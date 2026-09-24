@@ -3,7 +3,7 @@
 <package format="3">
   <name>amr_localization</name>
   <version>0.0.0</version>
-  <description>SLAM/AMCL/EKF 설정과 Kidnapped Robot 복구</description>
+  <description>AMCL/EKF 설정, Kidnapped Robot 복구, GT 대비 RMSE 측정</description>
   <maintainer email="TODO@example.com">민지</maintainer>
   <license>TODO: License declaration</license>
 

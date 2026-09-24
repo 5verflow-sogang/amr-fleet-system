@@ -45,6 +45,6 @@ colcon build
 | --- | --- | --- |
 | 이진 (팀장) | [@wjddlwls](https://github.com/wjddlwls) | 경로 계획, 모션 제어 |
 | 하연 | [@noeyish](https://github.com/noeyish) | Fleet Management, 인프라·CI |
-| 민지 | [@alswl722](https://github.com/alswl722) | SLAM, 위치 추정, 회귀 하네스 |
-| 지수 | [@xltuu](https://github.com/xltuu) | 시뮬레이션·로봇 모델, SLAM 공동, 작업 수행(BT·도킹) |
+| 민지 | [@alswl722](https://github.com/alswl722) | 위치 추정(AMCL·EKF·Kidnapped 복구), 회귀 하네스 |
+| 지수 | [@xltuu](https://github.com/xltuu) | 시뮬레이션·로봇 모델, 오도메트리·SLAM 매핑, 작업 수행(BT·도킹) |
 | 연우 | [@ye0n-w0](https://github.com/ye0n-w0) | AI 인지(YOLO·3D 변환), 동적 장애물 추적·회피 |

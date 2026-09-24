@@ -19,8 +19,8 @@
 
 ```
 map
-└── amr_0N/odom            (robot_localization EKF)
-    └── amr_0N/base_footprint
+└── amr_0N/odom            (map→odom: AMCL, 민지)
+    └── amr_0N/base_footprint   (odom→base: 지수 책임, 발행 주체는 EKF 구성에 따라 확정)
         └── amr_0N/base_link
             ├── amr_0N/lidar_link
             ├── amr_0N/camera_link
@@ -39,6 +39,7 @@ TODO(지수): extrinsic 값 확정 후 좌표 기입, `view_frames` 결과 첨�
 | 인식 결과 메시지 | 연우 ↔ 이진·지수 | 3D 객체 메시지(class, confidence, PoseWithCovariance) — Costmap·BT가 소비 |
 | 중앙 ↔ 분산 Fleet | 하연 ↔ 이진 | 작업 할당·협상 메시지, 서버 heartbeat |
 | 하네스 지표 | 민지 ↔ 하연 | 수집 지표와 로그 포맷 (명세서 1-4절 측정 절차 표 기준) |
+| 매핑 → 위치추정 인계 | 지수 → 민지 | 지도 파일, `/odom`·`/scan`·`/imu/data` 합격 조건, 센서 노이즈 파라미터 변경 통보 ([명세서 8-2절](project-spec.md#8-2-매핑위치추정-분업-지수--민지)) |
 
 ## 4. 패키지별 인터페이스
 

@@ -52,8 +52,9 @@ amr-fleet-system/
 | interfaces | `amr_msgs` | cmake (rosidl) | 하연 (전원 리뷰) | 커스텀 msg/srv/action |
 | simulation | `amr_description` | cmake | 지수 | URDF/xacro, 센서 extrinsic, TF |
 | simulation | `amr_gazebo` | cmake | 지수 | 물류센터 월드, 동적 장애물, 센서 노이즈 |
-| localization | `amr_odometry` | python | 민지 | 순기구학, 휠 오도메트리, 센서 전처리 필터 |
-| localization | `amr_localization` | python | 민지 (SLAM 지수 공동) | SLAM·AMCL·EKF 설정, Kidnapped 복구 |
+| localization | `amr_odometry` | python | 지수 | 순기구학, 휠 오도메트리, 센서 전처리 필터 |
+| localization | `amr_mapping` | python | 지수 | slam_toolbox 설정, 지도 저장, 맵 품질 평가 |
+| localization | `amr_localization` | python | 민지 | AMCL·EKF 설정, Kidnapped 복구, GT 대비 RMSE 측정 |
 | navigation | `amr_planning_core` | cmake | 이진 | A*, 평활화, DWA (ROS 비의존) |
 | navigation | `amr_nav2_plugins` | cmake | 이진 | Nav2 Planner/Controller 플러그인 래퍼 |
 | navigation | `amr_control` | cmake | 이진 | Pure Pursuit/Stanley, PID, 속도 프로파일 |
@@ -85,7 +86,8 @@ flowchart TB
 
   subgraph ROBOT["로봇 스택 (amr_0N 네임스페이스)"]
     ODOM[amr_odometry]
-    LOC[amr_localization<br/>SLAM · AMCL · EKF]
+    MAP[amr_mapping<br/>SLAM · 지도 저장]
+    LOC[amr_localization<br/>AMCL · EKF]
     DET[amr_detection<br/>YOLOv8]
     TRK[amr_tracking<br/>KF/AKF · TTC]
     SAFE[amr_safety]
@@ -107,6 +109,7 @@ flowchart TB
   end
 
   SENS --> ODOM --> LOC
+  ODOM --> MAP -->|map.pgm · map.yaml| LOC
   SENS --> DET --> TRK
   SENS --> TRK
   LOC --> NAV
