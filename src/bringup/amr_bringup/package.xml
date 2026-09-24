@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>amr_bringup</name>
+  <version>0.0.0</version>
+  <description>전체 시스템 launch 조립과 다중 로봇 네임스페이스 스폰</description>
+  <maintainer email="TODO@example.com">공동</maintainer>
+  <license>TODO: License declaration</license>
+
+  <!-- TODO: 구현 시 의존성 추가 (예: rclpy, amr_msgs) -->
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

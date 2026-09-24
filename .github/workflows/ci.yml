@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: colcon build & test
+    runs-on: ubuntu-22.04
+    container: ros:humble
+    defaults:
+      run:
+        shell: bash
+    env:
+      # ament_python 빌드 시 setuptools가 내는 알려진 deprecation 경고는 제외
+      PYTHONWARNINGS: "ignore:setup.py install is deprecated::setuptools.command.install,ignore:easy_install command is deprecated::setuptools.command.easy_install"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          rosdep update --rosdistro humble
+          rosdep install --from-paths src --ignore-src -y --rosdistro humble
+
+      - name: Build
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --event-handlers console_cohesion+ \
+            --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      # 원 명세서: colcon build 시 에러나 경고가 없어야 한다
+      - name: Check build warnings
+        run: |
+          files=$(find log/latest_build -name stderr.log -size +0 -exec grep -li 'warning' {} + || true)
+          if [ -n "$files" ]; then
+            for f in $files; do
+              echo "::error file=$f::build warning detected"
+              cat "$f"
+            done
+            exit 1
+          fi
+
+      - name: Test
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          colcon test --event-handlers console_cohesion+ --return-code-on-test-failure
+          colcon test-result --verbose
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: colcon-logs
+          path: log/

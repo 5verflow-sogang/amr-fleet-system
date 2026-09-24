@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>amr_planning_core</name>
+  <version>0.0.0</version>
+  <description>A*, 경로 평활화, DWA 핵심 로직 (ROS 비의존 라이브러리)</description>
+  <maintainer email="TODO@example.com">이진</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- TODO: 구현 시 의존성 추가 (예: rclcpp, amr_msgs) -->
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

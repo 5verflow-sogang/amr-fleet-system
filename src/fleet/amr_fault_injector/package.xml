@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>amr_fault_injector</name>
+  <version>0.0.0</version>
+  <description>통신 지연·패킷 손실·중앙 서버 강제종료 장애 주입기</description>
+  <maintainer email="TODO@example.com">하연</maintainer>
+  <license>TODO: License declaration</license>
+
+  <!-- TODO: 구현 시 의존성 추가 (예: rclpy, amr_msgs) -->
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

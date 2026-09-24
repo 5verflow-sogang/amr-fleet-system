@@ -1,0 +1,36 @@
+# 회귀 테스트 하네스 (명세서 5-2절)
+# self-hosted GPU 러너(학교 서버 또는 AWS Spot)에서 Fleet 시나리오를 N회 반복 실행한다.
+# 러너 등록과 tools/harness 구현 전까지는 수동/라벨 트리거만 둔다.
+name: Fleet Regression Test
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      repeats:
+        description: 시나리오 반복 횟수 N
+        default: "10"
+  # TODO: 러너 준비 후 활성화 (매일 03:00 KST)
+  # schedule:
+  #   - cron: "0 18 * * *"
+
+jobs:
+  fleet-test:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-fleet-test'
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      # TODO(하네스): 아래 단계를 tools/harness 스크립트로 교체
+      # 1. docker compose 로 시뮬레이션 + 5대 스택 기동
+      # 2. 장애 조건별 시나리오 N회 반복, ros2_tracing 수집
+      # 3. colcon test --coverage, 커버리지 리포트
+      # 4. P95/P99 지연·신뢰구간·커버리지를 PR 코멘트로 게시
+      # 5. baseline 대비 유의미한 저하 또는 커버리지 70% 미달 시 실패
+      - name: Run harness
+        env:
+          REPEATS: ${{ github.event.inputs.repeats || '10' }}
+        run: |
+          echo "TODO: tools/harness 구현 후 연결 (N=$REPEATS)"
