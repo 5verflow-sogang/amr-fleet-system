@@ -1,0 +1,55 @@
+# 역할별 서비스를 profile로 나눈다. 필요한 것만 골라 띄운다.
+#   docker compose --profile dev up        # 개발 셸
+#   docker compose --profile sim --profile fleet up
+# TODO: 각 서비스의 command를 해당 패키지 launch로 교체
+
+x-ros: &ros
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: amr-fleet-system:latest
+  network_mode: host
+  ipc: host
+  environment:
+    - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+    - DISPLAY=${DISPLAY:-}
+  volumes:
+    - ./src:/ros2_ws/src
+    - /tmp/.X11-unix:/tmp/.X11-unix:rw
+
+services:
+  dev:
+    <<: *ros
+    profiles: [dev]
+    stdin_open: true
+    tty: true
+
+  sim:
+    <<: *ros
+    profiles: [sim]
+    command: ["bash", "-c", "echo 'TODO: ros2 launch amr_gazebo ...' && sleep infinity"]
+
+  robots:
+    <<: *ros
+    profiles: [robots]
+    command: ["bash", "-c", "echo 'TODO: ros2 launch amr_bringup robots.launch.py num_robots:=5' && sleep infinity"]
+
+  fleet:
+    <<: *ros
+    profiles: [fleet]
+    command: ["bash", "-c", "echo 'TODO: ros2 launch amr_fleet_manager ...' && sleep infinity"]
+
+  perception:
+    <<: *ros
+    profiles: [perception]
+    command: ["bash", "-c", "echo 'TODO: ros2 launch amr_detection ...' && sleep infinity"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # TODO(관측 스택): prometheus, grafana 서비스 추가 (설정은 docker/ 아래)
+  # TODO(대시보드): dashboard 서비스 추가 (dashboard/ 참고)

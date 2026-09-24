@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>amr_metrics_exporter</name>
+  <version>0.0.0</version>
+  <description>Prometheus 지표 exporter와 교착·충돌 전후 rosbag 스냅샷</description>
+  <maintainer email="TODO@example.com">지수</maintainer>
+  <license>TODO: License declaration</license>
+
+  <!-- TODO: 구현 시 의존성 추가 (예: rclpy, amr_msgs) -->
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

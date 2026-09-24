@@ -1,0 +1,36 @@
+# colcon
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+
+# 모델 가중치 · rosbag · 실험 원자료 (CONTRIBUTING 6절)
+*.pt
+*.onnx
+*.engine
+*.db3
+*.mcap
+experiments/**/raw/
+
+# ros2_tracing 출력
+tracing/
+
+# 프론트엔드
+node_modules/
+dist/
+
+# IDE · OS
+.vscode/
+.idea/
+.DS_Store
+
+# 비밀 정보
+.env

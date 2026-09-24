@@ -1,0 +1,6 @@
+.git
+build
+install
+log
+dashboard/node_modules
+experiments/**/raw

@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>amr_fleet_core</name>
+  <version>0.0.0</version>
+  <description>작업 할당(최소거리/부하균형/Hungarian), 경로 충돌 예측, 교착 탐지 (ROS 비의존 라이브러리)</description>
+  <maintainer email="TODO@example.com">하연</maintainer>
+  <license>TODO: License declaration</license>
+
+  <!-- TODO: 구현 시 의존성 추가 (예: rclpy, amr_msgs) -->
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

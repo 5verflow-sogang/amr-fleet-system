@@ -1,0 +1,37 @@
+name: 버그
+description: 예상과 다르게 동작하는 문제
+title: "[버그] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 현상
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 절차
+      placeholder: |
+        1. docker compose --profile sim up
+        2. ros2 launch amr_bringup ...
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대 동작
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 로그 · 스크린샷
+      render: shell
+  - type: input
+    id: env
+    attributes:
+      label: 환경
+      placeholder: "브랜치/커밋, 로봇 대수, 지연 설정, GPU 유무"
