@@ -1,8 +1,8 @@
 # amr_localization
 
-- 담당: 민지 (SLAM은 지수 공동)
+- 담당: 민지
 - 빌드 타입: ament_python
-- 책임: SLAM/AMCL/EKF 설정과 Kidnapped Robot 복구
+- 책임: AMCL/EKF 설정, Kidnapped Robot 복구, GT 대비 RMSE 측정. 지도는 `amr_mapping`에서 받는다
 
 ## 제공 인터페이스
 

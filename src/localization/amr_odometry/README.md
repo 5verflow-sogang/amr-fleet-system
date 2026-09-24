@@ -1,6 +1,6 @@
 # amr_odometry
 
-- 담당: 민지
+- 담당: 지수
 - 빌드 타입: ament_python
 - 책임: 차동 구동 순기구학, 휠 오도메트리, LiDAR/Depth/IMU 전처리 필터
 

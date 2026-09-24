@@ -13,14 +13,13 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
-        ('share/' + package_name + '/maps', glob('maps/*')),
     ],
     install_requires=['setuptools'],
     extras_require={'test': ['pytest']},
     zip_safe=True,
     maintainer='민지',
     maintainer_email='TODO@example.com',
-    description='SLAM/AMCL/EKF 설정과 Kidnapped Robot 복구',
+    description='AMCL/EKF 설정, Kidnapped Robot 복구, GT 대비 RMSE 측정',
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [

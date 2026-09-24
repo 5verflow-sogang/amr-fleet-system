@@ -15,7 +15,7 @@
 | `hotfix/<설명>`                                               | `main` 긴급 수정           | `main`    | `main`, `dev`         |
 
 - 브랜치 이름은 소문자·숫자·`-`·`.`만 쓴다. 예: `feat/nav-astar`, `fix/fleet-deadlock-timeout`
-- `<영역>`은 `src/` 아래 도메인 이름을 쓴다: `interfaces`, `sim`, `loc`, `nav`, `perception`, `task`, `fleet`, `obs`, `bringup`, `infra`, `harness`, `dashboard`
+- `<영역>`은 `src/` 아래 도메인 이름을 쓴다: `interfaces`, `sim`, `loc`, `mapping`, `nav`, `perception`, `task`, `fleet`, `obs`, `bringup`, `infra`, `harness`, `dashboard`
 - 원본 레포의 `main`과 `dev`에 직접 push하지 않는다. 모든 변경은 PR로 들어간다.
 
 ### 1-1. 포크 워크플로
