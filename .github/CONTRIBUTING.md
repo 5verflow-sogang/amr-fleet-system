@@ -16,7 +16,49 @@
 
 - 브랜치 이름은 소문자·숫자·`-`·`.`만 쓴다. 예: `feat/nav-astar`, `fix/fleet-deadlock-timeout`
 - `<영역>`은 `src/` 아래 도메인 이름을 쓴다: `interfaces`, `sim`, `loc`, `nav`, `perception`, `task`, `fleet`, `obs`, `bringup`, `infra`, `harness`, `dashboard`
-- `main`과 `dev`에 직접 push하지 않는다. 모든 변경은 PR로 들어간다.
+- 원본 레포의 `main`과 `dev`에 직접 push하지 않는다. 모든 변경은 PR로 들어간다.
+
+### 1-1. 포크 워크플로
+
+원본은 조직 레포 [`5verflow-sogang/amr-fleet-system`](https://github.com/5verflow-sogang/amr-fleet-system)이다. 각자 포크에서 작업하고 원본 `dev`로 PR을 올린다.
+
+| 리모트     | 가리키는 곳                              | 용도                        |
+| ---------- | ---------------------------------------- | --------------------------- |
+| `origin`   | 내 포크 (`<내 아이디>/amr-fleet-system`) | 작업 브랜치 push            |
+| `upstream` | 원본 조직 레포                           | 최신`dev` 받아오기, PR 대상 |
+
+처음 한 번:
+
+```bash
+git clone https://github.com/<내 아이디>/amr-fleet-system.git
+cd amr-fleet-system
+git remote add upstream https://github.com/5verflow-sogang/amr-fleet-system.git
+```
+
+작업할 때마다:
+
+```bash
+# 1. 원본 최신 dev에서 시작
+git fetch upstream
+git switch -c feat/nav-astar upstream/dev
+
+# 2. 작업 후 내 포크에 push
+git push -u origin feat/nav-astar
+
+# 3. GitHub에서 PR 생성: 내 포크 feat/nav-astar → 5verflow-sogang/amr-fleet-system dev
+```
+
+작업 중 원본 `dev`가 바뀌면 PR 전에 반영한다:
+
+```bash
+git fetch upstream
+git rebase upstream/dev        # 충돌 해결 후
+git push --force-with-lease    # 내 포크의 내 작업 브랜치에만
+```
+
+- 포크의 `dev`는 쓰지 않아도 된다. 작업 브랜치는 항상 `upstream/dev`에서 새로 만든다.
+- force push는 **내 포크의 내 작업 브랜치**에만 한다. 원본 레포에는 절대 하지 않는다.
+- 알림(Discord 웹훅)은 원본 레포에만 설정돼 있다.
 
 ## 2. 커밋 · PR 제목 (Conventional Commits)
 
