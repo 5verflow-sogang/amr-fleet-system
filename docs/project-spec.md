@@ -43,7 +43,7 @@
 
 | 영역 | 필수 구현 | 필수 KPI | 담당 | 팀 추가·연구 연결 |
 | --- | --- | --- | --- | --- |
-| 1. 개발 환경·인프라 | `docker-compose up` 실행, ros:humble 베이스, nvidia-container-toolkit, Git Flow + conventional commits, 60×40m 물류센터(선반·입출고·충전 3개·통로), 동적 장애물 5개 이상(0.3~1.5m/s, 직선·곡선·무작위), xacro URDF(600×400×300mm, 2.0m/s, 1.0m/s², 1.5rad/s, 적재 질량 반영), 센서 노이즈(LiDAR σ=0.03m 등), extrinsic 파일 | 센서 사양 충족 | 지수 (Git Flow·Docker CI는 하연) | 회귀 하네스가 같은 Docker 이미지로 실행 |
+| 1. 개발 환경·인프라 | `docker-compose up` 실행, ros:humble 베이스, nvidia-container-toolkit, Git Flow + conventional commits, 60×40m 물류센터(선반·입출고·충전 3개·통로), 동적 장애물 5개 이상(0.3~1.5m/s, 직선·곡선·무작위), xacro URDF(600×400×300mm, 2.0m/s, 1.0m/s², 1.5rad/s, 적재 질량 반영), 센서 노이즈(LiDAR σ=0.03m 등), extrinsic 파일 | 센서 사양 충족 | 지수 (Docker·Git Flow·CI는 하연) | 회귀 하네스가 같은 Docker 이미지로 실행 |
 | 2. 로봇 기초 | 순기구학 직접 구현, 휠 오도메트리 + 드리프트 실험, LiDAR·Depth·IMU 필터링, TF 트리(map→odom→base_link→센서) 문서화 | 드리프트 분석 리포트 | 지수 | 드리프트 기준값은 위치추정 인계 계약에 사용 (8-2절) |
 | 3. 위치 추정 | slam_toolbox/cartographer 파라미터 문서화 또는 ICP/NDT 직접 구현, Loop Closure, 맵 품질 지표, AMCL 튜닝, Kidnapped 복구, EKF(Odom+IMU+AMCL) 공분산 근거 | 맵 0.05m 이하, 오차 정지 3cm·직선 5cm·회전 8cm, RMSE·Max(100개 시점 이상) | 지수(SLAM·지도) + 민지(AMCL·EKF·위치 오차 KPI), 8-2절 | 하네스로 N회 반복 신뢰구간 제시 |
 | 4. 경로 계획 | A* 직접 구현 vs NavFn/Smac, 경로 평활화, DWA 직접 구현 vs TEB, Costmap 3레이어, 좁은 통로(로봇 폭+20cm) | 50쌍 성공률 98%, 재계획 500ms, 주행시간 예측 오차 15% | 이진 | 연구 2에서 DWA 비용함수·Costmap에 불확실성 반영 가능 |
@@ -347,7 +347,7 @@ A1·A2는 단계별 기여를 분리하는 ablation이다. B2가 핵심 대조�
 | --- | --- |
 | 하연 | 중앙집중 작업할당(최소거리/부하균형/Hungarian), Traffic Management(경로충돌 예측·해소, 교차로 우선순위), 교착탐지·해소 2가지 이상 / 장애 주입기(지연 0~500ms, 손실 0~10%, 서버 강제종료) / ros2_tracing 셋업, QoS·DDS 벤더 튜닝 / GitHub Actions·Docker·Git Flow |
 | 민지 | AMCL 튜닝(파티클 수, alpha1~5, 리샘플링) / EKF 센서퓨전(Wheel Odom+IMU+AMCL, config 매트릭스, 50Hz 이상) + 공분산 근거 문서화 / Kidnapped Robot 복구(전역 재초기화 + 제자리 회전) / GT 대비 RMSE·Max Error 측정 파이프라인(100개 시점, 지정 로그 포맷) / 목표: 정지 3cm·직선 5cm·회전 8cm 이내 / 하네스 설계: 반복 횟수 N, 신뢰구간, 통계 검정 |
-| 지수 | 물류센터 환경(60×40m), 정적·동적 장애물 배치, Docker 개발환경 / URDF·xacro, TF 트리(`base_link` 하위, `odom→base_link`) 문서화, 센서 노이즈 모델링 / 차동구동 순기구학·휠 오도메트리, 드리프트 측정 실험 / LiDAR·Depth·IMU 전처리 필터 / 2D SLAM 매핑(slam_toolbox 튜닝, Loop Closure, 지도 저장, 맵 품질 지표) / Behavior Tree(15개 이상 노드), ArUco 도킹(2cm/1도) / (여유 시) Prometheus+Grafana, 교착·충돌 스냅샷 |
+| 지수 | 물류센터 환경(60×40m), 정적·동적 장애물 배치, compose `sim` 서비스 launch / URDF·xacro, TF 트리(`base_link` 하위, `odom→base_link`) 문서화, 센서 노이즈 모델링 / 차동구동 순기구학·휠 오도메트리, 드리프트 측정 실험 / LiDAR·Depth·IMU 전처리 필터 / 2D SLAM 매핑(slam_toolbox 튜닝, Loop Closure, 지도 저장, 맵 품질 지표) / Behavior Tree(15개 이상 노드), ArUco 도킹(2cm/1도) / (여유 시) Prometheus+Grafana, 교착·충돌 스냅샷 |
 | 이진 | A* 직접구현 및 NavFn/Smac 비교, 경로평활화 / DWA 직접구현 및 TEB 비교 / Costmap(Static/Obstacle/Inflation) / Pure Pursuit·Stanley, PID, 속도 프로파일링 / 분산 협상 로직(단순 규칙 기반) / 논문 구조·KCSE·MOST 일정 관리 / (채택 시) 실물 네트워크: 라즈베리파이 셋업, tc netem 지연 주입, 발표 데모 리허설 |
 | 연우 | YOLOv8 ROS2 노드(화물·사람·표지판 3종 이상), RViz2 마커 / 인식 품질 저하 시나리오(가림·조명·거리) / Pinhole 3D 변환 + 측정 공분산 전파 / KF 추적(baseline) → confidence 기반 AKF / 결정적 TTC(baseline) → Probabilistic TTC / VO·ORCA(baseline) → 불확실성 margin ORCA / ablation 실험 설계 / (스트레치) PPO·SAC 내비게이션 vs DWA |
 
@@ -455,7 +455,7 @@ P2 종료 시점에 데이터가 부족하면 MOST를 포기하고 KCSE에 집�
 | --- | --- | --- | --- | --- | --- |
 | 하연 | Fleet 아키텍처 설계 + `amr_msgs` 인터페이스 확정 + Docker 기본 세팅 | 중앙집중 작업할당 기본로직 + ros2_tracing 설치검증 + 장애주입기 착수 | Traffic Management·교착탐지 + 장애주입기 완성 + Fleet 통합 시작 | **Before 데이터 수집 완료, Fleet KPI 확정** | 논문 전체 구조·실험/결과 섹션 작성 주도 + 시스템 최종 폴리싱 |
 | 민지 | Docker/ROS2 세팅, slam_toolbox·AMCL·robot_localization 동작 검증, `amr_msgs` 리뷰, 지수와 인계 계약 확정(8-2절), GT 대비 RMSE 계산기 스텁 | SLAM 매핑 페어 지원(Loop Closure 디버깅), EKF config 초안(mock·초기 `/odom`·`/imu/data`), RMSE 파이프라인을 Gazebo GT에 연결, 하연과 하네스 지표 형식 합의 | **지도 v1 인계(10/11)** 후 AMCL 튜닝 + EKF 공분산 튜닝 + Kidnapped Robot 복구, 100개 시점 정확도 테스트 | **위치추정 필수 KPI 확정**(정지 3cm·직선 5cm·회전 8cm, EKF 50Hz) | 논문(Localization 파트) 작성 + 버그수정 |
-| 지수 | 물류센터 환경 기본구성, Docker 세팅, URDF 착수, 센서 노이즈 초안(민지 합의) | URDF·xacro 완성, TF(`base_link` 하위) 검증, 순기구학·휠 오도메트리(`/odom` 공분산), LiDAR·IMU 필터, slam_toolbox 매핑(민지 페어) | **지도 v1 인계(10/11)**, 드리프트 실험 → 기준값 합의(10/14), TF 트리 문서화, Behavior Tree 착수 | **지도 KPI 확정**(0.05m·벽 겹침 없음) + 드리프트·맵 품질 리포트, **BT+도킹 KPI 확정**, 통합테스트 | 논문(시스템구축·매핑 파트) 작성 + 여유되면 관측스택 착수 |
+| 지수 | 물류센터 환경 기본구성, URDF 착수, 센서 노이즈 초안(민지 합의) | URDF·xacro 완성, TF(`base_link` 하위) 검증, 순기구학·휠 오도메트리(`/odom` 공분산), LiDAR·IMU 필터, slam_toolbox 매핑(민지 페어) | **지도 v1 인계(10/11)**, 드리프트 실험 → 기준값 합의(10/14), TF 트리 문서화, Behavior Tree 착수 | **지도 KPI 확정**(0.05m·벽 겹침 없음) + 드리프트·맵 품질 리포트, **BT+도킹 KPI 확정**, 통합테스트 | 논문(시스템구축·매핑 파트) 작성 + 여유되면 관측스택 착수 |
 | 이진 | Nav2 기본셋업, Costmap 착수 | A* 직접구현 | DWA 직접구현 + Pure Pursuit/Stanley | **PID+CTE KPI 확정** + 분산 협상로직 초안 | 논문 전체 조율·투고원고 취합 |
 | 연우 | Pinhole Camera Model 설계, YOLO 착수 | YOLO 통합 + 3D좌표변환 | 칼만필터 추적 구현 | **탐지율/FPS/회피 KPI 확정**(TTC+ORCA 포함) | 논문(Perception 파트) 작성 |
 
