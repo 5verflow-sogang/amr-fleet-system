@@ -10,6 +10,8 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <!-- TODO: 구현 시 의존성 추가 (예: rclcpp, amr_msgs) -->
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
