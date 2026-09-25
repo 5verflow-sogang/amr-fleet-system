@@ -19,6 +19,7 @@ htmlcov/
 *.db3
 *.mcap
 experiments/**/raw/
+tools/harness/results/
 
 # ros2_tracing 출력
 tracing/
