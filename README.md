@@ -2,7 +2,7 @@
 
 Gazebo 시뮬레이션 기반 지능형 물류 AMR Fleet 시스템. ROS2 Humble 위에서 SLAM·경로계획·제어·AI 인지·작업 수행·다중 로봇 Fleet Management를 End-to-End로 구현한다.
 
-> 상태: 골격 단계 (P0). 설치·실행 방법은 구현에 맞춰 채운다.
+> 상태: 골격 단계 (P0).
 
 ## 문서
 
@@ -11,6 +11,7 @@ Gazebo 시뮬레이션 기반 지능형 물류 AMR Fleet 시스템. ROS2 Humble 
 | [docs/project-spec.md](docs/project-spec.md) | 프로젝트 명세 (원 명세서 + 팀 확장, 연구 계획, 일정) |
 | [docs/architecture.md](docs/architecture.md) | 아키텍처 전략, 패키지 구성, 다이어그램 |
 | [docs/api.md](docs/api.md) | 노드별 토픽·서비스·액션, 이름 규칙, TF 트리 |
+| [docs/runbook.md](docs/runbook.md) | Docker 빌드·실행·종료, 문제 해결 |
 | [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) | 브랜치·커밋·디렉토리 규칙 |
 
 ## 레포 구조
@@ -28,22 +29,12 @@ docs/           설계·알고리즘·API·리포트
 ## 빠른 시작
 
 ```bash
-# TODO: 구현 후 갱신
-docker compose --profile dev run --rm dev
-colcon build
+docker compose build
+docker compose up -d        # 시스템 전체 실행
+docker compose down         # 종료
 ```
 
-### GUI (RViz2)
-
-macOS·Windows·Linux 공통으로 브라우저에서 GUI를 쓴다.
-
-```bash
-docker compose --profile gui up -d        # 처음에는 이미지 빌드로 몇 분 걸린다
-# 브라우저: http://localhost:6080/vnc.html  (비밀번호: ros, VNC_PASSWORD로 변경)
-docker compose --profile gui down         # 종료
-```
-
-화면 안의 터미널이나 `docker compose exec gui bash`에서 `rviz2`를 실행한다. 그래픽은 CPU로 그리므로 느릴 수 있다.
+GPU 사용, 개발 셸, 브라우저 GUI(RViz2) 등 자세한 실행 방법은 [docs/runbook.md](docs/runbook.md)를 본다.
 
 ## 개발 환경
 
