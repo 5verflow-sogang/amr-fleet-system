@@ -68,7 +68,6 @@ git push --force-with-lease    # 내 포크의 내 작업 브랜치에만
 
 - type: `feat` `fix` `refactor` `perf` `docs` `test` `build` `ci` `chore` `style` `revert`
 - scope: 선택. 패키지나 영역 이름. 예: `feat(amr_planning_core): A* 휴리스틱 추가`
-- PR은 squash merge하므로 **PR 제목**이 최종 커밋 메시지가 된다.
 
 ## 3. PR 규칙
 

@@ -1,0 +1,11 @@
+# NVIDIA GPU가 있는 PC에서 perception에 GPU를 붙인다.
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+services:
+  perception:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

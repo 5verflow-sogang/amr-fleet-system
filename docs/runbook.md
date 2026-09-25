@@ -1,0 +1,82 @@
+# 런북
+
+Docker로 시스템을 빌드·실행·종료하는 방법.
+
+> 현재 `sim`, `robots`, `fleet`, `perception`은 자리만 잡아 둔 상태다. 컨테이너는 뜨지만 TODO 메시지를 출력하고 대기만 한다. 각 패키지의 launch 파일이 준비되면 [docker-compose.yml](../docker-compose.yml)의 `command`를 교체한다.
+
+## 준비
+
+- Docker (macOS·Windows는 Docker Desktop)
+- GPU를 쓸 경우: NVIDIA 드라이버 + nvidia-container-toolkit (Linux)
+
+## 서비스
+
+| 서비스 | 역할 | 기본 실행 |
+| --- | --- | --- |
+| `sim` | Gazebo 시뮬레이터 (창고 월드) | O |
+| `robots` | 로봇 스폰, 로봇별 위치 추정·주행 | O |
+| `fleet` | 작업 할당, 다중 로봇 교통 관리 | O |
+| `perception` | 카메라 기반 객체 인식 | O |
+| `dev` | 개발용 셸 | X (`run`으로 실행) |
+| `gui`, `gui-proxy` | 브라우저로 보는 RViz2 | X (`--profile gui`) |
+
+## 빌드
+
+```bash
+docker compose build          # 처음 한 번, 또는 Dockerfile·package.xml이 바뀌었을 때
+```
+
+## 실행
+
+```bash
+docker compose up -d          # 시스템 전체 (sim, robots, fleet, perception)
+docker compose ps             # 상태 확인
+docker compose logs -f fleet  # 서비스 로그 보기
+docker compose down           # 종료
+```
+
+### GPU 사용 (NVIDIA)
+
+`perception`에 GPU를 붙인다. GPU가 없는 PC에서는 이 옵션 없이 실행한다.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+### 개발 셸
+
+```bash
+docker compose run --rm dev
+colcon build
+```
+
+`./src`가 컨테이너에 마운트되어 있어 호스트에서 고친 코드가 바로 반영된다.
+
+### GUI (RViz2)
+
+```bash
+docker compose --profile gui up -d
+# 브라우저: http://localhost:6080/vnc.html  (비밀번호: ros)
+docker compose --profile gui down
+```
+
+화면 안의 터미널이나 `docker compose exec gui bash`에서 `rviz2`를 실행한다. 그래픽을 CPU로 그리므로 느릴 수 있다.
+
+## 환경 변수
+
+| 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `ROS_DOMAIN_ID` | `0` | 같은 네트워크의 다른 PC와 토픽이 섞이면 다른 값으로 바꾼다 |
+| `VNC_PASSWORD` | `ros` | GUI 접속 비밀번호 |
+| `GUI_RESOLUTION` | `1600x900` | GUI 화면 해상도 |
+
+예: `ROS_DOMAIN_ID=7 docker compose up -d`
+
+## 문제 해결
+
+| 증상 | 원인 · 해결 |
+| --- | --- |
+| `could not select device driver "nvidia"` | GPU가 없거나 nvidia-container-toolkit이 없는 PC에서 GPU 옵션을 줬다. `docker-compose.gpu.yml` 없이 실행한다 |
+| 다른 팀원 로봇의 토픽이 보인다 | `ROS_DOMAIN_ID`를 서로 다르게 설정한다 |
+| `localhost:6080` 접속이 안 된다 | `docker compose --profile gui ps`로 `gui`, `gui-proxy`가 둘 다 떠 있는지 확인한다 |
+| 코드 의존성을 추가했는데 반영이 안 된다 | `package.xml`에 적은 뒤 `docker compose build`로 이미지를 다시 빌드한다 |
