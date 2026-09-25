@@ -24,11 +24,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # CI는 빌드와 단위 테스트만 하므로 실행용 의존성(exec_depend)은 설치하지 않는다.
+      # Gazebo 같은 무거운 런타임 의존성 때문에 CI가 느려지는 것을 막기 위해서다.
+      # 테스트에 필요한 패키지는 package.xml에 test_depend로 적는다.
       - name: Install dependencies
         run: |
           apt-get update
           rosdep update --rosdistro humble
-          rosdep install --from-paths src --ignore-src -y --rosdistro humble
+          rosdep install --from-paths src --ignore-src -y --rosdistro humble \
+            -t build -t buildtool -t build_export -t buildtool_export -t test
 
       - name: Build
         run: |

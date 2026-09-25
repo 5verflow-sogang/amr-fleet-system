@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
     && rm -rf /var/lib/apt/lists/*
 
-# TODO: rosdep 외 의존성 (예: ultralytics, ros2_tracing/LTTng, Gazebo Fortress)
+# TODO: rosdep 외 의존성 (예: ultralytics, ros2_tracing/LTTng)
 
 WORKDIR /ros2_ws
 COPY src ./src
