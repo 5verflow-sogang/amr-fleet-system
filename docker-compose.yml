@@ -67,10 +67,15 @@ services:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - VNC_PASSWORD=${VNC_PASSWORD:-ros}
       - GUI_RESOLUTION=${GUI_RESOLUTION:-1600x900}
+    # 자체 가상 화면(Xvfb)을 쓰므로 호스트 X 소켓은 연결하지 않는다.
+    volumes:
+      - ./src:/ros2_ws/src
     command:
       - bash
       - -c
       - |
+        # 재시작 시 이전 실행의 lock이 남아 있으면 Xvfb가 시작을 거부한다.
+        rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
         Xvfb :99 -screen 0 $${GUI_RESOLUTION}x24 &
         sleep 2
         fluxbox &
