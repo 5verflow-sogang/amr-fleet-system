@@ -143,5 +143,6 @@ TODO: 구현 진행에 맞춰 아래 시나리오를 추가한다 (원 명세서
 | `robots` | 로봇 5대 스택 (`amr_bringup`) |
 | `fleet` | Fleet 서버, 장애 주입기 |
 | `perception` | YOLO 추론 (GPU) |
+| `gui` | 브라우저 GUI (Xvfb + noVNC, RViz2). `gui-proxy`가 6080 포트를 호스트에 중계 |
 | (예정) `monitoring` | Prometheus, Grafana |
 | (예정) `dashboard` | 웹 대시보드 |

@@ -33,6 +33,18 @@ docker compose --profile dev run --rm dev
 colcon build
 ```
 
+### GUI (RViz2)
+
+macOS·Windows·Linux 공통으로 브라우저에서 GUI를 쓴다.
+
+```bash
+docker compose --profile gui up -d        # 처음에는 이미지 빌드로 몇 분 걸린다
+# 브라우저: http://localhost:6080/vnc.html  (비밀번호: ros, VNC_PASSWORD로 변경)
+docker compose --profile gui down         # 종료
+```
+
+화면 안의 터미널이나 `docker compose exec gui bash`에서 `rviz2`를 실행한다. 그래픽은 CPU로 그리므로 느릴 수 있다.
+
 ## 개발 환경
 
 - Ubuntu 22.04, ROS2 Humble, Gazebo Fortress
