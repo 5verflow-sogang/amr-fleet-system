@@ -1,0 +1,23 @@
+# ArUco 마커를 보고 스테이션에 정밀 도킹한다 (목표 오차 2cm·1도).
+# 액션 이름: docking/dock (로봇 네임스페이스 아래)
+
+# ---- Goal: 요청 ----
+# 도킹할 스테이션 (Task의 station_id와 같은 이름)
+string station_id
+---
+# ---- Result: 최종 결과 ----
+bool success
+# 시도한 횟수
+uint8 attempts
+# 최종 위치 오차 (m)와 방향 오차 (rad)
+float32 position_error
+float32 yaw_error
+# 실패 사유. 성공이면 빈 문자열
+string message
+---
+# ---- Feedback: 진행 중 보고 ----
+# 현재 시도 번호 (1부터)
+uint8 attempt
+# 목표까지 남은 거리 (m)와 방향 오차 (rad)
+float32 distance_remaining
+float32 yaw_error
