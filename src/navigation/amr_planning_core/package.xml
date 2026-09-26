@@ -9,7 +9,7 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- TODO: 구현 시 의존성 추가 (예: rclcpp, amr_msgs) -->
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
