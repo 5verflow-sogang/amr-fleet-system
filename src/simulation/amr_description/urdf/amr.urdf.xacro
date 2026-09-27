@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<!--
+  AMR 조립 파일.
+
+    xacro amr.urdf.xacro namespace:=amr_01 payload_mass:=0.0
+
+  TF 트리 (docs/api.md 2장, prefix = "<namespace>/"):
+    base_footprint
+    └── base_link
+        ├── left_wheel_link / right_wheel_link
+        ├── front_caster_link / rear_caster_link
+        ├── lidar_link
+        ├── camera_link
+        │   └── camera_optical_frame
+        └── imu_link
+-->
+<robot name="amr" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- 로봇 네임스페이스. TF 프레임 접두어와 Gazebo 토픽에 쓴다. 비우면 접두어 없음 -->
+  <xacro:arg name="namespace" default="amr_01"/>
+  <!-- 적재물 질량 [kg]. 몸체 질량에 더한다 -->
+  <xacro:arg name="payload_mass" default="0.0"/>
+
+  <xacro:property name="namespace" value="$(arg namespace)"/>
+  <xacro:property name="payload_mass" value="$(arg payload_mass)"/>
+  <xacro:property name="prefix" value="${namespace + '/' if namespace else ''}"/>
+  <xacro:property name="topic_ns" value="${'/' + namespace if namespace else ''}"/>
+
+  <xacro:include filename="$(find amr_description)/urdf/properties.xacro"/>
+  <xacro:include filename="$(find amr_description)/urdf/base.xacro"/>
+  <xacro:include filename="$(find amr_description)/urdf/wheels.xacro"/>
+  <xacro:include filename="$(find amr_description)/urdf/sensors.xacro"/>
+  <xacro:include filename="$(find amr_description)/urdf/gazebo.xacro"/>
+
+</robot>
