@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<!--
+  입고·출고 도크. 모델 원점은 벽면 위의 도크 중심이고, +x가 창고 안쪽이다.
+  - platform: 벽에 붙은 하역 플랫폼 (x 0~1.5 m, 폭 3.5 m, 높이 1.0 m)
+  - bay: 플랫폼 앞 AMR 정차 구역 바닥 표시 (x 1.5~4.5 m). 충돌 없음
+-->
+<sdf version="1.8">
+  <model name="loading_dock">
+    <static>true</static>
+    <link name="platform">
+      <pose>0.75 0 0.5 0 0 0</pose>
+      <collision name="collision">
+        <geometry>
+          <box><size>1.5 3.5 1.0</size></box>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <box><size>1.5 3.5 1.0</size></box>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.40 1</ambient>
+          <diffuse>0.35 0.35 0.40 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <link name="bay">
+      <pose>3.0 0 0.004 0 0 0</pose>
+      <visual name="visual">
+        <cast_shadows>false</cast_shadows>
+        <geometry>
+          <box><size>3.0 3.5 0.002</size></box>
+        </geometry>
+        <material>
+          <ambient>0.95 0.80 0.10 1</ambient>
+          <diffuse>0.95 0.80 0.10 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

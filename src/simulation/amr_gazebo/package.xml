@@ -12,8 +12,13 @@
   <!-- TODO: 구현 시 의존성 추가 (예: rclcpp, amr_msgs) -->
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
+    <!-- ros_gz_sim이 models/를 리소스 경로에 추가해 월드에서 model://<이름>으로 쓸 수 있게 한다 -->
+    <gazebo_ros gazebo_model_path="${prefix}/models"/>
   </export>
 </package>

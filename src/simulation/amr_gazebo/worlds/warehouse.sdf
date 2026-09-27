@@ -1,0 +1,209 @@
+<?xml version="1.0"?>
+<!--
+  60 x 40 m 물류센터 월드 (1주차 기본형)
+
+  좌표계: 월드 원점 = 창고 중심, x -30~30 m (동서), y -20~20 m (남북), 위쪽(+y)이 북쪽.
+  레이아웃은 docs/project-spec-original.md 8장 결과 예시를 따른다.
+
+    y=+20 ┌──────────────────────────────────────────────┐
+          │ Dock-1  ══════ Main Corridor ══════   Dock-A │  y 8.5~18.5
+          │ Dock-2  ════════════════════════════  Dock-B │
+          │   A-1  A-2  A-3  A-4  A-5  A-6  A-7          │  y=+5
+          │   B-1  B-2  B-3 |B-4  B-5  B-6  B-7          │  y=-2  (| = 0.6 m 좁은 통로)
+          │   C-1  C-2  C-3  C-4  C-5  C-6  C-7          │  y=-9
+          │ [C1][C2][C3] Charging         Waiting Zone   │
+    y=-20 └──────────────────────────────────────────────┘
+        x=-30                                         x=+30
+
+  좌표 표는 amr_gazebo/README.md 참고. 동적 장애물·마찰·조명 튜닝·센서 시스템 플러그인은 2주차.
+-->
+<sdf version="1.8">
+  <world name="warehouse">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system" name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"/>
+
+    <scene>
+      <ambient>0.6 0.6 0.6 1</ambient>
+      <background>0.75 0.8 0.85 1</background>
+      <shadows>false</shadows>
+    </scene>
+
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 20 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.3 0.2 -1.0</direction>
+    </light>
+
+    <!-- ===================== 바닥 · 외벽 ===================== -->
+    <model name="floor">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane><normal>0 0 1</normal><size>100 100</size></plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane><normal>0 0 1</normal><size>60.4 40.4</size></plane>
+          </geometry>
+          <material>
+            <ambient>0.55 0.55 0.52 1</ambient>
+            <diffuse>0.55 0.55 0.52 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 두께 0.2 m, 높이 4 m. 벽 안쪽 면이 정확히 60 x 40 m가 되도록 바깥으로 0.1 m 밀어 둔다. -->
+    <model name="outer_walls">
+      <static>true</static>
+      <link name="link">
+        <collision name="north_collision">
+          <pose>0 20.1 2 0 0 0</pose>
+          <geometry><box><size>60.4 0.2 4</size></box></geometry>
+        </collision>
+        <visual name="north_visual">
+          <pose>0 20.1 2 0 0 0</pose>
+          <geometry><box><size>60.4 0.2 4</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.8 0.8 0.78 1</diffuse></material>
+        </visual>
+        <collision name="south_collision">
+          <pose>0 -20.1 2 0 0 0</pose>
+          <geometry><box><size>60.4 0.2 4</size></box></geometry>
+        </collision>
+        <visual name="south_visual">
+          <pose>0 -20.1 2 0 0 0</pose>
+          <geometry><box><size>60.4 0.2 4</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.8 0.8 0.78 1</diffuse></material>
+        </visual>
+        <collision name="east_collision">
+          <pose>30.1 0 2 0 0 0</pose>
+          <geometry><box><size>0.2 40 4</size></box></geometry>
+        </collision>
+        <visual name="east_visual">
+          <pose>30.1 0 2 0 0 0</pose>
+          <geometry><box><size>0.2 40 4</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.8 0.8 0.78 1</diffuse></material>
+        </visual>
+        <collision name="west_collision">
+          <pose>-30.1 0 2 0 0 0</pose>
+          <geometry><box><size>0.2 40 4</size></box></geometry>
+        </collision>
+        <visual name="west_visual">
+          <pose>-30.1 0 2 0 0 0</pose>
+          <geometry><box><size>0.2 40 4</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.8 0.8 0.78 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===================== 바닥 표시 (충돌 없음) ===================== -->
+    <model name="floor_markings">
+      <static>true</static>
+      <link name="link">
+        <!-- 메인 통로 경계선 -->
+        <visual name="corridor_line_north">
+          <pose>0 18.5 0.003 0 0 0</pose>
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>50 0.1 0.002</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material>
+        </visual>
+        <visual name="corridor_line_south">
+          <pose>0 8.5 0.003 0 0 0</pose>
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>50 0.1 0.002</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material>
+        </visual>
+        <!-- 충전 구역: x -26~-16, y -20~-16 -->
+        <visual name="charging_zone">
+          <pose>-21 -18 0.002 0 0 0</pose>
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>10 4 0.002</size></box></geometry>
+          <material><ambient>0.2 0.4 0.85 1</ambient><diffuse>0.2 0.4 0.85 1</diffuse></material>
+        </visual>
+        <!-- 대기 구역: x 16~26, y -20~-14 -->
+        <visual name="waiting_zone">
+          <pose>21 -17 0.002 0 0 0</pose>
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>10 6 0.002</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===================== 입고·출고 도크 ===================== -->
+    <!-- 입고: 서쪽 벽 (+x가 창고 안쪽) -->
+    <include>
+      <uri>model://loading_dock</uri>
+      <name>dock_1</name>
+      <pose>-30 16 0 0 0 0</pose>
+    </include>
+    <include>
+      <uri>model://loading_dock</uri>
+      <name>dock_2</name>
+      <pose>-30 11 0 0 0 0</pose>
+    </include>
+    <!-- 출고: 동쪽 벽 -->
+    <include>
+      <uri>model://loading_dock</uri>
+      <name>dock_a</name>
+      <pose>30 16 0 0 0 3.14159265</pose>
+    </include>
+    <include>
+      <uri>model://loading_dock</uri>
+      <name>dock_b</name>
+      <pose>30 11 0 0 0 3.14159265</pose>
+    </include>
+
+    <!-- ===================== 선반 랙 3열 x 7개 ===================== -->
+    <!-- 랙 5.0 x 1.2 m, 중심 간격 7.5 m (랙 사이 교차 통로 2.5 m), 열 사이 통로 5.8 m -->
+    <!-- A열: y = 5 -->
+    <include><uri>model://warehouse_rack</uri><name>rack_a1</name><pose>-22.5 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a2</name><pose>-15.0 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a3</name><pose>-7.5 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a4</name><pose>0 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a5</name><pose>7.5 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a6</name><pose>15.0 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a7</name><pose>22.5 5 0 0 0 0</pose></include>
+    <!-- B열: y = -2. B-4를 서쪽으로 1.9 m 당겨 B-3과 사이에 0.6 m 좁은 통로를 만든다 (로봇 폭 0.4 m + 0.2 m, Nav2 KPI 테스트용) -->
+    <include><uri>model://warehouse_rack</uri><name>rack_b1</name><pose>-22.5 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b2</name><pose>-15.0 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b3</name><pose>-7.5 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b4</name><pose>-1.9 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b5</name><pose>7.5 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b6</name><pose>15.0 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b7</name><pose>22.5 -2 0 0 0 0</pose></include>
+    <!-- C열: y = -9 -->
+    <include><uri>model://warehouse_rack</uri><name>rack_c1</name><pose>-22.5 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c2</name><pose>-15.0 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c3</name><pose>-7.5 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c4</name><pose>0 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c5</name><pose>7.5 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c6</name><pose>15.0 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c7</name><pose>22.5 -9 0 0 0 0</pose></include>
+
+    <!-- ===================== 기둥 ===================== -->
+    <!-- 통로 가운데에 두어 통로 폭을 2.6 m씩으로 좁힌다 -->
+    <include><uri>model://warehouse_pillar</uri><name>pillar_1</name><pose>-11.25 7.0 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_pillar</uri><name>pillar_2</name><pose>11.25 7.0 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_pillar</uri><name>pillar_3</name><pose>-15.0 1.5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_pillar</uri><name>pillar_4</name><pose>15.0 1.5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_pillar</uri><name>pillar_5</name><pose>-7.5 -5.5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_pillar</uri><name>pillar_6</name><pose>7.5 -5.5 0 0 0 0</pose></include>
+
+    <!-- ===================== 충전 스테이션 C1~C3 ===================== -->
+    <!-- 남쪽 벽에 붙어 북쪽(+y)을 향한다 -->
+    <include><uri>model://charging_station</uri><name>charger_c1</name><pose>-24 -20 0 0 0 1.5707963</pose></include>
+    <include><uri>model://charging_station</uri><name>charger_c2</name><pose>-21 -20 0 0 0 1.5707963</pose></include>
+    <include><uri>model://charging_station</uri><name>charger_c3</name><pose>-18 -20 0 0 0 1.5707963</pose></include>
+  </world>
+</sdf>
