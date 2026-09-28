@@ -4,6 +4,9 @@
 # 클래스 라벨. YOLO 라벨 그대로. 허용 값은 docs/api.md 4-3절 (예: "cargo", "person", "sign")
 string class_name
 
+# YOLO 모델의 클래스 번호. class_name과 1:1 대응
+int32 class_id
+
 # class_name의 YOLO confidence (0.0~1.0). 보정하지 않은 원본 값
 float32 confidence
 

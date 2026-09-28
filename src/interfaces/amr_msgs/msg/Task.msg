@@ -11,6 +11,7 @@ uint8 ITEM_MEDIUM=2     # 중형 박스 10kg
 uint8 ITEM_LARGE=3      # 대형 박스 25kg
 
 # 작업 ID. 시스템 전체에서 유일 (예: "task_0042")
+# UUID 권장: 서버가 죽은 뒤 로봇이 ID를 만들면 순번은 로봇끼리 겹칠 수 있다
 string task_id
 
 # 작업 종류 (TYPE_*)

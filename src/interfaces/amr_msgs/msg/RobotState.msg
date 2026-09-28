@@ -28,3 +28,6 @@ string current_task_id
 
 # 싣고 있는 물품 (Task.ITEM_*)
 uint8 item_type
+
+# 마지막으로 처리한 TaskAssignment.assignment_id. Ack가 유실돼도 서버가 이 값으로 확인한다
+uint32 last_assignment_id

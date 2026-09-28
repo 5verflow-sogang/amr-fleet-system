@@ -20,8 +20,8 @@ uint8 state
 # 세부 단계 (BT 서브트리 이름). 예: "move_to_pickup", "docking", "loading", "unloading"
 string phase
 
-# 실패 원인. FAILED가 아니면 빈 문자열
-string failure_reason
+# 실패 원인. FAILED가 아니면 code = NONE
+ErrorInfo error
 
 # 시작·종료 시각. 아직이면 0
 builtin_interfaces/Time start_time
