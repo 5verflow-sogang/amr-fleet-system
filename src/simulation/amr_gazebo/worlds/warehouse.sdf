@@ -32,60 +32,94 @@
     <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"/>
 
     <scene>
-      <ambient>0.6 0.6 0.6 1</ambient>
+      <!-- 0.6 -> 0.7: 광원 사이 빈 공간의 바닥 기본 밝기를 올려 명암 대비를 줄인다 -->
+      <ambient>0.7 0.7 0.7 1</ambient>
       <background>0.75 0.8 0.85 1</background>
       <shadows>false</shadows>
     </scene>
 
     <!--
-      실내 천장 조명 6개 (3열 x 2행, 4m 천장 바로 아래 z=3.8). 실외용 directional
+      실내 천장 조명 9개 (3열 x 3행, 4m 천장 바로 아래 z=3.8). 실외용 directional
       "sun" 광원 대신 창고 실내 조명으로 교체했다(2주차 조명 작업, 이진).
-      팀 대부분이 GPU 없이 CPU로 렌더링하므로 개수를 최소화하고 그림자는 모두
-      끈다(cast_shadows: false) — 점광원 여러 개의 실시간 그림자는 CPU에서 비용이 크다.
-      scene ambient(0.6)가 기본 밝기를 깔아주므로, 조명 사이 빈 공간도 YOLO 인식에
-      쓸 수 없을 만큼 어둡지는 않을 것으로 본다(가정, 실측 검증 안 됨).
+
+      v0(점광원 6개, range 20, constant/linear/quadratic 0.3/0.05/0.002)는 광원
+      바로 아래만 동그랗게 밝고 사이가 눈에 띄게 어두웠다. 두 가지로 고쳤다.
+      1) 그리드 간격을 줄임: 6개(3x2, 행 간격 20m) -> 9개(3x3, 행 간격 10m).
+         광원 하나가 늘었지만("너무 많이 늘리지 않는다" 기준으로 50%만 추가)
+         가장 가까운 광원까지의 최대 거리가 줄어 명암 대비가 줄어든다.
+      2) attenuation 곡선을 평평하게: constant를 올리고(0.3->0.6) linear·quadratic을
+         낮춰(0.05->0.02, 0.002->0.001) 거리에 따른 감쇠를 완만하게 했다. range도
+         20->28로 넓혀 그리드 대각선 간격(약 14m)에서도 range 컷오프에 안 걸리게 했다.
+         (감쇠 공식: 1/(constant + linear*d + quadratic*d^2))
+      팀 대부분이 GPU 없이 CPU로 렌더링하므로 개수는 여전히 최소로 유지하고
+      그림자는 계속 끈다(cast_shadows: false) — 점광원 여러 개의 실시간 그림자는
+      CPU에서 비용이 크다.
+      scene ambient도 0.6->0.7로 올려 광원 사이 바닥의 기본 밝기를 더했다.
+      정량적 밝기(lux) 실측 검증은 안 했다(가정) — noVNC로 육안 확인 후 필요하면
+      추가 조정한다.
     -->
     <light type="point" name="ceiling_light_1">
       <cast_shadows>false</cast_shadows>
       <pose>-20 10 3.8 0 0 0</pose>
       <diffuse>0.85 0.85 0.8 1</diffuse>
       <specular>0.1 0.1 0.1 1</specular>
-      <attenuation><range>20</range><constant>0.3</constant><linear>0.05</linear><quadratic>0.002</quadratic></attenuation>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
     </light>
     <light type="point" name="ceiling_light_2">
       <cast_shadows>false</cast_shadows>
       <pose>0 10 3.8 0 0 0</pose>
       <diffuse>0.85 0.85 0.8 1</diffuse>
       <specular>0.1 0.1 0.1 1</specular>
-      <attenuation><range>20</range><constant>0.3</constant><linear>0.05</linear><quadratic>0.002</quadratic></attenuation>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
     </light>
     <light type="point" name="ceiling_light_3">
       <cast_shadows>false</cast_shadows>
       <pose>20 10 3.8 0 0 0</pose>
       <diffuse>0.85 0.85 0.8 1</diffuse>
       <specular>0.1 0.1 0.1 1</specular>
-      <attenuation><range>20</range><constant>0.3</constant><linear>0.05</linear><quadratic>0.002</quadratic></attenuation>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
     </light>
     <light type="point" name="ceiling_light_4">
+      <cast_shadows>false</cast_shadows>
+      <pose>-20 0 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <light type="point" name="ceiling_light_5">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <light type="point" name="ceiling_light_6">
+      <cast_shadows>false</cast_shadows>
+      <pose>20 0 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <light type="point" name="ceiling_light_7">
       <cast_shadows>false</cast_shadows>
       <pose>-20 -10 3.8 0 0 0</pose>
       <diffuse>0.85 0.85 0.8 1</diffuse>
       <specular>0.1 0.1 0.1 1</specular>
-      <attenuation><range>20</range><constant>0.3</constant><linear>0.05</linear><quadratic>0.002</quadratic></attenuation>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
     </light>
-    <light type="point" name="ceiling_light_5">
+    <light type="point" name="ceiling_light_8">
       <cast_shadows>false</cast_shadows>
       <pose>0 -10 3.8 0 0 0</pose>
       <diffuse>0.85 0.85 0.8 1</diffuse>
       <specular>0.1 0.1 0.1 1</specular>
-      <attenuation><range>20</range><constant>0.3</constant><linear>0.05</linear><quadratic>0.002</quadratic></attenuation>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
     </light>
-    <light type="point" name="ceiling_light_6">
+    <light type="point" name="ceiling_light_9">
       <cast_shadows>false</cast_shadows>
       <pose>20 -10 3.8 0 0 0</pose>
       <diffuse>0.85 0.85 0.8 1</diffuse>
       <specular>0.1 0.1 0.1 1</specular>
-      <attenuation><range>20</range><constant>0.3</constant><linear>0.05</linear><quadratic>0.002</quadratic></attenuation>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
     </light>
 
     <!-- ===================== 바닥 · 외벽 ===================== -->
