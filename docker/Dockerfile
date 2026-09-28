@@ -11,7 +11,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
     && rm -rf /var/lib/apt/lists/*
 
-# TODO: rosdep 외 의존성 (예: ultralytics, ros2_tracing/LTTng)
+# TODO: rosdep 외 의존성 (예: ros2_tracing/LTTng)
+
+# YOLO 추론 (amr_detection)
+# ROS Humble의 cv_bridge 등은 NumPy 1.x로 빌드되어 있어 numpy<2를 유지한다.
+# opencv-python 4.12부터 numpy>=2를 요구하므로 4.11에 고정한다.
+RUN pip3 install --no-cache-dir \
+      ultralytics==8.4.158 \
+      numpy==1.26.4 \
+      opencv-python==4.11.0.86
+ADD https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.pt /opt/models/yolov8n.pt
 
 WORKDIR /ros2_ws
 COPY src ./src
