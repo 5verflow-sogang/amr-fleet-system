@@ -21,16 +21,20 @@
 map
 └── amr_0N/odom            (map→odom: AMCL, 민지)
     └── amr_0N/base_footprint   (odom→base: 지수 책임, 발행 주체는 EKF 구성에 따라 확정)
-        └── amr_0N/base_link
-            ├── amr_0N/lidar_link
-            ├── amr_0N/camera_link
-            │   └── amr_0N/camera_optical_frame
-            ├── amr_0N/imu_link
-            ├── amr_0N/left_wheel_link
-            └── amr_0N/right_wheel_link
+        └── amr_0N/base_link              (0, 0, 0.18)  몸체 중심
+            ├── amr_0N/lidar_link         (0.15, 0, 0.2)
+            ├── amr_0N/camera_link        (0.18, 0, 0.25)
+            │   └── amr_0N/camera_optical_frame  rpy (-π/2, 0, -π/2)
+            ├── amr_0N/imu_link           (0, 0, 0.1)
+            ├── amr_0N/left_wheel_link    (0,  0.17, -0.08)
+            ├── amr_0N/right_wheel_link   (0, -0.17, -0.08)
+            ├── amr_0N/front_caster_link  ( 0.22, 0, -0.15)
+            └── amr_0N/rear_caster_link   (-0.22, 0, -0.15)
 ```
 
-TODO(지수): extrinsic 값 확정 후 좌표 기입, `view_frames` 결과 첨부.
+좌표는 부모 프레임 기준 (x, y, z) [m]. 센서 위치는 원 명세서 TF 예시값이며, 1주차 URDF 골격에서 `view_frames`로 위 구조를 확인했다.
+현재 `odom → base_footprint`는 Gazebo DiffDrive가 발행한다 (`spawn_robot.launch.py publish_odom_tf:=false`로 끌 수 있다).
+TODO(지수): 2주차 센서 플러그인 추가 후 extrinsic 확정.
 
 ## 3. 합의가 필요한 경계 (P0 확정 대상)
 

@@ -9,9 +9,14 @@
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
 | Publish | `/clock` | `rosgraph_msgs/msg/Clock` | 시뮬레이션 시간. 다른 노드는 `use_sim_time:=true`로 쓴다 |
-| Subscribe | | | |
+| Publish | `/<ns>/odom` | `nav_msgs/msg/Odometry` | DiffDrive 휠 오도메트리, 50 Hz (`spawn_robot.launch.py`) |
+| Publish | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 바퀴 조인트 각도 |
+| Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `<ns>/odom` → `<ns>/base_footprint` (`publish_odom_tf:=true`) |
+| Subscribe | `/<ns>/cmd_vel` | `geometry_msgs/msg/Twist` | 속도 명령. 2.0 m/s, 1.0 m/s², 1.5 rad/s로 제한 |
 | Service | | | |
 | Action | | | |
+
+`<ns>` = 로봇 네임스페이스 (기본 `amr_01`). 로봇 모델은 [amr_description](../amr_description/README.md) 참고.
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
@@ -45,21 +50,22 @@
 
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
 
-launch 인자:
+launch 파일과 인자:
 
-| 인자 | 기본값 | 설명 |
+| launch | 인자 (기본값) | 설명 |
 | --- | --- | --- |
-| `world` | `warehouse.sdf` | `worlds/` 안의 파일 이름 또는 절대 경로 |
-| `gui` | `true` | `false`면 GUI 없이 서버만 실행 |
-| `verbosity` | `2` | Gazebo 로그 레벨 (0~4) |
+| `world.launch.py` | `world` (`warehouse.sdf`), `gui` (`true`), `verbosity` (`2`) | 월드만. `gui:=false`면 서버만 |
+| `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `publish_odom_tf` (`true`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
+| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw` | 월드 + 로봇 1대 + RViz |
 
 ## 실행
 
 ```bash
 # 컨테이너 안에서
-colcon build --packages-select amr_gazebo && source install/setup.bash
-ros2 launch amr_gazebo world.launch.py              # GUI 포함 (gui 프로필의 noVNC 화면에서)
-ros2 launch amr_gazebo world.launch.py gui:=false   # 서버만
+colcon build --packages-select amr_description amr_gazebo && source install/setup.bash
+ros2 launch amr_gazebo sim.launch.py                          # 월드 + 로봇 + RViz (gui 프로필의 noVNC 화면에서)
+ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false   # 서버만 (dev 컨테이너)
+ros2 launch amr_gazebo world.launch.py                        # 월드만
 ```
 
 ## 테스트

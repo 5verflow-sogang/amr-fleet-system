@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!-- base_footprint(지면 위 로봇 중심) → base_link(몸체 중심) -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <link name="${prefix}base_footprint"/>
+
+  <link name="${prefix}base_link">
+    <visual>
+      <geometry>
+        <box size="${base_length} ${base_width} ${base_height}"/>
+      </geometry>
+      <material name="amr_body">
+        <color rgba="0.15 0.35 0.75 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="${base_length} ${base_width} ${base_height}"/>
+      </geometry>
+    </collision>
+    <!-- 적재물 질량은 몸체 질량에 더한다 (payload_mass 인자) -->
+    <xacro:box_inertia m="${base_mass + payload_mass}" x="${base_length}" y="${base_width}" z="${base_height}"/>
+  </link>
+
+  <joint name="${prefix}base_joint" type="fixed">
+    <parent link="${prefix}base_footprint"/>
+    <child link="${prefix}base_link"/>
+    <origin xyz="0 0 ${base_z}" rpy="0 0 0"/>
+  </joint>
+
+</robot>
