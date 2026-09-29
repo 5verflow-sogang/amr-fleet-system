@@ -23,7 +23,8 @@
 ### 공통 규칙
 
 - 형식: UTF-8 CSV, 첫 줄은 헤더. 지표 하나당 파일 하나.
-- 시각: 초 단위 실수 (예: `123.456789`). 시간 기준(시뮬레이션 시간 / 실제 시간)은 아래 "합의 필요" 1번.
+- 시각: 초 단위 실수 (예: `123.456789`).
+- 시간 기준: 기본은 **시뮬레이션 시간**이다(GT와 추정값을 같은 시계로 맞춰야 하므로). 단, **응답 시간과 연구 1의 지연은 실제 시간**으로 잰다(하연 합의, #5).
 - 단위: 거리는 m, 각도는 rad, 지연은 ms. 컬럼 이름에 단위가 없으면 이 규칙을 따른다.
 - 명세서 컬럼은 이름·순서를 바꾸지 않는다. 부가 컬럼은 **명세서 컬럼 뒤에만** 추가한다. 앞쪽 열만 잘라내면 명세서 형식이 되도록 하기 위해서다.
 - 다중 로봇 시나리오는 부가 컬럼 `robot`(예: `amr_01`)을 붙인다.
@@ -46,7 +47,9 @@
 | --- | --- | --- | --- | --- |
 | `localization.csv` | `timestamp, gt_x, gt_y, est_x, est_y, error` | `segment` (`stationary`·`straight`·`rotation`), `yaw_error`, `robot` | 시나리오당 100개 시점 이상 | 민지 |
 | `cte.csv` | `timestamp, planned_x, planned_y, actual_x, actual_y, cte` | `segment` (`straight`·`curve`), `robot` | 구간별 분리 | 이진 |
-| `response_time.csv` | `cmd_time, response_time, latency_ms` | `robot`, `task_id` | 50회 이상 | 하연 |
+| `response_time.csv` | `cmd_time, response_time, latency_ms` | `robot`, `task_id`, `latency_sim_ms` | 50회 이상 | 하연 |
+| `tasks.csv` | 명세서 작업 로그 필드 (아래) | — | 작업마다 1행 | 하네스 기록기 (민지) |
+| `assignments.csv` | — (팀 정의, 아래) | — | 할당 호출마다 | 하연 (`amr_fleet_manager`) |
 | `coverage/` | `colcon test --coverage` 텍스트·HTML | 모듈별 하위 폴더 | — | 전원 |
 
 - `localization.csv`
@@ -54,8 +57,20 @@
   - `yaw_error`는 방향 오차(rad, -π~π로 정규화)다. 명세서 KPI는 위치만 보지만 회전 구간 분석과 RPE 대조에 쓴다.
   - `segment` 분류 기준(GT 속도·각속도 임계값)은 2주차에 RMSE 측정 노드와 함께 정해 이 문서에 추가한다.
   - 같은 실행의 원자료로 evo ATE를 계산해 `error`의 RMSE와 일치하는지 확인한다.
+- `response_time.csv` (초안, #18 리뷰에서 도출)
+  - `cmd_time`: 서버가 `/fleet/task_assignments`에 발행한 명령을 하네스 기록기가 받은 시각. 장애 주입기를 거치기 **전** 토픽을 기록하므로 주입된 지연이 응답 시간에 포함된다.
+  - `response_time`: 해당 로봇의 `/<robot>/odom` 속도가 임계값(선속도 0.01 m/s 또는 각속도 0.05 rad/s, 초안)을 처음 넘은 메시지를 받은 시각.
+  - `RobotState.velocity`(1~5Hz)는 쓰지 않는다. 최대 1초 오차가 생겨 200ms KPI를 잴 수 없다. `odom`은 50Hz라 오차가 20ms 이내다.
+  - 두 시각 모두 **실제 시간**이다. 메시지의 `header.stamp`는 시뮬레이션 시간이라 쓰지 않고, 기록기의 수신 시각을 쓴다(rosbag2는 기본으로 실제 시간을 기록한다).
+  - `latency_sim_ms`는 같은 구간을 시뮬레이션 시간으로 잰 참고값이다. `real_time_factor`와 함께 보면 시뮬레이터 속도 영향을 가를 수 있다.
+- `tasks.csv`: `/fleet/task_status`의 마지막 이벤트(COMPLETED·FAILED)를 작업 1건당 1행으로 옮긴다. 명세서가 요구하는 작업 로그 필드와 Fleet 지표(평균 작업 시간·처리량·총 이동 거리)를 여기서 계산한다.
+  - 컬럼: `task_id, robot, state, start_time, end_time, duration, distance_traveled, error_code`
+  - 로봇 가동률은 `/fleet/robot_states`의 `mode`가 BUSY인 시간 비율로 따로 계산한다.
+- `assignments.csv`: 할당 알고리즘을 호출할 때마다 결과를 남긴다. `AssignmentResult`는 토픽으로 나가지 않으므로 `amr_fleet_manager`가 직접 기록해야 한다(2주차 구현 때 반영 요청).
+  - 컬럼: `timestamp, call_id, algorithm, cost_fn, task_id, robot_id, cost`
+  - 할당 못 한 작업은 `robot_id`를 비운다. 호출별 `total_cost`는 같은 `call_id`의 `cost` 합이다.
+  - 알고리즘 3종 비교(연구 1)의 할당 최적성 지표로 쓴다.
 - 연구 1의 P95/P99 지연(ros2_tracing)은 하연이 별도 파일로 정의한다.
-- `cte.csv`의 부가 컬럼은 이진 확인이 필요하다.
 
 ### 실행 결과 배치
 
@@ -68,6 +83,8 @@ tools/harness/results/<run_id>/
 ├── localization.csv
 ├── cte.csv
 ├── response_time.csv
+├── tasks.csv
+├── assignments.csv
 └── coverage/
 ```
 
@@ -82,6 +99,8 @@ tools/harness/results/<run_id>/
 | `scenario`, `repeat`, `seed` | `loc_square_10m`, `3`, `42` | 반복·재현 |
 | `fault` | `{"delay_ms": 100, "loss_pct": 0}` | 연구 1 조건별 비교 |
 | `num_robots` | `5` | 다중 로봇 조건 |
+| `assignment_algorithm`, `cost_fn` | `hungarian`, `euclidean` | 할당 알고리즘 비교. 비용 함수가 다르면 `total_cost`끼리 비교할 수 없다 |
+| `controller` | `pure_pursuit` · `stanley` | 경로 추종 제어기 비교 (이진 요청, #5) |
 | `outcome` | `completed` · `timeout` · `collision` · `error` | 실패한 실행을 통계에서 구분 |
 | `frame_alignment` | `fixed` | 좌표계 정렬 방식 |
 | `host` | CPU 모델·코어 수, 메모리, GPU 유무 | CPU 80%·응답 시간 KPI는 실행 컴퓨터에 따라 달라짐 |
@@ -95,10 +114,15 @@ tools/harness/results/<run_id>/
 - 반복 횟수 N은 감으로 정하지 않고, 구분하고 싶은 차이 크기에서 **검정력 분석**으로 정한다(하네스 설계 과제, 명세서 8-1절).
 - `outcome`이 `completed`가 아닌 실행은 지표 통계에서 빼고 실패율로 따로 보고한다.
 
-### 합의 필요 (하연)
+### 합의 기록
 
-1. **시간 기준**: 위치추정은 GT와 추정값을 맞춰야 해서 시뮬레이션 시간을 쓴다. 응답 시간(200ms KPI)과 연구 1의 지연은 시뮬레이션 시간과 실제 시간 중 무엇으로 잴지 정해야 한다. 시뮬레이터가 실제보다 느리게 돌면 두 값이 달라진다.
-2. **`response_time.csv` 부가 컬럼**과 `meta.json` 필드가 하연의 측정 방식과 맞는지.
+| 항목 | 결정 | 출처 |
+| --- | --- | --- |
+| 응답 시간·연구 1 지연의 시간 기준 | 실제 시간 | 하연, #5 |
+| `response_time.csv` 부가 컬럼, `meta.json` 필드 | 설계와 맞으니 우선 진행, 바뀌면 수정 | 하연, #5 |
+| `cte.csv` 부가 컬럼 | `segment`, `robot` 확정. `meta.json`에 `controller` 추가 | 이진, #5 |
+
+남은 것: 응답 시간 판정 임계값(0.01 m/s·0.05 rad/s)은 초안이다. 하네스 구현 때 정지 상태 `odom` 노이즈를 보고 확정한다.
 
 ### 참고
 
