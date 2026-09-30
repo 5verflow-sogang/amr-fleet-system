@@ -2,7 +2,7 @@
 
 - 담당: 연우
 - 빌드 타입: ament_python
-- 책임: Pinhole 3D 변환, KF/AKF, TTC/Probabilistic TTC, VO/ORCA (ROS 비의존 라이브러리)
+- 책임: Pinhole 3D 변환, KF, TTC, VO/ORCA (ROS 비의존 라이브러리). 연구 2 알고리즘은 주제가 확정되면 이 패키지에 추가한다
 
 ## 공개 API
 
