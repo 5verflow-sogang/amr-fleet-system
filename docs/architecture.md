@@ -47,29 +47,29 @@ amr-fleet-system/
 
 ## 3. 패키지 구성
 
-| 도메인        | 패키지                    | 빌드           | 담당             | 책임                                             |
-| ------------- | ------------------------- | -------------- | ---------------- | ------------------------------------------------ |
-| interfaces    | `amr_msgs`                | cmake (rosidl) | 하연 (전원 리뷰) | 커스텀 msg/srv/action                            |
-| simulation    | `amr_description`         | cmake          | 지수             | URDF/xacro, 센서 extrinsic, TF                   |
-| simulation    | `amr_gazebo`              | cmake          | 지수             | 물류센터 월드, 동적 장애물, 센서 노이즈          |
-| localization  | `amr_odometry`            | python         | 지수             | 순기구학, 휠 오도메트리, 센서 전처리 필터        |
-| localization  | `amr_mapping`             | python         | 지수             | slam_toolbox 설정, 지도 저장, 맵 품질 평가       |
-| localization  | `amr_localization`        | python         | 민지             | AMCL·EKF 설정, Kidnapped 복구, GT 대비 RMSE 측정 |
-| navigation    | `amr_planning_core`       | cmake          | 이진             | A\*, 평활화, DWA (ROS 비의존)                    |
-| navigation    | `amr_nav2_plugins`        | cmake          | 이진             | Nav2 Planner/Controller 플러그인 래퍼            |
-| navigation    | `amr_control`             | cmake          | 이진             | Pure Pursuit/Stanley, PID, 속도 프로파일         |
-| perception    | `amr_detection`           | python         | 연우             | YOLOv8 인식, RViz2 마커                          |
-| perception    | `amr_perception_core`     | python         | 연우             | Pinhole 3D, KF/AKF, PTTC, ORCA (ROS 비의존)      |
-| perception    | `amr_tracking`            | python         | 연우             | 동적 장애물 분류·추적, 카메라 연관, 충돌 예측    |
-| perception    | `amr_safety`              | python         | 연우             | 긴급정지, Safety Zone, E-Stop, 센서 고장 감지    |
-| task          | `amr_bt`                  | cmake          | 지수             | BehaviorTree.CPP 작업 수행, 작업 관리            |
-| task          | `amr_docking`             | python         | 지수             | ArUco 정밀 도킹                                  |
-| fleet         | `amr_fleet_core`          | python         | 하연             | 할당, 경로 충돌 예측, 교착 탐지 (ROS 비의존)     |
-| fleet         | `amr_fleet_manager`       | python         | 하연             | 중앙집중 Fleet 서버, Traffic Management          |
-| fleet         | `amr_fleet_decentralized` | python         | 하연, 이진       | 분산 협상, 서버 장애 폴백 (연구 1 비교군)        |
-| fleet         | `amr_fault_injector`      | python         | 하연             | 지연·손실·서버 강제종료 주입                     |
-| observability | `amr_metrics_exporter`    | python         | 지수             | Prometheus exporter, 사고 전후 rosbag 스냅샷     |
-| bringup       | `amr_bringup`             | python         | 공동             | 전체 launch 조립, 다중 로봇 스폰                 |
+| 도메인        | 패키지                    | 빌드           | 담당             | 책임                                                       |
+| ------------- | ------------------------- | -------------- | ---------------- | ---------------------------------------------------------- |
+| interfaces    | `amr_msgs`                | cmake (rosidl) | 하연 (전원 리뷰) | 커스텀 msg/srv/action                                      |
+| simulation    | `amr_description`         | cmake          | 지수             | URDF/xacro, 센서 extrinsic, TF                             |
+| simulation    | `amr_gazebo`              | cmake          | 이진, 지수       | 물류센터 정적 월드(이진), 동적 장애물·센서 노이즈·GT(지수) |
+| localization  | `amr_odometry`            | python         | 지수             | 순기구학, 휠 오도메트리, 센서 전처리 필터                  |
+| localization  | `amr_mapping`             | python         | 지수             | slam_toolbox 설정, 지도 저장, 맵 품질 평가                 |
+| localization  | `amr_localization`        | python         | 민지             | AMCL·EKF 설정, Kidnapped 복구, GT 대비 RMSE 측정           |
+| navigation    | `amr_planning_core`       | cmake          | 이진             | A\*, 평활화, DWA (ROS 비의존)                              |
+| navigation    | `amr_nav2_plugins`        | cmake          | 이진             | Nav2 Planner/Controller 플러그인 래퍼                      |
+| navigation    | `amr_control`             | cmake          | 이진             | Pure Pursuit/Stanley, PID, 속도 프로파일                   |
+| perception    | `amr_detection`           | python         | 연우             | YOLOv8 인식, RViz2 마커                                    |
+| perception    | `amr_perception_core`     | python         | 연우             | Pinhole 3D, KF, TTC, ORCA (ROS 비의존)                     |
+| perception    | `amr_tracking`            | python         | 연우             | 동적 장애물 분류·추적, 카메라 연관, 충돌 예측              |
+| perception    | `amr_safety`              | python         | 연우             | 긴급정지, Safety Zone, E-Stop, 센서 고장 감지              |
+| task          | `amr_bt`                  | cmake          | 지수             | BehaviorTree.CPP 작업 수행, 작업 관리                      |
+| task          | `amr_docking`             | python         | 지수             | ArUco 정밀 도킹                                            |
+| fleet         | `amr_fleet_core`          | python         | 하연             | 할당, 경로 충돌 예측, 교착 탐지 (ROS 비의존)               |
+| fleet         | `amr_fleet_manager`       | python         | 하연             | 중앙집중 Fleet 서버, Traffic Management                    |
+| fleet         | `amr_fleet_decentralized` | python         | 하연, 이진       | 분산 협상, 서버 장애 폴백 (연구 1 비교군)                  |
+| fleet         | `amr_fault_injector`      | python         | 하연             | 지연·손실·서버 강제종료 주입                               |
+| observability | `amr_metrics_exporter`    | python         | 지수             | Prometheus exporter, 사고 전후 rosbag 스냅샷               |
+| bringup       | `amr_bringup`             | python         | 공동             | 전체 launch 조립, 다중 로봇 스폰                           |
 
 빌드 타입 기준: Nav2 플러그인과 BehaviorTree.CPP 노드는 C++이 필수라 navigation·task(`amr_bt`)는 C++로 둔다. 나머지는 개발 속도를 위해 Python으로 시작한다. 구현 착수 전이라면 담당자가 PR로 변경할 수 있다.
 
@@ -89,7 +89,7 @@ flowchart TB
     MAP[amr_mapping<br/>SLAM · 지도 저장]
     LOC[amr_localization<br/>AMCL · EKF]
     DET[amr_detection<br/>YOLOv8]
-    TRK[amr_tracking<br/>KF/AKF · TTC]
+    TRK[amr_tracking<br/>KF · TTC]
     SAFE[amr_safety]
     NAV[Nav2 + amr_nav2_plugins<br/>A* · DWA]
     CTRL[amr_control]
