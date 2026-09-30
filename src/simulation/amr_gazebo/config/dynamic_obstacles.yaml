@@ -1,0 +1,69 @@
+# 동적 장애물 자리 표시 (2주차, 이진 - 좌표/경로/패턴/속도 범위만 정리)
+#
+# 실제 스폰·이동·충돌체 구현은 지수 담당이다. 여기 적힌 좌표는
+# worlds/warehouse.sdf의 dynamic_obstacle_paths 모델(바닥 표시, 충돌 없음)과
+# 같은 값이다 - 표시와 실제 동작이 어긋나지 않도록 값을 바꿀 때 두 곳을 함께 고친다.
+#
+# 원 명세 요구: 동적 장애물 5개 이상(작업자·지게차·다른 로봇), 속도 0.3~1.5 m/s,
+# 이동 패턴 직선·곡선·무작위.
+#
+# waypoints는 로봇이 순서대로 지나가는 지점이다. pattern이 random인 경우
+# waypoints는 "이 안에서 무작위로 움직인다"는 대략적 영역/경유점 힌트로만 쓴다
+# (지수가 실제 랜덤워크 알고리즘을 정할 때의 시작점).
+
+obstacles:
+  - id: worker_1
+    type: worker
+    pattern: straight
+    speed_range_mps: [0.3, 0.8]
+    spawn: {x: -24.0, y: 13.0, yaw: 0.0}
+    waypoints:
+      - {x: -24.0, y: 13.0}
+      - {x: 24.0, y: 13.0}
+    note: "메인 통로(도크 사이, y 8.5~18.5 내부)를 동서로 왕복"
+
+  - id: worker_2
+    type: worker
+    pattern: curve
+    speed_range_mps: [0.3, 0.8]
+    spawn: {x: -20.0, y: 1.0, yaw: 0.0}
+    waypoints:
+      - {x: -20.0, y: 1.0}
+      - {x: -8.0, y: 3.8}
+      - {x: 8.0, y: 1.0}
+      - {x: 20.0, y: 3.8}
+    note: "A열 남쪽 남은 통로(y 0.4~4.4)에서 지그재그. pillar_3/4(±15.0, 1.5) 회피"
+
+  - id: forklift_1
+    type: forklift
+    pattern: straight
+    speed_range_mps: [0.8, 1.5]
+    spawn: {x: -24.0, y: -6.5, yaw: 0.0}
+    waypoints:
+      - {x: -24.0, y: -6.5}
+      - {x: 20.0, y: -6.5}
+    note: "B-C 열 사이 통로를 동서로 왕복. pillar_5/6(±7.5, -5.5)와 0.7m 이상 이격"
+
+  - id: forklift_2
+    type: forklift
+    pattern: random
+    speed_range_mps: [0.8, 1.5]
+    spawn: {x: 5.0, y: -13.0, yaw: 0.0}
+    waypoints:
+      - {x: 5.0, y: -13.0}
+      - {x: 15.0, y: -15.0}
+      - {x: 8.0, y: -17.0}
+      - {x: 18.0, y: -13.0}
+    note: "대기 구역 북쪽 인근에서 무작위 이동. 위 4점은 활동 범위 힌트"
+
+  - id: robot_1
+    type: robot
+    pattern: curve
+    speed_range_mps: [0.5, 1.2]
+    spawn: {x: -26.0, y: 13.0, yaw: -1.5708}
+    waypoints:
+      - {x: -26.0, y: 13.0}
+      - {x: -26.0, y: -14.0}
+      - {x: -22.0, y: -17.0}
+    note: "우리 Fleet 밖의 다른 AMR 가정. 서쪽 서비스 통로(랙 열 서쪽, x=-26)를 따라
+      메인 통로에서 충전 구역 방향으로 이동 - 랙 열(x -25~-20 등)과 겹치지 않음"
