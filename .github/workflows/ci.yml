@@ -1,10 +1,17 @@
 name: CI
 
+# 문서만 바뀐 변경은 빌드 결과에 영향이 없으므로 CI를 건너뛴다.
+
 on:
   push:
     branches: [main, dev]
+    paths-ignore: &docs-only
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
   pull_request:
     branches: [main, dev]
+    paths-ignore: *docs-only
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
