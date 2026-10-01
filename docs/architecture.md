@@ -14,7 +14,7 @@
 | API 계약 우선       | `amr_msgs`에 msg/srv/action을 먼저 정의하고 동결              |
 | 서비스 간 결합 금지 | 다른 도메인과는 토픽·서비스·액션으로만 통신, 코드 import 금지 |
 | 독립 테스트         | 알고리즘은 ROS 비의존 `*_core`에 두고 단위 테스트             |
-| 독립 배포           | docker-compose profile로 역할별 컨테이너 기동                 |
+| 독립 배포           | docker-compose 서비스로 역할별 컨테이너 분리                 |
 
 MSA를 채택하지 않은 이유:
 
@@ -175,8 +175,8 @@ sequenceDiagram
 ```
 
 - 비동기 화살표(`-)`)는 토픽, 동기 화살표(`->>`)는 액션·함수 호출이다.
-- 작업 전달을 토픽으로 한 이유: 장애 주입기가 중간에서 중계할 수 있고, 서버가 죽어도 분산 모드가 같은 토픽을 이어받을 수 있다. 액션은 서버-로봇 1:1 연결이라 둘 다 어렵다 ([api.md 4-4절](api.md#4-4-미결-쟁점-928-회의) Fleet 쟁점).
-- 응답 시간 KPI의 시작점은 `TaskAssignment.header.stamp`(cmd_time)다. 끝점은 [하네스 로그 포맷](../tools/harness/README.md#합의-필요-하연) 합의에서 정한다.
+- 작업 전달을 토픽으로 한 이유: 장애 주입기가 중간에서 중계할 수 있고, 서버가 죽어도 분산 모드가 같은 토픽을 이어받을 수 있다. 액션은 서버-로봇 1:1 연결이라 둘 다 어렵다 ([api.md 4-4절](api.md#4-4-쟁점-정리) Fleet 쟁점).
+- 응답 시간 KPI는 명령 발행부터 로봇이 처음 움직일 때까지를 **실제 시간**으로 잰다(#5). 시작·끝 시각을 어디서 얻는지는 [하네스 로그 포맷](../tools/harness/README.md#지표-csv)의 `response_time.csv`를 따른다.
 
 ### 5-2. 이후 추가할 시나리오
 
@@ -189,13 +189,16 @@ TODO: 구현 진행에 맞춰 아래 시나리오를 추가한다 (원 명세서
 
 ## 6. 배포 구성
 
-| compose profile    | 내용                                                                       |
-| ------------------ | -------------------------------------------------------------------------- |
-| `dev`              | 개발 셸 컨테이너                                                           |
-| `sim`              | Gazebo 월드                                                                |
-| `robots`           | 로봇 5대 스택 (`amr_bringup`)                                              |
-| `fleet`            | Fleet 서버, 장애 주입기                                                    |
-| `perception`       | YOLO 추론 (GPU)                                                            |
-| `gui`              | 브라우저 GUI (Xvfb + noVNC, RViz2).`gui-proxy`가 6080 포트를 호스트에 중계 |
-| (예정)`monitoring` | Prometheus, Grafana                                                        |
-| (예정)`dashboard`  | 웹 대시보드                                                                |
+`docker compose up`은 시스템 서비스만 띄우고, 개발 도구는 profile로 켠다. 실행 방법은 [runbook.md](runbook.md)에 있다.
+
+| 서비스 | 실행 | 내용 |
+| --- | --- | --- |
+| `sim` | 기본 | Gazebo 월드 |
+| `robots` | 기본 | 로봇 5대 스택 (`amr_bringup`) |
+| `fleet` | 기본 | Fleet 서버, 장애 주입기 |
+| `perception` | 기본 | YOLO 추론. GPU는 `docker-compose.gpu.yml`을 겹쳐 쓴다 |
+| `dev` | `--profile dev` 또는 `run dev` | 개발 셸 컨테이너 |
+| `gui`, `gui-proxy` | `--profile gui` | 브라우저 GUI (Xvfb + noVNC, RViz2). `gui-proxy`가 6080 포트를 호스트에 중계 |
+| `sandbox` | `--profile sandbox` | TurtleBot4 + AMCL + Nav2 임시 환경. 우리 로봇으로 교체되면 제거 |
+| (예정) `monitoring` | — | Prometheus, Grafana |
+| (예정) `dashboard` | — | 웹 대시보드 |
