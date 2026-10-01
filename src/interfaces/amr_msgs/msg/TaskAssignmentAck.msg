@@ -14,7 +14,8 @@ string robot_id
 # 받은 명령의 assignment_id를 그대로 되돌린다
 uint32 assignment_id
 
-# 받은 명령의 header.stamp를 그대로 되돌린다. header.stamp - assignment_stamp가 확인까지 걸린 시간
+# 받은 명령의 header.stamp를 그대로 되돌린다. header.stamp - assignment_stamp는 시뮬레이션 시간 기준 참고값이다
+# KPI·연구 1용 확인 왕복 시간은 하네스 기록기의 수신 시각(실제 시간)으로 잰다
 builtin_interfaces/Time assignment_stamp
 
 # 처리 결과 (RESULT_*)
