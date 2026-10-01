@@ -27,7 +27,7 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF)은 [amr_gazebo](../amr_gazebo/READ
 | `base.xacro` | `base_footprint`, `base_link` |
 | `wheels.xacro` | 좌우 구동 바퀴, 앞뒤 캐스터 |
 | `sensors.xacro` | `lidar_link`, `camera_link` → `camera_optical_frame`, `imu_link` (링크만, 플러그인은 2주차) |
-| `gazebo.xacro` | Fortress DiffDrive, JointStatePublisher 시스템 플러그인 |
+| `gazebo.xacro` | Fortress DiffDrive, JointStatePublisher, OdometryPublisher(GT) 시스템 플러그인 |
 
 ### 주요 값
 

@@ -6,6 +6,7 @@ ROS 토픽 (<ns> = namespace):
     /<ns>/cmd_vel       geometry_msgs/Twist     ROS → Gazebo
     /<ns>/odom          nav_msgs/Odometry       Gazebo → ROS
     /<ns>/joint_states  sensor_msgs/JointState  Gazebo → ROS
+    /<ns>/ground_truth/odom  nav_msgs/Odometry  Gazebo → ROS (진짜 위치, frame "world", 평가 전용)
     /tf                 <ns>/odom → <ns>/base_footprint (publish_odom_tf:=true일 때)
 """
 
@@ -28,6 +29,7 @@ def _spawn(context):
         f'{topic_ns}/cmd_vel@geometry_msgs/msg/Twist]ignition.msgs.Twist',
         f'{topic_ns}/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry',
         f'{topic_ns}/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model',
+        f'{topic_ns}/ground_truth/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry',
     ]
     remappings = []
     if LaunchConfiguration('publish_odom_tf').perform(context).lower() == 'true':
