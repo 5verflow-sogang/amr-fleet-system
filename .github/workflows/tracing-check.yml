@@ -10,6 +10,7 @@ on:
     paths:
       - ".github/workflows/tracing-check.yml"
       - "docker/Dockerfile"
+      - "docker/scripts/build_tracetools.sh"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,23 +25,29 @@ jobs:
       run:
         shell: bash
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install LTTng and ros2_tracing
         run: |
           apt-get update
-          # 앞줄: Dockerfile과 같은 목록 / 마지막 줄: 이벤트를 만들 데모 노드
+          # 앞 세 줄: Dockerfile과 같은 목록 / 마지막 줄: 이벤트를 만들 데모 노드
           apt-get install -y --no-install-recommends \
-            lttng-tools python3-lttng python3-babeltrace babeltrace \
+            git lttng-tools liblttng-ust-dev pkg-config \
+            python3-lttng python3-babeltrace babeltrace \
             ros-humble-ros2trace ros-humble-tracetools-launch \
             ros-humble-demo-nodes-cpp
 
-      - name: Check tracepoints in Humble binaries
+      - name: Build tracetools with LTTng
+        run: bash docker/scripts/build_tracetools.sh /opt/tracing_ws
+
+      - name: Check tracepoints
         run: |
-          source /opt/ros/humble/setup.bash
+          source /opt/tracing_ws/install/setup.bash
           ros2 run tracetools status
 
       - name: Trace talker / listener
         run: |
-          source /opt/ros/humble/setup.bash
+          source /opt/tracing_ws/install/setup.bash
           lttng-sessiond --daemonize
           lttng create demo --output=/tmp/tracing/demo
           lttng enable-event -u 'ros2:*'
