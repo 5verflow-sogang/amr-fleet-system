@@ -7,7 +7,9 @@
   <maintainer email="TODO@example.com">하연</maintainer>
   <license>TODO: License declaration</license>
 
-  <!-- TODO: 구현 시 의존성 추가 (예: rclpy, amr_msgs) -->
+  <!-- ROS 비의존 라이브러리라 rclpy, amr_msgs는 넣지 않는다 -->
+  <!-- Hungarian 할당. 테스트에서도 import하므로 CI(rosdep -t build)가 설치하도록 depend로 둔다 -->
+  <depend>python3-scipy</depend>
 
   <test_depend>python3-pytest</test_depend>
 
