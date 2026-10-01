@@ -1,7 +1,7 @@
 # 경로 계획 · 모션 제어 (A* · DWA · Costmap)
 
-> 상태: 초안 (1주차). 담당: 이진. 이 문서는 Costmap 설정 근거를 정리한다. A* 코어의
-> 알고리즘 설명, DWA·Pure Pursuit/Stanley·PID 절은 2주차 이후 구현하면서 채운다.
+> 상태: 진행 중 (2주차). 담당: 이진. Costmap(1절)·DWA(4절) 설정·구현 근거를 정리한다.
+> A* 알고리즘 설명(3절), Pure Pursuit/Stanley/PID(5절)는 아직 TODO.
 > 파라미터 파일은 [amr_bringup/config/nav2_params.yaml](../../src/bringup/amr_bringup/config/nav2_params.yaml)이다.
 
 ## 1. Costmap
@@ -104,7 +104,74 @@ TODO(2주차): `amr_planning_core`의 A*를 `amr_nav2_plugins`로 감싸 `planne
 TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방향 이동, 휴리스틱
 선택 근거, 셀 비용 가중치), 경로 평활화 방법을 여기에 작성한다.
 
-## 4. DWA / Pure Pursuit·Stanley / PID (예정)
+## 4. DWA (Dynamic Window Approach)
 
-TODO(2주차 이후): DWA 4단계(속도 샘플링·궤적 시뮬레이션·비용 함수·최적 속도 선택) 직접
-구현 설명, Pure Pursuit/Stanley 적응형 look-ahead 설계, PID 게인 튜닝 과정을 작성한다.
+> 담당: 이진. `amr_planning_core::DwaPlanner` (`dwa.hpp`/`dwa.cpp`). **이번 주 범위는
+> 정적 장애물 회피까지다** — 동적 장애물·Nav2 플러그인 연결·TEB 비교는 3주차(4-5절).
+
+### 4-1. 4단계
+
+1. **동적 윈도우 계산** (`computeDynamicWindow`): 현재 속도 (v, w)에서 가속 한계×dt만큼만
+   벗어날 수 있다고 보고, 그 범위를 다시 로봇 최대 속도로 자른다.
+2. **속도 샘플링 + 궤적 시뮬레이션** (`simulateTrajectory`): 윈도우 안의 (v, w) 조합마다
+   차동구동 전진 운동학으로 `sim_time` 동안 `dt` 간격으로 궤적을 찍는다.
+3. **비용 함수** (`evaluateCost`): heading(목표 방향) + clearance(장애물 거리) +
+   velocity(속도)를 각각 [0, 1]로 정규화해 가중합한다.
+4. **충돌 궤적 제외 후 최소 비용 선택** (`computeVelocityCommand`): 궤적 위 모든 점에서
+   사각 풋프린트가 치명 비용 셀과 겹치면 그 (v, w)는 후보에서 뺀다. 남은 후보 중 비용이
+   가장 낮은 (v, w)를 반환한다. 전부 충돌하면 `kNoValidTrajectory`.
+
+### 4-2. 파라미터 (`DwaConfig`, 기본값)
+
+| 파라미터 | 값 | 근거 |
+| --- | --- | --- |
+| `max_v` / `min_v` | 2.0 / 0.0 m/s | `nav2_params.yaml` `FollowPath.max_vel_x`와 동일(로봇 스펙) |
+| `max_w` | 1.5 rad/s | `FollowPath.max_vel_theta`와 동일 |
+| `acc_v` | 1.0 m/s² | `FollowPath.acc_lim_x`와 동일 |
+| `acc_w` | 3.2 rad/s² | `FollowPath.acc_lim_theta`와 동일 |
+| `dt` | 0.1 s | 제어 주기 |
+| `sim_time` | 2.0 s | 궤적 예측 길이. 짧게 잡으면 장애물을 더 가까이 와서야 "미래 충돌"로 감지해서 막판에야 급히 피하려다, 동적 윈도우(한 스텝에 꺾을 수 있는 각속도, `acc_w*dt`뿐)가 모자라 못 피하는 상황이 생긴다 — 테스트 중 실제로 발견해서 `sim_time`은 줄이지 않기로 했다(계산량은 샘플 개수로 조절) |
+| `v_samples` | 20 | `nav2_params.yaml` `FollowPath.vx_samples`와 동일 |
+| `w_samples` | 30 | `FollowPath.vtheta_samples`(20)보다 많다 — 회전 각속도 해상도가 좁은 통로 회피 성공률에 더 민감하다고 보고 촘촘히 샘플링했다. TODO(3주차): 실측 KPI로 `nav2_params.yaml`과 맞출지 재검토 |
+| `footprint_half_length` / `half_width` | 0.3 / 0.2 m | 로봇 스펙(600×400mm)과 동일. **외접원이 아니라 사각형으로 충돌 검사**한다 — 외접원 지름(0.72m)으로 하면 0.6m 좁은 통로(1-1절)를 항상 "막힘"으로 오판한다 |
+| `lethal_cost_threshold` | 253 | `AStarConfig`와 동일한 nav2 costmap 관례 |
+| `heading_weight` / `clearance_weight` / `velocity_weight` | 0.8 / 0.1 / 0.1 | 4-3절 |
+| `goal_tolerance` | 0.15 m | 전역 경로의 다음 지점 추종이 목적이라 각도 허용오차는 두지 않았다(최종 도킹 정밀도는 범위 밖) |
+
+### 4-3. 비용 함수 가중치 근거와 "제자리 정지" 함정
+
+처음엔 heading 0.8 / clearance 0.1 / velocity 0.1로 "충돌 궤적은 이미 하드 필터로
+제외되니, 남은 후보 중에서는 목표 방향이 가장 중요하다"는 근거로 정했다.
+
+그런데 폐루프 테스트(`ClosedLoopReachesGoalWithOneObstacle`)를 만들면서 **로봇이
+장애물 앞에서 멈춘 채 영원히 못 움직이는 현상**을 실제로 발견했다. 원인: 정지(v≈0)
+궤적은 위치가 거의 안 바뀌므로, 로봇이 마침 목표 쪽을 보고 있으면 heading 비용이
+0이 되어버린다. 그 결과 "제자리에 멈춰서 목표를 바라만 보기"가 실제로 전진하는
+어떤 후보보다도 싸 보이는 국소 최소(local minimum)가 됐다 — 속도 0.025 m/s까지
+떨어지다 결국 0에서 고정되는 것을 테스트 로그로 확인했다.
+
+고친 방법: `evaluateCost`에서 `|v|`가 거의 0인 궤적은 heading 비용을 계산하지 않고
+최댓값(1.0)으로 고정한다. "멈춰 있는 것"은 목표를 향해 가고 있다고 볼 근거가 없다고
+보는 것이다. 수정 전/후 동일 시나리오를 Python으로 재현해 비교했다 — 수정 전에는
+영원히 멈추거나(그 자리에서 제자리 회전만 반복) 끝났고, 수정 후에는 316스텝(약
+31.6초) 만에 장애물을 피해 목표에 도달했다. 가중치 비율(0.8/0.1/0.1) 자체는 바꾸지
+않았다 — 문제는 가중치가 아니라 "정지도 heading이 좋을 수 있다"는 정의 쪽이었다.
+
+### 4-4. 좌표계
+
+`RobotState`의 (x, y)는 `Grid`의 로컬 좌표계(미터, 셀 (0,0)의 모서리가 원점)다.
+`Grid`가 원점 정보를 들고 있지 않은 설계(`grid.hpp`, A*와 공유)와 같은 이유로,
+odom/map 프레임 ↔ 이 좌표계 변환은 core가 아니라 3주차 `amr_nav2_plugins`가 맡는다.
+
+### 4-5. 이번 주 범위와 3주차 범위
+
+| 구분 | 이번 주(2주차) | 3주차 |
+| --- | --- | --- |
+| 장애물 | 정적 장애물만(`Grid` 비용값) | `amr_msgs/TrackedObstacleArray` 기반 동적 장애물을 비용 함수에 반영(연구 2, 4장의 AKF·확률적 TTC와 연결) |
+| 연결 | ROS 비의존 core만(`amr_planning_core`) | `amr_nav2_plugins`에서 `nav2_core::Controller`로 감싸 `controller_server`에 꽂는다(1주차 DWB baseline을 교체) |
+| 비교 | — | DWB·TEB와 CTE·정지 횟수·경로 길이로 비교(원 명세 "DWA vs TEB") |
+
+## 5. Pure Pursuit · Stanley · PID (예정)
+
+TODO(3주차 이후): Pure Pursuit/Stanley 적응형 look-ahead 설계, PID 게인 튜닝 과정을
+작성한다.

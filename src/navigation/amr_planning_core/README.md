@@ -51,6 +51,47 @@ if (result.status == amr_planning_core::PlanStatus::kSuccess) {
 `PlanStatus`: `kSuccess`, `kStartOutOfBounds`, `kGoalOutOfBounds`, `kStartOccupied`,
 `kGoalOccupied`, `kNoPathFound`.
 
+### `amr_planning_core::DwaPlanner` (`dwa.hpp`)
+
+DWA(Dynamic Window Approach) 로컬 컨트롤러 코어. 이번 주 범위는 **정적 장애물
+회피까지**다(동적 장애물·Nav2 플러그인 연결은 3주차, [docs/algorithms/navigation.md](../../../docs/algorithms/navigation.md#4-dwa-dynamic-window-approach) 4절 참고).
+
+`RobotState`의 `(x, y)`는 `Grid`와 같은 로컬 좌표계(미터, 셀 `(0,0)`의 모서리가
+원점)다 — `Grid`가 원점을 들고 있지 않은 설계와 같은 이유로, odom/map 프레임
+변환은 이 라이브러리를 쓰는 노드(`amr_nav2_plugins`)가 담당한다.
+
+```cpp
+amr_planning_core::DwaConfig config;  // 기본값은 로봇 스펙 + nav2_params.yaml과 맞춤
+amr_planning_core::DwaPlanner planner(config);
+
+const amr_planning_core::RobotState state{/*x=*/1.0, /*y=*/1.0, /*yaw=*/0.0, /*v=*/0.5, /*w=*/0.0};
+const amr_planning_core::Point2D goal{3.0, 1.0};
+
+const amr_planning_core::DwaCommand command = planner.computeVelocityCommand(state, goal, grid);
+if (command.status == amr_planning_core::DwaStatus::kOk) {
+  // command.v, command.w를 다음 제어 주기에 낸다
+}
+```
+
+`DwaStatus`: `kOk`, `kGoalReached`(목표까지 `goal_tolerance` 이내), `kNoValidTrajectory`
+(모든 후보가 충돌해 낼 수 있는 속도가 없음).
+
+충돌 검사는 로봇 풋프린트를 **외접원이 아니라 사각형**(`footprint_half_length`,
+`footprint_half_width`)으로 한다 — 외접원(지름 0.72m)으로 하면 0.6m 좁은 통로를
+항상 "막힘"으로 오판한다.
+
+| 필드 | 기본값 | 설명 |
+| --- | --- | --- |
+| `max_v` / `min_v` | `2.0` / `0.0` m/s | 로봇 최대/최소 속도 |
+| `max_w` | `1.5` rad/s | 로봇 최대 각속도 |
+| `acc_v` / `acc_w` | `1.0` m/s² / `3.2` rad/s² | 가속 한계(동적 윈도우 계산에 사용) |
+| `dt` / `sim_time` | `0.1` s / `2.0` s | 제어 주기 / 궤적 예측 길이 |
+| `v_samples` / `w_samples` | `20` / `30` | 속도/각속도 샘플 개수 |
+| `footprint_half_length` / `footprint_half_width` | `0.3` / `0.2` m | 로봇 풋프린트 반폭(600×400mm) |
+| `lethal_cost_threshold` | `253` | `AStarConfig`와 동일한 치명 비용 임계값 |
+| `heading_weight` / `clearance_weight` / `velocity_weight` | `0.8` / `0.1` / `0.1` | 비용 함수 가중치(근거는 navigation.md 4-3절) |
+| `goal_tolerance` | `0.15` m | 이 거리 이내면 `kGoalReached` |
+
 ## 파라미터
 
 ROS 비의존 라이브러리이므로 파라미터는 `AStarConfig` 생성자 인자로 받는다. YAML 로딩은
