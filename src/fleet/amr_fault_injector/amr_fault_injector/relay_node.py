@@ -12,6 +12,7 @@ from functools import partial
 import rclpy
 from amr_msgs.msg import FleetHeartbeat, FleetTaskTable, TaskAssignment, ZoneGrant
 from rclpy.clock import Clock, ClockType
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
@@ -84,7 +85,8 @@ def main(args=None):
     node = FaultInjector()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
+        # Ctrl+C나 launch 종료(SIGINT)는 정상 종료로 본다
         pass
     finally:
         node.destroy_node()
