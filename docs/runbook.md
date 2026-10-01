@@ -62,6 +62,34 @@ docker compose --profile gui down
 
 화면 안의 터미널이나 `docker compose exec gui bash`에서 `rviz2`를 실행한다. 그래픽을 CPU로 그리므로 느릴 수 있다.
 
+## 트레이싱 (ros2_tracing)
+
+연구 1의 지연 분해에 쓴다. LTTng와 ros2_tracing은 이미지(`base`)에 들어 있다. 설치 검증은 [tracing-check.yml](../.github/workflows/tracing-check.yml) 워크플로가 한다.
+
+- 컨테이너에서는 **사용자 공간(UST) 이벤트만** 수집한다. 커널 이벤트는 호스트 커널에 lttng-modules가 있어야 해서 쓰지 않는다.
+- 트레이스하는 노드와 같은 컨테이너에서 세션을 연다. 세션 데몬과 노드가 공유 메모리로 통신한다.
+- 세션을 먼저 시작하고 노드를 띄운다.
+
+```bash
+docker compose run --rm dev
+source /opt/ros/humble/setup.bash
+
+lttng-sessiond --daemonize
+lttng create demo --output=/tmp/tracing/demo
+lttng enable-event -u 'ros2:*'
+lttng add-context -u -t vpid -t vtid -t procname
+lttng start
+# ... 트레이스할 노드 실행 ...
+lttng stop && lttng destroy
+
+# 이벤트 종류별 개수
+babeltrace /tmp/tracing/demo | grep -oE 'ros2:[a-z_]+' | sort | uniq -c
+```
+
+- `ros2 trace -k`(커널 이벤트 끔)도 같은 일을 하지만 Humble에서는 시작·종료 때 Enter를 눌러야 해서 스크립트에는 위 `lttng` 명령을 쓴다.
+- launch로 띄울 때는 `tracetools_launch.action.Trace`를 launch 파일에 넣으면 노드와 함께 세션이 열리고 닫힌다 (`events_kernel=[]`).
+- 수집되는 주요 이벤트: `rclcpp_publish`(발행), `callback_start`·`callback_end`(구독·타이머 콜백). 검증은 rclcpp 데모 노드로 했다. rclpy 노드(Fleet 서버, 장애주입기)에서 어떤 이벤트가 남는지는 따로 확인한다.
+
 ## 환경 변수
 
 | 변수 | 기본값 | 설명 |

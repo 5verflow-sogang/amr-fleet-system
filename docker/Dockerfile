@@ -11,7 +11,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
     && rm -rf /var/lib/apt/lists/*
 
-# TODO: rosdep 외 의존성 (예: ultralytics, ros2_tracing/LTTng)
+# ros2_tracing (연구 1 측정 도구). 사용자 공간(UST) 트레이싱만 쓴다.
+# 커널 트레이싱은 lttng-modules가 호스트 커널에 있어야 해서 컨테이너에서는 쓰지 않는다.
+# 같은 목록을 .github/workflows/tracing-check.yml에서 검증한다.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      lttng-tools \
+      python3-lttng \
+      python3-babeltrace \
+      babeltrace \
+      ros-humble-ros2trace \
+      ros-humble-tracetools-launch \
+    && rm -rf /var/lib/apt/lists/*
+
+# TODO: rosdep 외 의존성 (예: ultralytics)
 
 WORKDIR /ros2_ws
 COPY src ./src
