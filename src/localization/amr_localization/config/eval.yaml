@@ -1,0 +1,15 @@
+# 정답 대비 위치추정 오차 기록 노드 (eval_node) 파라미터.
+# 네임스페이스(로봇)는 실행할 때 부여한다: --ros-args -r __ns:=/amr_01 --params-file eval.yaml
+/**:
+  localization_eval:
+    ros__parameters:
+      use_sim_time: true
+      gt_topic: ground_truth/odom          # amr_gazebo, world 기준
+      estimate_topic: odometry/filtered    # EKF 출력, map 기준
+      estimate_type: odometry              # odometry | pose (amcl_pose 직접 평가 시)
+      # world에서 본 map 원점 [x, y, yaw]. 지도 인계 때 받은 매핑 시작 자세 (amr_gazebo README "GT 사용 시 주의")
+      map_origin_in_world: [0.0, 0.0, 0.0]
+      output_dir: ""                       # 비우면 /tmp/amr_eval/<robot>_<시각>
+      max_gap: 0.05                        # 정답 보간 허용 간격 [s]
+      moving_v: 0.01                       # 구간 분류 기준 [m/s] (초안)
+      moving_w: 0.05                       # 구간 분류 기준 [rad/s] (초안)

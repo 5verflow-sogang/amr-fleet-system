@@ -37,6 +37,27 @@ print(kpi_check(summaries))                 # 구간별 통과 여부 (정지 3c
 | `summarize_by_segment`, `kpi_check` | 구간별 RMSE·Max와 KPI 판정 |
 | `write_localization_csv` | 하네스 `localization.csv` 쓰기 |
 
+## 오차 기록 노드 (`eval_node`)
+
+정답(`ground_truth/odom`, world 기준)과 추정(`odometry/filtered`, map 기준)을 받아 위 모듈로 오차를 계산하고 하네스 형식으로 저장한다.
+
+```bash
+ros2 run amr_localization eval_node --ros-args -r __ns:=/amr_01 \
+  --params-file $(ros2 pkg prefix amr_localization)/share/amr_localization/config/eval.yaml \
+  -p map_origin_in_world:="[0.0, 1.5, 0.0]"
+ros2 service call /amr_01/localization_eval/save std_srvs/srv/Trigger   # 중간 저장 (종료할 때도 자동 저장)
+```
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `ground_truth/odom` | `nav_msgs/msg/Odometry` | 정답, world 기준 (`amr_gazebo`) |
+| Subscribe | `odometry/filtered` | `nav_msgs/msg/Odometry` | 추정, map 기준. `estimate_type:=pose`면 `geometry_msgs/msg/PoseWithCovarianceStamped` (예: `amcl_pose`) |
+| Service | `~/save` | `std_srvs/srv/Trigger` | 지금까지 기록 저장, 응답에 구간별 요약 |
+
+- `map_origin_in_world`: world에서 본 map 원점 `[x, y, yaw]`. 지도 인계 때 받은 매핑 시작 자세를 넣는다 ([amr_gazebo README](../../simulation/amr_gazebo/README.md) "GT 사용 시 주의"). 틀리면 그만큼 RMSE에 더해진다.
+- 정답은 추정 시각으로 **선형 보간**해 짝짓는다. 두 토픽의 발행 시각이 어긋나서 생기는 오차를 없애기 위해서다.
+- 저장 위치: `output_dir` (비우면 `/tmp/amr_eval/<robot>_<시각>`). `localization.csv`, `localization_summary.json`, `trajectories/<robot>_gt.tum`·`_est.tum`
+
 ## 파라미터
 
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.

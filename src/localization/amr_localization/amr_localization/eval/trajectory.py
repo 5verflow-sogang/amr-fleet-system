@@ -56,6 +56,64 @@ def write_tum(path: str, poses: Iterable[Pose2D]) -> None:
             f.write(f'{p.t:.9f} {p.x:.6f} {p.y:.6f} 0.0 {qx:.9f} {qy:.9f} {qz:.9f} {qw:.9f}\n')
 
 
+def transform_to_map(poses: Iterable[Pose2D], map_origin_in_world: tuple[float, float, float]) -> list[Pose2D]:
+    """world 기준 자세를 map 기준으로 바꾼다.
+
+    map_origin_in_world는 world에서 본 map 원점의 (x, y, yaw)다. slam_toolbox는 매핑을 시작한
+    자세를 map 원점으로 잡으므로, 지도 인계 때 받은 매핑 시작 자세를 그대로 넣는다.
+    """
+    ox, oy, oyaw = map_origin_in_world
+    c, s = math.cos(oyaw), math.sin(oyaw)
+    result = []
+    for p in poses:
+        dx, dy = p.x - ox, p.y - oy
+        result.append(Pose2D(p.t, c * dx + s * dy, -s * dx + c * dy,
+                             math.atan2(math.sin(p.yaw - oyaw), math.cos(p.yaw - oyaw))))
+    return result
+
+
+def interpolate(gt: Sequence[Pose2D], t: float, max_gap: float) -> Pose2D | None:
+    """시각 t를 사이에 둔 두 정답 시점을 선형 보간한다. 방향은 짧은 쪽으로 돈다.
+
+    t가 정답 범위 밖이거나 두 시점 간격이 max_gap(초)보다 크면 None.
+    gt는 시각 순으로 정렬돼 있어야 한다.
+    """
+    if not gt:
+        return None
+    times = [p.t for p in gt]
+    i = bisect.bisect_left(times, t)
+    if i < len(gt) and times[i] == t:
+        return gt[i]
+    if i == 0 or i == len(gt):
+        return None
+    a, b = gt[i - 1], gt[i]
+    if b.t - a.t > max_gap:
+        return None
+    r = (t - a.t) / (b.t - a.t)
+    dyaw = math.atan2(math.sin(b.yaw - a.yaw), math.cos(b.yaw - a.yaw))
+    yaw = a.yaw + r * dyaw
+    return Pose2D(t, a.x + r * (b.x - a.x), a.y + r * (b.y - a.y), math.atan2(math.sin(yaw), math.cos(yaw)))
+
+
+def associate_interpolated(
+    gt: Sequence[Pose2D],
+    est: Sequence[Pose2D],
+    max_gap: float = 0.05,
+) -> list[tuple[Pose2D, Pose2D]]:
+    """추정 시점마다 정답을 같은 시각으로 보간해 짝짓는다.
+
+    associate()의 가장 가까운 시점 방식은 두 주기가 어긋나면 시각 차이만큼 오차가 생긴다
+    (2 m/s에서 10 ms면 2 cm). 보간하면 이 오차가 사라진다. 기본 max_gap 0.05초는
+    100 Hz 정답에서 샘플 몇 개가 빠져도 보간하고, 그보다 긴 공백은 버린다.
+    """
+    pairs = []
+    for e in est:
+        g = interpolate(gt, e.t, max_gap)
+        if g is not None:
+            pairs.append((g, e))
+    return pairs
+
+
 def associate(
     gt: Sequence[Pose2D],
     est: Sequence[Pose2D],
