@@ -10,7 +10,7 @@ ROS 토픽을 직접 다루지 않는다. 공개 함수·클래스 목록을 여
 
 ### 작업 할당 (설계 초안)
 
-> 상태: 설계 초안. 타입·비용 함수·전처리(`common.py`)는 구현, 알고리즘 3종은 스켈레톤(`NotImplementedError`)이고 2주차에 구현한다. 호출 흐름은 [architecture.md 5-1절](../../../docs/architecture.md#5-1-작업-요청--할당--이동--완료-보고-중앙집중-모드) 4~5번이다.
+> 상태: 알고리즘 3종 구현 완료(2주차). 기본 알고리즘 선택과 비교 실험은 아래 미결 참고. 호출 흐름은 [architecture.md 5-1절](../../../docs/architecture.md#5-1-작업-요청--할당--이동--완료-보고-중앙집중-모드) 4~5번이다.
 
 #### 설계 원칙
 
@@ -116,7 +116,7 @@ def assign_xxx(
 | 파라미터 (YAML) | `assignment.algorithm` (`nearest` / `load_balance` / `hungarian`), `assignment.min_battery_percent` |
 | 후처리 | 결과마다 `TaskAssignment(ASSIGN)` 발행, 해당 로봇 `load += 1` |
 
-#### 검증 계획 (2주차 단위 테스트)
+#### 단위 테스트 (`test/test_assignment.py`)
 
 - 탐욕이 최적이 아닌 2×2 예제에서 `hungarian.total_cost < nearest.total_cost`
 - 작업 > 로봇, 로봇 > 작업, 빈 입력
@@ -131,7 +131,6 @@ def assign_xxx(
 | 비용 함수 | 직선 거리로 시작, Nav2 경로 길이는 성능 보고 결정 |
 | 배터리 하한 | 20% (파라미터) |
 | `load`의 정의 | 누적 할당 수. 누적 이동거리로 바꿀지 검토 |
-| 의존성 | `scipy` (rosdep 키 `python3-scipy`). 구현 시 `package.xml`에 추가 |
 | 할당된 작업 재조정 | 하지 않는다. 한 번 맡긴 작업은 완료·실패·취소 전까지 유지 |
 
 ## 파라미터
