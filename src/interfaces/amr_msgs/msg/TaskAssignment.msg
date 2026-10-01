@@ -10,8 +10,9 @@
 uint8 ACTION_ASSIGN=0   # 작업 할당
 uint8 ACTION_CANCEL=1   # 작업 취소
 
-# stamp: 서버가 처음 보낸 시각. 응답 시간 KPI의 명령 시각(cmd_time)으로 쓴다
-#        재전송해도 바꾸지 않고, 장애 주입기도 바꾸지 않는다
+# stamp: 서버가 처음 보낸 시각 (노드 시계 = 시뮬레이션 시간). 재전송해도 바꾸지 않고, 장애 주입기도 바꾸지 않는다
+#        응답 시간 KPI는 실제 시간으로 재므로 이 값을 쓰지 않는다. cmd_time은 하네스 기록기가
+#        이 메시지를 받은 시각이다 (tools/harness/README.md, response_time.csv)
 std_msgs/Header header
 
 # 명령 번호. 서버가 명령마다 1씩 늘리고, 재전송할 때는 같은 번호를 쓴다

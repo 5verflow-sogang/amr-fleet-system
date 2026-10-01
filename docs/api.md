@@ -107,7 +107,7 @@ TODO(지수): 2주차 센서 플러그인 추가 후 extrinsic 확정.
 | 장애 주입기 | 중계할 때 `header.stamp`와 번호 필드(`assignment_id`, `request_id`, `epoch`, `seq`)를 바꾸지 않는다 |
 | 명령 번호와 확인 | 서버 명령(`assignment_id`)과 로봇 요청(`request_id`)은 보낸 쪽이 1씩 늘리고, 재전송할 때는 같은 번호를 쓴다. 받는 쪽은 번호를 그대로 되돌려 보낸다(echo). 이미 처리한 번호는 다시 처리하지 않고 확인만 다시 보낸다 |
 | 서버 재시작 | `FleetHeartbeat.epoch`가 바뀌면 로봇은 명령 번호 기준을 초기화한다 |
-| 응답 시간 KPI | `cmd_time`은 `TaskAssignment.header.stamp`를 쓴다. 확인까지 걸린 시간은 `TaskAssignmentAck.header.stamp - assignment_stamp` |
+| 응답 시간 KPI | 실제 시간으로 잰다. 노드의 `header.stamp`는 시뮬레이션 시간이라 쓰지 않고, 하네스 기록기가 메시지를 받은 시각을 쓴다. `cmd_time`은 `TaskAssignment` 수신 시각, 확인 왕복 시간은 `TaskAssignment` → `TaskAssignmentAck` 수신 시각 차이 ([하네스 로그 포맷](../tools/harness/README.md#지표-csv)) |
 | 작업 로그 | `TaskStatus`의 마지막 이벤트(COMPLETED·FAILED)가 로그 한 줄이 된다. 소요 시간은 `end_time - start_time` |
 | 오류 코드 | `ErrorInfo.code` 대역: 100 할당 / 200 주행 / 300 교통 / 400 통신 / 900 도킹 (`Dock` 결과의 `error_code`, Nav2 DockRobot과 같은 값). 오류가 없으면 `NONE`(0) |
 

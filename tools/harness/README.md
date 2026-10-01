@@ -119,6 +119,7 @@ tools/harness/results/<run_id>/
 | 항목 | 결정 | 출처 |
 | --- | --- | --- |
 | 응답 시간·연구 1 지연의 시간 기준 | 실제 시간 | 하연, #5 |
+| 실제 시간 측정 방식 | 하네스 기록기 수신 시각 (노드 `header.stamp`는 시뮬레이션 시간 유지) | 하연, #27 |
 | `response_time.csv` 부가 컬럼, `meta.json` 필드 | 설계와 맞으니 우선 진행, 바뀌면 수정 | 하연, #5 |
 | `cte.csv` 부가 컬럼 | `segment`, `robot` 확정. `meta.json`에 `controller` 추가 | 이진, #5 |
 
