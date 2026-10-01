@@ -48,7 +48,7 @@
       <odom_topic>${topic_ns}/ground_truth/odom</odom_topic>
       <tf_topic>${topic_ns}/ground_truth/tf</tf_topic>
       <dimensions>3</dimensions>
-      <odom_publish_frequency>50</odom_publish_frequency>
+      <odom_publish_frequency>${gt_rate}</odom_publish_frequency>
     </plugin>
   </gazebo>
 
