@@ -20,6 +20,7 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_srvs.srv import Trigger
 
 from .eval import EvalRecorder, Pose2D, format_summary
@@ -62,13 +63,16 @@ class EvalNode(Node):
         self.recorder = EvalRecorder(
             robot, origin, p('max_gap').value, p('moving_v').value, p('moving_w').value)
 
-        self.create_subscription(Odometry, p('gt_topic').value, self._on_gt, 100)
+        # best effort 구독은 reliable·best effort 발행자 모두와 호환된다.
+        # (Gazebo 브리지·시뮬레이터 정답 토픽 중 best effort로 발행하는 것이 있다)
+        qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.BEST_EFFORT)
+        self.create_subscription(Odometry, p('gt_topic').value, self._on_gt, qos)
         est_type = p('estimate_type').value
         if est_type == 'odometry':
-            self.create_subscription(Odometry, p('estimate_topic').value, self._on_est_odom, 100)
+            self.create_subscription(Odometry, p('estimate_topic').value, self._on_est_odom, qos)
         elif est_type == 'pose':
             self.create_subscription(
-                PoseWithCovarianceStamped, p('estimate_topic').value, self._on_est_pose, 100)
+                PoseWithCovarianceStamped, p('estimate_topic').value, self._on_est_pose, qos)
         else:
             raise ValueError(f"estimate_type은 'odometry' 또는 'pose' (지금 '{est_type}')")
         self.create_service(Trigger, '~/save', self._on_save)
