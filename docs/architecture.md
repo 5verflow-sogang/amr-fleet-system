@@ -150,7 +150,7 @@ sequenceDiagram
   FM->>FM: 작업 큐에 적재, IDLE 로봇 추림
   FM->>CORE: assign_{algorithm}(tasks, robots)
   CORE-->>FM: AssignmentResult {task_id: robot_id}
-  FM-)FI: /fleet/task_assignments (ASSIGN, header.stamp = cmd_time)
+  FM-)FI: /fleet/task_assignments (ASSIGN)
   FI-)BT: 중계 (지연·손실 주입)
   Note over BT: robot_id가 자기 것이 아니면 무시
   BT-)FM: /fleet/task_status (PENDING)
@@ -176,7 +176,7 @@ sequenceDiagram
 
 - 비동기 화살표(`-)`)는 토픽, 동기 화살표(`->>`)는 액션·함수 호출이다.
 - 작업 전달을 토픽으로 한 이유: 장애 주입기가 중간에서 중계할 수 있고, 서버가 죽어도 분산 모드가 같은 토픽을 이어받을 수 있다. 액션은 서버-로봇 1:1 연결이라 둘 다 어렵다 ([api.md 4-4절](api.md#4-4-쟁점-정리) Fleet 쟁점).
-- 응답 시간 KPI는 명령 발행부터 로봇이 처음 움직일 때까지를 **실제 시간**으로 잰다(#5). 시작·끝 시각을 어디서 얻는지는 [하네스 로그 포맷](../tools/harness/README.md#지표-csv)의 `response_time.csv`를 따른다.
+- 응답 시간 KPI는 명령 발행부터 로봇이 처음 움직일 때까지를 **실제 시간**으로 잰다(#5). 노드의 `header.stamp`(시뮬레이션 시간)가 아니라 하네스 기록기가 `/fleet/task_assignments`를 받은 시각이 시작점이다(#27). 자세한 방법은 [하네스 로그 포맷](../tools/harness/README.md#지표-csv)의 `response_time.csv`를 따른다.
 
 ### 5-2. 이후 추가할 시나리오
 
