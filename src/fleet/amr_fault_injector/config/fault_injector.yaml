@@ -1,0 +1,7 @@
+# 중계 대상과 로봇 목록. 장애 조건(delay_ms, loss_pct, seed)은 실험마다 바뀌므로 launch 인자로 받는다.
+fault_injector:
+  ros__parameters:
+    robot_ids: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    topics: [task_assignments, heartbeat, zone_grants, task_table]
+    # 지연 큐를 확인하는 주기. 주입 지연의 오차가 최대 이 값만큼 생긴다
+    tick_ms: 1.0
