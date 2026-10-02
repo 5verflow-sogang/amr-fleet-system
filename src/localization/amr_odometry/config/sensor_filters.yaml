@@ -1,0 +1,31 @@
+# LiDAR·IMU 전처리 필터 파라미터 (scan_filter, imu_filter 노드)
+/**/scan_filter:
+  ros__parameters:
+    # 거리 필터 [m]. 센서 한계(LiDAR 0.12~25 m)와 이 값 중 좁은 쪽을 쓴다
+    range_min: 0.12
+    range_max: 25.0
+    # 각도 필터 [rad]. 범위 밖 빔은 NaN. 기본은 360° 전체 (몸체 가림이 없어 자를 곳이 없다)
+    angle_min: -3.14159265
+    angle_max: 3.14159265
+    # 아웃라이어: 앞뒤 2개 빔 중 (0.2 m + 거리의 5%) 안에 있는 이웃이 1개도 없으면 외톨이 점으로 제거
+    # 0.2 m = 노이즈(σ 0.03 m)의 이웃 차이 3σ(약 0.13 m) + 여유.
+    # 5%: 멀리서 벽을 비스듬히 비추면 이웃 빔 차이가 커서(sim에서 13 m에 0.4~0.6 m) 고정 0.2 m로는
+    # 정상 점 8%가 지워졌다
+    outlier_window: 2
+    outlier_distance: 0.2
+    outlier_ratio: 0.05
+    outlier_min_neighbors: 1
+
+/**/imu_filter:
+  ros__parameters:
+    # 저역통과 차단 주파수 [Hz] (IMU 100 Hz). 자이로는 EKF 회전 추정에 쓰여 지연이 작게 높게 둔다
+    gyro_cutoff_hz: 20.0
+    accel_cutoff_hz: 5.0
+    # 시작 후 이 시간 동안 정지 평균으로 바이어스를 잰다. 그동안 로봇을 움직이지 않는다
+    calibration_duration: 2.0
+    # 보정 중 축별 표준편차가 이보다 크면 움직인 것으로 보고 다시 잰다 (노이즈 σ의 약 50배)
+    stationary_gyro_stddev: 0.01
+    stationary_accel_stddev: 0.1
+    # 공분산에 쓰는 센서 노이즈 σ. amr_description/config/sensors.yaml의 IMU 값과 같게 둔다
+    gyro_noise_stddev: 2.0e-4
+    accel_noise_stddev: 1.7e-2

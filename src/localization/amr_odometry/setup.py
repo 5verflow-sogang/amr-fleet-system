@@ -24,6 +24,8 @@ setup(
     entry_points={
         'console_scripts': [
             'wheel_odometry_node = amr_odometry.wheel_odometry_node:main',
+            'scan_filter_node = amr_odometry.scan_filter_node:main',
+            'imu_filter_node = amr_odometry.imu_filter_node:main',
         ],
     },
 )
