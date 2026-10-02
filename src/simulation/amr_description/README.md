@@ -15,7 +15,7 @@
 | Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `base_link` → 바퀴 (`joint_states` 기반) |
 | Subscribe | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 바퀴 각도 (Gazebo에서 브리지) |
 
-Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF, 센서 `scan_raw`·`imu/data_raw`)은 [amr_gazebo](../amr_gazebo/README.md)의 `spawn_robot.launch.py`가 연결한다.
+Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF, 센서 `scan_raw`·`imu/data_raw`·`camera/*`)은 [amr_gazebo](../amr_gazebo/README.md)의 `spawn_robot.launch.py`가 연결한다.
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
 ## 로봇 모델 (`urdf/`)
@@ -26,7 +26,7 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF, 센서 `scan_raw`·`imu/data_raw`)
 | `properties.xacro` | 치수·질량·동역학 제한, 관성 매크로. **값은 여기서만 바꾼다** |
 | `base.xacro` | `base_footprint`, `base_link` |
 | `wheels.xacro` | 좌우 구동 바퀴, 앞뒤 캐스터 |
-| `sensors.xacro` | `lidar_link`, `camera_link` → `camera_optical_frame`, `imu_link`. LiDAR(`gpu_lidar`)·IMU 센서. 값은 `config/sensors.yaml`에서 읽음 (카메라 센서는 연우와 구성 확정 후) |
+| `sensors.xacro` | `lidar_link`, `camera_link` → `camera_optical_frame`, `imu_link`. LiDAR(`gpu_lidar`)·RGBD 카메라(`rgbd_camera` 1개)·IMU 센서. 값은 `config/sensors.yaml`에서 읽음 |
 | `gazebo.xacro` | Fortress DiffDrive, JointStatePublisher, OdometryPublisher(GT) 시스템 플러그인 |
 
 ### 주요 값
@@ -152,8 +152,14 @@ amr_01/odom                         (DiffDrive, spawn_robot.launch.py publish_od
 | IMU 주기 | 100 Hz | 100.0 Hz |
 | 자이로 σ | 2.0e-4 rad/s | 2.0e-4 rad/s (3축) |
 | 가속도 σ · 바이어스 | 0.017 m/s² · ±0.1 m/s² | 0.016~0.017 m/s² · x −0.099, y −0.100, z +0.100 (9.900 − 9.8) |
+| 카메라 (yaw −90°로 스폰, 정면 `rack_lane_divider`) | 640×480, FOV 87° | RGB `rgb8`, Depth `32FC1`, frame `camera_optical_frame` |
+| 카메라 내부 파라미터 | fx = 320 / tan(43.5°) = 337.2 | fx = fy = 337.2, cx 320, cy 240 |
+| Depth 거리 · 노이즈 σ | 0.92 m · 0.02 m | 0.919 m · 0.020 m (중앙 80×80 px, 40 프레임) |
 
-Gazebo IMU는 메시지 공분산을 0으로 보낸다. `/imu/data`(필터 출력)에서 채운다.
+- Gazebo IMU는 메시지 공분산을 0으로 보낸다. `/imu/data`(필터 출력)에서 채운다.
+- RGB와 Depth는 `rgbd_camera` 센서 하나라 주기·클립 거리(0.3~10 m)를 공유한다. 명세(RGB 30 Hz, Depth 15 Hz 이상)는 30 Hz로 둘 다 만족한다.
+- Fortress `rgbd_camera`는 Depth 노이즈를 RGB에도 같이 넣는다. RGB 흔들림은 σ 약 0.5/255(1단계 미만)라 인식에 영향이 없다고 보고 그대로 둔다.
+- Gazebo 포인트클라우드(`camera/points`)는 점 좌표가 x 전방인데 frame_id가 광학 프레임이라 쓰지 않는다. 포인트클라우드는 Depth 영상과 `camera_info`로 만든다 (작업: Depth 포인트클라우드 변환·다운샘플링).
 
 launch 인자 (`description.launch.py`): `namespace`(기본 `amr_01`), `payload_mass`(기본 `0.0`), `gt_rate`(기본 `100`), `use_sim_time`(기본 `true`)
 

@@ -3,7 +3,6 @@
   센서 링크와 Gazebo 센서. 위치는 원 명세서 TF 예시값이다 (base_link 기준).
   사양·노이즈 값은 config/sensors.yaml에서 읽는다. 값은 거기서만 바꾼다.
   센서 시스템(Sensors, Imu)은 월드(amr_gazebo/worlds/warehouse.sdf)에 있다.
-  카메라 센서는 연우와 구성(rgbd 1개)을 정한 뒤 추가한다.
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
@@ -14,6 +13,7 @@
   <xacro:property name="sensors" value="${xacro.load_yaml('$(find amr_description)/config/sensors.yaml')}"/>
   <xacro:property name="lidar" value="${sensors['lidar']}"/>
   <xacro:property name="imu" value="${sensors['imu']}"/>
+  <xacro:property name="rgbd" value="${sensors['rgbd_camera']}"/>
 
   <!-- 360° 스캔은 -π에서 시작해 한 칸 모자란 곳에서 끝내야 시작점과 끝점이 겹치지 않는다 -->
   <xacro:property name="lidar_resolution" value="${radians(lidar['resolution_deg'])}"/>
@@ -132,6 +132,43 @@
           <stddev>${lidar['noise']['stddev']}</stddev>
         </noise>
       </ray>
+    </sensor>
+  </gazebo>
+
+  <!--
+    RGB와 Depth를 한 센서로 낸다. 센서는 camera_link의 +x를 보고, 메시지 frame_id는 광학 프레임이다.
+    Gazebo 토픽 camera/{image, depth_image, camera_info}는 spawn_robot.launch.py가 ROS 이름으로 바꾼다.
+  -->
+  <gazebo reference="${prefix}camera_link">
+    <sensor name="rgbd_camera" type="rgbd_camera">
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <update_rate>${rgbd['update_rate']}</update_rate>
+      <topic>${topic_ns}/camera</topic>
+      <ignition_frame_id>${prefix}camera_optical_frame</ignition_frame_id>
+      <camera>
+        <horizontal_fov>${radians(rgbd['horizontal_fov'])}</horizontal_fov>
+        <image>
+          <width>${rgbd['width']}</width>
+          <height>${rgbd['height']}</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>${rgbd['range_min']}</near>
+          <far>${rgbd['range_max']}</far>
+        </clip>
+        <depth_camera>
+          <clip>
+            <near>${rgbd['range_min']}</near>
+            <far>${rgbd['range_max']}</far>
+          </clip>
+        </depth_camera>
+        <noise>
+          <type>${rgbd['depth_noise']['type']}</type>
+          <mean>${rgbd['depth_noise']['mean']}</mean>
+          <stddev>${rgbd['depth_noise']['stddev']}</stddev>
+        </noise>
+      </camera>
     </sensor>
   </gazebo>
 
