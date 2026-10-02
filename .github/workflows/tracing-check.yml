@@ -1,0 +1,78 @@
+# ros2_tracing(LTTng) 설치 검증
+# ros:humble 컨테이너 안에서 LTTng 세션을 열고, demo 노드의 발행·콜백 이벤트가 수집되는지 확인한다.
+# 설치 목록은 docker/Dockerfile base 단계와 같게 유지한다.
+name: Tracing Check
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - ".github/workflows/tracing-check.yml"
+      - "docker/Dockerfile"
+      - "docker/scripts/build_tracetools.sh"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lttng:
+    name: LTTng UST 이벤트 수집
+    runs-on: ubuntu-22.04
+    container: ros:humble
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LTTng and ros2_tracing
+        run: |
+          apt-get update
+          # 앞 세 줄: Dockerfile과 같은 목록 / 마지막 줄: 이벤트를 만들 데모 노드
+          apt-get install -y --no-install-recommends \
+            git lttng-tools liblttng-ust-dev pkg-config \
+            python3-lttng python3-babeltrace babeltrace \
+            ros-humble-ros2trace ros-humble-tracetools-launch \
+            ros-humble-demo-nodes-cpp
+
+      - name: Build tracetools with LTTng
+        run: bash docker/scripts/build_tracetools.sh /opt/tracing_ws
+
+      - name: Check tracepoints
+        run: |
+          source /opt/tracing_ws/install/setup.bash
+          ros2 run tracetools status
+
+      - name: Trace talker / listener
+        run: |
+          source /opt/tracing_ws/install/setup.bash
+          lttng-sessiond --daemonize
+          lttng create demo --output=/tmp/tracing/demo
+          lttng enable-event -u 'ros2:*'
+          lttng add-context -u -t vpid -t vtid -t procname
+          lttng start
+          timeout -s INT 5 ros2 run demo_nodes_cpp talker > /dev/null &
+          talker=$!
+          timeout -s INT 5 ros2 run demo_nodes_cpp listener > /dev/null || true
+          wait "$talker" || true
+          lttng stop
+          lttng destroy
+
+      - name: Count events
+        run: |
+          babeltrace /tmp/tracing/demo | grep -oE 'ros2:[a-z_]+' | sort | uniq -c | tee /tmp/tracing/counts.txt
+          for event in rclcpp_publish callback_start callback_end; do
+            if ! grep -q "ros2:${event}\$" /tmp/tracing/counts.txt; then
+              echo "::error::ros2:${event} 이벤트가 수집되지 않았다"
+              exit 1
+            fi
+          done
+
+      - name: Upload trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lttng-demo-trace
+          path: /tmp/tracing/

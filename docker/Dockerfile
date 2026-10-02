@@ -11,7 +11,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
     && rm -rf /var/lib/apt/lists/*
 
-# TODO: rosdep 외 의존성 (예: ultralytics, ros2_tracing/LTTng)
+# ros2_tracing (연구 1 측정 도구). 사용자 공간(UST) 트레이싱만 쓴다.
+# 커널 트레이싱은 lttng-modules가 호스트 커널에 있어야 해서 컨테이너에서는 쓰지 않는다.
+# 같은 목록과 스크립트를 .github/workflows/tracing-check.yml에서 검증한다.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      lttng-tools \
+      liblttng-ust-dev \
+      pkg-config \
+      python3-lttng \
+      python3-babeltrace \
+      babeltrace \
+      ros-humble-ros2trace \
+      ros-humble-tracetools-launch \
+    && rm -rf /var/lib/apt/lists/*
+
+# Humble 바이너리 tracetools는 LTTng 없이 빌드돼 있어 같은 버전을 LTTng와 함께 빌드해 오버레이한다.
+COPY docker/scripts/build_tracetools.sh /tmp/build_tracetools.sh
+RUN bash /tmp/build_tracetools.sh /opt/tracing_ws && rm /tmp/build_tracetools.sh
+
+# compose 서비스처럼 .bashrc를 거치지 않는 실행(bash -c)에서도 트레이싱이 켜지도록 entrypoint도 오버레이를 source한다.
+# 베이스 이미지 entrypoint가 바뀌어 치환이 안 되면 빌드를 실패시킨다.
+RUN sed -i 's|/opt/ros/$ROS_DISTRO/setup.bash|/opt/tracing_ws/install/setup.bash|' /ros_entrypoint.sh \
+    && grep -q /opt/tracing_ws/install/setup.bash /ros_entrypoint.sh
+
+# TODO: rosdep 외 의존성 (예: ultralytics)
 
 WORKDIR /ros2_ws
 COPY src ./src
@@ -21,9 +44,10 @@ RUN apt-get update \
     && rosdep install --from-paths src --ignore-src -y --rosdistro humble \
     && rm -rf /var/lib/apt/lists/*
 
-RUN source /opt/ros/humble/setup.bash && colcon build
+RUN source /opt/tracing_ws/install/setup.bash && colcon build
 
-RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc \
+# tracing_ws가 /opt/ros/humble 위에 얹혀 있으므로 그것만 source해도 된다
+RUN echo "source /opt/tracing_ws/install/setup.bash" >> ~/.bashrc \
     && echo "[ -f /ros2_ws/install/setup.bash ] && source /ros2_ws/install/setup.bash" >> ~/.bashrc
 
 CMD ["bash"]
