@@ -11,6 +11,7 @@
 | Publish | `/clock` | `rosgraph_msgs/msg/Clock` | 시뮬레이션 시간. 다른 노드는 `use_sim_time:=true`로 쓴다 |
 | Publish | `/<ns>/odom` | `nav_msgs/msg/Odometry` | DiffDrive 휠 오도메트리, 50 Hz (`spawn_robot.launch.py`) |
 | Publish | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 바퀴 조인트 각도 |
+| Publish | `/<ns>/ground_truth/odom` | `nav_msgs/msg/Odometry` | **GT(진짜 위치·속도)**, 기본 100 Hz (`gt_rate`). `frame_id: world`(Gazebo 월드 원점 = 창고 중심), `child_frame_id: <ns>/base_footprint`. TF로는 내보내지 않음. **평가 전용**(RMSE, 제동 거리) — 로봇 판단에 쓰지 않는다. 아래 "GT 사용 시 주의" 참고 |
 | Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `<ns>/odom` → `<ns>/base_footprint` (`publish_odom_tf:=true`) |
 | Subscribe | `/<ns>/cmd_vel` | `geometry_msgs/msg/Twist` | 속도 명령. 2.0 m/s, 1.0 m/s², 1.5 rad/s로 제한 |
 | Service | | | |
@@ -19,6 +20,12 @@
 `<ns>` = 로봇 네임스페이스 (기본 `amr_01`). 로봇 모델은 [amr_description](../amr_description/README.md) 참고.
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
+
+### GT 사용 시 주의
+
+- **주기**: 기본 100 Hz. 짝짓기 오차를 더 줄여야 하면 `spawn_robot.launch.py gt_rate:=200`처럼 올린다 (시뮬레이션 시간 기준 주기).
+- **속도(`twist`) 지연**: 이동 평균이 아니라 직전 샘플과의 차분으로 보인다. 실측(1.0 m/s 가속·제동)에서 위치 중앙차분 속도보다 **항상 한 샘플(100 Hz에서 10 ms) 늦었다.** 가속 시간처럼 타이밍이 중요한 측정은 GT 위치를 미분해서 쓰거나 한 샘플만큼 보정한다.
+- **`world`와 `map`은 원점이 다르다**: slam_toolbox는 매핑을 시작한 위치·방향을 `map` 원점으로 잡는다. GT(`world`)와 위치 추정(`map`)을 비교하려면 둘 사이 변환이 필요하고, 이 변환 오차는 RMSE에 그대로 더해진다(정지 KPI 3 cm). 그래서 **지도를 인계할 때 매핑 시작 위치·방향(`world` 기준 x, y, yaw)을 함께 기록한다.** 기본 스폰 위치는 (0, 1.5, 0)이다.
 
 ## 월드 레이아웃 (`worlds/warehouse.sdf`)
 
@@ -115,7 +122,7 @@ launch 파일과 인자:
 | launch | 인자 (기본값) | 설명 |
 | --- | --- | --- |
 | `world.launch.py` | `world` (`warehouse.sdf`), `gui` (`true`), `verbosity` (`2`) | 월드만. `gui:=false`면 서버만 |
-| `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `publish_odom_tf` (`true`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
+| `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
 | `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw` | 월드 + 로봇 1대 + RViz |
 
 ## 실행

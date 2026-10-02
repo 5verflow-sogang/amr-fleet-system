@@ -36,6 +36,20 @@
       <joint_name>${prefix}left_wheel_joint</joint_name>
       <joint_name>${prefix}right_wheel_joint</joint_name>
     </plugin>
+
+    <!--
+      GT(ground truth): Gazebo가 아는 진짜 위치·속도. 위치 오차(RMSE)·제동 거리 측정의 기준값.
+      frame "world" = Gazebo 월드 원점(창고 중심). SLAM의 map과는 원점이 다를 수 있다.
+      TF로는 내보내지 않는다 (tf_topic은 브리지하지 않음). 로봇 판단에 쓰면 안 된다.
+    -->
+    <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
+      <odom_frame>world</odom_frame>
+      <robot_base_frame>${prefix}base_footprint</robot_base_frame>
+      <odom_topic>${topic_ns}/ground_truth/odom</odom_topic>
+      <tf_topic>${topic_ns}/ground_truth/tf</tf_topic>
+      <dimensions>3</dimensions>
+      <odom_publish_frequency>${gt_rate}</odom_publish_frequency>
+    </plugin>
   </gazebo>
 
 </robot>

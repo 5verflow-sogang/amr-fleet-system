@@ -22,12 +22,12 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF)은 [amr_gazebo](../amr_gazebo/READ
 
 | 파일 | 내용 |
 | --- | --- |
-| `amr.urdf.xacro` | 조립. 인자 `namespace`(TF 접두어·Gazebo 토픽), `payload_mass`(적재 질량 kg) |
+| `amr.urdf.xacro` | 조립. 인자 `namespace`(TF 접두어·Gazebo 토픽), `payload_mass`(적재 질량 kg), `gt_rate`(GT 토픽 주기 Hz) |
 | `properties.xacro` | 치수·질량·동역학 제한, 관성 매크로. **값은 여기서만 바꾼다** |
 | `base.xacro` | `base_footprint`, `base_link` |
 | `wheels.xacro` | 좌우 구동 바퀴, 앞뒤 캐스터 |
 | `sensors.xacro` | `lidar_link`, `camera_link` → `camera_optical_frame`, `imu_link` (링크만, 플러그인은 2주차) |
-| `gazebo.xacro` | Fortress DiffDrive, JointStatePublisher 시스템 플러그인 |
+| `gazebo.xacro` | Fortress DiffDrive, JointStatePublisher, OdometryPublisher(GT) 시스템 플러그인 |
 
 ### 주요 값
 
@@ -128,7 +128,7 @@ amr_01/odom                         (DiffDrive, spawn_robot.launch.py publish_od
 
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
 
-launch 인자 (`description.launch.py`): `namespace`(기본 `amr_01`), `payload_mass`(기본 `0.0`), `use_sim_time`(기본 `true`)
+launch 인자 (`description.launch.py`): `namespace`(기본 `amr_01`), `payload_mass`(기본 `0.0`), `gt_rate`(기본 `100`), `use_sim_time`(기본 `true`)
 
 ## 실행
 

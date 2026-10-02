@@ -6,6 +6,7 @@ ROS 토픽 (<ns> = namespace):
     /<ns>/cmd_vel       geometry_msgs/Twist     ROS → Gazebo
     /<ns>/odom          nav_msgs/Odometry       Gazebo → ROS
     /<ns>/joint_states  sensor_msgs/JointState  Gazebo → ROS
+    /<ns>/ground_truth/odom  nav_msgs/Odometry  Gazebo → ROS (진짜 위치, frame "world", 평가 전용)
     /tf                 <ns>/odom → <ns>/base_footprint (publish_odom_tf:=true일 때)
 """
 
@@ -28,6 +29,7 @@ def _spawn(context):
         f'{topic_ns}/cmd_vel@geometry_msgs/msg/Twist]ignition.msgs.Twist',
         f'{topic_ns}/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry',
         f'{topic_ns}/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model',
+        f'{topic_ns}/ground_truth/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry',
     ]
     remappings = []
     if LaunchConfiguration('publish_odom_tf').perform(context).lower() == 'true':
@@ -42,6 +44,7 @@ def _spawn(context):
             launch_arguments={
                 'namespace': ns,
                 'payload_mass': LaunchConfiguration('payload_mass'),
+                'gt_rate': LaunchConfiguration('gt_rate'),
                 'use_sim_time': use_sim_time,
             }.items(),
         ),
@@ -79,6 +82,7 @@ def generate_launch_description():
         DeclareLaunchArgument('z', default_value='0.01', description='스폰 위치 z [m]'),
         DeclareLaunchArgument('yaw', default_value='0.0', description='스폰 방향 [rad]'),
         DeclareLaunchArgument('payload_mass', default_value='0.0', description='적재물 질량 [kg]'),
+        DeclareLaunchArgument('gt_rate', default_value='100', description='GT 토픽 발행 주기 [Hz]'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         DeclareLaunchArgument(
             'publish_odom_tf', default_value='true',

@@ -25,6 +25,7 @@ def generate_launch_description():
             'xacro ', xacro_file,
             ' namespace:=', namespace,
             ' payload_mass:=', LaunchConfiguration('payload_mass'),
+            ' gt_rate:=', LaunchConfiguration('gt_rate'),
         ]),
         value_type=str)
 
@@ -35,6 +36,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'payload_mass', default_value='0.0',
             description='적재물 질량 [kg]'),
+        DeclareLaunchArgument(
+            'gt_rate', default_value='100',
+            description='GT 토픽(ground_truth/odom) 발행 주기 [Hz]'),
         DeclareLaunchArgument(
             'use_sim_time', default_value='true',
             description='Gazebo /clock 사용 여부'),
