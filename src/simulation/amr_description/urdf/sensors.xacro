@@ -1,13 +1,35 @@
 <?xml version="1.0"?>
 <!--
-  센서 링크 자리. 위치는 원 명세서 TF 예시값이다 (base_link 기준).
-  1주차는 링크·조인트만 둔다. 센서 플러그인과 노이즈 모델은 2주차에 추가한다.
+  센서 링크와 Gazebo 센서. 위치는 원 명세서 TF 예시값이다 (base_link 기준).
+  사양·노이즈 값은 config/sensors.yaml에서 읽는다. 값은 거기서만 바꾼다.
+  센서 시스템(Sensors, Imu)은 월드(amr_gazebo/worlds/warehouse.sdf)에 있다.
+  카메라 센서는 연우와 구성(rgbd 1개)을 정한 뒤 추가한다.
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <xacro:property name="lidar_xyz" value="0.15 0 0.2"/>
   <xacro:property name="camera_xyz" value="0.18 0 0.25"/>
   <xacro:property name="imu_xyz" value="0 0 0.1"/>
+
+  <xacro:property name="sensors" value="${xacro.load_yaml('$(find amr_description)/config/sensors.yaml')}"/>
+  <xacro:property name="lidar" value="${sensors['lidar']}"/>
+  <xacro:property name="imu" value="${sensors['imu']}"/>
+
+  <!-- 360° 스캔은 -π에서 시작해 한 칸 모자란 곳에서 끝내야 시작점과 끝점이 겹치지 않는다 -->
+  <xacro:property name="lidar_resolution" value="${radians(lidar['resolution_deg'])}"/>
+  <xacro:property name="lidar_samples" value="${int(round(lidar['horizontal_fov'] / lidar['resolution_deg']))}"/>
+
+  <!-- IMU 축 하나의 가우시안 노이즈. spec은 imu['angular_velocity'] 또는 imu['linear_acceleration'] -->
+  <xacro:macro name="imu_axis_noise" params="axis spec">
+    <xacro:element xacro:name="${axis}">
+      <noise type="gaussian">
+        <mean>0.0</mean>
+        <stddev>${spec['noise_stddev']}</stddev>
+        <bias_mean>${spec['bias_mean']}</bias_mean>
+        <bias_stddev>${spec['bias_stddev']}</bias_stddev>
+      </noise>
+    </xacro:element>
+  </xacro:macro>
 
   <!-- LiDAR -->
   <link name="${prefix}lidar_link">
@@ -71,5 +93,67 @@
     <child link="${prefix}imu_link"/>
     <origin xyz="${imu_xyz}" rpy="0 0 0"/>
   </joint>
+
+  <!--
+    Gazebo 센서. URDF 고정 조인트는 SDF 변환 때 base_link로 합쳐지므로
+    ignition_frame_id로 메시지 frame_id를 TF 트리의 센서 링크 이름에 맞춘다.
+    토픽은 원본(*_raw)이다. 인계 계약의 /scan, /imu/data는 amr_odometry 필터 출력이다.
+  -->
+  <gazebo reference="${prefix}lidar_link">
+    <sensor name="lidar" type="gpu_lidar">
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <update_rate>${lidar['update_rate']}</update_rate>
+      <topic>${topic_ns}/scan_raw</topic>
+      <ignition_frame_id>${prefix}lidar_link</ignition_frame_id>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>${lidar_samples}</samples>
+            <resolution>1</resolution>
+            <min_angle>${-pi}</min_angle>
+            <max_angle>${-pi + (lidar_samples - 1) * lidar_resolution}</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>1</samples>
+            <resolution>1</resolution>
+            <min_angle>0</min_angle>
+            <max_angle>0</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>${lidar['range_min']}</min>
+          <max>${lidar['range_max']}</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>${lidar['noise']['type']}</type>
+          <mean>${lidar['noise']['mean']}</mean>
+          <stddev>${lidar['noise']['stddev']}</stddev>
+        </noise>
+      </ray>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="${prefix}imu_link">
+    <sensor name="imu" type="imu">
+      <always_on>true</always_on>
+      <update_rate>${imu['update_rate']}</update_rate>
+      <topic>${topic_ns}/imu/data_raw</topic>
+      <ignition_frame_id>${prefix}imu_link</ignition_frame_id>
+      <imu>
+        <angular_velocity>
+          <xacro:imu_axis_noise axis="x" spec="${imu['angular_velocity']}"/>
+          <xacro:imu_axis_noise axis="y" spec="${imu['angular_velocity']}"/>
+          <xacro:imu_axis_noise axis="z" spec="${imu['angular_velocity']}"/>
+        </angular_velocity>
+        <linear_acceleration>
+          <xacro:imu_axis_noise axis="x" spec="${imu['linear_acceleration']}"/>
+          <xacro:imu_axis_noise axis="y" spec="${imu['linear_acceleration']}"/>
+          <xacro:imu_axis_noise axis="z" spec="${imu['linear_acceleration']}"/>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
 
 </robot>

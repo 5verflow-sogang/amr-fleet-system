@@ -15,7 +15,7 @@
 | Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `base_link` → 바퀴 (`joint_states` 기반) |
 | Subscribe | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 바퀴 각도 (Gazebo에서 브리지) |
 
-Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF)은 [amr_gazebo](../amr_gazebo/README.md)의 `spawn_robot.launch.py`가 연결한다.
+Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF, 센서 `scan_raw`·`imu/data_raw`)은 [amr_gazebo](../amr_gazebo/README.md)의 `spawn_robot.launch.py`가 연결한다.
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
 ## 로봇 모델 (`urdf/`)
@@ -26,7 +26,7 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF)은 [amr_gazebo](../amr_gazebo/READ
 | `properties.xacro` | 치수·질량·동역학 제한, 관성 매크로. **값은 여기서만 바꾼다** |
 | `base.xacro` | `base_footprint`, `base_link` |
 | `wheels.xacro` | 좌우 구동 바퀴, 앞뒤 캐스터 |
-| `sensors.xacro` | `lidar_link`, `camera_link` → `camera_optical_frame`, `imu_link` (링크만, 플러그인은 2주차) |
+| `sensors.xacro` | `lidar_link`, `camera_link` → `camera_optical_frame`, `imu_link`. LiDAR(`gpu_lidar`)·IMU 센서. 값은 `config/sensors.yaml`에서 읽음 (카메라 센서는 연우와 구성 확정 후) |
 | `gazebo.xacro` | Fortress DiffDrive, JointStatePublisher, OdometryPublisher(GT) 시스템 플러그인 |
 
 ### 주요 값
@@ -139,6 +139,21 @@ amr_01/odom                         (DiffDrive, spawn_robot.launch.py publish_od
 ## 파라미터
 
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
+
+- `config/sensors.yaml`: 센서 사양·노이즈. `sensors.xacro`가 xacro 처리 때 읽으므로 값을 바꾸면 launch만 다시 하면 된다. 바꿀 때는 민지에게 알린다 (명세서 8-2절)
+
+### 센서 검증 (정지 상태, 월드 v0 스폰 위치 (0, 1.5))
+
+| 항목 | 설정 | 측정 |
+| --- | --- | --- |
+| LiDAR 주기 · 빔 | 10 Hz, 720빔 0.5° | 10.0 Hz, 720빔 0.5000° |
+| LiDAR 노이즈 σ | 0.03 m | 0.0299 m (빔별 표준편차 중앙값, 100 스캔) |
+| LiDAR 거리 | 남쪽 `rack_lane_divider` 1.1 m, 북쪽 `rack_a4` 2.9 m | 1.100 m, 2.899 m. 최소 거리 1.05 m (몸체 가림 없음) |
+| IMU 주기 | 100 Hz | 100.0 Hz |
+| 자이로 σ | 2.0e-4 rad/s | 2.0e-4 rad/s (3축) |
+| 가속도 σ · 바이어스 | 0.017 m/s² · ±0.1 m/s² | 0.016~0.017 m/s² · x −0.099, y −0.100, z +0.100 (9.900 − 9.8) |
+
+Gazebo IMU는 메시지 공분산을 0으로 보낸다. `/imu/data`(필터 출력)에서 채운다.
 
 launch 인자 (`description.launch.py`): `namespace`(기본 `amr_01`), `payload_mass`(기본 `0.0`), `gt_rate`(기본 `100`), `use_sim_time`(기본 `true`)
 

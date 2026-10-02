@@ -12,6 +12,8 @@
 | Publish | `/<ns>/odom` | `nav_msgs/msg/Odometry` | DiffDrive 휠 오도메트리, 50 Hz (`spawn_robot.launch.py`) |
 | Publish | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 바퀴 조인트 각도 |
 | Publish | `/<ns>/ground_truth/odom` | `nav_msgs/msg/Odometry` | **GT(진짜 위치·속도)**, 기본 100 Hz (`gt_rate`). `frame_id: world`(Gazebo 월드 원점 = 창고 중심), `child_frame_id: <ns>/base_footprint`. TF로는 내보내지 않음. **평가 전용**(RMSE, 제동 거리) — 로봇 판단에 쓰지 않는다. 아래 "GT 사용 시 주의" 참고 |
+| Publish | `/<ns>/scan_raw` | `sensor_msgs/msg/LaserScan` | 2D LiDAR 원본 (노이즈 포함), 10 Hz, frame `<ns>/lidar_link` |
+| Publish | `/<ns>/imu/data_raw` | `sensor_msgs/msg/Imu` | IMU 원본 (노이즈·바이어스 포함, 공분산 비어 있음), 100 Hz, frame `<ns>/imu_link` |
 | Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `<ns>/odom` → `<ns>/base_footprint` (`publish_odom_tf:=true`) |
 | Subscribe | `/<ns>/cmd_vel` | `geometry_msgs/msg/Twist` | 속도 명령. 2.0 m/s, 1.0 m/s², 1.5 rad/s로 제한 |
 | Service | | | |
@@ -109,7 +111,10 @@ noVNC로 확인해보니 광원 바로 아래만 동그랗게 밝고 사이가 �
 
 색상: 작업자=주황, 지게차=빨강, 다른 로봇=보라 (기존 통로선 노랑·충전 파랑·대기 회색과 구분).
 
-아직 없는 것 (지수 담당): 실제 스폰·이동 동작, 충돌체, 센서 시스템 플러그인(Sensors, IMU).
+아직 없는 것 (지수 담당): 실제 스폰·이동 동작, 충돌체.
+
+센서 시스템(`Sensors`, `Imu`)은 월드에 있다. `Sensors`는 LiDAR·카메라를 렌더링(ogre2)하므로
+화면(DISPLAY)이 있는 gui 컨테이너(Xvfb)에서 띄운다. 화면이 없는 dev 컨테이너에서는 LiDAR가 나오지 않는다.
 
 ## 파라미터
 
