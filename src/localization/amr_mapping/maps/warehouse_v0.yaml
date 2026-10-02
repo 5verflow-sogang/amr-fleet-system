@@ -1,0 +1,10 @@
+# 월드 v0 지도 (작업 7 매핑 시도, 2026-10-03). 자세한 기록은 amr_mapping/README.md "지도 v0"
+# 매핑 시작 자세 (world 기준, amr_gazebo README "GT 사용 시 주의"): x 0.0, y 1.5, yaw 0.0
+#   → world 좌표 = map 좌표 + (0.0, 1.5)
+image: warehouse_v0.pgm
+mode: trinary
+resolution: 0.05
+origin: [-30.2, -21.8, 0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
