@@ -29,6 +29,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY docker/scripts/build_tracetools.sh /tmp/build_tracetools.sh
 RUN bash /tmp/build_tracetools.sh /opt/tracing_ws && rm /tmp/build_tracetools.sh
 
+# compose 서비스처럼 .bashrc를 거치지 않는 실행(bash -c)에서도 트레이싱이 켜지도록 entrypoint도 오버레이를 source한다.
+# 베이스 이미지 entrypoint가 바뀌어 치환이 안 되면 빌드를 실패시킨다.
+RUN sed -i 's|/opt/ros/$ROS_DISTRO/setup.bash|/opt/tracing_ws/install/setup.bash|' /ros_entrypoint.sh \
+    && grep -q /opt/tracing_ws/install/setup.bash /ros_entrypoint.sh
+
 # TODO: rosdep 외 의존성 (예: ultralytics)
 
 WORKDIR /ros2_ws

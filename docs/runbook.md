@@ -67,7 +67,8 @@ docker compose --profile gui down
 연구 1의 지연 분해에 쓴다. LTTng와 ros2_tracing은 이미지(`base`)에 들어 있다. 설치 검증은 [tracing-check.yml](../.github/workflows/tracing-check.yml) 워크플로가 한다.
 
 - Humble 바이너리의 `tracetools`는 LTTng 없이 빌드돼 있어 `ros2 run tracetools status`가 `Tracing disabled`를 낸다. 이미지는 같은 버전을 LTTng와 함께 빌드해 `/opt/tracing_ws`에 오버레이한다 ([build_tracetools.sh](../docker/scripts/build_tracetools.sh)).
-- 그래서 `/opt/ros/humble/setup.bash` 대신 **`/opt/tracing_ws/install/setup.bash`를 source**한다 (`dev` 셸의 `.bashrc`는 이미 그렇게 되어 있다). compose 서비스의 `command`에서 트레이스할 때도 이걸 먼저 source한다.
+- 그래서 `/opt/ros/humble/setup.bash` 대신 **`/opt/tracing_ws/install/setup.bash`를 source**한다. 이미지의 entrypoint(`/ros_entrypoint.sh`)와 `.bashrc`가 이미 그렇게 되어 있어, compose 서비스(`bash -c`)와 대화형 셸 모두 트레이싱이 켜진다.
+- 직접 `source /opt/ros/humble/setup.bash`를 다시 하면 오버레이가 가려져 `Tracing disabled`가 된다. 그럴 땐 `/opt/tracing_ws/install/setup.bash`나 `/ros2_ws/install/setup.bash`를 source한다.
 - 컨테이너에서는 **사용자 공간(UST) 이벤트만** 수집한다. 커널 이벤트는 호스트 커널에 lttng-modules가 있어야 해서 쓰지 않는다.
 - 트레이스하는 노드와 같은 컨테이너에서 세션을 연다. 세션 데몬과 노드가 공유 메모리로 통신한다.
 - 세션을 먼저 시작하고 노드를 띄운다.
