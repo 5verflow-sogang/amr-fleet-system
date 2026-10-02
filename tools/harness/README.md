@@ -55,7 +55,8 @@
 - `localization.csv`
   - `error`는 `sqrt((gt_x-est_x)^2 + (gt_y-est_y)^2)`이다. 명세서 KPI(정지 3cm·직선 5cm·회전 8cm)는 `segment`별로 산출한다.
   - `yaw_error`는 방향 오차(rad, -π~π로 정규화)다. 명세서 KPI는 위치만 보지만 회전 구간 분석과 RPE 대조에 쓴다.
-  - `segment` 분류 기준(GT 속도·각속도 임계값)은 2주차에 RMSE 측정 노드와 함께 정해 이 문서에 추가한다.
+  - `segment` 분류 기준(초안, `amr_localization.eval`): 정답 궤적의 각속도가 0.05 rad/s 이상이면 `rotation`, 아니고 선속도가 0.01 m/s 이상이면 `straight`, 둘 다 아니면 `stationary`. 곡선 주행은 `rotation`으로 센다.
+  - KPI 판정은 구간별 **RMSE**가 기준 이하이고 샘플이 100개 이상일 때 통과로 본다. Max는 함께 보고한다.
   - 같은 실행의 원자료로 evo ATE를 계산해 `error`의 RMSE와 일치하는지 확인한다.
 - `response_time.csv` (초안, #18 리뷰에서 도출)
   - `cmd_time`: 서버가 `/fleet/task_assignments`에 발행한 명령을 하네스 기록기가 받은 시각. 장애 주입기를 거치기 **전** 토픽을 기록하므로 주입된 지연이 응답 시간에 포함된다.
