@@ -15,10 +15,11 @@
           <color rgba="0.1 0.1 0.1 1"/>
         </material>
       </visual>
+      <!-- 충돌은 얇은 원통을 바깥으로 반 폭 옮겨 둔다 (properties.xacro wheel_contact_width 설명 참고) -->
       <collision>
-        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <origin xyz="0 ${reflect * wheel_contact_width / 2} 0" rpy="${pi/2} 0 0"/>
         <geometry>
-          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+          <cylinder radius="${wheel_radius}" length="${wheel_contact_width}"/>
         </geometry>
       </collision>
       <inertial>

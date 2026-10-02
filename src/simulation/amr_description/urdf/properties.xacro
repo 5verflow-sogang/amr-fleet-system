@@ -16,6 +16,13 @@
   <!-- 구동 바퀴: 몸체 폭 안에 들어가게 둔다 (좁은 통로 0.6 m 통과 조건) -->
   <xacro:property name="wheel_radius" value="0.1"/>
   <xacro:property name="wheel_width" value="0.05"/>
+  <!--
+    바퀴 충돌 원통 폭. 보이는 폭(wheel_width)과 따로 둔다.
+    Fortress(DART)는 원통-바닥 접촉점을 원통 안쪽 모서리에 잡아, 폭 5 cm 원통이면 제자리 회전에서
+    유효 바퀴 간격이 0.34 → 0.298 m로 줄어 odom이 회전을 12% 작게 잰다.
+    얇게 하고 폭의 절반만큼 바깥으로 옮겨 안쪽 모서리가 바퀴 중심선(wheel_separation / 2)에 오게 한다.
+  -->
+  <xacro:property name="wheel_contact_width" value="0.01"/>
   <xacro:property name="wheel_separation" value="0.34"/>
   <xacro:property name="wheel_mass" value="1.5"/>
 
