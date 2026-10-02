@@ -1,0 +1,22 @@
+# slam_toolbox 온라인 비동기 매핑 설정 (mapping.launch.py)
+# slam_toolbox 기본 설정(mapper_params_online_async.yaml)을 먼저 읽고 이 파일 값으로 덮어쓴다.
+# 프레임 이름의 로봇 접두어(amr_01/)와 scan 토픽은 launch가 namespace 인자로 채운다.
+slam_toolbox:
+  ros__parameters:
+    mode: mapping
+    map_frame: map
+    # 지도 해상도 [m/셀]. 인계 계약(명세서 8-2절): 0.05 m 이하
+    resolution: 0.05
+    # 스캔 매칭에 쓰는 최대 거리 [m]. LiDAR 최대 25 m 중 먼 곳은 비스듬히 맞아 노이즈가 커서 20 m까지만 쓴다
+    max_laser_range: 20.0
+    # 새 스캔을 그래프에 넣는 이동·회전 기준. 기본(0.5 m, 0.5 rad)이면 창고 통로 회전에서 스캔이 드물어 0.3으로 낮춘다
+    minimum_travel_distance: 0.3
+    minimum_travel_heading: 0.3
+    # 지도 갱신 주기 [s]. CPU 렌더링 sim이라 기본 5 s보다 자주 보되 부담이 크지 않게 2 s
+    map_update_interval: 2.0
+    # 루프 클로저: 같은 통로를 다시 지날 때 누적 오차를 잡는다 (명세 3-1: Loop Closure 탐지·그래프 최적화)
+    do_loop_closing: true
+    # map → odom TF 발행 주기 [s]
+    transform_publish_period: 0.02
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
