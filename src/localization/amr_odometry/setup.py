@@ -23,7 +23,7 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            # 'node_name = amr_odometry.node_module:main',
+            'wheel_odometry_node = amr_odometry.wheel_odometry_node:main',
         ],
     },
 )
