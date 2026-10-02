@@ -46,7 +46,7 @@ class WheelOdometryNode(Node):
         config = EncoderNoiseConfig(
             ticks_per_rev=p('encoder.ticks_per_rev', 4096).value,
             wheel_radius_scale_stddev=p('encoder.wheel_radius_scale_stddev', 0.005).value,
-            distance_noise_k=p('encoder.distance_noise_k', 0.032).value,
+            distance_noise_k=p('encoder.distance_noise_k', 0.01).value,
             seed=p('encoder.seed', 0).value,
             noise_enabled=p('encoder.noise_enabled', True).value,
         )

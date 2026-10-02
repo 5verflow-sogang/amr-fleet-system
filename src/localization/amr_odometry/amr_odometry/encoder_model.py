@@ -24,7 +24,7 @@ LEFT, RIGHT = 0, 1
 class EncoderNoiseConfig:
     ticks_per_rev: int = 4096
     wheel_radius_scale_stddev: float = 0.005
-    distance_noise_k: float = 0.032
+    distance_noise_k: float = 0.01
     # 0이면 실행마다 무작위. 하네스 반복 실험에서는 실행별로 지정해 재현한다
     seed: int = 0
     # False면 양자화만 하고 계통·무작위 오차는 넣지 않는다
