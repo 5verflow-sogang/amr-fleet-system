@@ -1,0 +1,30 @@
+# 휠 오도메트리 (wheel_odometry_node) 파라미터
+/**:
+  ros__parameters:
+    # 로봇 치수. amr_description/urdf/properties.xacro와 같은 값으로 둔다
+    wheel_radius: 0.1             # m
+    wheel_separation: 0.34        # m
+    # URDF 조인트 이름 (네임스페이스 접두어 amr_01/는 빼고 적는다)
+    left_wheel_joint: left_wheel_joint
+    right_wheel_joint: right_wheel_joint
+
+    odom_topic: odom
+    odom_frame: odom
+    base_frame: base_footprint
+    # D4(A안): odom → base_footprint는 ekf_local이 발행한다. EKF 없이 단독 시험할 때만 true
+    publish_tf: false
+    # odom 발행 주기 [Hz]. Gazebo joint_states는 1 kHz라 적분은 매번 하고 발행만 묶는다 (EKF 50 Hz)
+    publish_rate: 50.0
+
+    # 속도 공분산 하한 [(m/s)², (rad/s)²]. 정지 중에도 EKF가 측정을 과신하지 않게 한다
+    twist_variance_floor: 1.0e-4
+
+    # 엔코더 측정 모델 (PR #26 민지 리뷰 반영). 정확한 값은 드리프트 실험에서 민지와 정한다
+    encoder:
+      ticks_per_rev: 4096                 # 명세: 4096 이상
+      wheel_radius_scale_stddev: 0.005    # 계통 오차: 좌우 바퀴 반지름 배율 (1 + N(0, σ)), 실행마다 한 번
+      # 무작위 오차: 바퀴마다 Δs에 N(0, k²·|Δs|) → 10 m에서 바퀴당 1σ ≈ 3.2 cm, 방향 1σ ≈ 7.5°.
+      # #26 초안 0.032(바퀴당 1%)는 바퀴 간격 0.34 m 때문에 10 m 방향 1σ가 약 24°로 커져 낮췄다
+      distance_noise_k: 0.01
+      seed: 0                             # 0이면 실행마다 무작위. 하네스 반복 실험에서는 지정
+      noise_enabled: true                 # false면 양자화만 (이상적 엔코더)
