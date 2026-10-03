@@ -1,0 +1,63 @@
+# 센서 사양·노이즈 파라미터 (D3 초안, 지수 제안 → 민지 합의 대기)
+#
+# 기준: 원 명세 센서 사양 표 (docs/project-spec.md "센서 사양").
+# 명세에 수치가 없는 항목은 비슷한 실제 센서·Gazebo 예제를 근거로 잡은 제안값이며 "근거"에 적었다.
+# 2주차 센서 플러그인(sensors.xacro)이 이 파일을 읽는다. 값을 바꾸면 민지에게 알린다
+# (SLAM·AMCL·EKF 공분산이 이 값에 맞춰져 있다, docs/project-spec.md 8-2절 인계 계약).
+#
+# 토픽: Gazebo 원본은 *_raw로 내보내고, 필터·보정을 거친 결과가 인계 계약의 /scan, /imu/data가 된다.
+
+lidar:                      # 2D LiDAR → /<ns>/scan_raw (sensor_msgs/LaserScan), frame <ns>/lidar_link
+  update_rate: 10.0         # Hz. 명세: 10 Hz 이상. Nav2 expected_update_rate 0.1 s와 맞춤
+  horizontal_fov: 360.0     # deg. 명세
+  resolution_deg: 0.5       # deg. 명세 → 720 샘플
+  range_min: 0.12           # m. 명세 없음. 일반 2D LiDAR 최소 거리 (몸체 가림 방지)
+  range_max: 25.0           # m. 명세
+  noise:
+    type: gaussian
+    mean: 0.0
+    stddev: 0.03            # m. 명세 (가우시안 σ=0.03 m)
+
+depth_camera:               # → /<ns>/camera/depth/image_raw, /<ns>/camera/depth/points, frame <ns>/camera_optical_frame
+  update_rate: 15.0         # Hz. 명세: 15 Hz 이상
+  width: 640                # px. 명세: 640×480 이상
+  height: 480
+  horizontal_fov: 87.0      # deg. 명세
+  range_min: 0.3            # m. 명세 없음. RealSense D435 최소 거리(약 0.28 m) 근거
+  range_max: 10.0           # m. 명세
+  noise:
+    type: gaussian
+    mean: 0.0
+    # m. 명세는 "깊이 측정 노이즈"만 있음. D435 정확도 "2 m에서 2% 이내"(≈0.04 m)의 절반을
+    # 상수 σ로 근사. 실제 깊이 노이즈는 거리 제곱에 비례하지만 Gazebo는 상수 σ만 지원한다.
+    stddev: 0.02
+
+rgb_camera:                 # → /<ns>/camera/color/image_raw, frame <ns>/camera_optical_frame
+  update_rate: 30.0         # Hz. 명세
+  width: 640                # px. 명세: 640×480 이상
+  height: 480
+  # deg. 명세 없음. Depth와 같은 값으로 두면 RGB 픽셀 ↔ 깊이 대응이 단순해진다 (연우 확인 필요)
+  horizontal_fov: 87.0
+  noise:
+    type: gaussian
+    mean: 0.0
+    stddev: 0.0             # 명세: 노이즈 없음 ("—")
+
+imu:                        # → /<ns>/imu/data_raw (sensor_msgs/Imu), frame <ns>/imu_link
+  update_rate: 100.0        # Hz. 명세: 100 Hz 이상
+  # 명세: "바이어스 + 노이즈". 수치는 Gazebo·TurtleBot3 IMU 예제 값(저가 MEMS 수준)을 근거로 한다.
+  # Gazebo IMU는 메시지 공분산을 비워 보낸다 → /imu/data 발행 시 아래 noise_stddev²로 공분산을 채운다 (인계 계약).
+  angular_velocity:         # 자이로, 축(x, y, z)마다 같은 값
+    noise_stddev: 2.0e-4    # rad/s
+    bias_mean: 7.5e-6       # rad/s
+    bias_stddev: 8.0e-7     # rad/s
+  linear_acceleration:      # 가속도계, 축마다 같은 값
+    noise_stddev: 1.7e-2    # m/s²
+    bias_mean: 0.1          # m/s²
+    bias_stddev: 0.001      # m/s²
+
+# 휠 엔코더 (명세: 틱 분해능 4096 이상, 슬립 노이즈)
+# Gazebo에는 엔코더 센서가 없어 amr_odometry가 joint_states에 측정 모델을 적용한다.
+# 값(틱 분해능, 계통 오차, 거리 비례 무작위 오차 k, seed)은 쓰는 패키지에 한 곳만 둔다 (CONTRIBUTING 4-5):
+#   amr_odometry/config/odometry.yaml 의 encoder.*  (PR #35)
+# 모델 설명과 k를 0.032 → 0.01로 낮춘 근거는 amr_odometry/README.md. 값을 바꾸면 민지에게 알린다 (명세서 8-2절).
