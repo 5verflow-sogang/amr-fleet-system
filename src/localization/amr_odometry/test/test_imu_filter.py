@@ -80,6 +80,23 @@ def test_calibration_restarts_when_moving():
     assert np.allclose(cal.gyro_bias, GYRO_BIAS, atol=7e-5)
 
 
+def test_calibration_rejects_constant_rotation():
+    # 일정 속도 회전은 흔들림이 작아도 정지가 아니다 → 회전 속도를 바이어스로 저장하면 안 된다
+    rng = np.random.default_rng(8)
+    cal = BiasCalibrator(ImuFilterConfig(calibration_duration=1.0))
+    for t, g, a in samples(250, rng, gyro=(0.0, 0.0, 0.5)):
+        cal.add(t, g, a)
+    assert not cal.done and cal.restarts >= 2
+
+
+def test_calibration_rejects_constant_acceleration():
+    rng = np.random.default_rng(9)
+    cal = BiasCalibrator(ImuFilterConfig(calibration_duration=1.0))
+    for t, g, a in samples(250, rng):
+        cal.add(t, g, a + np.array([1.0, 0.0, 0.0]))   # 1 m/s² 가속 중
+    assert not cal.done
+
+
 def test_filter_outputs_nothing_until_calibrated_then_unbiased():
     rng = np.random.default_rng(3)
     f = ImuFilter(ImuFilterConfig(calibration_duration=2.0))
@@ -104,8 +121,49 @@ def test_filter_tracks_rotation_after_calibration():
     assert out[0][2] == pytest.approx(1.0, abs=0.01)
 
 
+def moving(n, rng, t0=0.0):
+    """회전 속도가 계속 바뀌는(정지가 아닌) 샘플."""
+    for i, (t, g, a) in enumerate(samples(n, rng, t0=t0)):
+        yield t, g + np.array([0.0, 0.0, 0.5 * math.sin(i * 0.2)]), a
+
+
+def test_fallback_publishes_uncalibrated_after_max_attempts():
+    rng = np.random.default_rng(5)
+    f = ImuFilter(ImuFilterConfig(calibration_duration=0.5, max_calibration_attempts=3))
+    outputs = [f.update(t, g, a) for t, g, a in moving(250, rng)]
+    first = next(i for i, o in enumerate(outputs) if o is not None)
+    # 0.5 s × 3번 실패 → 약 1.5 s(150 샘플) 뒤부터 발행
+    assert 140 <= first <= 170
+    assert f.uncalibrated and not f.calibrator.done
+    # 바이어스를 빼지 않으므로 가속도 z에 바이어스 0.1이 그대로 남는다
+    accel_z = np.array([o[1][2] for o in outputs[first + 20:]])
+    assert accel_z.mean() == pytest.approx(GRAVITY + ACCEL_BIAS[2], abs=0.01)
+
+
+def test_fallback_switches_to_calibrated_when_stationary():
+    rng = np.random.default_rng(6)
+    f = ImuFilter(ImuFilterConfig(calibration_duration=0.5, max_calibration_attempts=2))
+    for t, g, a in moving(150, rng):
+        f.update(t, g, a)
+    assert f.uncalibrated
+    out = [f.update(t, g, a) for t, g, a in samples(300, rng, t0=1.5)]
+    assert f.calibrator.done and not f.uncalibrated
+    accel_z = np.array([o[1][2] for o in out[-100:]])
+    assert accel_z.mean() == pytest.approx(GRAVITY, abs=6e-3)
+
+
+def test_fallback_disabled_when_zero_attempts():
+    rng = np.random.default_rng(7)
+    f = ImuFilter(ImuFilterConfig(calibration_duration=0.5, max_calibration_attempts=0))
+    assert all(f.update(t, g, a) is None for t, g, a in moving(500, rng))
+    assert not f.uncalibrated
+
+
 @pytest.mark.parametrize('kwargs', [
     {'gyro_cutoff_hz': -1.0}, {'accel_cutoff_hz': -1.0}, {'calibration_duration': 0.0},
+    {'max_calibration_attempts': -1}, {'uncalibrated_gyro_bias_stddev': -0.1},
+    {'uncalibrated_accel_bias_stddev': -0.1}, {'stationary_gyro_mean_max': -0.1},
+    {'stationary_accel_mean_tolerance': -0.1},
 ])
 def test_invalid_config(kwargs):
     with pytest.raises(ValueError):
