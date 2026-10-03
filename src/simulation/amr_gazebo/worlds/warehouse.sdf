@@ -1,0 +1,432 @@
+<?xml version="1.0"?>
+<!--
+  60 x 40 m 물류센터 월드 (v0, 1~2주차)
+
+  좌표계: 월드 원점 = 창고 중심, x -30~30 m (동서), y -20~20 m (남북), 위쪽(+y)이 북쪽.
+  레이아웃은 docs/project-spec-original.md 8장 결과 예시를 따른다.
+
+    y=+20 ┌──────────────────────────────────────────────┐
+          │ Dock-1  ══════ Main Corridor ══════   Dock-A │  y 8.5~18.5
+          │ Dock-2  ════════════════════════════  Dock-B │
+          │   A-1  A-2  A-3  A-4  A-5  A-6  A-7          │  y=+5
+          │          [==== 0.6x5.0m 통로 ====]           │  y=-0.2 (2주차 추가)
+          │   B-1  B-2  B-3 |B-4  B-5  B-6  B-7          │  y=-2  (| = 0.6x1.2m 좁은 통로)
+          │   C-1  C-2  C-3  C-4  C-5  C-6  C-7          │  y=-9
+          │ [C1][C2][C3] Charging         Waiting Zone   │
+    y=-20 └──────────────────────────────────────────────┘
+        x=-30                                         x=+30
+
+  좌표 표는 amr_gazebo/README.md 참고. 좁은 통로 2곳(1.2m·5.0m), 바닥 마찰, 실내 조명,
+  동적 장애물 경로 표시(시각 전용)는 2주차(이진)에 추가했다. 동적 장애물의 실제 이동
+  동작·충돌체와 센서 시스템 플러그인(지수 담당)은 아직 없다.
+-->
+<sdf version="1.8">
+  <world name="warehouse">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system" name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"/>
+
+    <scene>
+      <!-- 0.6 -> 0.7: 광원 사이 빈 공간의 바닥 기본 밝기를 올려 명암 대비를 줄인다 -->
+      <ambient>0.7 0.7 0.7 1</ambient>
+      <background>0.75 0.8 0.85 1</background>
+      <shadows>false</shadows>
+    </scene>
+
+    <!--
+      실내 천장 조명 9개 (3열 x 3행, 4m 천장 바로 아래 z=3.8). 실외용 directional
+      "sun" 광원 대신 창고 실내 조명으로 교체했다(2주차 조명 작업, 이진).
+
+      v0(점광원 6개, range 20, constant/linear/quadratic 0.3/0.05/0.002)는 광원
+      바로 아래만 동그랗게 밝고 사이가 눈에 띄게 어두웠다. 두 가지로 고쳤다.
+      1) 그리드 간격을 줄임: 6개(3x2, 행 간격 20m) -> 9개(3x3, 행 간격 10m).
+         광원 하나가 늘었지만("너무 많이 늘리지 않는다" 기준으로 50%만 추가)
+         가장 가까운 광원까지의 최대 거리가 줄어 명암 대비가 줄어든다.
+      2) attenuation 곡선을 평평하게: constant를 올리고(0.3->0.6) linear·quadratic을
+         낮춰(0.05->0.02, 0.002->0.001) 거리에 따른 감쇠를 완만하게 했다. range도
+         20->28로 넓혀 그리드 대각선 간격(약 14m)에서도 range 컷오프에 안 걸리게 했다.
+         (감쇠 공식: 1/(constant + linear*d + quadratic*d^2))
+      팀 대부분이 GPU 없이 CPU로 렌더링하므로 개수는 여전히 최소로 유지하고
+      그림자는 계속 끈다(cast_shadows: false) — 점광원 여러 개의 실시간 그림자는
+      CPU에서 비용이 크다.
+      scene ambient도 0.6->0.7로 올려 광원 사이 바닥의 기본 밝기를 더했다.
+      정량적 밝기(lux) 실측 검증은 안 했다(가정) — noVNC로 육안 확인 후 필요하면
+      추가 조정한다.
+    -->
+    <light type="point" name="ceiling_light_1">
+      <cast_shadows>false</cast_shadows>
+      <pose>-20 10 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <light type="point" name="ceiling_light_2">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 10 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <light type="point" name="ceiling_light_3">
+      <cast_shadows>false</cast_shadows>
+      <pose>20 10 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <light type="point" name="ceiling_light_4">
+      <cast_shadows>false</cast_shadows>
+      <pose>-20 0 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <light type="point" name="ceiling_light_5">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <light type="point" name="ceiling_light_6">
+      <cast_shadows>false</cast_shadows>
+      <pose>20 0 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <light type="point" name="ceiling_light_7">
+      <cast_shadows>false</cast_shadows>
+      <pose>-20 -10 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <light type="point" name="ceiling_light_8">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 -10 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <light type="point" name="ceiling_light_9">
+      <cast_shadows>false</cast_shadows>
+      <pose>20 -10 3.8 0 0 0</pose>
+      <diffuse>0.85 0.85 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation><range>28</range><constant>0.6</constant><linear>0.02</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+
+    <!-- ===================== 바닥 · 외벽 ===================== -->
+    <model name="floor">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane><normal>0 0 1</normal><size>100 100</size></plane>
+          </geometry>
+          <!--
+            바닥 마찰 계수 (2주차 물리 파라미터, 이진). mu=마찰 방향1, mu2=마찰 방향2
+            (평면이라 등방성으로 동일值). 물류센터 바닥은 보통 에폭시 코팅 콘크리트다.
+
+            [가정] 이 프로젝트에서 실측하거나 인용한 값이 아니다. 고무 바퀴 - 에폭시/콘크리트
+            바닥 접촉의 마찰계수가 일반적으로 대략 0.5~0.8 범위로 알려진 것을 참고해 중간값
+            0.7을 썼다. 정확한 수치가 필요하면(예: 드리프트 실험이 바닥 슬립을 원인으로
+            지목하는 경우) 실측치나 출처 있는 자료로 교체해야 한다.
+          -->
+          <surface>
+            <friction>
+              <ode>
+                <mu>0.7</mu>
+                <mu2>0.7</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane><normal>0 0 1</normal><size>60.4 40.4</size></plane>
+          </geometry>
+          <material>
+            <ambient>0.55 0.55 0.52 1</ambient>
+            <diffuse>0.55 0.55 0.52 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 두께 0.2 m, 높이 4 m. 벽 안쪽 면이 정확히 60 x 40 m가 되도록 바깥으로 0.1 m 밀어 둔다. -->
+    <model name="outer_walls">
+      <static>true</static>
+      <link name="link">
+        <collision name="north_collision">
+          <pose>0 20.1 2 0 0 0</pose>
+          <geometry><box><size>60.4 0.2 4</size></box></geometry>
+        </collision>
+        <visual name="north_visual">
+          <pose>0 20.1 2 0 0 0</pose>
+          <geometry><box><size>60.4 0.2 4</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.8 0.8 0.78 1</diffuse></material>
+        </visual>
+        <collision name="south_collision">
+          <pose>0 -20.1 2 0 0 0</pose>
+          <geometry><box><size>60.4 0.2 4</size></box></geometry>
+        </collision>
+        <visual name="south_visual">
+          <pose>0 -20.1 2 0 0 0</pose>
+          <geometry><box><size>60.4 0.2 4</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.8 0.8 0.78 1</diffuse></material>
+        </visual>
+        <collision name="east_collision">
+          <pose>30.1 0 2 0 0 0</pose>
+          <geometry><box><size>0.2 40 4</size></box></geometry>
+        </collision>
+        <visual name="east_visual">
+          <pose>30.1 0 2 0 0 0</pose>
+          <geometry><box><size>0.2 40 4</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.8 0.8 0.78 1</diffuse></material>
+        </visual>
+        <collision name="west_collision">
+          <pose>-30.1 0 2 0 0 0</pose>
+          <geometry><box><size>0.2 40 4</size></box></geometry>
+        </collision>
+        <visual name="west_visual">
+          <pose>-30.1 0 2 0 0 0</pose>
+          <geometry><box><size>0.2 40 4</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.8 0.8 0.78 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===================== 바닥 표시 (충돌 없음) ===================== -->
+    <model name="floor_markings">
+      <static>true</static>
+      <link name="link">
+        <!-- 메인 통로 경계선 -->
+        <visual name="corridor_line_north">
+          <pose>0 18.5 0.003 0 0 0</pose>
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>50 0.1 0.002</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material>
+        </visual>
+        <visual name="corridor_line_south">
+          <pose>0 8.5 0.003 0 0 0</pose>
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>50 0.1 0.002</size></box></geometry>
+          <material><ambient>0.95 0.8 0.1 1</ambient><diffuse>0.95 0.8 0.1 1</diffuse></material>
+        </visual>
+        <!-- 충전 구역: x -26~-16, y -20~-16 -->
+        <visual name="charging_zone">
+          <pose>-21 -18 0.002 0 0 0</pose>
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>10 4 0.002</size></box></geometry>
+          <material><ambient>0.2 0.4 0.85 1</ambient><diffuse>0.2 0.4 0.85 1</diffuse></material>
+        </visual>
+        <!-- 대기 구역: x 16~26, y -20~-14 -->
+        <visual name="waiting_zone">
+          <pose>21 -17 0.002 0 0 0</pose>
+          <cast_shadows>false</cast_shadows>
+          <geometry><box><size>10 6 0.002</size></box></geometry>
+          <material><ambient>0.85 0.85 0.85 1</ambient><diffuse>0.85 0.85 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ===================== 입고·출고 도크 ===================== -->
+    <!-- 입고: 서쪽 벽 (+x가 창고 안쪽) -->
+    <include>
+      <uri>model://loading_dock</uri>
+      <name>dock_1</name>
+      <pose>-30 16 0 0 0 0</pose>
+    </include>
+    <include>
+      <uri>model://loading_dock</uri>
+      <name>dock_2</name>
+      <pose>-30 11 0 0 0 0</pose>
+    </include>
+    <!-- 출고: 동쪽 벽 -->
+    <include>
+      <uri>model://loading_dock</uri>
+      <name>dock_a</name>
+      <pose>30 16 0 0 0 3.14159265</pose>
+    </include>
+    <include>
+      <uri>model://loading_dock</uri>
+      <name>dock_b</name>
+      <pose>30 11 0 0 0 3.14159265</pose>
+    </include>
+
+    <!-- ===================== 선반 랙 3열 x 7개 ===================== -->
+    <!-- 랙 5.0 x 1.2 m, 중심 간격 7.5 m (랙 사이 교차 통로 2.5 m), 열 사이 통로 5.8 m -->
+    <!-- A열: y = 5 -->
+    <include><uri>model://warehouse_rack</uri><name>rack_a1</name><pose>-22.5 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a2</name><pose>-15.0 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a3</name><pose>-7.5 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a4</name><pose>0 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a5</name><pose>7.5 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a6</name><pose>15.0 5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_a7</name><pose>22.5 5 0 0 0 0</pose></include>
+    <!-- B열: y = -2. B-4를 서쪽으로 1.9 m 당겨 B-3과 사이에 0.6 m 좁은 통로를 만든다 (로봇 폭 0.4 m + 0.2 m, Nav2 KPI 테스트용) -->
+    <include><uri>model://warehouse_rack</uri><name>rack_b1</name><pose>-22.5 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b2</name><pose>-15.0 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b3</name><pose>-7.5 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b4</name><pose>-1.9 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b5</name><pose>7.5 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b6</name><pose>15.0 -2 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_b7</name><pose>22.5 -2 0 0 0 0</pose></include>
+    <!-- C열: y = -9 -->
+    <include><uri>model://warehouse_rack</uri><name>rack_c1</name><pose>-22.5 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c2</name><pose>-15.0 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c3</name><pose>-7.5 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c4</name><pose>0 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c5</name><pose>7.5 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c6</name><pose>15.0 -9 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_rack</uri><name>rack_c7</name><pose>22.5 -9 0 0 0 0</pose></include>
+
+    <!-- ===================== 기둥 ===================== -->
+    <!-- 통로 가운데에 두어 통로 폭을 2.6 m씩으로 좁힌다 -->
+    <include><uri>model://warehouse_pillar</uri><name>pillar_1</name><pose>-11.25 7.0 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_pillar</uri><name>pillar_2</name><pose>11.25 7.0 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_pillar</uri><name>pillar_3</name><pose>-15.0 1.5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_pillar</uri><name>pillar_4</name><pose>15.0 1.5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_pillar</uri><name>pillar_5</name><pose>-7.5 -5.5 0 0 0 0</pose></include>
+    <include><uri>model://warehouse_pillar</uri><name>pillar_6</name><pose>7.5 -5.5 0 0 0 0</pose></include>
+
+    <!-- ===================== 충전 스테이션 C1~C3 ===================== -->
+    <!-- 남쪽 벽에 붙어 북쪽(+y)을 향한다 -->
+    <include><uri>model://charging_station</uri><name>charger_c1</name><pose>-24 -20 0 0 0 1.5707963</pose></include>
+    <include><uri>model://charging_station</uri><name>charger_c2</name><pose>-21 -20 0 0 0 1.5707963</pose></include>
+    <include><uri>model://charging_station</uri><name>charger_c3</name><pose>-18 -20 0 0 0 1.5707963</pose></include>
+
+    <!-- ===================== 2번째 좁은 통로 (2주차, 이진) ===================== -->
+    <!--
+      A-B 열 사이 통로(원래 y -1.4~4.4, 폭 5.8 m)에 랙 1개를 나란히 추가해
+      폭 0.6 m x 길이 5.0 m 통로를 만든다. 기존 랙 위치는 하나도 옮기지 않았다.
+      새 통로: x -2.5~2.5, y -1.4~-0.8 (남쪽 B열과의 사이).
+      이 구간의 남은 메인 통로(북쪽): y 0.4~4.4, 폭 4.0 m — 로봇 2대가 엇갈려
+      지나가는 데 필요한 최소 폭(1.5 m 이상)을 충분히 만족한다.
+      x -2.5~2.5 밖에서는 원래 5.8 m 폭 그대로다. 입출고 도크(y 8.5~18.5)·
+      충전소(남쪽 벽)로 가는 통로와는 겹치지 않는다.
+    -->
+    <include><uri>model://warehouse_rack</uri><name>rack_lane_divider</name><pose>0 -0.2 0 0 0 0</pose></include>
+
+    <!-- ===================== 동적 장애물 경로 표시 (2주차, 이진) ===================== -->
+    <!--
+      작업자·지게차·다른 로봇이 다닐 경로/스폰 위치를 바닥에 얇게 표시한다.
+      전부 <visual>만 있고 <collision>이 없다 — 로봇이 부딪히지 않고, 두께도
+      1mm(0.001 m)라 LiDAR(설치 높이 약 0.2 m)의 스캔 평면보다 훨씬 아래에 있어
+      스캔에도, SLAM 맵에도 잡히지 않는다.
+      실제 이동 동작(스폰, 속도, 충돌체)은 지수가 구현한다. 좌표·경로·패턴·속도
+      범위는 config/dynamic_obstacles.yaml에 동일한 값으로 정리해 뒀다.
+    -->
+    <model name="dynamic_obstacle_paths">
+      <static>true</static>
+      <link name="link">
+        <!-- worker_1: 메인 통로, 직선, (-24,13)->(24,13) -->
+        <visual name="worker_1_path">
+          <cast_shadows>false</cast_shadows>
+          <pose>0 13 0.0015 0 0 0</pose>
+          <geometry><box><size>48 0.1 0.001</size></box></geometry>
+          <material><ambient>0.95 0.55 0.15 1</ambient><diffuse>0.95 0.55 0.15 1</diffuse></material>
+        </visual>
+        <visual name="worker_1_spawn">
+          <cast_shadows>false</cast_shadows>
+          <pose>-24 13 0.002 0 0 0</pose>
+          <geometry><cylinder><radius>0.3</radius><length>0.001</length></cylinder></geometry>
+          <material><ambient>0.95 0.55 0.15 1</ambient><diffuse>0.95 0.55 0.15 1</diffuse></material>
+        </visual>
+
+        <!-- worker_2: A열 남은 통로(y 0.4~4.4), 곡선(지그재그), 4점 -->
+        <visual name="worker_2_path_1">
+          <cast_shadows>false</cast_shadows>
+          <pose>-14 2.4 0.0015 0 0 0.2288</pose>
+          <geometry><box><size>12.32 0.1 0.001</size></box></geometry>
+          <material><ambient>0.95 0.55 0.15 1</ambient><diffuse>0.95 0.55 0.15 1</diffuse></material>
+        </visual>
+        <visual name="worker_2_path_2">
+          <cast_shadows>false</cast_shadows>
+          <pose>0 2.4 0.0015 0 0 -0.1739</pose>
+          <geometry><box><size>16.24 0.1 0.001</size></box></geometry>
+          <material><ambient>0.95 0.55 0.15 1</ambient><diffuse>0.95 0.55 0.15 1</diffuse></material>
+        </visual>
+        <visual name="worker_2_path_3">
+          <cast_shadows>false</cast_shadows>
+          <pose>14 2.4 0.0015 0 0 0.2288</pose>
+          <geometry><box><size>12.32 0.1 0.001</size></box></geometry>
+          <material><ambient>0.95 0.55 0.15 1</ambient><diffuse>0.95 0.55 0.15 1</diffuse></material>
+        </visual>
+        <visual name="worker_2_spawn">
+          <cast_shadows>false</cast_shadows>
+          <pose>-20 1.0 0.002 0 0 0</pose>
+          <geometry><cylinder><radius>0.3</radius><length>0.001</length></cylinder></geometry>
+          <material><ambient>0.95 0.55 0.15 1</ambient><diffuse>0.95 0.55 0.15 1</diffuse></material>
+        </visual>
+
+        <!-- forklift_1: B-C 열 사이 통로, 직선, (-24,-6.5)->(20,-6.5), 기둥 5/6(y=-5.5) 회피 -->
+        <visual name="forklift_1_path">
+          <cast_shadows>false</cast_shadows>
+          <pose>-2 -6.5 0.0015 0 0 0</pose>
+          <geometry><box><size>44 0.1 0.001</size></box></geometry>
+          <material><ambient>0.85 0.15 0.15 1</ambient><diffuse>0.85 0.15 0.15 1</diffuse></material>
+        </visual>
+        <visual name="forklift_1_spawn">
+          <cast_shadows>false</cast_shadows>
+          <pose>-24 -6.5 0.002 0 0 0</pose>
+          <geometry><cylinder><radius>0.4</radius><length>0.001</length></cylinder></geometry>
+          <material><ambient>0.85 0.15 0.15 1</ambient><diffuse>0.85 0.15 0.15 1</diffuse></material>
+        </visual>
+
+        <!-- forklift_2: 대기 구역 인근, 무작위(산개 경로점 4개) -->
+        <visual name="forklift_2_path_1">
+          <cast_shadows>false</cast_shadows>
+          <pose>10 -14 0.0015 0 0 -0.1974</pose>
+          <geometry><box><size>10.2 0.1 0.001</size></box></geometry>
+          <material><ambient>0.85 0.15 0.15 1</ambient><diffuse>0.85 0.15 0.15 1</diffuse></material>
+        </visual>
+        <visual name="forklift_2_path_2">
+          <cast_shadows>false</cast_shadows>
+          <pose>11.5 -16 0.0015 0 0 -2.8664</pose>
+          <geometry><box><size>7.28 0.1 0.001</size></box></geometry>
+          <material><ambient>0.85 0.15 0.15 1</ambient><diffuse>0.85 0.15 0.15 1</diffuse></material>
+        </visual>
+        <visual name="forklift_2_path_3">
+          <cast_shadows>false</cast_shadows>
+          <pose>13 -15 0.0015 0 0 0.3805</pose>
+          <geometry><box><size>10.77 0.1 0.001</size></box></geometry>
+          <material><ambient>0.85 0.15 0.15 1</ambient><diffuse>0.85 0.15 0.15 1</diffuse></material>
+        </visual>
+        <visual name="forklift_2_spawn">
+          <cast_shadows>false</cast_shadows>
+          <pose>5 -13 0.002 0 0 0</pose>
+          <geometry><cylinder><radius>0.4</radius><length>0.001</length></cylinder></geometry>
+          <material><ambient>0.85 0.15 0.15 1</ambient><diffuse>0.85 0.15 0.15 1</diffuse></material>
+        </visual>
+
+        <!-- robot_1: 다른 AMR(충전소로 이동하는 교차 트래픽), 곡선(2구간) -->
+        <visual name="robot_1_path_1">
+          <cast_shadows>false</cast_shadows>
+          <pose>-26 -0.5 0.0015 0 0 -1.5708</pose>
+          <geometry><box><size>27 0.1 0.001</size></box></geometry>
+          <material><ambient>0.55 0.25 0.85 1</ambient><diffuse>0.55 0.25 0.85 1</diffuse></material>
+        </visual>
+        <visual name="robot_1_path_2">
+          <cast_shadows>false</cast_shadows>
+          <pose>-24 -15.5 0.0015 0 0 -0.6435</pose>
+          <geometry><box><size>5.0 0.1 0.001</size></box></geometry>
+          <material><ambient>0.55 0.25 0.85 1</ambient><diffuse>0.55 0.25 0.85 1</diffuse></material>
+        </visual>
+        <visual name="robot_1_spawn">
+          <cast_shadows>false</cast_shadows>
+          <pose>-26 13 0.002 0 0 0</pose>
+          <geometry><cylinder><radius>0.3</radius><length>0.001</length></cylinder></geometry>
+          <material><ambient>0.55 0.25 0.85 1</ambient><diffuse>0.55 0.25 0.85 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>

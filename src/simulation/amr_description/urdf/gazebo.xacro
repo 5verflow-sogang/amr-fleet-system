@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<!--
+  Gazebo Fortress 시스템 플러그인.
+  Gazebo 토픽은 로봇 네임스페이스를 붙여 5대가 겹치지 않게 하고, ros_gz_bridge가 같은 이름의 ROS 토픽으로 잇는다.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <gazebo>
+    <!-- cmd_vel → 바퀴 속도, 바퀴 회전 → odom (odom → base_footprint TF 포함) -->
+    <plugin filename="ignition-gazebo-diff-drive-system" name="ignition::gazebo::systems::DiffDrive">
+      <left_joint>${prefix}left_wheel_joint</left_joint>
+      <right_joint>${prefix}right_wheel_joint</right_joint>
+      <wheel_separation>${wheel_separation}</wheel_separation>
+      <wheel_radius>${wheel_radius}</wheel_radius>
+
+      <max_linear_velocity>${max_linear_velocity}</max_linear_velocity>
+      <min_linear_velocity>${-max_linear_velocity}</min_linear_velocity>
+      <max_linear_acceleration>${max_linear_acceleration}</max_linear_acceleration>
+      <min_linear_acceleration>${-max_linear_acceleration}</min_linear_acceleration>
+      <max_angular_velocity>${max_angular_velocity}</max_angular_velocity>
+      <min_angular_velocity>${-max_angular_velocity}</min_angular_velocity>
+      <max_angular_acceleration>${max_angular_acceleration}</max_angular_acceleration>
+      <min_angular_acceleration>${-max_angular_acceleration}</min_angular_acceleration>
+
+      <topic>${topic_ns}/cmd_vel</topic>
+      <odom_topic>${topic_ns}/odom</odom_topic>
+      <tf_topic>${topic_ns}/tf</tf_topic>
+      <frame_id>${prefix}odom</frame_id>
+      <child_frame_id>${prefix}base_footprint</child_frame_id>
+      <odom_publish_frequency>50</odom_publish_frequency>
+    </plugin>
+
+    <!-- 바퀴 조인트 각도 → joint_states (robot_state_publisher가 바퀴 TF를 계산) -->
+    <plugin filename="ignition-gazebo-joint-state-publisher-system" name="ignition::gazebo::systems::JointStatePublisher">
+      <topic>${topic_ns}/joint_states</topic>
+      <joint_name>${prefix}left_wheel_joint</joint_name>
+      <joint_name>${prefix}right_wheel_joint</joint_name>
+    </plugin>
+
+    <!--
+      GT(ground truth): Gazebo가 아는 진짜 위치·속도. 위치 오차(RMSE)·제동 거리 측정의 기준값.
+      frame "world" = Gazebo 월드 원점(창고 중심). SLAM의 map과는 원점이 다를 수 있다.
+      TF로는 내보내지 않는다 (tf_topic은 브리지하지 않음). 로봇 판단에 쓰면 안 된다.
+    -->
+    <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
+      <odom_frame>world</odom_frame>
+      <robot_base_frame>${prefix}base_footprint</robot_base_frame>
+      <odom_topic>${topic_ns}/ground_truth/odom</odom_topic>
+      <tf_topic>${topic_ns}/ground_truth/tf</tf_topic>
+      <dimensions>3</dimensions>
+      <odom_publish_frequency>${gt_rate}</odom_publish_frequency>
+    </plugin>
+  </gazebo>
+
+</robot>

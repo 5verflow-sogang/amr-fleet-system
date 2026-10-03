@@ -23,7 +23,7 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            # 'node_name = amr_localization.node_module:main',
+            'eval_node = amr_localization.eval_node:main',
         ],
     },
 )

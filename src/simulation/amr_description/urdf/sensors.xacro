@@ -1,0 +1,75 @@
+<?xml version="1.0"?>
+<!--
+  센서 링크 자리. 위치는 원 명세서 TF 예시값이다 (base_link 기준).
+  1주차는 링크·조인트만 둔다. 센서 플러그인과 노이즈 모델은 2주차에 추가한다.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="lidar_xyz" value="0.15 0 0.2"/>
+  <xacro:property name="camera_xyz" value="0.18 0 0.25"/>
+  <xacro:property name="imu_xyz" value="0 0 0.1"/>
+
+  <!-- LiDAR -->
+  <link name="${prefix}lidar_link">
+    <visual>
+      <geometry>
+        <cylinder radius="0.04" length="0.05"/>
+      </geometry>
+      <material name="amr_sensor">
+        <color rgba="0.2 0.2 0.2 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.04" length="0.05"/>
+      </geometry>
+    </collision>
+    <xacro:cylinder_inertia m="0.2" r="0.04" h="0.05"/>
+  </link>
+
+  <joint name="${prefix}lidar_joint" type="fixed">
+    <parent link="${prefix}base_link"/>
+    <child link="${prefix}lidar_link"/>
+    <origin xyz="${lidar_xyz}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 카메라 (링크는 ROS 관례 x 전방, 광학 프레임은 z 전방·x 오른쪽·y 아래) -->
+  <link name="${prefix}camera_link">
+    <visual>
+      <geometry>
+        <box size="0.03 0.1 0.03"/>
+      </geometry>
+      <material name="amr_sensor"/>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.03 0.1 0.03"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="0.1" x="0.03" y="0.1" z="0.03"/>
+  </link>
+
+  <joint name="${prefix}camera_joint" type="fixed">
+    <parent link="${prefix}base_link"/>
+    <child link="${prefix}camera_link"/>
+    <origin xyz="${camera_xyz}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="${prefix}camera_optical_frame"/>
+
+  <joint name="${prefix}camera_optical_joint" type="fixed">
+    <parent link="${prefix}camera_link"/>
+    <child link="${prefix}camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
+  </joint>
+
+  <!-- IMU (몸체 안쪽) -->
+  <link name="${prefix}imu_link"/>
+
+  <joint name="${prefix}imu_joint" type="fixed">
+    <parent link="${prefix}base_link"/>
+    <child link="${prefix}imu_link"/>
+    <origin xyz="${imu_xyz}" rpy="0 0 0"/>
+  </joint>
+
+</robot>

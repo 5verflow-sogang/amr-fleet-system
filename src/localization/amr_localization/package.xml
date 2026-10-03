@@ -7,7 +7,16 @@
   <maintainer email="TODO@example.com">민지</maintainer>
   <license>TODO: License declaration</license>
 
-  <!-- TODO: 구현 시 의존성 추가 (예: rclpy, amr_msgs) -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <!-- 위치추정 스택 (localization.launch.py) -->
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>nav2_amcl</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>amr_mapping</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
 

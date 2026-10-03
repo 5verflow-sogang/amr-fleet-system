@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 기반 | 31번 스펙 필수요건: 5대 동시운용, SLAM·경로계획·제어·AI인지·작업수행·Fleet Management, Docker·Git Flow·테스트자동화, 대시보드 | 개요서 |
 | 연구 1 (메인) | 중앙집중 Fleet의 통신 지연 내성과 분산 전환 임계점 실측. ros2_tracing을 측정 도구로 사용 | 하연(방법론) + 민지(연구설계) |
-| 연구 2 (AI/ML) | 인식·위치추정 불확실성을 추적→충돌예측→회피까지 전파했을 때의 안전성 향상 검증 | AI/ML 파트 제안 |
+| 연구 2 (AI/ML) | KF 상태 추정 공분산 P와 TTC를 결합한 적응형 safety margin이 ORCA의 안전성-효율성 trade-off에 미치는 영향 검증 | AI/ML 파트 제안 |
 | 시스템 고도화 | 장애 주입기, 회귀 테스트 하네스, 관측 스택(Prometheus/Grafana + 사후 리플레이) | 민지 제안 |
 | 선택 고도화 | RL 내비게이션, 궤적 예측, MARL, 실물 네트워크(라즈베리파이), Jetson 엣지 추론 | 팀원 추가 제안, 2차 회의 안건 |
 
@@ -22,9 +22,9 @@
 
 | 핵심 시스템 | 입력 | 출력 | 팀 추가 산출물 |
 | --- | --- | --- | --- |
-| 1. 시뮬레이션 환경 및 로봇 시스템 | 물류센터 설계 파라미터, 로봇 스펙 | 물리 시뮬레이션 물류센터, 센서 노이즈 모델 AMR, Docker ROS2 스택 | 연구 2용 인식 품질 저하 시나리오(가림·조명·거리) |
+| 1. 시뮬레이션 환경 및 로봇 시스템 | 물류센터 설계 파라미터, 로봇 스펙 | 물리 시뮬레이션 물류센터, 센서 노이즈 모델 AMR, Docker ROS2 스택 | 연구 2용 P·TTC 독립 변화 시나리오(관측 누락·noise 수준·상대속도) |
 | 2. 자율 매핑 및 정밀 위치 추정 | LiDAR, IMU, Wheel Encoder | 2D 맵, EKF 센서퓨전 위치 추정, 오차 분석 리포트 | 회귀 하네스 기반 신뢰구간 리포트 |
-| 3. AI 인지 및 동적 환경 대응 | 목표 지점, 센서 데이터, 카메라 영상 | 객체 인식·3D 위치, 경로 생성·추종, 동적 장애물 예측·회피, 긴급 대응 | 연구 2: 불확실성 전파 파이프라인과 baseline 비교 |
+| 3. AI 인지 및 동적 환경 대응 | 목표 지점, 센서 데이터, 카메라 영상 | 객체 인식·3D 위치, 경로 생성·추종, 동적 장애물 예측·회피, 긴급 대응 | 연구 2: 적응형 margin ORCA와 고정 margin baseline 비교 |
 | 4. 다중 AMR 협업 운용 | 다수 배송 요청 | 5대 이상 동시 운용, 작업 할당, 교착 방지, 대시보드 | 연구 1: 장애 주입, 중앙/분산/하이브리드 비교, 관측 스택 |
 
 레포지토리에 반드시 포함할 것:
@@ -43,13 +43,13 @@
 
 | 영역 | 필수 구현 | 필수 KPI | 담당 | 팀 추가·연구 연결 |
 | --- | --- | --- | --- | --- |
-| 1. 개발 환경·인프라 | `docker-compose up` 실행, ros:humble 베이스, nvidia-container-toolkit, Git Flow + conventional commits, 60×40m 물류센터(선반·입출고·충전 3개·통로), 동적 장애물 5개 이상(0.3~1.5m/s, 직선·곡선·무작위), xacro URDF(600×400×300mm, 2.0m/s, 1.0m/s², 1.5rad/s, 적재 질량 반영), 센서 노이즈(LiDAR σ=0.03m 등), extrinsic 파일 | 센서 사양 충족 | 지수 (Docker·Git Flow·CI는 하연) | 회귀 하네스가 같은 Docker 이미지로 실행 |
+| 1. 개발 환경·인프라 | `docker-compose up` 실행, ros:humble 베이스, nvidia-container-toolkit, Git Flow + conventional commits, 60×40m 물류센터(선반·입출고·충전 3개·통로), 동적 장애물 5개 이상(0.3~1.5m/s, 직선·곡선·무작위), xacro URDF(600×400×300mm, 2.0m/s, 1.0m/s², 1.5rad/s, 적재 질량 반영), 센서 노이즈(LiDAR σ=0.03m 등), extrinsic 파일 | 센서 사양 충족 | 지수 (물류센터 정적 환경은 이진, Docker·Git Flow·CI는 하연) | 회귀 하네스가 같은 Docker 이미지로 실행 |
 | 2. 로봇 기초 | 순기구학 직접 구현, 휠 오도메트리 + 드리프트 실험, LiDAR·Depth·IMU 필터링, TF 트리(map→odom→base_link→센서) 문서화 | 드리프트 분석 리포트 | 지수 | 드리프트 기준값은 위치추정 인계 계약에 사용 (8-2절) |
 | 3. 위치 추정 | slam_toolbox/cartographer 파라미터 문서화 또는 ICP/NDT 직접 구현, Loop Closure, 맵 품질 지표, AMCL 튜닝, Kidnapped 복구, EKF(Odom+IMU+AMCL) 공분산 근거 | 맵 0.05m 이하, 오차 정지 3cm·직선 5cm·회전 8cm, RMSE·Max(100개 시점 이상) | 지수(SLAM·지도) + 민지(AMCL·EKF·위치 오차 KPI), 8-2절 | 하네스로 N회 반복 신뢰구간 제시 |
 | 4. 경로 계획 | A* 직접 구현 vs NavFn/Smac, 경로 평활화, DWA 직접 구현 vs TEB, Costmap 3레이어, 좁은 통로(로봇 폭+20cm) | 50쌍 성공률 98%, 재계획 500ms, 주행시간 예측 오차 15% | 이진 | 연구 2에서 DWA 비용함수·Costmap에 불확실성 반영 가능 |
 | 5. 모션 제어 | Pure Pursuit/Stanley 직접 구현(적응형 look-ahead), PID 속도 제어, 사다리꼴/S-curve, 저크 제한 | CTE 직선 5cm·곡선 10cm | 이진 | 연구 2 효율성 지표(jerk)로 재사용 |
-| 6. AI 인지 | YOLOv8 3종 이상(화물·사람·표지판), 커스텀 메시지 + RViz2 마커, Pinhole 2D→3D(map frame) | CPU 10 FPS 또는 GPU 30 FPS | 연우 | 연구 2 입력: confidence·측정 공분산. Jetson 고도화안 연결 |
-| 7. 동적 환경 대응 | LiDAR 동적 장애물 분류, KF/EKF 추적(속도·방향·신뢰도), 미래 위치 예측·TTC, VO/ORCA, 긴급정지(0.3m), Safety Zone(Warning/Critical), E-Stop, 센서 고장 감지 → 안전 정지/저속 | 30회 충돌 0건, 경로 이탈 1m, 복귀 5초, 1.0m/s 장애물 재계획 회피 | 연우 | **연구 2 본체.** 명세의 "신뢰도 계산"을 AKF 공분산으로 확장 |
+| 6. AI 인지 | YOLOv8 3종 이상(화물·사람·표지판), 커스텀 메시지 + RViz2 마커, Pinhole 2D→3D(map frame) | CPU 10 FPS 또는 GPU 30 FPS | 연우 | 연구 2 입력: KF의 R 근거가 되는 측정 노이즈 모델. Jetson 고도화안 연결 |
+| 7. 동적 환경 대응 | LiDAR 동적 장애물 분류, KF/EKF 추적(속도·방향·신뢰도), 미래 위치 예측·TTC, VO/ORCA, 긴급정지(0.3m), Safety Zone(Warning/Critical), E-Stop, 센서 고장 감지 → 안전 정지/저속 | 30회 충돌 0건, 경로 이탈 1m, 복귀 5초, 1.0m/s 장애물 재계획 회피 | 연우 | **연구 2 본체.** 명세의 "신뢰도 계산"을 KF 공분산 P로 두고 ORCA margin 결정에 사용 |
 | 8. 작업 수행 | BehaviorTree.CPP, 대기-이동-인식-작업-복귀, 노드 15개 이상, 서브트리, 에러 3종 이상 자동 복구, Groot 시각화, ArUco 도킹(3회 실패 시 대체 작업), JSON Task, 상태 이벤트, 우선순위·마감 스케줄링, 작업 로그 | 도킹 2cm·1도, 단일 작업 성공률 97%, BT 확장 시 수정 3파일 이내 | 지수 | 작업 로그를 관측 스택으로 수집 |
 | 9. Fleet Management | 5대 이상, 네임스페이스·TF 분리, 통신 지연 100ms 반영, 중앙 할당(최소거리/부하균형/Hungarian), 최적성 지표, 경로 충돌 예측, 교차로 우선순위, 교착 탐지 + 해소 전략 2가지 이상, 대시보드(위치·상태·배터리·작업, KPI, 이상 알림) | 5대 동시 운용 시 교착 없이 수행 | 하연 (분산 로직은 이진 공동) | **연구 1 본체.** 100ms 반영을 장애 주입기의 한 설정값으로 구현. 대시보드는 Prometheus/Grafana(지수) |
 | 10. 통합·품질 | 성능 리포트, README·아키텍처·알고리즘·API 문서 | 평균 응답 200ms(50회 이상), 5대 CPU 80% 이하, 연속 4시간 운용, 커버리지 70%, 통합 테스트 10개 이상 자동화, `colcon build` 경고 0 | 민지(테스트) + 이진(문서) + 전원 | ros2_tracing으로 응답시간 분해, 하네스로 CI 자동 검증 |
@@ -63,9 +63,9 @@
 | 지점 | 원 명세서 | 팀 계획의 문제 | 조치 |
 | --- | --- | --- | --- |
 | KPI 검증 조건 | 로봇 간 통신 지연 최대 100ms를 시뮬레이션에 반영 | 연구 1이 baseline을 지연 0ms로 정의 | 필수 KPI(200ms, CPU 80%)는 **지연 100ms 조건**에서 검증. 0ms는 연구용 기준점으로만 사용 |
-| 동적 장애물 추적 입력 | LiDAR 데이터에서 동적 장애물 분류 후 KF 추적 | 연구 2는 YOLO(카메라) 검출에서 출발 | LiDAR 트랙에 카메라 검출을 연관(association)해 confidence를 붙임. 카메라 FOV(87도) 밖은 LiDAR 단독 + 기본 R |
+| 동적 장애물 추적 입력 | LiDAR 데이터에서 동적 장애물 분류 후 KF 추적 | 연구 2는 YOLO(카메라) 검출에서 출발 | LiDAR 트랙에 카메라 검출을 연관(association)해 class를 붙임. 카메라 FOV(87도) 밖은 LiDAR 단독. 연구 2는 KF 출력(P) 이후만 바꾸므로 이 구조와 충돌하지 않음 |
 | 연속 운용 | 연속 4시간 운용 안정성 검증 | 로드맵에 없음 | P4에 4시간 soak 테스트 추가, 관측 스택으로 메모리·지연 추이 기록 |
-| 안전 시스템 | 긴급정지 0.3m, Safety Zone, E-Stop, 센서 고장 감지 | 팀 문서에 언급 없음 | 연우 담당으로 명시. 연구 2의 충돌확률을 Warning 존 트리거로 활용 |
+| 안전 시스템 | 긴급정지 0.3m, Safety Zone, E-Stop, 센서 고장 감지 | 팀 문서에 언급 없음 | 연우 담당으로 명시. 연구 2의 TTC·adaptive margin을 Warning 존 트리거로 활용 |
 | RL 보너스 | Isaac Sim의 RL 환경 활용 | 시뮬레이터는 Gazebo 권장 | Gazebo를 쓰면 RL용 별도 경량 환경(gym 래퍼) 필요. 스트레치로 유지하고 시뮬레이터 결정 시 함께 판단 |
 | 시뮬레이터 버전 | Gazebo Fortress 또는 Garden, ROS2 Humble | 둘 다 후보로 기재 | Humble 공식 페어링인 Fortress로 확정 권장 |
 
@@ -87,7 +87,8 @@
 
 | 영역 | 누락·축약 항목 | 담당 |
 | --- | --- | --- |
-| 1. 환경 | 바닥 마찰 계수·조명 조건 등 물리 파라미터를 현실적으로 설정 / 정적 장애물(선반·벽·**기둥**) / 동적 장애물 종류(**작업자·지게차·다른 로봇**) / URDF 모델 내 센서 위치와 TF 트리 정확히 일치 / 센서 캘리브레이션 절차 문서화 | 지수 |
+| 1. 환경 | 바닥 마찰 계수·조명 조건 등 물리 파라미터를 현실적으로 설정 / 정적 장애물(선반·벽·**기둥**) | 이진 |
+| 1. 환경 | 동적 장애물 종류(**작업자·지게차·다른 로봇**) / URDF 모델 내 센서 위치와 TF 트리 정확히 일치 / 센서 캘리브레이션 절차 문서화 | 지수 |
 | 1. 센서 | 아래 "센서 사양" 표의 전 항목(1-2절은 LiDAR σ만 기재) | 지수 |
 | 2. 로봇 기초 | LiDAR 필터 3종(거리·각도·아웃라이어) / Depth 포인트클라우드 변환 + **다운샘플링** / IMU 저역통과 필터 + **바이어스 보정** / TF 트리 시각화 자료 | 지수 |
 | 3. 위치 추정 | Loop Closure 탐지와 **그래프 최적화 과정** 설명 / 맵 품질 지표는 맵 일관성·구조물 정확도로 정의 | 지수 |
@@ -172,9 +173,10 @@
 | P95 / P99 | 상위 5%/1% 지연시간. 안전 관련 시스템에서 평균보다 중요 |
 | 장애 주입 | 지연·패킷손실·서버 장애를 인위적으로 발생시켜 한계를 실측하는 기법 |
 | 신뢰구간 / 노이즈 바닥 | 같은 조건 N회 반복으로 결과가 우연인지 실제 개선인지 구분하는 기준 |
-| Adaptive KF (AKF) | 측정 신뢰도에 따라 측정잡음 공분산 R을 실시간 조정하는 칼만필터 |
+| 상태 추정 공분산 P | KF가 추정한 상태(위치·속도)의 불확실성을 나타내는 공분산 행렬. 클수록 추정을 덜 믿어야 함 |
+| NEES | 실제 추정 오차가 공분산 P와 맞는지 보는 일관성 지표. P를 margin에 쓰기 전 점검용 |
 | TTC | Time-To-Collision. 현재 상대속도 유지 시 충돌까지 남은 시간 |
-| Probabilistic TTC | 위치·속도 추정의 공분산을 반영해 충돌 확률 또는 TTC 분포로 표현한 위험도 |
+| Adaptive safety margin | ORCA가 장애물 반경에 더하는 여유 거리를 P와 TTC에 따라 매 주기 조절하는 방식 |
 | VO / ORCA | Velocity Obstacle / Optimal Reciprocal Collision Avoidance. 충돌을 일으키는 속도 집합을 피해 속도를 선택하는 회피 기법 |
 
 ## 3. 연구 1 (메인): 중앙집중 Fleet의 통신 지연 내성과 분산 전환 임계점
@@ -213,69 +215,123 @@ ros2_tracing은 **측정 도구**, 중앙집중 vs 분산 비교실험은 **그 
 - 목표는 완벽한 분산 시스템이 아니라 중앙집중 대비 상대적 강건성 비교다.
 - 보너스 과제 4번(분산 Fleet Management, 중앙 서버 장애 시 폴백)은 이 실험으로 함께 검증된다.
 
-## 4. 연구 2 (AI/ML): 불확실성 전파 기반 동적 장애물 회피
+## 4. 연구 2 (AI/ML): KF 공분산과 TTC를 결합한 적응형 safety margin 기반 ORCA 충돌 회피
 
-**연구질문**: 객체 인식 및 위치 추정의 불확실성을 충돌예측과 회피까지 전파하면 동적 장애물 환경에서 로봇의 안전성이 향상되는가?
+**연구질문**: 동적 장애물 환경에서 Kalman Filter의 상태 추정 공분산 P와 TTC를 결합한 적응형 safety margin은 고정 margin 기반 ORCA의 안전성-효율성 trade-off에 어떤 영향을 미치는가?
 
-스펙이 요구하는 파이프라인(YOLO → 3D 위치 → KF → TTC → ORCA)을 그대로 두고, 각 단계가 점 추정값 대신 **평균 + 공분산**을 다음 단계로 넘기도록 바꾼다.
+> 초기안(인식 불확실성을 YOLO부터 ORCA까지 전 단계 전파)에서 범위를 좁힌 안이다. 좁힌 이유는 [4-5절](#4-5-초기안에서-범위를-좁힌-이유)에 정리했다.
+
+스펙이 요구하는 파이프라인(YOLO → 3D 위치 → KF → TTC → ORCA)은 그대로 두고, **ORCA가 쓰는 safety margin을 정하는 방법 하나만** 바꾼다. 새로운 추적·충돌예측 알고리즘을 제안하지 않는다. KF와 TTC에서 이미 얻을 수 있는 정보를 margin 결정에 썼을 때의 효과를 검증한다.
 
 ```mermaid
 flowchart LR
-  A[YOLOv8<br/>bbox + confidence] --> B[Pinhole 3D 변환<br/>위치 + 측정 공분산]
-  B --> C[Adaptive KF<br/>confidence 반영 R]
-  C --> D[Probabilistic TTC<br/>충돌확률 추정]
-  D --> E[VO/ORCA<br/>불확실성 safety margin]
+  A[YOLOv8<br/>+ LiDAR 트랙] --> B[3D 위치]
+  B --> C["Kalman Filter<br/>x̂, P"]
+  C --> D[TTC<br/>결정적 계산]
+  C --> M
+  D --> M["Adaptive margin<br/>m = f(P, TTC)"]
+  M --> E[ORCA<br/>알고리즘 변경 없음]
   E --> F[속도 명령]
+  style M stroke-width:3px
 ```
 
-각 화살표는 추정값과 공분산을 함께 전달한다. baseline은 같은 구조에서 공분산을 버리고 고정값을 쓴다.
+굵은 테두리가 이 연구에서 바꾸는 부분이다. baseline은 같은 구조에서 m을 고정값으로 둔다.
 
-### 4-1. 단계별 설계
+### 4-1. 설계
 
-1. **Pinhole 3D 좌표변환**: bbox 내부 depth의 중앙값을 Z로 사용하고 카메라 내부 파라미터로 X, Y를 계산한다. bbox 픽셀 오차와 depth 잡음을 Jacobian으로 전파해 3D 측정 공분산을 만든다.
-2. **Adaptive Kalman Filter**: YOLO confidence가 낮을수록 측정잡음 공분산 R을 키워 측정을 덜 신뢰한다. 미검출 프레임은 예측만 수행해 공분산이 자연스럽게 커진다. Mahalanobis 게이팅으로 오매칭을 거른다.
-3. **Probabilistic TTC**: 상대 위치·속도의 공분산에서 샘플링(Monte Carlo)해 예측 구간 T 안에서 안전거리 이내로 접근할 확률을 계산한다. 출력은 충돌확률과 TTC 분포(예: 하위 5% TTC)다.
-4. **불확실성 기반 VO/ORCA**: 장애물 반경을 위치 공분산의 최대 고유값만큼 팽창시킨다. 충돌확률이 임계값을 넘을 때만 확장된 margin을 적용해 과도한 보수성을 피한다.
+기존 ORCA는 장애물마다 고정 margin을 더한다. 제안 방식은 KF 공분산과 TTC로 margin을 매 주기 조절한다.
 
 ```math
-R_k = \frac{\Sigma_{3D,k}}{c_k^{\alpha}}, \qquad r_{\text{safe}} = r_{\text{robot}} + r_{\text{obs}} + \kappa \sqrt{\lambda_{\max}(\Sigma_{\text{pos}})}
+R_{\text{base}} = r_{\text{robot}} + r_{\text{obs}} + m_{\text{fixed}}, \qquad R_{\text{adaptive}} = r_{\text{robot}} + r_{\text{obs}} + f(P_k, \mathrm{TTC}_k)
 ```
 
-c는 YOLO confidence, α는 조정 계수, κ는 신뢰수준(예: 95%)에 해당하는 계수다.
+1. **KF 추적**: 장애물마다 위치·속도 추정값 $\hat{x}_k$와 공분산 $P_k$를 출력한다. 스펙 필수 구현(KF/EKF 추적) 그대로다.
+2. **TTC**: 추정된 로봇-장애물 상대 위치·속도로 TTC를 닫힌 식으로 계산한다. 샘플링은 쓰지 않는다.
+3. **margin 함수 f**: 추정 불확실성이 크거나 충돌이 임박하면 margin을 키우고, 추정이 안정적이거나 시간 여유가 있으면 줄인다.
+4. **ORCA**: 알고리즘은 바꾸지 않고 장애물의 effective radius에만 margin을 반영한다.
+
+f의 구체적인 형태와 가중치는 구현과 예비 실험으로 정한다. 출발점 후보는 두 항을 더하는 형태다.
+
+```math
+m_k = \mathrm{clip}\!\left(m_{\min} + \kappa\sqrt{\lambda_{\max}(P_{\text{pos},k})} + \beta \cdot \max\!\left(0,\ 1 - \frac{\mathrm{TTC}_k}{T_h}\right),\ m_{\min},\ m_{\max}\right)
+```
+
+$P_{\text{pos}}$는 P의 위치(x, y) 블록, κ는 신뢰수준 계수, $T_h$는 TTC가 이보다 길면 긴급도 항이 0이 되는 시간 기준, β는 긴급도 가중치다. 덧셈 형태를 쓰면 ablation이 간단해진다. β=0이면 A1(P만), κ=0이면 A2(TTC만)가 된다.
+
+비교를 공정하게 하려고 다음을 지킨다.
+
+- B1의 고정 margin은 $m_{\min}$, B2는 $m_{\max}$와 같게 둔다. 적응형 margin이 두 baseline 사이에서만 움직이므로 "margin을 키워서 안전해졌다"와 "필요할 때만 키웠다"를 구분할 수 있다.
+- f의 파라미터(κ, β, $T_h$)는 예비 실험용 시나리오 seed로 정하고, 본 실험은 다른 seed로 돌린다. 튜닝에 쓴 데이터로 평가하지 않는다.
 
 ### 4-2. 비교군과 가설
 
-| 비교군 | 추적 | 충돌예측 | 회피 margin |
+| 비교군 | Kalman Filter | TTC | ORCA safety margin |
 | --- | --- | --- | --- |
-| B1 기본 baseline | KF(고정 R) | 결정적 TTC | 고정 소형 margin |
-| B2 보수적 baseline | KF(고정 R) | 결정적 TTC | 고정 대형 margin |
-| A1 | AKF | 결정적 TTC | 고정 소형 margin |
-| A2 | AKF | Probabilistic TTC | 고정 소형 margin |
-| 제안 | AKF | Probabilistic TTC | 불확실성 기반 margin |
+| B1 기본 baseline | 사용 | 사용 | 고정 소형 margin ($m_{\min}$) |
+| B2 보수적 baseline | 사용 | 사용 | 고정 대형 margin ($m_{\max}$) |
+| A1 | 사용 | 사용 | P 기반 adaptive margin (β=0) |
+| A2 | 사용 | 사용 | TTC 기반 adaptive margin (κ=0) |
+| 제안 | 사용 | 사용 | P+TTC 기반 adaptive margin |
 
-A1·A2는 단계별 기여를 분리하는 ablation이다. B2가 핵심 대조군이다. 제안 방식은 **B1보다 안전하고 B2보다 효율적**이어야 "그냥 더 조심해서 안전해진 것"이 아님을 보일 수 있다.
+B1은 효율을 우선한 일반적인 고정 margin, B2는 안전을 위해 큰 margin을 고정으로 쓰는 보수적 방식이다. A1·A2는 공분산과 TTC 각각의 기여를 분리하는 ablation이다. 모든 비교군에서 추적과 TTC 계산은 같고 margin만 다르다.
 
-- **H1**: AKF는 고정 R KF보다 인식 잡음이 큰 조건에서 추적 오차와 NEES(공분산 일관성)가 개선된다.
-- **H2**: 제안 방식은 B1 대비 충돌·근접(near-miss)이 줄어든다.
-- **H3**: 제안 방식은 B2 대비 경로 길이·완료 시간·정지 횟수가 적다.
+- **H1**: 제안 방식은 B1 대비 충돌과 near-miss를 줄인다.
+- **H2**: 제안 방식은 B2 대비 경로 길이, 목표 도달 시간, 불필요한 감속·정지 횟수를 줄인다.
+- **H3**: 제안 방식은 A1·A2와 다른 안전성-효율성 trade-off를 형성한다. 추정 불확실성과 충돌의 시간적 긴급성을 함께 반영하기 때문이다.
+
+핵심 비교는 **"B1보다 안전하면서 B2보다 효율적인가?"** 다. 이를 보여야 margin을 크게 잡아 안전해진 것이 아니라 상황에 맞게 조절한 효과임을 주장할 수 있다.
 
 ### 4-3. 실험 조건과 지표
 
 | 항목 | 내용 |
 | --- | --- |
-| 독립변수 | 인식 품질(거리, 가림, 조명, 인위적 confidence 저하), 장애물 속도 0.3~1.5m/s, 이동 패턴(직선/곡선/무작위), 장애물 밀도 |
-| 안전성 지표 | 충돌 건수(스펙: 30회 중 0건), 최소 이격거리, near-miss 비율 |
-| 추정 품질 지표 | 위치 RMSE, NEES, TTC 예측 오차, 충돌 경보 오탐·미탐률 |
-| 효율성 지표 | 경로 길이, 목표 도달 시간, 정지 횟수, jerk |
-| 실시간성 | 파이프라인 지연(ros2_tracing), CPU. 스펙 200ms 예산 안에 들어와야 함 |
-| 반복 | 조건당 N회 반복, 회귀 테스트 하네스로 신뢰구간 산출 |
+| 장애물 속도 | 저속 → 고속 (스펙 범위 0.3~1.5m/s) |
+| 이동 패턴 | 직선, 횡단, 교차, 곡선, 무작위 |
+| 장애물 밀도 | 저 / 중 / 고 |
+| 추정 불확실성 | 관측 noise 수준, 관측 누락(가림·카메라 FOV 밖·검출 실패) |
+| 충돌 위험도 | 초기 거리와 상대속도를 바꿔 TTC 변화 |
+| 반복 | 조건당 N회, 회귀 테스트 하네스로 신뢰구간 산출 |
+
+**P와 TTC를 독립적으로 바꾸는 조건이 가장 중요하다.** 같은 TTC에서 관측 조건을 바꿔 P만 다르게 하고, 같은 P에서 상대속도를 바꿔 TTC만 다르게 한다. P와 TTC를 각각 2수준으로 두는 2×2 조건을 기본으로 한다.
+
+주의할 점이 있다. 선형 KF의 P는 실제 잔차가 아니라 Q, R, 관측 빈도로만 정해진다. 따라서 **R을 고정한 채 센서 noise만 키우면 P는 거의 변하지 않는다.** P를 실제로 바꾸는 방법은 두 가지다.
+
+- 관측 누락: 가림, FOV 밖, 검출 실패 구간에서는 예측만 수행되어 P가 커진다. 원 명세의 "LiDAR 트랙 + 카메라 연관" 구조에서 자연스럽게 생긴다.
+- noise 수준에 맞춘 R: 조건별 noise 수준에 맞춰 R을 설정하거나, 거리에 따라 R을 키운다(센서 노이즈 모델 기반).
+
+P가 실제 오차를 반영하지 못하면 P 기반 margin은 의미가 없다. 그래서 GT로 NEES를 계산해 P의 일관성을 먼저 확인한다.
+
+| 평가 영역 | 지표 |
+| --- | --- |
+| 안전성 | 충돌 횟수(스펙: 30회 중 0건), collision rate, 최소 이격거리, near-miss 비율 |
+| 효율성 | 목표 도달 시간, 경로 길이, 평균 속도, 감속·정지 횟수 |
+| 주행 안정성 | 속도 변화량, jerk, ORCA 회피 개입 횟수 |
+| 추정 품질 점검 | 위치·속도 RMSE, NEES (P를 margin에 쓸 수 있는지 확인용) |
+| 실시간성 | margin 계산 시간, 전체 파이프라인 지연(ros2_tracing), CPU. 스펙 200ms 예산 안 |
+
+최종 결과는 비교군별 안전성-효율성 산점도(예: 최소 이격거리 vs 목표 도달 시간)로 보여준다.
 
 ### 4-4. 인터페이스와 스코프
 
-- YOLO와 3D 변환을 모두 연우가 맡으므로 2D 검출(bbox, class, confidence, 타임스탬프)은 인지 도메인 내부 경계로 두고, 외부(Costmap·BT)로 내보내는 3D 결과는 공분산 포함 메시지로 통일한다. 원 명세서가 **커스텀 메시지 타입**을 요구하므로 인터페이스 패키지 `amr_msgs`에 직접 정의하고, 3D 위치는 PoseWithCovariance 필드로 담는다. 착수 첫 주에 확정한다.
-- 시뮬레이터 ground truth가 있어 추적 오차·NEES를 정확히 계산할 수 있다는 점이 시뮬레이션 연구의 강점이다.
-- 정교한 궤적 예측 모델(6장)은 넣지 않는다. 등속 모델 + 공분산으로 먼저 가설을 검증한다.
-- 원 명세는 동적 장애물을 **LiDAR로 분류·추적**하도록 요구한다. 따라서 추적의 뼈대는 LiDAR 트랙이고, 카메라 FOV 안에서는 YOLO 검출을 연관(association)해 confidence를 R 조정에 쓴다. FOV 밖이나 미검출 시에는 기본 R을 쓴다. 이 구조 자체가 "카메라 가시성에 따른 불확실성 변화"라는 실험 조건이 된다.
+- **입력**: KF가 장애물마다 Track ID, 추정 위치, 추정 속도, 상태 추정 공분산 P, timestamp를 넘긴다. 원 명세서가 커스텀 메시지 타입을 요구하므로 인터페이스 패키지 `amr_msgs`에 직접 정의한다. 인식 결과 3D 메시지(class, confidence, PoseWithCovariance)와 함께 착수 첫 주에 확정한다.
+- **Adaptive safety margin 모듈**: 로봇과 장애물의 상대 상태로 TTC를 계산하고, $(\hat{x}, P, \mathrm{TTC}) \rightarrow m_{\text{adaptive}}$를 계산한다. ROS 비의존 라이브러리(`amr_perception_core`)에 두어 단위 테스트한다.
+- **ORCA**: 알고리즘 자체는 바꾸지 않고 effective radius에 $m_{\text{adaptive}}$를 반영한다. 연구 범위는 ORCA를 새로 제안하는 것이 아니라 **ORCA가 쓰는 margin의 결정 방법을 바꾸는 것**으로 한정한다.
+- 원 명세는 동적 장애물을 **LiDAR로 분류·추적**하도록 요구한다. 추적의 뼈대는 LiDAR 트랙이고, 카메라 FOV 안에서는 YOLO 검출을 연관해 class를 붙인다. 카메라 가시성에 따라 관측 빈도가 달라지는 구조 자체가 P를 바꾸는 실험 조건이 된다.
+- 시뮬레이터 ground truth가 있어 추적 오차와 NEES를 정확히 계산할 수 있다.
+- 궤적 예측 모델(6장)은 넣지 않는다. 등속 모델로 가설을 먼저 검증한다.
+
+### 4-5. 초기안에서 범위를 좁힌 이유
+
+초기안은 YOLO confidence → Pinhole 3D 측정 공분산 → Adaptive KF → Monte Carlo 기반 Probabilistic TTC → 불확실성 ORCA까지 모든 단계가 평균과 공분산을 넘기는 구조였다. 검토 중 아래 네 가지 문제가 나왔다.
+
+| 문제 | 초기안에 미치는 영향 | 수정안에서의 처리 |
+| --- | --- | --- |
+| YOLO는 bbox 픽셀 분산을 주지 않는다 | $\Sigma_{3D} = J\,\Sigma_{u,v,Z}\,J^T$에서 $\sigma_u^2, \sigma_v^2$를 알 수 없어 측정 공분산을 구성할 수 없다 | 연구 가설에서 뺀다. KF의 R은 센서 노이즈 모델(depth noise 등)과 고정 픽셀 오차 가정으로 정한다 |
+| confidence가 위치 불확실성을 뜻하는지 불분명 | confidence는 검출 신뢰도다. 클래스는 확신하면서 bbox가 틀릴 수 있고, 반대도 가능하다. $R_k = \Sigma_{3D,k}/c_k^{\alpha}$는 검증되지 않은 가정에 기댄다 | AKF를 뺀다. confidence와 GT 대비 3D 위치 오차는 로그로 수집만 해두고, 상관이 유의하면 후속 연구에서 다룬다 |
+| Monte Carlo TTC의 실시간성 | 장애물 수 × 샘플 수만큼 매 주기 계산이 늘어 200ms 예산의 병목이 될 수 있다 | 결정적 TTC(닫힌 식)만 쓴다. margin 계산은 고유값 하나와 스칼라 연산이라 부담이 거의 없다 |
+| P에서 TTC 분포로의 변환이 비선형 | TTC는 위치·속도의 비선형 함수라 P를 TTC 분산으로 볼 수 없다. MC는 느리고 해석적 근사는 오차가 생긴다 | TTC를 분포로 바꾸지 않는다. P와 TTC를 f의 **별개 입력**으로 결합한다 |
+
+결과적으로 파이프라인의 대부분이 스펙 필수 구현과 같아진다. 연우가 필수 KPI(KF 추적, TTC, ORCA)를 구현하는 작업이 곧 연구 baseline이 되고, 연구용 추가 구현은 margin 모듈과 실험 시나리오로 줄어든다. 초기안의 AKF와 Probabilistic TTC는 6장 선택 고도화로 옮긴다.
 
 ## 5. 시스템 고도화 (공통 인프라)
 
@@ -304,7 +360,7 @@ A1·A2는 단계별 기여를 분리하는 ablation이다. B2가 핵심 대조�
 - Prometheus로 지연·처리량·배터리 시계열 저장, Grafana로 시각화
 - 스펙 필수 대시보드(실시간 위치·상태·배터리·현재 작업, KPI: 작업 처리량·평균 작업 시간·로봇 가동률, 알림: 긴급 정지·작업 실패·교착)를 이 스택으로 구현. 지도 위 실시간 위치는 Foxglove Studio로 병행
 - 교착·충돌 발생 시 전후 상태를 자동 스냅샷(rosbag 구간 저장)해 원인을 재현
-- 연구 2의 near-miss, 충돌확률 경보도 같은 알림 경로로 표시
+- 연구 2의 near-miss, margin 확장 이벤트도 같은 알림 경로로 표시
 
 ## 6. 선택 고도화 (스트레치 목표)
 
@@ -313,10 +369,11 @@ A1·A2는 단계별 기여를 분리하는 ablation이다. B2가 핵심 대조�
 | 항목 | 내용 | 기존 계획과의 관계 | 권장 |
 | --- | --- | --- | --- |
 | RL 기반 내비게이션 (보너스 1) | 단일 로봇 PPO/SAC 정책, 소규모 Domain Randomization, 직접구현 DWA와 정량 비교 | 연구 2 착수로 연우 부담 증가 → 확정 과제에서 스트레치로 조정, 지수 지원 | 연구 2 초안 이후 |
-| 궤적 예측 기반 사회적 내비게이션 | KF 추적 히스토리 → Social-STGCNN/Trajectron++ → Predictive Costmap 레이어 → DWA 비용함수 확장 | 연구 2의 자연스러운 후속. Trajectron++의 GMM 출력은 공분산 전파 구조에 그대로 연결됨 | 후속 연구로 보류 |
+| 궤적 예측 기반 사회적 내비게이션 | KF 추적 히스토리 → Social-STGCNN/Trajectron++ → Predictive Costmap 레이어 → DWA 비용함수 확장 | 연구 2의 자연스러운 후속. 예측 분포의 공분산을 margin 함수 f의 P 자리에 그대로 연결 가능 | 후속 연구로 보류 |
 | MARL 기반 Fleet 할당 | 계층 구조(상위 MAPPO 할당 / 하위 Nav2 유지), PettingZoo 추상 환경 학습 → Gazebo 검증 | 연구 1의 분산 비교군을 학습 기반으로 교체하는 확장 | 후속 연구로 보류 |
 | 실물 네트워크 (고도화안 1) | 로봇 대리 노드를 라즈베리파이로 분리, `tc netem`으로 실제 지연·손실 발생, 각 노드 ros2_tracing 실측 | 연구 1 결과의 실측 검증 + 발표 데모. 통계 실험은 시뮬레이션 유지 | 최소구성(3+1대)만, 2차 회의 결정 — **이진 주도** |
-| Jetson 엣지 추론 (고도화안 2) | YOLOv8 → TensorRT FP16/INT8, 시뮬레이터 카메라 토픽을 Jetson으로 전달해 추론, FPS·지연·전력 측정 | 연구 2의 인식 품질 조건(양자화에 따른 confidence 변화)으로 활용 가능 | 2차 회의 결정 |
+| Jetson 엣지 추론 (고도화안 2) | YOLOv8 → TensorRT FP16/INT8, 시뮬레이터 카메라 토픽을 Jetson으로 전달해 추론, FPS·지연·전력 측정 | 양자화에 따른 검출 누락·오차 변화를 연구 2의 관측 조건으로 활용 가능 | 2차 회의 결정 |
+| 불확실성 전 단계 전파 (연구 2 초기안) | confidence–3D 위치 오차 상관 검증 → 유의하면 confidence 기반 AKF, Probabilistic TTC(Unscented Transform·Gaussian 근사로 실시간성 확보) | 4-5절에서 범위 밖으로 뺀 부분. confidence·오차 로그는 본 실험에서 미리 수집 | 후속 연구로 보류 |
 | 충전 스케줄링 | 충전소 3개 × 로봇 5대 경합, 임계값/예측/기회주의 정책 | 스펙의 빈 구멍. 연구 축에서는 제외, 시스템 기능으로만 | 여유 시 기능 추가 |
 
 궤적 예측과 MARL은 한 학기 안에 연구 1·2와 동시에 하면 일정이 터질 가능성이 높다. 논문 "향후 연구" 절의 근거로 남기는 것을 기본안으로 한다.
@@ -331,28 +388,45 @@ A1·A2는 단계별 기여를 분리하는 ablation이다. B2가 핵심 대조�
 
 ## 8. 팀 역할
 
-역할 비중은 5명 모두 20%로 맞춘다. 연구 1은 하연·이진·민지, 연구 2는 연우가 주도한다.
+역할 비중은 5명 모두 20%로 맞춘다. 연구 1은 하연·이진·민지, 연구 2는 연우가 주도한다. 메시지 열은 9/28 회의에서 확정한 `amr_msgs` 설계안 기준이며, 발행하는 쪽이 필드 의미와 값의 정확성을 책임진다.
 
-| 담당자 | 관심사 | 담당 모듈(31번 스펙 기준) | 연구·고도화 역할 |
+| 담당자 | 담당 모듈(31번 스펙 기준) | 발행·소유 메시지 | 연구·고도화 역할 |
 | --- | --- | --- | --- |
-| 하연 | 인프라, 실시간 데이터 | Fleet Management 총괄(작업할당·Traffic Management·교착탐지해소), `amr_msgs` 인터페이스 확정 | 연구 1 주저자, 장애 주입기, ros2_tracing, CI/CD 총괄 |
-| 민지 | 백엔드, 파이프라인 | 위치추정(AMCL 튜닝, EKF 센서퓨전, Kidnapped Robot 복구, GT 대비 RMSE 측정), TF `map→odom` | 회귀 테스트 하네스(N회 반복·신뢰구간·baseline 비교), 연구 1 통계 분석 |
-| 지수 | 첫 프로젝트, 학습 목적 | 시뮬레이션 환경/로봇모델링/센서, 오도메트리·센서 전처리, SLAM 매핑(지도 생성), 작업수행(BT, 도킹) | 관측 스택(Prometheus/Grafana, 스냅샷, 여유 시 착수), RL 지원 |
-| 이진 (팀장) | 시스템 | 경로계획/모션제어(A*·DWA 직접구현, Pure Pursuit/Stanley, PID) | 분산 협상 로직(하연과 공동), 논문 구조·투고 일정 조율, **실물 네트워크 고도화 주도** |
-| 연우 | ML/AI | AI인지/동적장애물(YOLOv8, 3D 변환, KF 추적, TTC, ORCA) | 연구 2 주저자(AKF·Probabilistic TTC·불확실성 ORCA), RL 내비게이션(스트레치) |
+| 하연 | Fleet Management 총괄(작업할당·Traffic Management·교착탐지해소), **`amr_msgs` 패키지 관리자**, Docker·Git Flow·CI | `Task`, `TaskAssignment`, `ZoneGrant`, `FleetHeartbeat`, `FleetTaskTable`/`TaskRecord`, `ErrorInfo` 코드 대역 | 연구 1 주저자, 장애 주입기, ros2_tracing, CI/CD 총괄 |
+| 민지 | 위치추정(AMCL 튜닝, EKF 센서퓨전, Kidnapped Robot 복구, GT 대비 RMSE 측정), TF `map→odom` | (발행 없음) Fleet 메시지 신뢰성 규약(명령 ID·Ack·lease·경매) 공동 설계 | 회귀 테스트 하네스(N회 반복·신뢰구간·baseline 비교), 연구 1 통계 분석 |
+| 지수 | 동적 장애물·로봇모델링/센서, 오도메트리·센서 전처리, SLAM 매핑(지도 생성), 작업수행(BT, 도킹) | `RobotState`(가상 배터리 포함), `TaskStatus`, `TaskAssignmentAck`, `Dock.action` | 관측 스택(Prometheus/Grafana, 스냅샷, 여유 시 착수), RL 지원 |
+| 이진 (팀장) | 경로계획/모션제어(A*·DWA 직접구현, Pure Pursuit/Stanley, PID), 물류센터 정적 환경(월드), 로봇 측 구역 진입 처리 | `ZoneRequest`, 분산 폴백 시 `TaskAuction`·`TaskBid`(하연과 공동) | 분산 협상 로직(하연과 공동), 논문 구조·투고 일정 조율, **실물 네트워크 고도화 주도** |
+| 연우 | AI인지/동적장애물(YOLOv8, 3D 변환, KF 추적, TTC, ORCA), 안전 시스템(긴급정지·Safety Zone·E-Stop·센서 고장 감지) | `DetectedObject3DArray`, `TrackedObstacleArray`, `CollisionRiskArray`, `SafetyStatus`, E-Stop 서비스(`std_srvs/SetBool`) | 연구 2 주저자(P+TTC 적응형 margin ORCA), RL 내비게이션(스트레치) |
+
+> 로봇 측 `ZoneRequest` 담당(이진)은 제안이다. 구역 앞 정지·재개가 주행 제어에 붙는 기능이라 이진에 두었고, BT에서 처리하자는 의견이 나오면 지수로 옮긴다. 2주차에 확정한다.
 
 ### 8-1. 세부 작업
 
 | 담당자 | 세부 작업 |
 | --- | --- |
-| 하연 | 중앙집중 작업할당(최소거리/부하균형/Hungarian), Traffic Management(경로충돌 예측·해소, 교차로 우선순위), 교착탐지·해소 2가지 이상 / 장애 주입기(지연 0~500ms, 손실 0~10%, 서버 강제종료) / ros2_tracing 셋업, QoS·DDS 벤더 튜닝 / GitHub Actions·Docker·Git Flow |
-| 민지 | AMCL 튜닝(파티클 수, alpha1~5, 리샘플링) / EKF 센서퓨전(Wheel Odom+IMU+AMCL, config 매트릭스, 50Hz 이상) + 공분산 근거 문서화 / Kidnapped Robot 복구(전역 재초기화 + 제자리 회전) / GT 대비 RMSE·Max Error 측정 파이프라인(100개 시점, 지정 로그 포맷) / 목표: 정지 3cm·직선 5cm·회전 8cm 이내 / 하네스 설계: 반복 횟수 N, 신뢰구간, 통계 검정 |
-| 지수 | 물류센터 환경(60×40m), 정적·동적 장애물 배치, compose `sim` 서비스 launch / URDF·xacro, TF 트리(`base_link` 하위, `odom→base_link`) 문서화, 센서 노이즈 모델링 / 차동구동 순기구학·휠 오도메트리, 드리프트 측정 실험 / LiDAR·Depth·IMU 전처리 필터 / 2D SLAM 매핑(slam_toolbox 튜닝, Loop Closure, 지도 저장, 맵 품질 지표) / Behavior Tree(15개 이상 노드), ArUco 도킹(2cm/1도) / (여유 시) Prometheus+Grafana, 교착·충돌 스냅샷 |
-| 이진 | A* 직접구현 및 NavFn/Smac 비교, 경로평활화 / DWA 직접구현 및 TEB 비교 / Costmap(Static/Obstacle/Inflation) / Pure Pursuit·Stanley, PID, 속도 프로파일링 / 분산 협상 로직(단순 규칙 기반) / 논문 구조·KCSE·MOST 일정 관리 / (채택 시) 실물 네트워크: 라즈베리파이 셋업, tc netem 지연 주입, 발표 데모 리허설 |
-| 연우 | YOLOv8 ROS2 노드(화물·사람·표지판 3종 이상), RViz2 마커 / 인식 품질 저하 시나리오(가림·조명·거리) / Pinhole 3D 변환 + 측정 공분산 전파 / KF 추적(baseline) → confidence 기반 AKF / 결정적 TTC(baseline) → Probabilistic TTC / VO·ORCA(baseline) → 불확실성 margin ORCA / ablation 실험 설계 / (스트레치) PPO·SAC 내비게이션 vs DWA |
+| 하연 | `amr_msgs` msg/srv/action 작성·빌드·버전 관리(변경 PR은 발행자·소비자 모두 승인) / 중앙집중 작업할당(최소거리/부하균형/Hungarian), Traffic Management(구역 허가 `ZoneRequest`/`ZoneGrant` 서버 측, 경로충돌 예측, 교차로 우선순위), 교착탐지·해소 2가지 이상 / 할당 명령 재전송·Ack 처리, heartbeat·작업표 방송 / 장애 주입기(지연 0~500ms, 손실 0~10%, 서버 강제종료) / ros2_tracing 셋업, QoS·DDS 벤더 튜닝 / GitHub Actions·Docker·Git Flow |
+| 민지 | AMCL 튜닝(파티클 수, alpha1~5, 리샘플링) / EKF 센서퓨전(Wheel Odom+IMU+AMCL, config 매트릭스, 50Hz 이상) + 공분산 근거 문서화 / Kidnapped Robot 복구(전역 재초기화 + 제자리 회전) / GT 대비 RMSE·Max Error 측정 파이프라인(100개 시점, 지정 로그 포맷) / 목표: 정지 3cm·직선 5cm·회전 8cm 이내 / 하네스 설계: 반복 횟수 N, 신뢰구간, 통계 검정, Ack 왕복시간 등 Fleet 메시지 기반 지표 수집 / Fleet 메시지 신뢰성 규약 리뷰 |
+| 지수 | 동적 장애물(작업자·지게차·다른 로봇, 0.3~1.5m/s) 배치, compose `sim` 서비스 launch, GT 토픽 제공 / URDF·xacro, TF 트리(`base_link` 하위, `odom→base_link`) 문서화, 센서 노이즈 모델링 / 차동구동 순기구학·휠 오도메트리, 드리프트 측정 실험 / LiDAR·Depth·IMU 전처리 필터 / 2D SLAM 매핑(slam_toolbox 튜닝, Loop Closure, 지도 저장, 맵 품질 지표) / Behavior Tree(15개 이상 노드), ArUco 도킹(2cm/1도), 3회 실패 시 대체 작업 / `RobotState`(가상 배터리 모델)·`TaskStatus`·`TaskAssignmentAck` 발행 / (여유 시) Prometheus+Grafana, 교착·충돌 스냅샷 |
+| 이진 | 물류센터 정적 환경(60×40m 벽·기둥·선반·입출고·충전소 3개·통로, 바닥 마찰·조명) / A* 직접구현 및 NavFn/Smac 비교, 경로평활화 / DWA 직접구현 및 TEB 비교(`TrackedObstacleArray`의 pose·twist·radius로 동적 장애물 반영) / Costmap(Static/Obstacle/Inflation) / Pure Pursuit·Stanley, PID, 속도 프로파일링(`SafetyStatus.speed_limit` 참고 감속) / 로봇 측 구역 진입 처리(`ZoneRequest` 발행, 허가 없으면 구역 앞 정지) / 분산 협상 로직(단순 규칙 기반) / 논문 구조·KSC·MOST 일정 관리 / (채택 시) 실물 네트워크: 라즈베리파이 셋업, tc netem 지연 주입, 발표 데모 리허설 |
+| 연우 | YOLOv8 ROS2 노드(화물·사람·표지판 3종 이상), RViz2 마커 / Pinhole 3D 변환 + 센서 노이즈 모델 기반 R / LiDAR 동적 장애물 분류 + KF 추적(P 출력) + 카메라 연관 + NEES 점검 / TTC + margin 함수 f(P, TTC) → `CollisionRiskArray` / VO·ORCA(고정 margin baseline → 적응형 margin) / 안전 노드: `cmd_vel` 게이트(정지 책임), Safety Zone(Warning/Critical), E-Stop, 센서 고장 감지 / P·TTC 독립 변화 시나리오(관측 누락·noise·상대속도) / 비교군 5종 실험 설계 / (스트레치) PPO·SAC 내비게이션 vs DWA |
 
 - 논문은 전원 공동 작성. 각자 담당 모듈 파트는 본인이, 서론·관련연구·결론은 분담, 전체 구조는 이진이 조율한다.
-- 초반 인터페이스 합의가 필요한 경계: 하연↔이진(분산 협상), 연우↔이진·지수(인식 결과 3D 메시지: Costmap·BT가 소비), 민지↔하연(하네스가 수집할 지표 형식), 지수→민지(지도·오도메트리·센서 토픽 인계 계약, 8-2절).
+- 안전 정지 책임은 안전 노드(연우)가 `cmd_vel`을 가로채는 방식에 둔다(9/28 회의). 제어(이진)는 `speed_limit`을 참고해 부드럽게 감속하는 부가 역할만 한다.
+
+#### 인터페이스 경계 (amr_msgs 확정안)
+
+| # | 경계 | 발행 → 소비 | 메시지 |
+| --- | --- | --- | --- |
+| 1 | 인지 → 추적·Costmap·BT | 연우 → 연우·이진·지수 | `DetectedObject3DArray` |
+| 2 | 추적 → 회피·안전·주행 | 연우 → 연우·이진 | `TrackedObstacleArray`, `CollisionRiskArray` |
+| 3 | 안전 → 제어·BT·대시보드 | 연우 → 이진·지수·대시보드 | `SafetyStatus`, E-Stop 서비스 |
+| 4 | Fleet → 로봇 (작업) | 하연 → 지수 | `TaskAssignment` ↔ `TaskAssignmentAck` |
+| 5 | 로봇 → Fleet·대시보드 | 지수 → 하연·대시보드 | `RobotState`, `TaskStatus` |
+| 6 | Fleet ↔ 로봇 (생존·폴백) | 하연 ↔ 이진 | `FleetHeartbeat`, `FleetTaskTable`, `TaskAuction`, `TaskBid` |
+| 7 | 로봇 ↔ Fleet (교통) | 이진 ↔ 하연 | `ZoneRequest` ↔ `ZoneGrant` |
+| 8 | BT → 도킹 | 지수 → 지수 | `Dock.action` |
+| — | 지도·센서 인계 | 지수 → 민지 | 표준 메시지, 8-2절 인계 계약 |
+| — | 지표 수집 | 전원 → 민지 | 하네스 CSV 형식([tools/harness/README.md](../tools/harness/README.md)) |
 
 ### 8-2. 매핑·위치추정 분업 (지수 ↔ 민지)
 
@@ -441,23 +515,27 @@ IEEE MOST 마감(2026년 12월 1일)까지 약 10주가 남았다. 이 일정에
 | P0 셋업 | 9/28~10/11 (2주) | Gazebo 환경, URDF, Docker, Git Flow, 오도메트리·센서 필터, SLAM 지도 v1 인계(10/11) | ros2_tracing 설치 검증, self-hosted 러너 테스트, 모듈 간 인터페이스 확정 |
 | P1 핵심 구현 | 10/12~10/19 (1주, 압축) | SLAM·EKF, A*·DWA, YOLO 연동, 중앙집중 할당, BT — 필수 KPI 확정 | 장애 주입기, 하네스 v1, Before 데이터 1세트 |
 | **P1.5 논문(국문) 작성** | **10/20~10/26** | 10/19까지 미완료분 최소 보완 | 전원 공동 작성(KSC 투고), 이진 취합·조율 |
-| P2 실험 심화 | 10/27~11/22 (약 3.5주) | KPI 최종 안정화 | 연구 1 비교 실험 전체, 연구 2 AKF·PTTC·불확실성 ORCA 및 ablation |
+| P2 실험 심화 | 10/27~11/22 (약 3.5주) | KPI 최종 안정화 | 연구 1 비교 실험 전체, 연구 2 비교 실험(현재안 기준: f(P, TTC) 튜닝(예비 seed) 및 비교군 5종. 10/5 주제 결정에 따라 수정) |
 | P3 MOST 원고 | 11/23~12/1 (1.5주) | 통합 테스트 10개 이상 | 연구 1 영문 원고 제출 |
 | P4 마무리 | 12월 | 커버리지 70%, 연속 4시간 운용 테스트 | 스트레치(실물 네트워크·RL 등) |
 
-스펙 구현지침의 권장 순서도 따른다. EKF 완료 직후 연구 2 데이터 수집을 병행하고, 동적 장애물 추적 단계에서 AKF를 붙이며, Fleet Management 단계에서 중앙집중을 먼저 완성한 뒤 분산 비교군을 얹는다.
+스펙 구현지침의 권장 순서도 따른다. EKF 완료 직후 연구 2 데이터 수집을 병행하고, 동적 장애물 추적·ORCA 단계에서 adaptive margin을 붙이며, Fleet Management 단계에서 중앙집중을 먼저 완성한 뒤 분산 비교군을 얹는다.
 
 P2 종료 시점에 데이터가 부족하면 MOST를 포기하고 KCSE에 집중하는 결정을 11/22에 내린다.
 
 ### 9-1. 주간 회의/중간점검 (매주 월요일, 인원별)
 
+날짜는 그날 회의에서 점검하는 작업이다. 9/28(1차) 열은 1주차(9/21~9/27), 10/5(2차) 열은 2주차(9/28~10/4) 작업이다.
+
+연구 2 주제는 10/5(2차) 회의에서 정한다. 결정 후 연구 2와 관련된 칸(연우 10/12~, P2 연구 2 실험)과 4장을 고친다.
+
 | 담당자 | 9/28(1차) | 10/5(2차) | 10/12(3차) | 10/19(P1 마감) | 10/20~26(논문) |
 | --- | --- | --- | --- | --- | --- |
 | 하연 | Fleet 아키텍처 설계 + `amr_msgs` 인터페이스 확정 + Docker 기본 세팅 | 중앙집중 작업할당 기본로직 + ros2_tracing 설치검증 + 장애주입기 착수 | Traffic Management·교착탐지 + 장애주입기 완성 + Fleet 통합 시작 | **Before 데이터 수집 완료, Fleet KPI 확정** | 논문 전체 구조·실험/결과 섹션 작성 주도 + 시스템 최종 폴리싱 |
 | 민지 | Docker/ROS2 세팅, slam_toolbox·AMCL·robot_localization 동작 검증, `amr_msgs` 리뷰, 지수와 인계 계약 확정(8-2절), GT 대비 RMSE 계산기 스텁 | SLAM 매핑 페어 지원(Loop Closure 디버깅), EKF config 초안(mock·초기 `/odom`·`/imu/data`), RMSE 파이프라인을 Gazebo GT에 연결, 하연과 하네스 지표 형식 합의 | **지도 v1 인계(10/11)** 후 AMCL 튜닝 + EKF 공분산 튜닝 + Kidnapped Robot 복구, 100개 시점 정확도 테스트 | **위치추정 필수 KPI 확정**(정지 3cm·직선 5cm·회전 8cm, EKF 50Hz) | 논문(Localization 파트) 작성 + 버그수정 |
-| 지수 | 물류센터 환경 기본구성, URDF 착수, 센서 노이즈 초안(민지 합의) | URDF·xacro 완성, TF(`base_link` 하위) 검증, 순기구학·휠 오도메트리(`/odom` 공분산), LiDAR·IMU 필터, slam_toolbox 매핑(민지 페어) | **지도 v1 인계(10/11)**, 드리프트 실험 → 기준값 합의(10/14), TF 트리 문서화, Behavior Tree 착수 | **지도 KPI 확정**(0.05m·벽 겹침 없음) + 드리프트·맵 품질 리포트, **BT+도킹 KPI 확정**, 통합테스트 | 논문(시스템구축·매핑 파트) 작성 + 여유되면 관측스택 착수 |
-| 이진 | Nav2 기본셋업, Costmap 착수 | A* 직접구현 | DWA 직접구현 + Pure Pursuit/Stanley | **PID+CTE KPI 확정** + 분산 협상로직 초안 | 논문 전체 조율·투고원고 취합 |
-| 연우 | Pinhole Camera Model 설계, YOLO 착수 | YOLO 통합 + 3D좌표변환 | 칼만필터 추적 구현 | **탐지율/FPS/회피 KPI 확정**(TTC+ORCA 포함) | 논문(Perception 파트) 작성 |
+| 지수 | 물류센터 월드 기본형(v0 보완은 2주차부터 이진), URDF 착수, 센서 노이즈 초안(민지 합의) | URDF·xacro 완성, TF(`base_link` 하위) 검증, 순기구학·휠 오도메트리(`/odom` 공분산), LiDAR·IMU 필터, slam_toolbox 매핑(민지 페어) | **지도 v1 인계(10/11)**, 드리프트 실험 → 기준값 합의(10/14), TF 트리 문서화, Behavior Tree 착수 | **지도 KPI 확정**(0.05m·벽 겹침 없음) + 드리프트·맵 품질 리포트, **BT+도킹 KPI 확정**, 통합테스트 | 논문(시스템구축·매핑 파트) 작성 + 여유되면 관측스택 착수 |
+| 이진 | Nav2 기본셋업, Costmap 착수 | A* 직접구현 + 물류센터 월드 v0(물리·조명·좁은 통로·동적 장애물 자리) + 적재 질량 제동 거리 테스트 + DWA 코어 착수(3차 선행) | DWA 완성(동적 장애물 반영·Nav2 플러그인·TEB 비교) + Pure Pursuit/Stanley | **PID+CTE KPI 확정** + 분산 협상로직 초안 | 논문 전체 조율·투고원고 취합 |
+| 연우 | Pinhole Camera Model 설계, YOLO 착수 | YOLO 통합 + 3D좌표변환 + 칼만필터 추적 구현·LiDAR 동적 장애물 분류 착수(3차 선행) | LiDAR 동적 장애물 분류 + 카메라 연관(LiDAR 트랙 ↔ YOLO 검출) + TTC·ORCA 착수 | **탐지율/FPS/회피 KPI 확정**(TTC+ORCA 포함) | 논문(Perception 파트) 작성 |
 
 ## 10. 관련 선행연구
 
@@ -478,7 +556,7 @@ P2 종료 시점에 데이터가 부족하면 MOST를 포기하고 KCSE에 집�
 
 **차별점**: 위 논문은 모두 단일 로봇/차량 내부 지연을 다룬다. 이 프로젝트는 다중 로봇 Fleet 통신 레이어 + 중앙집중/분산 아키텍처 비교 + 장애 주입 기반 임계점 분석으로 확장한다. 분산 Fleet 아키텍처 문헌은 추가 조사가 필요하다.
 
-### 10-2. 연구 2: 불확실성 기반 충돌 회피 (조사 후보)
+### 10-2. 연구 2: 불확실성·TTC 기반 적응형 충돌 회피 (조사 후보)
 
 아래는 출발점 후보이며 서지 정보는 투고 전 원문으로 확인해야 한다.
 
@@ -486,9 +564,9 @@ P2 종료 시점에 데이터가 부족하면 MOST를 포기하고 KCSE에 집�
 - 위치추정 불확실성을 반영한 다중로봇 충돌회피(Hennes 외, 2012 전후)
 - PRVO: Probabilistic Reciprocal Velocity Obstacle(Gopalakrishnan 외, IROS 2017 전후)
 - Chance-constrained 동적 환경 충돌회피(Zhu & Alonso-Mora, RA-L 2019 전후)
-- 검출 confidence 기반 적응형 칼만필터 / 다중객체추적 계열
+- TTC·위험도 기반 적응형 안전거리(safety distance) 계열 — 조사 필요
 
-**차별점 후보**: 기존 연구는 주로 위치추정 또는 회피 단계 한 곳의 불확실성만 다룬다. 이 연구는 **YOLO confidence에서 시작해 3D 변환·추적·TTC·ORCA까지 끝까지 전파**하고, 단계별 ablation으로 각 단계의 기여를 분리한다는 점을 주장한다. 조사 결과에 따라 문장을 조정한다.
+**차별점 후보**: PRVO나 chance-constrained 계열은 불확실성을 속도 장애물이나 최적화 제약에 직접 넣어 회피 알고리즘 자체를 바꾼다. 이 연구는 ORCA를 그대로 두고 **KF가 이미 내놓는 P와 TTC만으로 margin을 조절**하는 가벼운 방식이며, P와 TTC를 독립적으로 바꾸는 실험과 ablation으로 두 정보 각각의 기여를 분리한다는 점을 주장한다. 조사 결과에 따라 문장을 조정한다.
 
 ## 11. 비용 및 하드웨어
 
@@ -519,7 +597,7 @@ P2 종료 시점에 데이터가 부족하면 MOST를 포기하고 KCSE에 집�
 | 논문 | 주제 | 투고처 | 형태 | 일정 | 학교 지원 |
 | --- | --- | --- | --- | --- | --- |
 | 논문 A | 다중 로봇 Fleet에서 중앙집중 작업할당의 통신 지연 내성 분석 및 분산 전환 임계점 실측 | IEEE MOST 2027 (Autonomous vehicles/robots 트랙) | 영문 시스템 논문 6~11쪽 | 마감 2026.12.1 | 미확인 — 등록비 자체가 높고 트래블 그랜트는 미국 대학 재학생 한정, 팀 자체부담 가능성 대비 |
-| 논문 B | 객체 인식 불확실성의 추적·충돌예측·회피 전파를 통한 동적 장애물 환경 안전성 향상 | KSC(한국소프트웨어종합학술대회) | 국문 | 통상 12월경 개최 | **캡스톤 학교연계로 1인 참가비 지원 확정** — 발표자 1인 기준 재확인 필요 |
+| 논문 B | 칼만 필터 공분산과 TTC를 결합한 적응형 safety margin 기반 ORCA 동적 장애물 회피 | KSC(한국소프트웨어종합학술대회) | 국문 | 통상 12월경 개최 | **캡스톤 학교연계로 1인 참가비 지원 확정** — 발표자 1인 기준 재확인 필요 |
 
 - 논문 A 데이터가 MOST 마감에 부족하면 논문 A도 KSC/국내학회로 돌린다(9장의 11/22 결정).
 - 두 논문 모두 전원 공저. 제1저자는 논문 A 하연, 논문 B 연우를 기본안으로 한다.
@@ -535,15 +613,17 @@ P2 종료 시점에 데이터가 부족하면 MOST를 포기하고 KCSE에 집�
 | P1 압축 일정 (10/19 마감) | **높음** — 원래 4.5주였던 1차 개발이 사실상 3주로 압축됨 | 10/19까지 KPI 미완료분은 10/20~26 사이 병행 보완, 논문은 확정된 데이터로 먼저 작성 |
 | MOST 전체 일정 | 높음 | 11/22 MOST 진행 여부 결정 게이트 |
 | 분산 모드 구현 부담 | 중간~높음 | 단순 규칙 기반 대조군으로 제한, 팀 합의 |
-| 연구 2 결과가 "보수성 증가"로만 해석될 위험 | 중간 | 대형 고정 margin 대조군(B2)과 효율성 지표로 반박 |
-| 연구 2 연산량 | 중간. Monte Carlo TTC가 200ms 예산을 넘을 수 있음 | 샘플 수 제한 또는 해석적 근사, ros2_tracing으로 지연 측정 |
+| 연구 2 결과가 "보수성 증가"로만 해석될 위험 | 중간 | B1=$m_{\min}$, B2=$m_{\max}$로 두고 안전성-효율성 산점도로 반박 |
+| 연구 2에서 P가 실험 조건에 따라 변하지 않을 위험 | 중간. 고정 R KF의 P는 센서 noise만 키워서는 거의 변하지 않음 | 관측 누락 조건과 noise 수준에 맞춘 R로 P를 바꾸고, NEES로 P 일관성 확인(4-3절) |
+| 연구 2 margin 함수 튜닝 편향 | 중간 | f 파라미터는 예비 seed로 정하고 본 실험은 별도 seed |
+| 연구 2 연산량 | 낮음. Monte Carlo TTC를 빼서 margin 계산은 고유값 하나 수준 | ros2_tracing으로 margin 계산 시간·전체 지연 측정 |
 | 지도 인계 지연 (10/11) | 중간~높음 — 지수가 P0에 URDF·오도메트리·필터·매핑을 모두 진행 | 민지가 10/5주 매핑 페어 지원, 인계 전에는 mock·임시 지도로 AMCL·EKF 설정을 먼저 구성. 일정은 미루지 않고 9-1절 날짜를 유지 |
 | 연우 업무량 | 높음. YOLO 인식 + 스펙 난이도 최상위 모듈 + 연구 2 | RL은 스트레치로 하향, 지수 지원 |
 | 인터페이스 충돌 | 중간 | P0에 메시지 타입 3개 경계 확정 |
 | self-hosted 러너 구성 | 중간 | P0에 테스트, N값을 통계적 최소치로 |
 | 하드웨어(기본) | 낮음 | Gazebo + 학교 서버 |
 | 하드웨어(실물 네트워크 채택 시) | 중간 — 이진이 P1과 병행 부담 | 2차 회의에서 최소구성만 채택, 이진의 P1 KPI(경로계획/제어) 완료 이후 착수 |
-| 연구 신규성 | 높음 | 연구 1 임계점 실측, 연구 2 전 단계 전파 + ablation |
+| 연구 신규성 | 연구 1 높음, 연구 2 중간(범위를 좁혀 기여가 작아짐) | 연구 1 임계점 실측. 연구 2는 P·TTC 효과 분리 실험과 trade-off 곡선으로 보완 |
 
 ## 14. 다음에 확인할 것
 
@@ -556,6 +636,8 @@ P2 종료 시점에 데이터가 부족하면 MOST를 포기하고 KCSE에 집�
 - 하네스 반복 횟수 N과 통계 검정 방법 설계
 - 인식 결과 3D 메시지 타입(confidence·공분산 포함) 확정: 연우 작성, 소비 측(이진·지수) 리뷰
 - 연구 2 선행연구 서지 확인 및 차별점 문장 확정
+- 연구 2 margin 함수 f 후보 형태와 예비 실험 계획, P·TTC 2×2 조건 설계 (연우)
+- KF 트랙 메시지(Track ID·위치·속도·P·timestamp) `amr_msgs` 정의: 연우 작성, 하연 리뷰
 - 2차 회의: 실물 네트워크(이진 주도)·Jetson 채택 여부, 논문 2편 분리안 확정
 - Jetson·라즈베리파이 국내 판매가 재확인
 - KSC 학교지원 발표자 1인 기준(저자 순서 vs 팀 지정) 확인

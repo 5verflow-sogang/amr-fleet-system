@@ -3,6 +3,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up   # perception에 GPU 사용
 #   docker compose run --rm dev                  # 개발 셸
 #   docker compose --profile gui up -d           # 브라우저 GUI: http://localhost:6080/vnc.html
+#   docker compose --profile sandbox up -d       # 1주차 임시: TurtleBot4 + Nav2
 # TODO: 각 서비스의 command를 해당 패키지 launch로 교체
 
 x-ros: &ros
@@ -84,6 +85,37 @@ services:
     entrypoint: ["sh", "-c"]
     command:
       - exec socat TCP-LISTEN:6080,fork,reuseaddr TCP:$$(ip route | awk '/default/ {print $$3}'):6081
+
+  # 1주차 임시 검증 환경: TurtleBot4 Lite + AMCL + Nav2 (maze 월드, Gazebo 화면 없이 실행).
+  # RViz2는 gui 프로필로 띄워서 본다. 로봇 위치는 RViz2의 "2D Pose Estimate"로 처음 한 번 지정한다.
+  # TODO(2주차): 지수 로봇으로 교체되면 제거.
+  sandbox:
+    <<: *ros
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: sandbox
+    image: amr-fleet-system:sandbox
+    profiles: [sandbox]
+    # 자체 가상 화면(Xvfb)을 쓰므로 호스트 X 소켓은 연결하지 않는다.
+    volumes:
+      - ./src:/ros2_ws/src
+    command:
+      - bash
+      - -c
+      - |
+        share=/opt/ros/humble/share
+        # 센서 렌더링용 가상 화면. gui(:99)와 겹치지 않게 :98을 쓴다.
+        rm -f /tmp/.X98-lock /tmp/.X11-unix/X98
+        Xvfb :98 -screen 0 640x480x24 > /dev/null 2>&1 &
+        export DISPLAY=:98
+        export IGN_GAZEBO_RESOURCE_PATH=$$share/turtlebot4_ignition_bringup/worlds:$$share/irobot_create_ignition_bringup/worlds:$$share
+        # Gazebo 서버만 실행(-s). turtlebot4_ignition.launch.py는 GUI를 항상 띄우므로 쓰지 않는다.
+        ros2 launch ros_gz_sim gz_sim.launch.py gz_args:="-s -r maze.sdf" &
+        ros2 run ros_gz_bridge parameter_bridge /clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock &
+        exec ros2 launch turtlebot4_ignition_bringup turtlebot4_spawn.launch.py \
+          world:=maze model:=lite localization:=true nav2:=true \
+          map:=$$share/turtlebot4_navigation/maps/maze.yaml
 
   # TODO(관측 스택): prometheus, grafana 서비스 추가 (설정은 docker/ 아래)
   # TODO(대시보드): dashboard 서비스 추가 (dashboard/ 참고)

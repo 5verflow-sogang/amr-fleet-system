@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!-- 기둥. 모델 원점은 바닥 중심이다. -->
+<sdf version="1.8">
+  <model name="warehouse_pillar">
+    <static>true</static>
+    <link name="link">
+      <pose>0 0 3.0 0 0 0</pose>
+      <collision name="collision">
+        <geometry>
+          <box><size>0.6 0.6 6.0</size></box>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <box><size>0.6 0.6 6.0</size></box>
+        </geometry>
+        <material>
+          <ambient>0.6 0.6 0.6 1</ambient>
+          <diffuse>0.6 0.6 0.6 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>
