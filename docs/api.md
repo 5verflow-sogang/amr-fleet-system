@@ -33,7 +33,7 @@ map
 ```
 
 좌표는 부모 프레임 기준 (x, y, z) [m]. 센서 위치는 원 명세서 TF 예시값이며, 1주차 URDF 골격에서 `view_frames`로 위 구조를 확인했다.
-TODO(지수): 2주차 센서 플러그인 추가 후 extrinsic 확정.
+센서 위치(extrinsic)는 2주차 센서 플러그인에서 위 값 그대로 확정했다. 센서 메시지의 `frame_id`는 위 링크 이름과 같다 (`lidar_link`, `imu_link`, `camera_optical_frame`, sim에서 확인).
 
 ### 2-1. TF 발행 주체 (D4, A안: EKF 두 개)
 
@@ -46,7 +46,7 @@ TODO(지수): 2주차 센서 플러그인 추가 후 extrinsic 확정.
 
 - EKF의 `base_link_frame`은 `base_footprint`로 둔다 (위 TF 트리 기준).
 - `amr_odometry`의 `publish_tf`는 기본 `false`다. EKF 없이 오도메트리만 단독으로 시험할 때만 `true`로 켠다.
-- EKF가 붙기 전까지(현재)는 Gazebo DiffDrive가 `odom → base_footprint`를 발행한다 (`spawn_robot.launch.py publish_odom_tf` 기본 `true`).
+- EKF 없이 sim만 띄우면 Gazebo DiffDrive가 `odom → base_footprint`를 발행한다 (`publish_odom_tf` 기본 `true`). EKF를 띄울 때는 `sim.launch.py publish_odom_tf:=false`로 끈다.
 
 ## 3. 합의가 필요한 경계 (P0 확정 대상)
 
@@ -171,6 +171,27 @@ TODO(지수): 2주차 센서 플러그인 추가 후 extrinsic 확정.
 | --- | --- | --- | --- |
 | Subscribe | | | |
 | Publish | `perception/objects` | `amr_msgs/msg/DetectedObject3DArray` | 카메라 프레임별 인식 결과와 3D 위치 |
+
+### amr_gazebo (로봇별, `<ns>` = `amr_01` …)
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Publish | `/<ns>/scan_raw` | `sensor_msgs/msg/LaserScan` | LiDAR 원본 (σ 0.03 m), 10 Hz, frame `<ns>/lidar_link` |
+| Publish | `/<ns>/imu/data_raw` | `sensor_msgs/msg/Imu` | IMU 원본 (노이즈·바이어스, 공분산 비어 있음), 100 Hz, frame `<ns>/imu_link` |
+| Publish | `/<ns>/camera/color/image_raw` | `sensor_msgs/msg/Image` | RGB `rgb8` 640×480, 30 Hz, frame `<ns>/camera_optical_frame` |
+| Publish | `/<ns>/camera/depth/image_raw` | `sensor_msgs/msg/Image` | Depth `32FC1` (m, 0.3~10 m), 30 Hz, RGB와 픽셀 1:1 |
+| Publish | `/<ns>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` | RGB·Depth 공통 내부 파라미터 |
+| Publish | `/<ns>/diff_drive/odom` | `nav_msgs/msg/Odometry` | DiffDrive 이상적 odom (노이즈·공분산 없음). 로봇 판단에는 `/<ns>/odom`을 쓴다 |
+| Publish | `/<ns>/ground_truth/odom` | `nav_msgs/msg/Odometry` | GT, frame `world`. 평가 전용 |
+| Subscribe | `/<ns>/cmd_vel` | `geometry_msgs/msg/Twist` | 속도 명령 |
+
+### amr_odometry (로봇별)
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Publish | `/<ns>/odom` | `nav_msgs/msg/Odometry` | 휠 오도메트리 (엔코더 모델), 50 Hz, 위치·속도 공분산 |
+| Publish | `/<ns>/scan` | `sensor_msgs/msg/LaserScan` | 필터 스캔 (거리·각도·아웃라이어), 10 Hz |
+| Publish | `/<ns>/imu/data` | `sensor_msgs/msg/Imu` | 바이어스 보정·저역통과, 100 Hz, 공분산 채움. 시작 2초 정지 보정 뒤 발행 |
 
 <!-- TODO: 나머지 패키지 섹션을 같은 형식으로 추가 -->
 

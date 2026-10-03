@@ -47,7 +47,7 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF, 센서 `scan_raw`·`imu/data_raw`�
 | 폭 1 cm, 중심 | 0.976 | 1.000 | 0.332 m |
 | **폭 1 cm, 바깥 5 mm (현재)** | **1.004 · 1.004** | **1.000** | **0.341 m** |
 
-실제 = Gazebo 모델 자세 (`ign model -m amr_01 -p`), odom = DiffDrive `/amr_01/odom`. 0.5 rad/s 4초 회전, 0.5 m/s 3초 직진.
+실제 = Gazebo 모델 자세 (`ign model -m amr_01 -p`), odom = DiffDrive odom (지금 이름 `/amr_01/diff_drive/odom`). 0.5 rad/s 4초 회전, 0.5 m/s 3초 직진.
 | 전체 질량 | 약 33.9 kg (+ `payload_mass`) | |
 | 최대 선속도 | 2.0 m/s | DiffDrive에서 제한 |
 | 최대 선가속도 | 1.0 m/s² | |
@@ -57,7 +57,7 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF, 센서 `scan_raw`·`imu/data_raw`�
 ### TF 트리
 
 ```
-amr_01/odom                         (DiffDrive, spawn_robot.launch.py publish_odom_tf:=true)
+amr_01/odom                         (발행: Gazebo DiffDrive 기본, EKF를 띄우면 ekf_local — D4)
 └── amr_01/base_footprint           지면 위 로봇 중심
     └── amr_01/base_link            (0, 0, 0.18)  몸체 중심
         ├── amr_01/left_wheel_link  (0,  0.17, -0.08)

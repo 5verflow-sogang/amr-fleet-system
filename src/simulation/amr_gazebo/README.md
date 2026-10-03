@@ -9,7 +9,7 @@
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
 | Publish | `/clock` | `rosgraph_msgs/msg/Clock` | 시뮬레이션 시간. 다른 노드는 `use_sim_time:=true`로 쓴다 |
-| Publish | `/<ns>/odom` | `nav_msgs/msg/Odometry` | DiffDrive 휠 오도메트리, 50 Hz (`spawn_robot.launch.py`) |
+| Publish | `/<ns>/diff_drive/odom` | `nav_msgs/msg/Odometry` | DiffDrive 이상적 휠 오도메트리 (노이즈·공분산 없음), 50 Hz. 로봇 판단용 `/<ns>/odom`은 `amr_odometry`가 낸다 |
 | Publish | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 바퀴 조인트 각도 |
 | Publish | `/<ns>/ground_truth/odom` | `nav_msgs/msg/Odometry` | **GT(진짜 위치·속도)**, 기본 100 Hz (`gt_rate`). `frame_id: world`(Gazebo 월드 원점 = 창고 중심), `child_frame_id: <ns>/base_footprint`. TF로는 내보내지 않음. **평가 전용**(RMSE, 제동 거리) — 로봇 판단에 쓰지 않는다. 아래 "GT 사용 시 주의" 참고 |
 | Publish | `/<ns>/scan_raw` | `sensor_msgs/msg/LaserScan` | 2D LiDAR 원본 (노이즈 포함), 10 Hz, frame `<ns>/lidar_link` |
@@ -17,7 +17,7 @@
 | Publish | `/<ns>/camera/color/image_raw` | `sensor_msgs/msg/Image` | RGB (`rgb8`, 640×480), 30 Hz, frame `<ns>/camera_optical_frame` |
 | Publish | `/<ns>/camera/depth/image_raw` | `sensor_msgs/msg/Image` | Depth (`32FC1`, m, 0.3~10 m), 30 Hz. RGB와 픽셀 1:1 대응 |
 | Publish | `/<ns>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` | RGB·Depth 공통 내부 파라미터 (fx = fy = 337.2, cx 320, cy 240) |
-| Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `<ns>/odom` → `<ns>/base_footprint` (`publish_odom_tf:=true`) |
+| Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `<ns>/odom` → `<ns>/base_footprint` (`publish_odom_tf:=true`, 기본). EKF(`ekf_local`)를 띄우면 `false`로 끈다 (D4) |
 | Subscribe | `/<ns>/cmd_vel` | `geometry_msgs/msg/Twist` | 속도 명령. 2.0 m/s, 1.0 m/s², 1.5 rad/s로 제한 |
 | Service | | | |
 | Action | | | |
@@ -136,7 +136,7 @@ launch 파일과 인자:
 | --- | --- | --- |
 | `world.launch.py` | `world` (`warehouse.sdf`), `gui` (`true`), `verbosity` (`2`) | 월드만. `gui:=false`면 서버만 |
 | `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
-| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw` | 월드 + 로봇 1대 + RViz |
+| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`) | 월드 + 로봇 1대 + RViz |
 
 ## 실행
 

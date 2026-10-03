@@ -51,7 +51,7 @@ def generate_launch_description():
             description='odom → base_footprint TF 발행. EKF(ekf_local)가 발행하면 false (D4)'),
         DeclareLaunchArgument(
             'odom_topic', default_value='odom',
-            description='출력 토픽 (상대 이름). Gazebo DiffDrive odom과 겹치면 바꿔서 쓴다'),
+            description='출력 토픽 (상대 이름). DiffDrive 이상적 odom은 diff_drive/odom으로 따로 나온다'),
         DeclareLaunchArgument(
             'encoder_seed', default_value='0',
             description='엔코더 노이즈 seed. 0이면 실행마다 무작위'),
