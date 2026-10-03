@@ -1,0 +1,45 @@
+# nav2_amcl 설정 (docs/algorithms/localization.md 3절)
+#
+# 값은 Nav2 Humble 기본값에서 시작한다 (sandbox에서 실제 로드값 확인, #39). 튜닝값과 근거는 3주차에 기록한다.
+# 프레임 이름(로봇 접두어 amr_01/)과 초기 위치는 localization.launch.py가 채운다.
+
+/**:
+  amcl:
+    ros__parameters:
+      # D4: map → odom은 ekf_global이 발행한다. AMCL은 amcl_pose만 낸다
+      tf_broadcast: false
+      global_frame_id: map
+      # 지도는 로봇들이 같이 쓰므로 네임스페이스 밖의 /map을 받는다
+      map_topic: /map
+      scan_topic: scan            # amr_odometry scan_filter 출력 (거리·각도·아웃라이어 필터 적용)
+      robot_model_type: nav2_amcl::DifferentialMotionModel
+
+      # 파티클 수 범위. 불확실할수록 많이 쓴다 (KLD-sampling)
+      min_particles: 500
+      max_particles: 2000
+      # 움직임 노이즈. alpha1 회전→회전, alpha2 직진→회전, alpha3 직진→직진, alpha4 회전→직진
+      # 3주차에 amr_odometry 엔코더 모델(k, 계통 오차) 값에서 계산해 근거로 쓴다 (#35)
+      alpha1: 0.2
+      alpha2: 0.2
+      alpha3: 0.2
+      alpha4: 0.2
+      alpha5: 0.2                 # 옴니휠 전용, 차동구동에서는 쓰지 않음
+
+      laser_model_type: likelihood_field
+      laser_min_range: 0.12       # LiDAR 사양 (sensors.yaml)
+      laser_max_range: 20.0       # slam_toolbox 매핑과 같은 값 (amr_mapping, 먼 빔은 비스듬해 노이즈가 큼)
+      max_beams: 60               # 720빔 중 갱신에 쓰는 빔 수 (Nav2 기본)
+      sigma_hit: 0.2              # Nav2 기본. LiDAR σ 0.03 m보다 크다 → 3주차 튜닝 대상
+
+      # 필터 갱신 조건. AMCL은 움직일 때만 갱신·발행하므로 EKF가 받는 보정 빈도를 정한다
+      update_min_d: 0.25
+      update_min_a: 0.2
+      resample_interval: 1
+
+      # Kidnapped 복구용 무작위 파티클 주입. 0이면 꺼짐. 권장값(0.001 / 0.1)은 복구 작업(3주차)에서 켠다
+      recovery_alpha_slow: 0.0
+      recovery_alpha_fast: 0.0
+
+      transform_tolerance: 1.0
+      # 시작할 때 launch의 초기 위치로 파티클을 뿌린다 (RViz 2D Pose Estimate 없이 시작하려고)
+      set_initial_pose: true

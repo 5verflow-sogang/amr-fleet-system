@@ -15,6 +15,39 @@
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
+## 위치추정 스택 (`localization.launch.py`)
+
+지도 서버 + AMCL + EKF 두 개(D4 A안, [api.md 2-1절](../../../docs/api.md#2-1-tf-발행-주체-d4-a안-ekf-두-개))를 띄운다. 설정 근거는 [localization.md](../../../docs/algorithms/localization.md).
+
+```bash
+ros2 launch amr_localization localization.launch.py                          # amr_01, 지도 v0
+ros2 launch amr_localization localization.launch.py use_imu:=false           # IMU 없이 (센서 플러그인 전)
+ros2 launch amr_localization localization.launch.py odom_topic:=wheel/odom   # DiffDrive odom과 겹칠 때 (#35)
+```
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `<odom_topic>` (기본 `odom`) | `nav_msgs/msg/Odometry` | 휠 오도메트리 (`amr_odometry`). EKF가 `vx`·`vy`·`vyaw`를 씀 |
+| Subscribe | `imu/data` | `sensor_msgs/msg/Imu` | IMU 필터 출력. EKF가 `vyaw`를 씀 (`use_imu:=true`일 때) |
+| Subscribe | `scan` | `sensor_msgs/msg/LaserScan` | 스캔 필터 출력 (AMCL) |
+| Subscribe | `/map` | `nav_msgs/msg/OccupancyGrid` | 지도. 로봇들이 같이 씀 |
+| Publish | `amcl_pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | AMCL 추정 (`ekf_global` 입력) |
+| Publish | `odometry/local` | `nav_msgs/msg/Odometry` | `ekf_local` 출력, odom 기준 (제어용, 점프 없음) |
+| Publish | `odometry/filtered` | `nav_msgs/msg/Odometry` | `ekf_global` 출력, map 기준 (**위치 오차 KPI 측정 대상**) |
+| Publish | `/tf` | | `map → <ns>/odom` (`ekf_global`), `<ns>/odom → <ns>/base_footprint` (`ekf_local`) |
+
+| 인자 | 기본값 | 설명 |
+| --- | --- | --- |
+| `namespace` | `amr_01` | 로봇. TF 프레임 접두어로도 쓴다 |
+| `map` | `amr_mapping/maps/warehouse_v0.yaml` | 지도 |
+| `start_map_server` | `true` | 로봇 여러 대면 한 번만 `true` |
+| `odom_topic` | `odom` | 휠 오도메트리 토픽 |
+| `use_imu` | `true` | IMU가 없는 환경에서는 `false` |
+| `initial_x`·`initial_y`·`initial_yaw` | `0.0` | AMCL 초기 위치 (map 기준). 지도 v0에서 기본 스폰 world (0, 1.5) = map (0, 0) |
+
+- 함께 띄워야 하는 것: 시뮬레이터와 로봇(`amr_gazebo`), 휠 오도메트리·센서 필터(`amr_odometry`). D4에 따라 `amr_odometry`는 `publish_tf:=false`(기본), DiffDrive는 `publish_odom_tf:=false`로 띄운다.
+- 위치 오차는 `eval_node`(아래)로 잰다: 추정 `odometry/filtered`, `map_origin_in_world: [0.0, 1.5, 0.0]`.
+
 ## 정확도 평가 모듈 (`amr_localization.eval`)
 
 ROS에 의존하지 않는 순수 Python 모듈이다. 시뮬레이터 없이 단위 테스트한다. 로그 형식은 [하네스 로그 포맷](../../../tools/harness/README.md)을 따른다.
