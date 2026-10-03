@@ -19,8 +19,8 @@
 
 ```
 map
-└── amr_0N/odom            (map→odom: AMCL, 민지)
-    └── amr_0N/base_footprint   (odom→base: 지수 책임, 발행 주체는 EKF 구성에 따라 확정)
+└── amr_0N/odom            (map→odom: ekf_global, 민지)
+    └── amr_0N/base_footprint   (odom→base_footprint: ekf_local, 품질은 지수 책임)
         └── amr_0N/base_link              (0, 0, 0.18)  몸체 중심
             ├── amr_0N/lidar_link         (0.15, 0, 0.2)
             ├── amr_0N/camera_link        (0.18, 0, 0.25)
@@ -33,8 +33,20 @@ map
 ```
 
 좌표는 부모 프레임 기준 (x, y, z) [m]. 센서 위치는 원 명세서 TF 예시값이며, 1주차 URDF 골격에서 `view_frames`로 위 구조를 확인했다.
-현재 `odom → base_footprint`는 Gazebo DiffDrive가 발행한다 (`spawn_robot.launch.py publish_odom_tf:=false`로 끌 수 있다).
 TODO(지수): 2주차 센서 플러그인 추가 후 extrinsic 확정.
+
+### 2-1. TF 발행 주체 (D4, A안: EKF 두 개)
+
+`map→odom`과 `odom→base_footprint`는 각각 한 노드만 발행한다. 근거와 비교안은 [localization.md 1절](algorithms/localization.md#tf-발행-구성-2주차에-지수와-확정)을 따른다.
+
+| TF | 발행 노드 | 입력 | 끄는 설정 |
+| --- | --- | --- | --- |
+| `map → odom` | `ekf_global` (민지) | `odom`, `imu/data`, `amcl_pose` | AMCL `tf_broadcast: false` |
+| `odom → base_footprint` | `ekf_local` (민지) | `odom`, `imu/data` (전역 입력 없음) | `amr_odometry` `publish_tf: false`, Gazebo DiffDrive `publish_odom_tf:=false` |
+
+- EKF의 `base_link_frame`은 `base_footprint`로 둔다 (위 TF 트리 기준).
+- `amr_odometry`의 `publish_tf`는 기본 `false`다. EKF 없이 오도메트리만 단독으로 시험할 때만 `true`로 켠다.
+- EKF가 붙기 전까지(현재)는 Gazebo DiffDrive가 `odom → base_footprint`를 발행한다 (`spawn_robot.launch.py publish_odom_tf` 기본 `true`).
 
 ## 3. 합의가 필요한 경계 (P0 확정 대상)
 
