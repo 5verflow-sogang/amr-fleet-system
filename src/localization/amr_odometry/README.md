@@ -12,7 +12,11 @@
 | --- | --- | --- | --- |
 | Publish | `/<ns>/odom` | `nav_msgs/msg/Odometry` | 휠 오도메트리, 50 Hz. 위치·속도 공분산 채움. frame `<ns>/odom` → `<ns>/base_footprint` |
 | Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `<ns>/odom` → `<ns>/base_footprint`. **`publish_tf:=true`일 때만** (기본 꺼짐, D4) |
+| Publish | `/<ns>/scan` | `sensor_msgs/msg/LaserScan` | 필터 적용 스캔 (거리·각도·아웃라이어), 10 Hz, frame `<ns>/lidar_link` |
+| Publish | `/<ns>/imu/data` | `sensor_msgs/msg/Imu` | 바이어스 보정·저역통과, 100 Hz, 각속도·가속도 공분산 채움, orientation 없음 |
 | Subscribe | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 좌우 바퀴 각도 (Gazebo에서 브리지, 1 kHz) |
+| Subscribe | `/<ns>/scan_raw` | `sensor_msgs/msg/LaserScan` | LiDAR 원본 (amr_gazebo 브리지) |
+| Subscribe | `/<ns>/imu/data_raw` | `sensor_msgs/msg/Imu` | IMU 원본 (amr_gazebo 브리지) |
 
 - 인계 계약(명세서 8-2절): `/odom`은 공분산을 채워 민지(EKF)에게 넘긴다. EKF는 `vx`, `vy`, `vyaw`를 쓴다 ([localization.md](../../../docs/algorithms/localization.md)).
 - TF: D4(A안)에 따라 `odom → base_footprint`는 `ekf_local`이 발행한다. 이 노드는 EKF 없이 단독으로 시험할 때만 TF를 낸다.
@@ -27,6 +31,33 @@
 | `kinematics.py` | 순기구학, 중점법 적분, Siegwart 공분산 전파 (ROS 비의존) |
 | `encoder_model.py` | 엔코더 측정 모델: 4096틱 양자화, 계통 오차, 거리 비례 무작위 오차 (ROS 비의존) |
 | `wheel_odometry_node.py` | `joint_states` 구독 → `odom` 발행 |
+| `scan_filter.py` | LiDAR 거리·각도·아웃라이어 필터 (ROS 비의존) |
+| `imu_filter.py` | IMU 바이어스 보정·저역통과 (ROS 비의존) |
+| `scan_filter_node.py`, `imu_filter_node.py` | `scan_raw` → `scan`, `imu/data_raw` → `imu/data` |
+
+### LiDAR 필터 (`config/sensor_filters.yaml`)
+
+빔 개수·각도 배열은 그대로 두고 걸러낸 빔 값만 REP 117 규칙으로 바꾼다 (−inf 너무 가까움, +inf 반사 없음, NaN 제거).
+
+| 필터 | 내용 | 기본값 |
+| --- | --- | --- |
+| 거리 | 센서 한계와 설정 중 좁은 쪽 밖이면 ±inf | 0.12 ~ 25 m |
+| 각도 | 범위 밖 빔은 NaN | 360° 전체 (몸체 가림 없음) |
+| 아웃라이어 | 앞뒤 2빔 안에 (0.2 m + 거리 × 5%) 이내 이웃이 없으면 NaN | `outlier_distance` 0.2, `outlier_ratio` 0.05 |
+
+허용 차이를 거리에 비례하게 한 이유: 멀리서 벽을 비스듬히 비추면 이웃 빔끼리도 0.3~0.6 m씩 벌어진다.
+고정 0.2 m로는 sim(월드 v0)에서 정상 점 643개 중 53개(8%)가 지워졌고, 거리 비례로 바꾸니 3개(0.5%)로 줄었다.
+
+### IMU 필터 (`config/sensor_filters.yaml`)
+
+1. **바이어스 보정**: 시작 후 2초 정지 평균. 자이로 바이어스 = 평균 각속도, 가속도 바이어스 = 평균 − (0, 0, g).
+   그동안 축별 표준편차가 자이로 0.01 rad/s, 가속도 0.1 m/s²를 넘으면 움직인 것으로 보고 다시 잰다
+   (스폰 직후 로봇이 내려앉는 흔들림도 여기서 걸러진다). **보정이 끝나기 전에는 `/imu/data`를 내지 않는다.**
+2. **저역통과**: 1차 필터, 자이로 20 Hz (EKF 회전 추정용이라 지연을 작게), 가속도 5 Hz.
+3. **공분산**: 센서 노이즈 σ²(자이로 2e-4, 가속도 1.7e-2, `sensors.yaml`과 같은 값) × (1 + 1/N). 1/N은 2초 보정 평균의 남은 불확실성이다.
+4. 자기장 센서가 없어 방향은 추정하지 않는다 (`orientation_covariance[0] = -1`, REP 145).
+
+Gazebo 자이로 바이어스(7.5e-6 rad/s)는 2초 보정 정밀도(σ/√200 ≈ 1.4e-5)보다 작아 사실상 구분되지 않는다. 가속도 바이어스(0.1 m/s²)는 제거된다.
 
 ### 엔코더 측정 모델
 
@@ -105,6 +136,19 @@ Gazebo에는 엔코더 센서가 없어 실제 바퀴 각도에 오차를 넣는
 - 발행 50.0 Hz (sim 시간), frame `amr_01/odom` → `amr_01/base_footprint`
 - `publish_tf:=false`면 `/tf` 발행 노드에 `wheel_odometry`가 없고, `true`면 있다
 
+### 필터 검증 (sim, 월드 v0, 스폰 위치 정지 3초)
+
+| 항목 | 원본 (`*_raw`) | 필터 후 |
+| --- | --- | --- |
+| 가속도 평균 [m/s²] | (0.099, 0.099, 9.899) | (−0.002, 0.000, 9.806) — 기대 (0, 0, 9.807) |
+| 가속도 σ [m/s²] | 0.016~0.018 | 0.006~0.007 |
+| 자이로 σ [rad/s] | 1.9e-4~2.0e-4 | 1.2e-4~1.3e-4 |
+| `/imu/data` 주기 | 100 Hz | 100 Hz |
+| 스캔 유효 빔 | 640 / 720 | 637 / 720 (아웃라이어 제거 3) |
+| `/scan` 주기 | 10 Hz | 10 Hz |
+
+제자리 회전 시 `/imu/data` 적분 yaw는 Gazebo 실제 yaw와 같다 (+2.638 rad vs +2.638 rad).
+
 ## 실행
 
 ```bash
@@ -116,6 +160,11 @@ ros2 launch amr_odometry odometry.launch.py encoder_seed:=42        # 계통 오
 ros2 launch amr_odometry odometry.launch.py encoder_noise:=false    # 이상적 엔코더
 ```
 
+```bash
+# LiDAR·IMU 필터 (센서 브리지가 떠 있어야 한다). 시작 후 2초 동안 로봇을 움직이지 않는다
+ros2 launch amr_odometry sensor_filters.launch.py
+```
+
 ## 테스트
 
 ```bash
@@ -123,3 +172,4 @@ colcon test --packages-select amr_odometry
 ```
 
 `test_kinematics.py`(직진·제자리 회전·원호 닫힌 해, 공분산 대칭·증가·주기 무관), `test_encoder_model.py`(양자화, ±π 넘김, 계통 오차 재현·분포, 누적 σ = k·√D가 주기와 무관).
+`test_scan_filter.py`(REP 117 표시, 각도 마스크, 외톨이 점·먼 비스듬한 벽·노이즈 벽), `test_imu_filter.py`(저역통과 시정수, 바이어스 복원, 움직이면 재보정, 보정 전 출력 없음).
