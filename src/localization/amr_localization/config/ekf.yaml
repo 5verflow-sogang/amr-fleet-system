@@ -1,0 +1,86 @@
+# robot_localization EKF 두 개 (D4 A안, docs/api.md 2-1절, docs/algorithms/localization.md 2절)
+#
+#   ekf_local : 휠 오도메트리 + IMU         → odom → base_footprint TF, odometry/local
+#   ekf_global: 휠 오도메트리 + IMU + AMCL  → map → odom TF,          odometry/filtered (KPI 측정 대상)
+#
+# 프레임 이름(로봇 접두어 amr_01/)과 입력 토픽 이름은 localization.launch.py가 채운다.
+# 입력 토픽을 여기 적지 않는 이유: IMU가 없는 환경(센서 플러그인 전, sandbox)에서 imu0을 뺄 수 있게 하려고.
+#
+# config 매트릭스 순서 (15개):
+#   [x, y, z,  roll, pitch, yaw,  vx, vy, vz,  vroll, vpitch, vyaw,  ax, ay, az]
+#
+# 공분산(process_noise_covariance)은 패키지 기본값을 쓴다. 튜닝값과 근거는 3주차에
+# localization.md 2-2절에 기록한다 (센서 측정 공분산 R은 각 메시지의 공분산 필드에서 온다).
+
+/**:
+  ekf_local:
+    ros__parameters:
+      frequency: 50.0           # KPI: EKF 50 Hz 이상
+      sensor_timeout: 0.1       # 입력이 이 시간 동안 없으면 예측만 한다 [s]
+      two_d_mode: true          # 평면 주행. z·roll·pitch를 0으로 고정
+      publish_tf: true          # odom → base_footprint (D4)
+      print_diagnostics: true
+
+      # 휠 오도메트리 (amr_odometry): 속도만 받는다.
+      # 누적 위치보다 속도가 믿을 만하고, vy는 "옆으로 못 움직인다"는 제약(메시지에 0 + 하한 분산)으로 쓴다.
+      odom0_config: [false, false, false,
+                     false, false, false,
+                     true,  true,  false,
+                     false, false, true,
+                     false, false, false]
+      odom0_queue_size: 10
+      odom0_differential: false
+      odom0_relative: false
+
+      # IMU (amr_odometry imu_filter): 회전 속도만 받는다.
+      # 자기장 센서가 없어 절대 방향은 없고(orientation_covariance[0] = -1),
+      # 가속도는 바이어스(0.1 m/s²)가 커서 넣지 않는다 (#26, #37).
+      imu0_config: [false, false, false,
+                    false, false, false,
+                    false, false, false,
+                    false, false, true,
+                    false, false, false]
+      imu0_queue_size: 20
+      imu0_differential: false
+      imu0_relative: false
+      imu0_remove_gravitational_acceleration: true
+
+  ekf_global:
+    ros__parameters:
+      frequency: 50.0
+      sensor_timeout: 0.1
+      two_d_mode: true
+      publish_tf: true          # map → odom (D4). AMCL은 tf_broadcast: false
+      print_diagnostics: true
+
+      odom0_config: [false, false, false,
+                     false, false, false,
+                     true,  true,  false,
+                     false, false, true,
+                     false, false, false]
+      odom0_queue_size: 10
+      odom0_differential: false
+      odom0_relative: false
+
+      imu0_config: [false, false, false,
+                    false, false, false,
+                    false, false, false,
+                    false, false, true,
+                    false, false, false]
+      imu0_queue_size: 20
+      imu0_differential: false
+      imu0_relative: false
+      imu0_remove_gravitational_acceleration: true
+
+      # AMCL (amcl_pose): 지도 기준 절대 위치 x, y, yaw. 누적 오차를 잡는다.
+      # 절대 위치는 이 입력 하나에만 준다 (두 입력이 같은 절대값을 주면 EKF가 과신한다).
+      pose0_config: [true,  true,  false,
+                     false, false, true,
+                     false, false, false,
+                     false, false, false,
+                     false, false, false]
+      pose0_queue_size: 5
+      pose0_differential: false
+      pose0_relative: false
+      # pose0_rejection_threshold는 두지 않는다. AMCL이 잠깐 튀는 값(sandbox에서 최대 49 cm)을 거를 수 있지만,
+      # Kidnapped 복구 때 AMCL이 새 위치로 크게 옮겨 가는 것도 막아 버린다. 복구 설계(3주차)와 함께 정한다.

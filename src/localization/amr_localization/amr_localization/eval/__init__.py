@@ -16,7 +16,16 @@ from .metrics import (
     summarize_by_segment,
     write_localization_csv,
 )
-from .trajectory import Pose2D, associate, read_tum, write_tum
+from .recorder import EvalRecorder, format_summary
+from .trajectory import (
+    Pose2D,
+    associate,
+    associate_interpolated,
+    interpolate,
+    read_tum,
+    transform_to_map,
+    write_tum,
+)
 
 __all__ = [
     'KPI_THRESHOLDS',
@@ -26,15 +35,20 @@ __all__ = [
     'STATIONARY',
     'STRAIGHT',
     'ErrorSample',
+    'EvalRecorder',
     'Pose2D',
     'Summary',
     'associate',
+    'associate_interpolated',
     'classify_segment',
     'compute_errors',
+    'format_summary',
+    'interpolate',
     'kpi_check',
     'read_tum',
     'summarize',
     'summarize_by_segment',
+    'transform_to_map',
     'write_localization_csv',
     'write_tum',
 ]

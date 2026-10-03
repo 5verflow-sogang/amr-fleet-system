@@ -37,7 +37,7 @@ TODO(지수): 2주차 센서 플러그인 추가 후 extrinsic 확정.
 
 ### 2-1. TF 발행 주체 (D4, A안: EKF 두 개)
 
-`map→odom`과 `odom→base_footprint`는 각각 한 노드만 발행한다. 근거와 비교안은 [localization.md 1절](algorithms/localization.md#tf-발행-구성-2주차에-지수와-확정)을 따른다.
+`map→odom`과 `odom→base_footprint`는 각각 한 노드만 발행한다. 근거와 비교안은 [localization.md 1절](algorithms/localization.md#tf-발행-구성-d4-a안-확정)을 따른다.
 
 | TF | 발행 노드 | 입력 | 끄는 설정 |
 | --- | --- | --- | --- |

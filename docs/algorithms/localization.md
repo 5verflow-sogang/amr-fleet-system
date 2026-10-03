@@ -1,6 +1,6 @@
 # 위치 추정 (AMCL · EKF)
 
-> 상태: 초안 (1주차). 담당: 민지. 설정 항목과 설계 근거(공식 문서·선행연구)를 정리했다. 튜닝값과 실측 근거는 지도 인계(10/11) 뒤 실제 로봇으로 채운다. 인용은 [참고 문헌](#6-참고-문헌)의 번호다.
+> 상태: 초안 (2주차). 담당: 민지. 설정 항목과 설계 근거(공식 문서·선행연구)를 정리했고, 설정 파일 초안은 `amr_localization/config/`(`ekf.yaml`, `amcl.yaml`)에 있다. 튜닝값과 실측 근거는 실제 로봇(센서 플러그인 이후)으로 채운다. 인용은 [참고 문헌](#6-참고-문헌)의 번호다.
 > 지도 생성(slam_toolbox)은 지수 담당이며 별도 문서로 다룬다. 분업은 [명세서 8-2절](../project-spec.md#8-2-매핑위치추정-분업-지수--민지)을 따른다.
 
 ## 1. 구성
@@ -8,19 +8,21 @@
 | 노드 | 패키지 | 입력 | 출력 |
 | --- | --- | --- | --- |
 | AMCL | `nav2_amcl` | `map`, `scan`, TF | `amcl_pose` (PoseWithCovarianceStamped) |
-| `ekf_local` | `robot_localization` | `odom`, `imu/data` | `odom→base_link` 후보 |
-| `ekf_global` | `robot_localization` | `odom`, `imu/data`, `amcl_pose` | `odometry/filtered`, `map→odom` 후보 |
+| `ekf_local` | `robot_localization` | `odom`, `imu/data` | `odometry/local`, `odom→base_footprint` |
+| `ekf_global` | `robot_localization` | `odom`, `imu/data`, `amcl_pose` | `odometry/filtered` (KPI 측정 대상), `map→odom` |
 
-### TF 발행 구성 (2주차에 지수와 확정)
+실행: `ros2 launch amr_localization localization.launch.py` (지도 서버, AMCL, EKF 두 개). 인자는 패키지 README 참고.
 
-`odom→base_link`와 `map→odom`은 각각 한 노드만 발행해야 한다. 원 명세서의 "EKF(Odom+IMU+AMCL)"를 만족하는 후보는 두 가지다.
+### TF 발행 구성 (D4, A안 확정)
 
-| 안 | `odom→base_link` | `map→odom` | 설정 |
+`odom→base_footprint`와 `map→odom`은 각각 한 노드만 발행해야 한다. 원 명세서의 "EKF(Odom+IMU+AMCL)"를 만족하는 후보 두 가지를 비교해 A안으로 확정했다(#34, [api.md 2-1절](../api.md#2-1-tf-발행-주체-d4-a안-ekf-두-개)).
+
+| 안 | `odom→base_footprint` | `map→odom` | 설정 |
 | --- | --- | --- | --- |
-| A. EKF 두 개 (권장) | `ekf_local` | `ekf_global` (AMCL 보정 포함) | 오도메트리 노드 `publish_tf: false`, AMCL `tf_broadcast: false` |
+| A. EKF 두 개 (확정) | `ekf_local` | `ekf_global` (AMCL 보정 포함) | 오도메트리 노드 `publish_tf: false`, AMCL `tf_broadcast: false` |
 | B. EKF 한 개 + AMCL | EKF (odom+IMU) | AMCL | AMCL 결과가 EKF에 들어가지 않아 명세 요구와 어긋남 |
 
-A안은 `odom` 프레임이 연속적(점프 없음)이라는 조건을 지키면서, AMCL 보정은 `map→odom`에만 반영한다. robot_localization 공식 문서가 권장하는 구성과 같다: `world_frame`을 `map`으로 둔 인스턴스는 `map→odom`을 발행하고, `odom→base_link`는 다른 노드(또 하나의 robot_localization 인스턴스여도 된다)가 발행하되 **그 인스턴스는 전역 데이터(AMCL 등)를 넣지 않는다** [2]. AMCL의 `tf_broadcast: false`는 AMCL이 `map→odom`을 발행하지 않게 하는 옵션이다 [4]. 확정 결과는 [api.md](../api.md) TF 트리에 기록한다.
+A안은 `odom` 프레임이 연속적(점프 없음)이라는 조건을 지키면서, AMCL 보정은 `map→odom`에만 반영한다. robot_localization 공식 문서가 권장하는 구성과 같다: `world_frame`을 `map`으로 둔 인스턴스는 `map→odom`을 발행하고, `odom→base_footprint`는 다른 노드(또 하나의 robot_localization 인스턴스여도 된다)가 발행하되 **그 인스턴스는 전역 데이터(AMCL 등)를 넣지 않는다** [2]. AMCL의 `tf_broadcast: false`는 AMCL이 `map→odom`을 발행하지 않게 하는 옵션이다 [4]. EKF의 `base_link_frame`은 URDF 구조(`base_footprint → base_link`)에 맞춰 `base_footprint`로 둔다.
 
 ## 2. EKF (`robot_localization`)
 
