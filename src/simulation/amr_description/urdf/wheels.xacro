@@ -37,7 +37,7 @@
       <!-- 바퀴 중심 높이 = 지면에서 wheel_radius -->
       <origin xyz="0 ${reflect * wheel_separation / 2} ${wheel_radius - base_z}" rpy="0 0 0"/>
       <axis xyz="0 1 0"/>
-      <limit effort="20" velocity="${max_linear_velocity / wheel_radius}"/>
+      <limit effort="${wheel_max_torque}" velocity="${max_linear_velocity / wheel_radius}"/>
     </joint>
 
     <gazebo reference="${prefix}${side}_wheel_link">
