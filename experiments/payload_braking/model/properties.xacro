@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<!--
+  적재 질량 제동 거리 실험용 최소 모델 치수·질량.
+
+  src/simulation/amr_description(지수 패키지)의 실제 로봇과는 분리된 독립 모델이다 —
+  이 실험은 그 패키지를 건드리지 않는다. 바퀴 충돌 원통을 얇게 하고 바깥으로
+  반 폭 옮기는 트릭은 PR #36(fix/sim-wheel-contact)과 똑같은 이유로 그대로 가져왔다:
+  Fortress(DART)는 원통-바닥 접촉점을 원통 안쪽 모서리에 잡아서, 보이는 폭(5cm) 그대로
+  충돌시키면 제자리 회전 시 유효 바퀴 간격이 줄어든다. 이 실험은 직진 가속·제동만
+  측정하므로 회전 오차의 영향은 작지만, 동일 조건을 유지하기 위해 같은 값을 쓴다.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- 몸체: 0.6 x 0.4 x 0.3 m, 25 kg (README "모터 사양 근거" 참고) -->
+  <xacro:property name="base_length" value="0.6"/>
+  <xacro:property name="base_width" value="0.4"/>
+  <xacro:property name="base_height" value="0.3"/>
+  <xacro:property name="base_mass" value="25.0"/>
+  <xacro:property name="ground_clearance" value="0.03"/>
+
+  <!-- 적재물 상자: 몸체 위 중앙. 크기는 고정, 질량만 payload_kg 인자로 바뀐다 -->
+  <xacro:property name="payload_length" value="0.3"/>
+  <xacro:property name="payload_width" value="0.3"/>
+  <xacro:property name="payload_height" value="0.1"/>
+  <!-- 0 kg 조건에서 질량 0인 링크는 관성 행렬이 특이해져 물리 엔진이 불안정해질 수
+       있어, 실질적으로 0인 아주 작은 질량으로 바닥을 깐다(결과에 영향 없음) -->
+  <xacro:property name="payload_mass_floor" value="0.0001"/>
+
+  <!-- 구동 바퀴 -->
+  <xacro:property name="wheel_radius" value="0.1"/>
+  <xacro:property name="wheel_width" value="0.05"/>
+  <xacro:property name="wheel_contact_width" value="0.01"/>
+  <xacro:property name="wheel_separation" value="0.34"/>
+  <xacro:property name="wheel_mass" value="1.5"/>
+
+  <!-- 캐스터: 앞뒤 2개, 마찰 없는 구 -->
+  <xacro:property name="caster_radius" value="0.03"/>
+  <xacro:property name="caster_offset_x" value="0.22"/>
+  <xacro:property name="caster_mass" value="0.3"/>
+
+  <!-- base_footprint(지면) → base_link(몸체 중심) 높이 -->
+  <xacro:property name="base_z" value="${ground_clearance + base_height / 2}"/>
+
+  <!-- 관성 모멘트 매크로 (amr_description/urdf/properties.xacro와 동일한 식) -->
+  <xacro:macro name="box_inertia" params="m x y z">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m * (y*y + z*z) / 12}" ixy="0" ixz="0"
+               iyy="${m * (x*x + z*z) / 12}" iyz="0"
+               izz="${m * (x*x + y*y) / 12}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="cylinder_inertia" params="m r h">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m * (3*r*r + h*h) / 12}" ixy="0" ixz="0"
+               iyy="${m * (3*r*r + h*h) / 12}" iyz="0"
+               izz="${m * r * r / 2}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="sphere_inertia" params="m r">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${2 * m * r * r / 5}" ixy="0" ixz="0"
+               iyy="${2 * m * r * r / 5}" iyz="0"
+               izz="${2 * m * r * r / 5}"/>
+    </inertial>
+  </xacro:macro>
+
+</robot>

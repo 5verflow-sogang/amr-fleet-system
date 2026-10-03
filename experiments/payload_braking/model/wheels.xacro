@@ -1,0 +1,86 @@
+<?xml version="1.0"?>
+<!-- 차동 구동: 좌우 구동 바퀴 + 앞뒤 캐스터. amr_description/urdf/wheels.xacro와 같은 구조 -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- side: left | right, reflect: 1 | -1 -->
+  <xacro:macro name="drive_wheel" params="side reflect">
+    <link name="${side}_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="wheel">
+          <color rgba="0.1 0.1 0.1 1"/>
+        </material>
+      </visual>
+      <!-- 충돌은 얇은 원통을 바깥으로 반 폭 옮겨 둔다 (properties.xacro 설명, PR #36) -->
+      <collision>
+        <origin xyz="0 ${reflect * wheel_contact_width / 2} 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_contact_width}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <mass value="${wheel_mass}"/>
+        <inertia ixx="${wheel_mass * (3*wheel_radius*wheel_radius + wheel_width*wheel_width) / 12}" ixy="0" ixz="0"
+                 iyy="${wheel_mass * (3*wheel_radius*wheel_radius + wheel_width*wheel_width) / 12}" iyz="0"
+                 izz="${wheel_mass * wheel_radius * wheel_radius / 2}"/>
+      </inertial>
+    </link>
+
+    <joint name="${side}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${side}_wheel_link"/>
+      <origin xyz="0 ${reflect * wheel_separation / 2} ${wheel_radius - base_z}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <!-- effort 한계 = 바퀴 토크 한계. V 모드(DiffDrive)는 속도 소스라 이 한계를
+           엄격히 지키지 않을 수 있다 - README "결론" 참고 -->
+      <limit effort="${wheel_torque_max}" velocity="100"/>
+    </joint>
+
+    <gazebo reference="${side}_wheel_link">
+      <mu1>1.0</mu1>
+      <mu2>1.0</mu2>
+    </gazebo>
+  </xacro:macro>
+
+  <!-- name: front | rear, reflect: 1 | -1 -->
+  <xacro:macro name="caster" params="name reflect">
+    <link name="${name}_caster_link">
+      <visual>
+        <geometry>
+          <sphere radius="${caster_radius}"/>
+        </geometry>
+        <material name="caster">
+          <color rgba="0.5 0.5 0.5 1"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <sphere radius="${caster_radius}"/>
+        </geometry>
+      </collision>
+      <xacro:sphere_inertia m="${caster_mass}" r="${caster_radius}"/>
+    </link>
+
+    <joint name="${name}_caster_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="${name}_caster_link"/>
+      <origin xyz="${reflect * caster_offset_x} 0 ${caster_radius - base_z}" rpy="0 0 0"/>
+    </joint>
+
+    <!-- 고정 구로 캐스터를 근사하므로 마찰을 없앤다 -->
+    <gazebo reference="${name}_caster_link">
+      <mu1>0.0</mu1>
+      <mu2>0.0</mu2>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:drive_wheel side="left" reflect="1"/>
+  <xacro:drive_wheel side="right" reflect="-1"/>
+  <xacro:caster name="front" reflect="1"/>
+  <xacro:caster name="rear" reflect="-1"/>
+
+</robot>
