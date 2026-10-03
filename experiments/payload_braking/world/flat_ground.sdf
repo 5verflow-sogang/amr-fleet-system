@@ -1,0 +1,67 @@
+<?xml version="1.0"?>
+<!--
+  적재 질량 제동 거리 실험용 빈 평평한 월드. 물류센터 월드(amr_gazebo/worlds/warehouse.sdf)는
+  쓰지 않는다 - 랙·기둥 등 장애물이 가속·제동 측정에 전혀 필요 없고, 오히려 변수만 늘린다.
+
+  좌표계: 원점 (0,0), 바닥은 x -100~100m, y -10~10m인 평면 하나뿐.
+  로봇은 x=-20에서 스폰해 +x로 달린다 - 가속(~1m) + 1초 정속(~1m) + 제동(최대 몇 m)을
+  다 더해도 20m 주행 공간에 여유가 크다.
+
+  real_time_factor=0: 스로틀 없이 최대한 빠르게(CPU가 버티는 한). 측정은 전부 GT
+  position + 시뮬레이션 시각(헤더 타임스탬프) 기준이라 실제로 얼마나 빨리 돌든
+  결과에는 영향이 없다.
+-->
+<sdf version="1.8">
+  <world name="payload_braking">
+    <physics name="1ms" type="dart">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>0</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system" name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"/>
+
+    <scene>
+      <ambient>0.7 0.7 0.7 1</ambient>
+      <background>0.75 0.8 0.85 1</background>
+      <shadows>false</shadows>
+    </scene>
+
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 20 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <direction>-0.3 0.2 -1.0</direction>
+    </light>
+
+    <!-- 바닥: 마찰 계수 mu 0.7 (지수 월드 바닥과 동일 가정값, 에폭시/콘크리트 범위 중간) -->
+    <model name="ground">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane><normal>0 0 1</normal><size>200 20</size></plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0.7</mu>
+                <mu2>0.7</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane><normal>0 0 1</normal><size>200 20</size></plane>
+          </geometry>
+          <material>
+            <ambient>0.55 0.55 0.52 1</ambient>
+            <diffuse>0.55 0.55 0.52 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>

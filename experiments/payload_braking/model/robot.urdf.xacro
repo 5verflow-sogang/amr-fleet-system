@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<!--
+  적재 질량 제동 거리 실험용 최소 로봇.
+
+    xacro robot.urdf.xacro payload_kg:=10 drive_mode:=V accel_limited:=true \
+      wheel_torque_max:=3.0 gt_rate:=100 -o /tmp/robot.urdf
+
+  drive_mode: V(DiffDrive, 속도 명령) | T(JointController 힘 모드, 토크 한계)
+  accel_limited: V 모드에서만 의미 있음. true=normal(가속 1.0 m/s² 제한),
+                 false=emergency(가속 한계 없음). T 모드는 무시한다(변환 노드가 처리).
+-->
+<robot name="amr_payload" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="payload_kg" default="0.0"/>
+  <xacro:arg name="drive_mode" default="V"/>
+  <xacro:arg name="accel_limited" default="true"/>
+  <xacro:arg name="wheel_torque_max" default="3.0"/>
+  <xacro:arg name="gt_rate" default="100"/>
+
+  <xacro:property name="payload_kg" value="$(arg payload_kg)"/>
+  <xacro:property name="wheel_torque_max" value="$(arg wheel_torque_max)"/>
+  <xacro:property name="gt_rate" value="$(arg gt_rate)"/>
+
+  <!--
+    문자열 인자 비교는 xacro:property에 그대로 담지 않고, $(arg ..)를 직접
+    따옴표로 감싸 평가한 결과(True/False)를 담는다. xacro:property에 "V" 같은
+    문자열을 그대로 담아 나중에 ${drive_mode == 'V'}로 비교하면, 치환 시 따옴표
+    없이 V가 그대로 식에 들어가 NameError가 난다 - 평가 시점에 비교까지 끝낸
+    불(bool) 값을 담아야 안전하다.
+  -->
+  <xacro:property name="is_drive_v" value="${'$(arg drive_mode)' == 'V'}"/>
+  <xacro:property name="is_drive_t" value="${'$(arg drive_mode)' == 'T'}"/>
+  <xacro:property name="accel_limited" value="${'$(arg accel_limited)' == 'true'}"/>
+
+  <!-- 같은 model/ 디렉토리의 상대 경로. ROS 패키지가 아니라 find-pkg-share를 안 쓴다 -->
+  <xacro:include filename="properties.xacro"/>
+  <xacro:include filename="base.xacro"/>
+  <xacro:include filename="wheels.xacro"/>
+  <xacro:include filename="gazebo.xacro"/>
+
+</robot>
