@@ -14,7 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # TODO: rosdep 외 의존성 (예: ros2_tracing/LTTng)
 
 # YOLO 추론 (amr_detection)
-RUN pip3 install --no-cache-dir ultralytics==8.4.164
+# ROS Humble의 cv_bridge는 NumPy 1.x로 컴파일되어 있어 numpy<2를 유지한다. opencv-python 4.12부터 numpy 2를 요구한다.
+# ultralytics가 설치하는 torch가 setuptools를 84.x로 올리는데, 이는 colcon-core(<80 요구)와 맞지 않아
+# colcon build가 실패하므로 ROS Humble 권장 버전으로 되돌린다.
+RUN pip3 install --no-cache-dir ultralytics==8.4.164 "numpy<2" "opencv-python<4.12" \
+    && pip3 install --no-cache-dir setuptools==58.2.0
 ADD https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.pt /opt/models/yolov8n.pt
 
 WORKDIR /ros2_ws
