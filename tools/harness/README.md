@@ -35,12 +35,12 @@
 | --- | --- | --- | --- |
 | `trajectories/<robot>_gt.tum` | TUM 궤적 형식 | 시뮬레이터 Ground Truth 궤적 | 민지 (GT 토픽은 지수가 `amr_gazebo`에서 제공) |
 | `trajectories/<robot>_est.tum` | TUM 궤적 형식 | EKF 추정 궤적 (`odometry/filtered`) | 민지 |
-| `rosbag/` | rosbag2 (mcap) | 시나리오에서 정한 토픽 기록 (선택) | 시나리오 작성자 |
+| `rosbag/` | rosbag2 (mcap) | 시나리오에서 정한 토픽 기록 (선택). 단 Fleet 시나리오는 `/fleet/*`, `/<robot>/fleet/*` 녹화가 필수 (`fleet_latency.csv`·Ack 컬럼의 원자료) | 시나리오 작성자, Fleet 토픽은 하연 |
 | `trace/` | LTTng CTF | ros2_tracing 원본 (UST `ros2:*` 이벤트). `hop_latency.csv`의 원자료 | 하연 (수집 절차는 [runbook](../../docs/runbook.md) "트레이싱") |
 
 - TUM 궤적 형식: 한 줄에 `timestamp x y z qx qy qz qw` (공백 구분, 초·m·쿼터니언). evo가 그대로 읽는다.
 - **좌표계 정렬**: GT(Gazebo world)와 추정값(`map`)은 서로 다른 좌표계다. 두 좌표계 사이 변환을 시나리오 설정에 고정값으로 두고, 정렬 방식을 `meta.json`에 기록한다. 평가 도구가 임의로 최적 정렬(Umeyama 등)을 하면 오차가 실제보다 작게 나올 수 있으므로 KPI 산출에는 고정 변환만 쓴다.
-- rosbag은 용량이 커서 기본으로 켜지 않는다. 켜는 경우에도 커밋하지 않는다(CONTRIBUTING 6절).
+- rosbag은 용량이 커서 기본으로 켜지 않는다. 켜는 경우에도 커밋하지 않는다(CONTRIBUTING 6절). Fleet 시나리오의 `/fleet/*` 녹화는 예외로 항상 켠다. 센서·지도 같은 큰 토픽이 아니라 용량이 작다.
 
 ### 지표 CSV
 
@@ -72,7 +72,7 @@
     - `ack_time`: 같은 `robot`·`assignment_id`의 `TaskAssignmentAck`를 `/fleet/task_assignment_acks`에서 처음 받은 시각. `result`(수락·거부)와 상관없이 첫 Ack.
     - `ack_rtt_ms` = (`ack_time` − `cmd_time`) × 1000. 첫 발송 기준이라 재전송에 걸린 시간이 들어간다.
     - `resends`: 기록기가 같은 `assignment_id`를 받은 횟수 − 1.
-    - Ack를 못 받으면 `ack_time`, `ack_rtt_ms`를 비운다.
+    - Ack를 못 받으면 `ack_time`, `ack_rtt_ms`를 비운다. 단 실행 끝 무렵에 보낸 명령은 Ack가 오는 중에 실행이 끝날 수 있으므로, 아래 "관측 마감" 규칙으로 빼고 센다.
     - 로봇 → 서버 방향은 지금 장애 주입을 하지 않으므로([api.md 4-4절](../../docs/api.md#4-4-미결-쟁점-928-회의)) `ack_rtt_ms`에는 주입 지연이 한 번만 들어간다.
 - `tasks.csv`: `/fleet/task_status`의 마지막 이벤트(COMPLETED·FAILED)를 작업 1건당 1행으로 옮긴다. 명세서가 요구하는 작업 로그 필드와 Fleet 지표(평균 작업 시간·처리량·총 이동 거리)를 여기서 계산한다.
   - 컬럼: `task_id, robot, state, start_time, end_time, duration, distance_traveled, error_code`
@@ -95,9 +95,11 @@
   - 컬럼: `topic, robot, key, send_time, recv_time, latency_ms, delivered`
   - `key`: 원본과 중계본을 짝짓는 번호. `task_assignments`는 `assignment_id`, `zone_grants`는 `request_id`, `heartbeat`·`task_table`은 `epoch:seq`. 장애주입기는 이 필드를 바꾸지 않는다([amr_fault_injector](../../src/fleet/amr_fault_injector/README.md))
   - `send_time`: 기록기가 원본 `/fleet/<topic>`을 받은 시각. `recv_time`: 기록기가 중계본 `/<robot>/fleet/<topic>`을 받은 시각. 둘 다 실제 시간
+  - **기록 방법**: rclpy 기록 노드를 쓰지 않고 rosbag2로 `/fleet/*`, `/<robot>/fleet/*`, `/fleet/task_assignment_acks`를 녹화한 뒤 CSV를 오프라인으로 만든다. 수신 시각은 bag에 저장된 수신 시각을 쓴다. Python 노드는 부하가 걸리면 수신 시각을 수 ms 늦게 적는데, 재려는 값이 바로 그 ms 단위 지연이라 측정이 틀어진다(민지, #33). `response_time.csv`의 Ack 컬럼도 같은 bag에서 만든다
   - `latency_ms` = (`recv_time` − `send_time`) × 1000. 주입 지연 + 중계 1홉 + DDS. 주입 0ms 조건이 중계 오버헤드 기준선이다
-  - `delivered`: 중계본이 오면 `1`, 실행이 끝날 때까지 안 오면 `0`(`recv_time`, `latency_ms`는 비움). 손실률을 여기서 센다
+  - `delivered`: 중계본이 오면 `1`, 안 오면 `0`(`recv_time`, `latency_ms`는 비움). 관측 마감 뒤에 보낸 메시지는 비운다(판정 안 함). 손실률은 `0`/`1`인 행만으로 센다
   - 같은 `key`가 여러 번 오면(재전송) 첫 도착만 쓴다
+  - **관측 마감**: 실행 종료 시각에서 `delay_ms` + 여유 시간(`grace_s`, 기본 1초)을 뺀 시각 이후에 보낸 메시지는 지연·손실 계산에서 뺀다. 예를 들어 지연 0.5초 조건에서 실행이 10초에 끝나면, 9.8초에 보낸 메시지는 10.3초에 도착할 예정이라 아직 오는 중이다. 이걸 손실로 세면 지연이 클수록 손실이 많은 것처럼 나와 연구 1의 결론이 왜곡된다(민지, #33). Ack도 같은 규칙을 쓰되, 여유 시간에 서버 재전송 간격 × 최대 재전송 횟수를 더한다(`amr_fleet_manager` 파라미터 확정 후). 쓴 마감 시각은 `meta.json`의 `observation_cutoff`에 남긴다
 - `hop_latency.csv`: 구독 노드가 메시지를 꺼낸 1건(`ros2:rmw_take`, `taken=1`)마다 1행. `trace/`에서 오프라인으로 변환한다
   - 컬럼: `layer, node, topic, source_time, take_time, dds_ms, callback_ms`
   - `layer`: 토픽 이름이 `/fleet/*` 또는 `/<robot>/fleet/*`면 `2`, 나머지는 `1`
@@ -111,6 +113,7 @@
   - 실행마다 그룹별로 P50·P95·P99·최대·N을 낸다. 그룹은 `fleet_latency`는 (`topic`, `robot`), `hop_latency`는 (`layer`, `topic`, `node`)
   - 반복 간에는 위 "요약 통계"와 같이 평균과 부트스트랩 95% 신뢰구간을 낸다
   - P99는 표본이 100개 미만이면 사실상 최대값이다. 실행 1회의 그룹 표본이 100개 미만이면 반복 실행을 합쳐(pool) 계산하고 그렇게 했다고 표시한다
+  - 신뢰구간은 **실행 단위로** 다시 뽑는다. 부트스트랩 한 번에 실행 N개를 복원 추출하고, 뽑힌 실행의 메시지를 합쳐 분위수를 구한다. 메시지 단위로 섞어 뽑지 않는다. 같은 실행 안의 메시지는 같은 조건·같은 순간의 부하를 공유해 서로 닮아 있으므로, 메시지 1,000개를 독립 표본으로 보면 신뢰구간이 실제보다 좁게 나온다. 독립인 정보량은 실행 수에 가깝다(민지, #33)
   - 손실된 메시지(`delivered=0`)는 지연 분위수에서 빼고 손실률로 따로 보고한다
 
 ### 실행 결과 배치
@@ -152,6 +155,7 @@ tools/harness/results/<run_id>/
 | `use_sim_time`, `real_time_factor` | `true`, `0.87` | 시뮬레이터가 실제보다 느리게 돌았는지 |
 | `rmw_implementation` | `rmw_cyclonedds_cpp` | 연구 1 After 측정의 DDS 벤더 비교 (하연 제안) |
 | `qos_profile` | `default` | 연구 1 After 측정의 QoS 튜닝 전후 구분. 값은 [api.md 6절](../../docs/api.md#6-qos-기본값) 프로파일 이름 (하연 제안) |
+| `observation_cutoff` | `{"end": 612.3, "grace_s": 1.0, "cutoff": 610.8}` | 연구 1 지연·손실·Ack에서 뺀 실행 끝 구간 (하연 제안, 민지 #33) |
 
 ### 요약 통계
 
@@ -171,7 +175,7 @@ tools/harness/results/<run_id>/
 
 남은 것: 응답 시간 판정 임계값(0.01 m/s·0.05 rad/s)은 초안이다. 하네스 구현 때 정지 상태 `odom` 노이즈를 보고 확정한다.
 
-리뷰 중 (D5, 하연 제안): `response_time.csv` Ack 컬럼, 연구 1 지연(`fleet_latency.csv`, `hop_latency.csv`), `trace/`, `meta.json`의 `rmw_implementation`·`qos_profile`. 민지가 승인하면 위 표로 옮긴다.
+리뷰 중 (D5, 하연 제안): `response_time.csv` Ack 컬럼, 연구 1 지연(`fleet_latency.csv`, `hop_latency.csv`), `trace/`, `meta.json`의 `rmw_implementation`·`qos_profile`·`observation_cutoff`. 민지 의견(rosbag2 녹화, 관측 마감, 실행 단위 신뢰구간) 반영. 민지가 승인하면 위 표로 옮긴다.
 
 ### 참고
 
