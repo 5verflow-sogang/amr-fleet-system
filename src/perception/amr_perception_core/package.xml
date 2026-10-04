@@ -8,7 +8,9 @@
   <license>TODO: License declaration</license>
 
   <!-- TODO: 구현 시 의존성 추가 (예: rclpy, amr_msgs) -->
+  <exec_depend>python3-numpy</exec_depend>
 
+  <test_depend>python3-numpy</test_depend>
   <test_depend>python3-pytest</test_depend>
 
   <export>
