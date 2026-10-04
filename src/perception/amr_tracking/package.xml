@@ -7,7 +7,14 @@
   <maintainer email="TODO@example.com">연우</maintainer>
   <license>TODO: License declaration</license>
 
-  <!-- TODO: 구현 시 의존성 추가 (예: rclpy, amr_msgs) -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>amr_msgs</exec_depend>
+  <exec_depend>amr_perception_core</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
 

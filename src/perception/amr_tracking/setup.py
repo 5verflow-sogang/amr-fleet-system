@@ -23,7 +23,8 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            # 'node_name = amr_tracking.node_module:main',
+            'tracking_node = amr_tracking.tracking_node:main',
+            'synthetic_obstacles_node = amr_tracking.synthetic_obstacles_node:main',
         ],
     },
 )

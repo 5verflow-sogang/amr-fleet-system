@@ -192,6 +192,12 @@ map
 | Publish | `/<ns>/odom` | `nav_msgs/msg/Odometry` | 휠 오도메트리 (엔코더 모델), 50 Hz, 위치·속도 공분산 |
 | Publish | `/<ns>/scan` | `sensor_msgs/msg/LaserScan` | 필터 스캔 (거리·각도·아웃라이어), 10 Hz |
 | Publish | `/<ns>/imu/data` | `sensor_msgs/msg/Imu` | 바이어스 보정·저역통과, 100 Hz, 공분산 채움. 시작 2초 정지 보정 뒤 발행 |
+### amr_tracking
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `perception/obstacle_measurements` | `geometry_msgs/msg/PoseArray` | 장애물 위치 측정, 고정 좌표계(odom 또는 map). 인지 도메인 내부 |
+| Publish | `perception/obstacles` | `amr_msgs/msg/TrackedObstacleArray` | 확정 트랙의 위치·속도·공분산. `header`는 측정을 그대로 따른다 |
 
 <!-- TODO: 나머지 패키지 섹션을 같은 형식으로 추가 -->
 
