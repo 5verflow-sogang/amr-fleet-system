@@ -2,6 +2,8 @@
 
 좌표는 ROS camera optical frame 관례를 따른다: Z 전방, X 오른쪽, Y 아래.
 픽셀 (u, v)는 영상 좌상단이 원점이고 u는 오른쪽, v는 아래로 증가한다.
+CameraInfo K와 같은 ROS/OpenCV 관례로, 픽셀 i의 중심이 정수 i다.
+YOLO bbox(픽셀 경계 관례)의 중심은 depth_sampling.bbox_center_to_pixel로 바꿔서 넘긴다.
 왜곡이 보정된(rectified) 영상을 가정한다.
 """
 

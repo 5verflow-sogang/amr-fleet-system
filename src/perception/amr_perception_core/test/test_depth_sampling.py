@@ -1,12 +1,16 @@
 import numpy as np
 import pytest
 
+from amr_perception_core.camera_model import PinholeCamera
 from amr_perception_core.depth_sampling import (
+    bbox_center_to_pixel,
     DepthSampleStatus,
     DepthSamplingConfig,
     sample_bbox_depth,
     shrink_bbox,
 )
+
+MEDIAN = DepthSamplingConfig(method='median')
 
 # 객체 bbox (200..300, 100..200). 기본 roi_scale=0.5면 ROI는 (225..275, 125..175) = 50x50
 BBOX = (200.0, 100.0, 300.0, 200.0)
@@ -42,8 +46,9 @@ def test_roi_shrink_ignores_background_inside_loose_bbox():
     depth = make_scene()
     loose_bbox = (170.0, 70.0, 330.0, 230.0)
     assert sample_bbox_depth(depth, loose_bbox).depth == pytest.approx(2.0)
-    full = sample_bbox_depth(depth, loose_bbox, DepthSamplingConfig(roi_scale=1.0))
-    assert full.depth == pytest.approx(8.0)  # bbox 전체를 쓰면 배경이 과반
+    full = sample_bbox_depth(
+        depth, loose_bbox, DepthSamplingConfig(roi_scale=1.0, method='median'))
+    assert full.depth == pytest.approx(8.0)  # bbox 전체를 중앙값으로 보면 배경이 과반
 
 
 # --- 정상 동작 ---
@@ -66,7 +71,92 @@ def test_median_rejects_minority_outliers():
 def test_median_of_known_distribution():
     depth = make_scene()
     depth[ROI] = np.linspace(1.0, 3.0, ROI_PIXELS).reshape(50, 50)
-    assert sample_bbox_depth(depth, BBOX).depth == pytest.approx(2.0)
+    assert sample_bbox_depth(depth, BBOX, MEDIAN).depth == pytest.approx(2.0)
+
+
+# --- 가장 가까운 덩어리(전경) ---
+
+def make_thin_object(object_ratio, object_depth=2.0, background_depth=8.0):
+    """ROI 왼쪽 열들만 물체(object_ratio 비율)이고 나머지는 배경인 깊이 영상."""
+    depth = make_scene(object_depth=background_depth)
+    depth[ROI][:, :int(50 * object_ratio)] = object_depth
+    return depth
+
+
+def test_thin_object_uses_object_depth_not_background():
+    # 기둥·표지판처럼 ROI의 20%만 물체여도 물체 깊이를 고른다
+    depth = make_thin_object(0.2)
+    result = sample_bbox_depth(depth, BBOX)
+    assert result.depth == pytest.approx(2.0)
+    assert result.num_foreground == ROI_PIXELS // 5
+
+
+def test_median_method_picks_background_for_thin_object():
+    # 같은 상황에서 중앙값 방식은 배경을 고른다 (리뷰에서 지적된 동작)
+    assert sample_bbox_depth(make_thin_object(0.2), BBOX, MEDIAN).depth == pytest.approx(8.0)
+
+
+def test_nearest_cluster_ignores_few_near_spikes():
+    # 전경 기준 백분위(10%)보다 적은 가까운 튀는 픽셀은 결과를 바꾸지 못한다
+    depth = make_scene(object_depth=3.0)
+    depth[ROI][:1, :] = 0.5  # ROI의 2%
+    result = sample_bbox_depth(depth, BBOX)
+    assert result.depth == pytest.approx(3.0)
+
+
+def test_nearest_cluster_with_depth_noise():
+    # 시뮬레이터 깊이 잡음(σ=0.02 m)이 있어도 물체 깊이 근처를 고른다
+    rng = np.random.default_rng(0)
+    depth = make_thin_object(0.3)
+    depth[ROI][:, :15] += rng.normal(0.0, 0.02, size=(50, 15)).astype(np.float32)
+    assert sample_bbox_depth(depth, BBOX).depth == pytest.approx(2.0, abs=0.01)
+
+
+def test_foreground_band_keeps_object_thickness():
+    # 물체 앞면~뒷면 깊이 차(0.2 m)는 band(0.3 m) 안이라 모두 전경, 배경은 제외
+    depth = make_scene(object_depth=8.0)
+    depth[ROI][:, :25] = np.linspace(2.0, 2.2, 25)
+    result = sample_bbox_depth(depth, BBOX)
+    assert result.num_foreground == ROI_PIXELS // 2
+    assert 2.0 <= result.depth <= 2.2
+
+
+def test_uniform_object_same_as_median():
+    for config in (DepthSamplingConfig(), MEDIAN):
+        result = sample_bbox_depth(make_scene(), BBOX, config)
+        assert result.depth == pytest.approx(2.0)
+        assert result.num_foreground == ROI_PIXELS
+
+
+# --- bbox 중심 → K 픽셀 관례 ---
+
+def test_bbox_center_to_pixel_shifts_half_pixel():
+    # 픽셀 (320, 240) 하나만 덮는 bbox의 중심은 K 관례로 (320, 240)
+    assert bbox_center_to_pixel((320.0, 240.0, 321.0, 241.0)) == (320.0, 240.0)
+    assert bbox_center_to_pixel(BBOX) == (249.5, 149.5)
+
+
+def test_bbox_center_backprojects_onto_optical_axis():
+    camera = PinholeCamera(fx=500.0, fy=500.0, cx=320.0, cy=240.0)
+    u, v = bbox_center_to_pixel((310.0, 230.0, 331.0, 251.0))
+    np.testing.assert_allclose(camera.backproject(u, v, 2.0), [0.0, 0.0, 2.0], atol=1e-12)
+
+
+def test_bbox_center_to_pixel_rejects_invalid_bbox():
+    with pytest.raises(ValueError):
+        bbox_center_to_pixel((10.0, 10.0, 5.0, 20.0))
+
+
+# --- 검출 영상 크기 확인 ---
+
+def test_accepts_matching_image_size():
+    assert sample_bbox_depth(make_scene(), BBOX, image_size=(640, 480)).ok
+
+
+@pytest.mark.parametrize('image_size', [(480, 640), (1280, 720), (640, 479)])
+def test_rejects_mismatched_image_size(image_size):
+    with pytest.raises(ValueError):
+        sample_bbox_depth(make_scene(), BBOX, image_size=image_size)
 
 
 # --- 무효 값 제거 ---
@@ -218,6 +308,11 @@ def test_rejects_invalid_image_shape(image):
     {'max_depth': np.inf},
     {'min_valid_ratio': -0.1},
     {'min_valid_ratio': 1.1},
+    {'method': 'mean'},
+    {'near_percentile': -1.0},
+    {'near_percentile': 100.5},
+    {'foreground_band': 0.0},
+    {'foreground_band': np.nan},
 ])
 def test_rejects_invalid_config(kwargs):
     with pytest.raises(ValueError):
