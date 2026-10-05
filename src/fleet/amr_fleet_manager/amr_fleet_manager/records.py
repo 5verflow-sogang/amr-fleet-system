@@ -1,8 +1,9 @@
-"""서버 재시작 번호(epoch), assignments.csv 기록, 구역 목록 읽기. rclpy를 import하지 않는다."""
+"""서버 재시작 번호(epoch), assignments.csv·fault_events.csv 기록, 구역 목록 읽기. rclpy를 import하지 않는다."""
 
 from __future__ import annotations
 
 import csv
+import time
 from pathlib import Path
 from typing import Iterable
 
@@ -12,6 +13,7 @@ from amr_fleet_core.traffic import ZoneSpec
 from .dispatcher import AssignmentRow
 
 ASSIGNMENTS_HEADER = ['timestamp', 'call_id', 'algorithm', 'cost_fn', 'task_id', 'robot_id', 'cost']
+FAULT_EVENTS_HEADER = ['time', 'event']
 
 
 def next_epoch(path: str) -> int:
@@ -62,3 +64,21 @@ def load_zones(path: str) -> list[ZoneSpec]:
         return []
     data = yaml.safe_load(Path(path).read_text(encoding='utf-8')) or {}
     return [ZoneSpec(str(z['id']), int(z.get('capacity', 1))) for z in data.get('zones') or []]
+
+
+def append_fault_event(path: str, event: str, now: float | None = None) -> float:
+    """서버 강제종료·재시작 시각을 fault_events.csv에 한 줄 덧붙인다. 경로가 비면 기록하지 않는다.
+
+    시각은 실제 시간(UNIX 초)이다. rosbag2가 기록하는 수신 시각과 같은 시계라 heartbeat 끊김과 맞춰 볼 수 있다.
+    """
+    now = time.time() if now is None else now
+    if path:
+        file = Path(path)
+        file.parent.mkdir(parents=True, exist_ok=True)
+        new = not file.exists() or file.stat().st_size == 0
+        with file.open('a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if new:
+                writer.writerow(FAULT_EVENTS_HEADER)
+            writer.writerow([f'{now:.6f}', event])
+    return now

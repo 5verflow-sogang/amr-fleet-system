@@ -37,6 +37,7 @@
 | `trajectories/<robot>_est.tum` | TUM 궤적 형식 | EKF 추정 궤적 (`odometry/filtered`) | 민지 |
 | `rosbag/` | rosbag2 (mcap) | 시나리오에서 정한 토픽 기록 (선택). 단 Fleet 시나리오는 `/fleet/*`, `/<robot>/fleet/*` 녹화가 필수 (`fleet_latency.csv`·Ack 컬럼의 원자료) | 시나리오 작성자, Fleet 토픽은 하연 |
 | `trace/` | LTTng CTF | ros2_tracing 원본 (UST `ros2:*` 이벤트). `hop_latency.csv`의 원자료 | 하연 (수집 절차는 [runbook](../../docs/runbook.md) "트레이싱") |
+| `fault_events.csv` | CSV `time, event` | 서버 강제종료·재시작 시각 (실제 시간, UNIX 초). 서버 장애 시나리오에서만 | 하연 (`fleet_manager.launch.py`의 `fault_events_file`) |
 
 - TUM 궤적 형식: 한 줄에 `timestamp x y z qx qy qz qw` (공백 구분, 초·m·쿼터니언). evo가 그대로 읽는다.
 - **좌표계 정렬**: GT(Gazebo world)와 추정값(`map`)은 서로 다른 좌표계다. 두 좌표계 사이 변환을 시나리오 설정에 고정값으로 두고, 정렬 방식을 `meta.json`에 기록한다. 평가 도구가 임의로 최적 정렬(Umeyama 등)을 하면 오차가 실제보다 작게 나올 수 있으므로 KPI 산출에는 고정 변환만 쓴다.
@@ -130,6 +131,7 @@ tools/harness/results/<run_id>/
 ├── tasks.csv
 ├── assignments.csv
 ├── fleet_latency.csv
+├── fault_events.csv
 ├── hop_latency.csv
 ├── trace/
 └── coverage/
@@ -144,7 +146,7 @@ tools/harness/results/<run_id>/
 | --- | --- | --- |
 | `git_sha` | `9ef33ea` | 어느 코드로 나온 결과인지 |
 | `scenario`, `repeat`, `seed` | `loc_square_10m`, `3`, `42` | 반복·재현 |
-| `fault` | `{"delay_ms": 100, "loss_pct": 0}` | 연구 1 조건별 비교 |
+| `fault` | `{"delay_ms": 100, "loss_pct": 0, "kill_at_s": 60, "restart_after_s": 10}` | 연구 1 조건별 비교. 서버 강제종료가 없으면 `kill_at_s`는 -1 |
 | `num_robots` | `5` | 다중 로봇 조건 |
 | `assignment_algorithm`, `cost_fn` | `hungarian`, `euclidean` | 할당 알고리즘 비교. 비용 함수가 다르면 `total_cost`끼리 비교할 수 없다 |
 | `controller` | `pure_pursuit` · `stanley` | 경로 추종 제어기 비교 (이진 요청, #5) |
