@@ -140,7 +140,7 @@ def assign_xxx(
 `ZoneRequest`/`ZoneGrant`의 서버 측 판단만 한다. 메시지 변환과 발행은 `amr_fleet_manager`가 한다.
 
 ```python
-zm = ZoneManager([ZoneSpec('narrow_01', capacity=1)], lease_s=5.0)
+zm = ZoneManager([ZoneSpec('narrow_01', capacity=1)], lease_s=5.0, release_timeout_s=30.0)
 zm.request(robot_id, zone_id, request_id, now) -> list[Decision]  # 요청한 로봇에 대한 답 1건
 zm.release(robot_id, zone_id, now) -> list[Decision]              # 자리가 나서 허가받은 대기 로봇의 답
 zm.expire(now) -> list[Decision]                                  # 주기 호출. 만료 정리 후 대기 로봇 허가
@@ -152,7 +152,9 @@ zm.expire(now) -> list[Decision]                                  # 주기 호�
 | 이미 허가받은 로봇이 다시 요청 (연장) | `GRANTED`, `lease_expiry = now + lease_s` |
 | 자리가 있음 | `GRANTED` |
 | 정원이 참 | `QUEUED` (`REASON_OCCUPIED`, `holder_robot_id` = 먼저 들어간 로봇), 대기열 끝에 넣는다 |
-| 점유 로봇이 반납하거나 lease가 지남 | 대기열 맨 앞 로봇에게 그 로봇의 마지막 `request_id`로 `GRANTED` |
+| 점유 로봇이 반납 | 대기열 맨 앞 로봇에게 그 로봇의 마지막 `request_id`로 `GRANTED` |
+| 점유 로봇의 lease가 지남 | **넘기지 않는다.** 통로 안에서 만료되면 로봇은 빠져나간 뒤 반납한다 (이진 합의) |
+| 점유 로봇이 `release_timeout_s` 동안 요청도 반납도 없음 | 죽은 것으로 보고 풀어 대기 로봇에게 넘긴다 |
 | 대기 로봇이 `lease_s` 동안 다시 요청하지 않음 | 대기열에서 뺀다 (답 없음) |
 | 반납 | 반납한 로봇에게는 답하지 않는다 |
 

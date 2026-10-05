@@ -6,19 +6,22 @@ from amr_fleet_core.traffic import (GRANT_GRANTED, GRANT_QUEUED, GRANT_REJECTED,
                                     ZoneSpec)
 
 LEASE = 5.0
+RELEASE_TIMEOUT = 30.0
 
 
 def make(*specs):
-    return ZoneManager(specs or [ZoneSpec('narrow_01')], lease_s=LEASE)
+    return ZoneManager(specs or [ZoneSpec('narrow_01')], lease_s=LEASE, release_timeout_s=RELEASE_TIMEOUT)
 
 
 def test_invalid_config():
     with pytest.raises(ValueError):
         ZoneSpec('z', capacity=0)
     with pytest.raises(ValueError):
-        ZoneManager([ZoneSpec('z'), ZoneSpec('z')], lease_s=LEASE)
+        ZoneManager([ZoneSpec('z'), ZoneSpec('z')], lease_s=LEASE, release_timeout_s=RELEASE_TIMEOUT)
     with pytest.raises(ValueError):
-        ZoneManager([ZoneSpec('z')], lease_s=0.0)
+        ZoneManager([ZoneSpec('z')], lease_s=0.0, release_timeout_s=RELEASE_TIMEOUT)
+    with pytest.raises(ValueError):
+        ZoneManager([ZoneSpec('z')], lease_s=LEASE, release_timeout_s=LEASE)
 
 
 def test_unknown_zone_rejected():
@@ -53,15 +56,36 @@ def test_renewal_extends_lease():
     assert zm.holders('narrow_01') == ['amr_01']
 
 
-def test_expired_lease_hands_over():
+def test_expired_lease_keeps_zone_until_release():
     zm = make()
     zm.request('amr_01', 'narrow_01', 1, 0.0)
-    # 대기 로봇은 계속 다시 요청한다 (대기열 유지)
-    zm.request('amr_02', 'narrow_01', 5, 1.0)
-    zm.request('amr_02', 'narrow_01', 5, 4.0)
-    [d] = zm.expire(LEASE)
+    # amr_01의 연장이 끊긴다 (서버 끊김·유실). 대기 로봇은 계속 다시 요청한다
+    for t in (1.0, 4.0, 8.0, 12.0):
+        assert zm.request('amr_02', 'narrow_01', 5, t)[0].grant == GRANT_QUEUED
+        # lease가 지나도 통로 안에 있을 수 있으므로 넘기지 않는다
+        assert zm.expire(t) == []
+    assert zm.holders('narrow_01') == ['amr_01']
+
+    # 빠져나와 반납하면 그때 넘긴다
+    [d] = zm.release('amr_01', 'narrow_01', 13.0)
     assert (d.robot_id, d.grant, d.request_id) == ('amr_02', GRANT_GRANTED, 5)
-    assert zm.holders('narrow_01') == ['amr_02']
+
+
+def test_silent_holder_released_after_timeout():
+    zm = make()
+    zm.request('amr_01', 'narrow_01', 1, 0.0)
+    zm.request('amr_02', 'narrow_01', 5, RELEASE_TIMEOUT - 1.0)
+    assert zm.expire(RELEASE_TIMEOUT - 0.5) == []
+    # amr_01이 30초 동안 아무 요청도 없으면 죽은 것으로 보고 푼다
+    [d] = zm.expire(RELEASE_TIMEOUT)
+    assert (d.robot_id, d.grant) == ('amr_02', GRANT_GRANTED)
+
+
+def test_expired_holder_can_renew():
+    zm = make()
+    zm.request('amr_01', 'narrow_01', 1, 0.0)
+    [d] = zm.request('amr_01', 'narrow_01', 1, 10.0)
+    assert (d.grant, d.lease_expiry) == (GRANT_GRANTED, 10.0 + LEASE)
 
 
 def test_silent_waiter_dropped():

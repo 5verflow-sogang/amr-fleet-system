@@ -27,7 +27,7 @@ string zone_id
 # 허가 결과 (GRANT_*)
 uint8 grant
 
-# 이 시각이 지나면 허가가 무효. GRANTED일 때만 의미가 있다
+# 이 시각이 지나면 새로 들어갈 수 없다. 이미 구역 안이면 빠져나간 뒤 반납한다 (ZoneRequest.msg). GRANTED일 때만 의미가 있다
 builtin_interfaces/Time lease_expiry
 
 # 이유 (REASON_*)
