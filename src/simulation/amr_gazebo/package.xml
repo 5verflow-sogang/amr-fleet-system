@@ -8,8 +8,13 @@
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
 
-  <!-- TODO: 구현 시 의존성 추가 (예: rclcpp, amr_msgs) -->
+  <!-- 동적 장애물 노드 (scripts/dynamic_obstacles_node.py) -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>
   <exec_depend>launch</exec_depend>
@@ -17,6 +22,8 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>amr_description</exec_depend>
   <!-- rviz2는 gui 이미지에만 설치한다 (sim.launch.py rviz:=true일 때만 필요) -->
+
+  <test_depend>ament_cmake_pytest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<!--
+  작업자 (지름 0.5 m, 키 1.7 m 원기둥). 동적 장애물. 모델 원점은 바닥 중심이다.
+  dynamic_obstacles.launch.py가 스폰하고 dynamic_obstacles_node가 움직인다.
+  - VelocityControl: /model/<이름>/cmd_vel (몸체 기준 Twist)을 받아 속도를 그대로 낸다. 마지막 명령을 유지한다
+  - OdometryPublisher: /model/<이름>/odometry 로 월드 기준 위치·속도(GT)를 낸다
+-->
+<sdf version="1.8">
+  <model name="dynamic_worker">
+    <link name="link">
+      <!-- 중력을 끄고 충돌체를 바닥에서 띄워 바닥과 닿지 않게 한다. 바닥 마찰이 발밑을 잡으면
+           키 큰 모델이 넘어졌다 (작업자 1.7 m). 높이는 스폰 z로 정해지고 VelocityControl이 z 속도 0을 유지한다 -->
+      <gravity>false</gravity>
+      <pose>0 0 0.85 0 0 0</pose>
+      <inertial>
+        <mass>70</mass>
+        <inertia><ixx>17.95</ixx><iyy>17.95</iyy><izz>2.19</izz></inertia>
+      </inertial>
+      <collision name="collision">
+        <pose>0 0 0.0125 0 0 0</pose>
+        <geometry><cylinder><radius>0.25</radius><length>1.675</length></cylinder></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><cylinder><radius>0.25</radius><length>1.7</length></cylinder></geometry>
+        <material>
+          <ambient>0.95 0.55 0.15 1</ambient>
+          <diffuse>0.95 0.55 0.15 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+    </link>
+    <plugin filename="ignition-gazebo-velocity-control-system"
+            name="ignition::gazebo::systems::VelocityControl"/>
+    <plugin filename="ignition-gazebo-odometry-publisher-system"
+            name="ignition::gazebo::systems::OdometryPublisher">
+      <odom_frame>world</odom_frame>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <dimensions>2</dimensions>
+    </plugin>
+  </model>
+</sdf>
