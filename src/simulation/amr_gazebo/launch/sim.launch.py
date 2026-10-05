@@ -2,6 +2,8 @@
 
     ros2 launch amr_gazebo sim.launch.py                       # gui 컨테이너에서
     ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false  # 서버만
+    ros2 launch amr_gazebo sim.launch.py publish_odom_tf:=false  # EKF가 odom TF를 낼 때 (D4)
+    ros2 launch amr_gazebo sim.launch.py payload_mass:=25.0      # 적재 질량 [kg]
 """
 
 import os
@@ -27,6 +29,10 @@ def generate_launch_description():
         DeclareLaunchArgument('x', default_value='0.0'),
         DeclareLaunchArgument('y', default_value='1.5'),
         DeclareLaunchArgument('yaw', default_value='0.0'),
+        DeclareLaunchArgument('payload_mass', default_value='0.0', description='적재물 질량 [kg]'),
+        DeclareLaunchArgument(
+            'publish_odom_tf', default_value='true',
+            description='odom → base_footprint TF를 DiffDrive에서 낼지. EKF를 띄우면 false (D4)'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(launch_dir, 'world.launch.py')),
             launch_arguments={'gui': LaunchConfiguration('gui')}.items(),
@@ -38,6 +44,8 @@ def generate_launch_description():
                 'x': LaunchConfiguration('x'),
                 'y': LaunchConfiguration('y'),
                 'yaw': LaunchConfiguration('yaw'),
+                'payload_mass': LaunchConfiguration('payload_mass'),
+                'publish_odom_tf': LaunchConfiguration('publish_odom_tf'),
             }.items(),
         ),
         Node(

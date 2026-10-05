@@ -9,10 +9,15 @@
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
 | Publish | `/clock` | `rosgraph_msgs/msg/Clock` | 시뮬레이션 시간. 다른 노드는 `use_sim_time:=true`로 쓴다 |
-| Publish | `/<ns>/odom` | `nav_msgs/msg/Odometry` | DiffDrive 휠 오도메트리, 50 Hz (`spawn_robot.launch.py`) |
+| Publish | `/<ns>/diff_drive/odom` | `nav_msgs/msg/Odometry` | DiffDrive 이상적 휠 오도메트리 (노이즈·공분산 없음), 50 Hz. 로봇 판단용 `/<ns>/odom`은 `amr_odometry`가 낸다 |
 | Publish | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 바퀴 조인트 각도 |
 | Publish | `/<ns>/ground_truth/odom` | `nav_msgs/msg/Odometry` | **GT(진짜 위치·속도)**, 기본 100 Hz (`gt_rate`). `frame_id: world`(Gazebo 월드 원점 = 창고 중심), `child_frame_id: <ns>/base_footprint`. TF로는 내보내지 않음. **평가 전용**(RMSE, 제동 거리) — 로봇 판단에 쓰지 않는다. 아래 "GT 사용 시 주의" 참고 |
-| Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `<ns>/odom` → `<ns>/base_footprint` (`publish_odom_tf:=true`) |
+| Publish | `/<ns>/scan_raw` | `sensor_msgs/msg/LaserScan` | 2D LiDAR 원본 (노이즈 포함), 10 Hz, frame `<ns>/lidar_link` |
+| Publish | `/<ns>/imu/data_raw` | `sensor_msgs/msg/Imu` | IMU 원본 (노이즈·바이어스 포함, 공분산 비어 있음), 100 Hz, frame `<ns>/imu_link` |
+| Publish | `/<ns>/camera/color/image_raw` | `sensor_msgs/msg/Image` | RGB (`rgb8`, 640×480), 30 Hz, frame `<ns>/camera_optical_frame` |
+| Publish | `/<ns>/camera/depth/image_raw` | `sensor_msgs/msg/Image` | Depth (`32FC1`, m, 0.3~10 m), 30 Hz. RGB와 픽셀 1:1 대응 |
+| Publish | `/<ns>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` | RGB·Depth 공통 내부 파라미터 (fx = fy = 337.2, cx 320, cy 240) |
+| Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `<ns>/odom` → `<ns>/base_footprint` (`publish_odom_tf:=true`, 기본). EKF(`ekf_local`)를 띄우면 `false`로 끈다 (D4) |
 | Subscribe | `/<ns>/cmd_vel` | `geometry_msgs/msg/Twist` | 속도 명령. 2.0 m/s, 1.0 m/s², 1.5 rad/s로 제한 |
 | Service | | | |
 | Action | | | |
@@ -109,7 +114,15 @@ noVNC로 확인해보니 광원 바로 아래만 동그랗게 밝고 사이가 �
 
 색상: 작업자=주황, 지게차=빨강, 다른 로봇=보라 (기존 통로선 노랑·충전 파랑·대기 회색과 구분).
 
-아직 없는 것 (지수 담당): 실제 스폰·이동 동작, 충돌체, 센서 시스템 플러그인(Sensors, IMU).
+아직 없는 것 (지수 담당): 실제 스폰·이동 동작, 충돌체.
+
+센서 시스템(`Sensors`, `Imu`)은 월드에 있다. `Sensors`는 LiDAR·카메라를 렌더링(ogre2)으로 만든다.
+화면(DISPLAY)이 없는 dev 컨테이너에서도 ogre2가 headless 모드로 바꿔 동작한다
+(`Unable to open display: . Trying to run in headless mode.` 경고는 무시해도 된다).
+
+카메라는 CPU로 렌더링해서 시뮬레이션이 실시간보다 느려진다. 로봇 1대 기준 실시간 대비 약 0.77배
+(실제 시간으로 재면 LiDAR 7.6 Hz, IMU 79 Hz, 카메라 23 Hz). 시뮬레이션 시간 기준 주기는 설정값 그대로이므로
+노드는 `use_sim_time:=true`로 쓴다. 로봇 대수를 늘릴 때는 카메라 해상도·주기 조정이 필요할 수 있다.
 
 ## 파라미터
 
@@ -123,7 +136,7 @@ launch 파일과 인자:
 | --- | --- | --- |
 | `world.launch.py` | `world` (`warehouse.sdf`), `gui` (`true`), `verbosity` (`2`) | 월드만. `gui:=false`면 서버만 |
 | `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
-| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw` | 월드 + 로봇 1대 + RViz |
+| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`) | 월드 + 로봇 1대 + RViz |
 
 ## 실행
 

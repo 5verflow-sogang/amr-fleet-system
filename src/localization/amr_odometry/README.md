@@ -20,7 +20,7 @@
 
 - 인계 계약(명세서 8-2절): `/odom`은 공분산을 채워 민지(EKF)에게 넘긴다. EKF는 `vx`, `vy`, `vyaw`를 쓴다 ([localization.md](../../../docs/algorithms/localization.md)).
 - TF: D4(A안)에 따라 `odom → base_footprint`는 `ekf_local`이 발행한다. 이 노드는 EKF 없이 단독으로 시험할 때만 TF를 낸다.
-- **주의**: 지금은 Gazebo DiffDrive도 `/<ns>/odom`을 내보낸다. 같이 띄우면 섞이므로 그 전까지는 `odom_topic:=wheel/odom`으로 띄운다. DiffDrive 쪽 이름 변경은 센서 PR에서 한다.
+- Gazebo DiffDrive의 이상적 odom은 `/<ns>/diff_drive/odom`으로 따로 나온다 (센서 PR). `/<ns>/odom`은 이 노드만 낸다.
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
@@ -133,7 +133,7 @@ Gazebo에는 엔코더 센서가 없어 실제 바퀴 각도에 오차를 넣는
 
 ## 검증 (sim, 월드 v0, 6 m 주행: 직진 4 m → 제자리 90° → 곡선 2 m)
 
-기준: Gazebo DiffDrive odom (같은 바퀴 각도로 계산한 이상적 오도메트리)
+기준: Gazebo DiffDrive odom (같은 바퀴 각도로 계산한 이상적 오도메트리, 지금 이름 `/<ns>/diff_drive/odom`)
 
 | 조건 | 위치 차이 | 방향 차이 | 공분산 방향 σ |
 | --- | --- | --- | --- |
@@ -162,8 +162,8 @@ Gazebo에는 엔코더 센서가 없어 실제 바퀴 각도에 오차를 넣는
 ## 실행
 
 ```bash
-# sim이 떠 있는 상태에서 (DiffDrive odom과 겹치지 않게 지금은 wheel/odom으로)
-ros2 launch amr_odometry odometry.launch.py odom_topic:=wheel/odom
+# sim이 떠 있는 상태에서
+ros2 launch amr_odometry odometry.launch.py
 
 ros2 launch amr_odometry odometry.launch.py publish_tf:=true        # EKF 없이 단독 시험
 ros2 launch amr_odometry odometry.launch.py encoder_seed:=42        # 계통 오차 재현

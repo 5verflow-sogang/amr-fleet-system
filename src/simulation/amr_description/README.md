@@ -15,7 +15,7 @@
 | Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `base_link` → 바퀴 (`joint_states` 기반) |
 | Subscribe | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 바퀴 각도 (Gazebo에서 브리지) |
 
-Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF)은 [amr_gazebo](../amr_gazebo/README.md)의 `spawn_robot.launch.py`가 연결한다.
+Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF, 센서 `scan_raw`·`imu/data_raw`·`camera/*`)은 [amr_gazebo](../amr_gazebo/README.md)의 `spawn_robot.launch.py`가 연결한다.
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
 ## 로봇 모델 (`urdf/`)
@@ -26,7 +26,7 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF)은 [amr_gazebo](../amr_gazebo/READ
 | `properties.xacro` | 치수·질량·동역학 제한, 관성 매크로. **값은 여기서만 바꾼다** |
 | `base.xacro` | `base_footprint`, `base_link` |
 | `wheels.xacro` | 좌우 구동 바퀴, 앞뒤 캐스터 |
-| `sensors.xacro` | `lidar_link`, `camera_link` → `camera_optical_frame`, `imu_link` (링크만, 플러그인은 2주차) |
+| `sensors.xacro` | `lidar_link`, `camera_link` → `camera_optical_frame`, `imu_link`. LiDAR(`gpu_lidar`)·RGBD 카메라(`rgbd_camera` 1개)·IMU 센서. 값은 `config/sensors.yaml`에서 읽음 |
 | `gazebo.xacro` | Fortress DiffDrive, JointStatePublisher, OdometryPublisher(GT) 시스템 플러그인 |
 
 ### 주요 값
@@ -47,7 +47,7 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF)은 [amr_gazebo](../amr_gazebo/READ
 | 폭 1 cm, 중심 | 0.976 | 1.000 | 0.332 m |
 | **폭 1 cm, 바깥 5 mm (현재)** | **1.004 · 1.004** | **1.000** | **0.341 m** |
 
-실제 = Gazebo 모델 자세 (`ign model -m amr_01 -p`), odom = DiffDrive `/amr_01/odom`. 0.5 rad/s 4초 회전, 0.5 m/s 3초 직진.
+실제 = Gazebo 모델 자세 (`ign model -m amr_01 -p`), odom = DiffDrive odom (지금 이름 `/amr_01/diff_drive/odom`). 0.5 rad/s 4초 회전, 0.5 m/s 3초 직진.
 | 전체 질량 | 약 33.9 kg (+ `payload_mass`) | |
 | 최대 선속도 | 2.0 m/s | DiffDrive에서 제한 |
 | 최대 선가속도 | 1.0 m/s² | |
@@ -57,7 +57,7 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF)은 [amr_gazebo](../amr_gazebo/READ
 ### TF 트리
 
 ```
-amr_01/odom                         (DiffDrive, spawn_robot.launch.py publish_odom_tf:=true)
+amr_01/odom                         (발행: Gazebo DiffDrive 기본, EKF를 띄우면 ekf_local — D4)
 └── amr_01/base_footprint           지면 위 로봇 중심
     └── amr_01/base_link            (0, 0, 0.18)  몸체 중심
         ├── amr_01/left_wheel_link  (0,  0.17, -0.08)
@@ -139,6 +139,27 @@ amr_01/odom                         (DiffDrive, spawn_robot.launch.py publish_od
 ## 파라미터
 
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
+
+- `config/sensors.yaml`: 센서 사양·노이즈. `sensors.xacro`가 xacro 처리 때 읽으므로 값을 바꾸면 launch만 다시 하면 된다. 바꿀 때는 민지에게 알린다 (명세서 8-2절)
+
+### 센서 검증 (정지 상태, 월드 v0 스폰 위치 (0, 1.5))
+
+| 항목 | 설정 | 측정 |
+| --- | --- | --- |
+| LiDAR 주기 · 빔 | 10 Hz, 720빔 0.5° | 10.0 Hz, 720빔 0.5000° |
+| LiDAR 노이즈 σ | 0.03 m | 0.0299 m (빔별 표준편차 중앙값, 100 스캔) |
+| LiDAR 거리 | 남쪽 `rack_lane_divider` 1.1 m, 북쪽 `rack_a4` 2.9 m | 1.100 m, 2.899 m. 최소 거리 1.05 m (몸체 가림 없음) |
+| IMU 주기 | 100 Hz | 100.0 Hz |
+| 자이로 σ | 2.0e-4 rad/s | 2.0e-4 rad/s (3축) |
+| 가속도 σ · 바이어스 | 0.017 m/s² · ±0.1 m/s² | 0.016~0.017 m/s² · x −0.099, y −0.100, z +0.100 (9.900 − 9.8) |
+| 카메라 (yaw −90°로 스폰, 정면 `rack_lane_divider`) | 640×480, FOV 87° | RGB `rgb8`, Depth `32FC1`, frame `camera_optical_frame` |
+| 카메라 내부 파라미터 | fx = 320 / tan(43.5°) = 337.2 | fx = fy = 337.2, cx 320, cy 240 |
+| Depth 거리 · 노이즈 σ | 0.92 m · 0.02 m | 0.919 m · 0.020 m (중앙 80×80 px, 40 프레임) |
+
+- Gazebo IMU는 메시지 공분산을 0으로 보낸다. `/imu/data`(필터 출력)에서 채운다.
+- RGB와 Depth는 `rgbd_camera` 센서 하나라 주기·클립 거리(0.3~10 m)를 공유한다. 명세(RGB 30 Hz, Depth 15 Hz 이상)는 30 Hz로 둘 다 만족한다.
+- Fortress `rgbd_camera`는 Depth 노이즈를 RGB에도 같이 넣는다. RGB 흔들림은 σ 약 0.5/255(1단계 미만)라 인식에 영향이 없다고 보고 그대로 둔다.
+- Gazebo 포인트클라우드(`camera/points`)는 점 좌표가 x 전방인데 frame_id가 광학 프레임이라 쓰지 않는다. 포인트클라우드는 Depth 영상과 `camera_info`로 만든다 (작업: Depth 포인트클라우드 변환·다운샘플링).
 
 launch 인자 (`description.launch.py`): `namespace`(기본 `amr_01`), `payload_mass`(기본 `0.0`), `gt_rate`(기본 `100`), `use_sim_time`(기본 `true`)
 
