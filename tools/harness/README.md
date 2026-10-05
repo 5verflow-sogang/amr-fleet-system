@@ -7,9 +7,9 @@
 - `.github/workflows/fleet-test.yml`이 이 디렉토리의 진입 스크립트를 호출한다.
 - 로그 포맷은 명세서 1-4절 "성능 지표 측정 절차" 표를 따른다.
 
-## 로그 포맷 (초안, 하연과 합의 중)
+## 로그 포맷
 
-> 상태: 초안. 하연과 합의하면 "초안" 표시를 뗀다. 컬럼 이름과 순서는 명세서 1-4절 표를 그대로 따르고, 이 문서는 단위·파일 배치·부가 컬럼·원자료 보관만 정한다.
+> 상태: 형식은 합의됐다([합의 기록](#합의-기록)). 실측 후 확정할 숫자 기준값만 "초안"으로 표시한다. 컬럼 이름과 순서는 명세서 1-4절 표를 그대로 따르고, 이 문서는 단위·파일 배치·부가 컬럼·원자료 보관만 정한다.
 
 ### 기본 원칙: 원자료를 남기고 지표는 나중에 계산한다
 
@@ -61,19 +61,19 @@
   - `segment` 분류 기준(초안, `amr_localization.eval`): 정답 궤적의 각속도가 0.05 rad/s 이상이면 `rotation`, 아니고 선속도가 0.01 m/s 이상이면 `straight`, 둘 다 아니면 `stationary`. 곡선 주행은 `rotation`으로 센다.
   - KPI 판정은 구간별 **RMSE**가 기준 이하이고 샘플이 100개 이상일 때 통과로 본다. Max는 함께 보고한다.
   - 같은 실행의 원자료로 evo ATE를 계산해 `error`의 RMSE와 일치하는지 확인한다.
-- `response_time.csv` (초안, #18 리뷰에서 도출)
+- `response_time.csv` (#18 리뷰에서 도출)
   - `cmd_time`: 서버가 `/fleet/task_assignments`에 발행한 명령을 하네스 기록기가 받은 시각. 장애 주입기를 거치기 **전** 토픽을 기록하므로 주입된 지연이 응답 시간에 포함된다.
   - `response_time`: 해당 로봇의 `/<robot>/odom` 속도가 임계값(선속도 0.01 m/s 또는 각속도 0.05 rad/s, 초안)을 처음 넘은 메시지를 받은 시각.
   - `RobotState.velocity`(1~5Hz)는 쓰지 않는다. 최대 1초 오차가 생겨 200ms KPI를 잴 수 없다. `odom`은 50Hz라 오차가 20ms 이내다.
   - 두 시각 모두 **실제 시간**이다. 메시지의 `header.stamp`는 시뮬레이션 시간이라 쓰지 않고, 기록기의 수신 시각을 쓴다(rosbag2는 기본으로 실제 시간을 기록한다).
   - `latency_sim_ms`는 같은 구간을 시뮬레이션 시간으로 잰 참고값이다. `real_time_factor`와 함께 보면 시뮬레이터 속도 영향을 가를 수 있다.
-  - Ack 왕복시간 (초안, 하연 제안). 응답 시간과 같은 기록기가 같은 실제 시간으로 잰다.
+  - Ack 왕복시간 (하연 제안, #33). 응답 시간과 같은 기록기가 같은 실제 시간으로 잰다.
     - `cmd_time`은 그 `assignment_id`의 **첫 발송**을 기록기가 받은 시각이다. 재전송은 `cmd_time`을 바꾸지 않는다.
     - `ack_time`: 같은 `robot`·`assignment_id`의 `TaskAssignmentAck`를 `/fleet/task_assignment_acks`에서 처음 받은 시각. `result`(수락·거부)와 상관없이 첫 Ack.
     - `ack_rtt_ms` = (`ack_time` − `cmd_time`) × 1000. 첫 발송 기준이라 재전송에 걸린 시간이 들어간다.
     - `resends`: 기록기가 같은 `assignment_id`를 받은 횟수 − 1.
     - Ack를 못 받으면 `ack_time`, `ack_rtt_ms`를 비운다. 단 실행 끝 무렵에 보낸 명령은 Ack가 오는 중에 실행이 끝날 수 있으므로, 아래 "관측 마감" 규칙으로 빼고 센다.
-    - 로봇 → 서버 방향은 지금 장애 주입을 하지 않으므로([api.md 4-4절](../../docs/api.md#4-4-미결-쟁점-928-회의)) `ack_rtt_ms`에는 주입 지연이 한 번만 들어간다.
+    - 로봇 → 서버 방향은 지금 장애 주입을 하지 않으므로([api.md 4-4절](../../docs/api.md#4-4-쟁점-정리)) `ack_rtt_ms`에는 주입 지연이 한 번만 들어간다.
 - `tasks.csv`: `/fleet/task_status`의 마지막 이벤트(COMPLETED·FAILED)를 작업 1건당 1행으로 옮긴다. 명세서가 요구하는 작업 로그 필드와 Fleet 지표(평균 작업 시간·처리량·총 이동 거리)를 여기서 계산한다.
   - 컬럼: `task_id, robot, state, start_time, end_time, duration, distance_traveled, error_code`
   - 로봇 가동률은 `/fleet/robot_states`의 `mode`가 BUSY인 시간 비율로 따로 계산한다.
@@ -82,7 +82,7 @@
   - 할당 못 한 작업은 `robot_id`를 비운다. 호출별 `total_cost`는 같은 `call_id`의 `cost` 합이다.
   - 알고리즘 3종 비교(연구 1)의 할당 최적성 지표로 쓴다.
 
-### 연구 1 지연 (초안, 하연 제안)
+### 연구 1 지연
 
 명세서 3-2절의 "두 레이어 P95/P99"를 두 파일로 잰다. 레이어 1은 로봇 내부 노드 간, 레이어 2는 Fleet 서버 ↔ 로봇이다.
 
@@ -153,9 +153,9 @@ tools/harness/results/<run_id>/
 | `host` | CPU 모델·코어 수, 메모리, GPU 유무 | CPU 80%·응답 시간 KPI는 실행 컴퓨터에 따라 달라짐 |
 | `versions` | ROS 배포판, 시뮬레이터, Docker 이미지 태그 | 환경 차이 추적 |
 | `use_sim_time`, `real_time_factor` | `true`, `0.87` | 시뮬레이터가 실제보다 느리게 돌았는지 |
-| `rmw_implementation` | `rmw_cyclonedds_cpp` | 연구 1 After 측정의 DDS 벤더 비교 (하연 제안) |
-| `qos_profile` | `default` | 연구 1 After 측정의 QoS 튜닝 전후 구분. 값은 [api.md 6절](../../docs/api.md#6-qos-기본값) 프로파일 이름 (하연 제안) |
-| `observation_cutoff` | `{"end": 612.3, "grace_s": 1.0, "cutoff": 610.8}` | 연구 1 지연·손실·Ack에서 뺀 실행 끝 구간 (하연 제안, 민지 #33) |
+| `rmw_implementation` | `rmw_cyclonedds_cpp` | 연구 1 After 측정의 DDS 벤더 비교 (하연, #33) |
+| `qos_profile` | `default` | 연구 1 After 측정의 QoS 튜닝 전후 구분. 값은 [api.md 6절](../../docs/api.md#6-qos-기본값) 프로파일 이름 (하연, #33) |
+| `observation_cutoff` | `{"end": 612.3, "grace_s": 1.0, "cutoff": 610.8}` | 연구 1 지연·손실·Ack에서 뺀 실행 끝 구간 (하연·민지, #33) |
 
 ### 요약 통계
 
@@ -172,10 +172,18 @@ tools/harness/results/<run_id>/
 | 실제 시간 측정 방식 | 하네스 기록기 수신 시각 (노드 `header.stamp`는 시뮬레이션 시간 유지) | 하연, #27 |
 | `response_time.csv` 부가 컬럼, `meta.json` 필드 | 설계와 맞으니 우선 진행, 바뀌면 수정 | 하연, #5 |
 | `cte.csv` 부가 컬럼 | `segment`, `robot` 확정. `meta.json`에 `controller` 추가 | 이진, #5 |
+| 위치 오차 KPI 판정 | 구간별 **RMSE**로 판정, Max는 함께 보고 | 하연, #28 |
+| `response_time.csv` Ack 컬럼 | `assignment_id`, `ack_time`, `ack_rtt_ms`, `resends`. 첫 발송 기준이라 재전송 시간 포함 | 하연·민지, #33 |
+| 연구 1 지연 파일 | `fleet_latency.csv`(끝에서 끝, 손실 포함), `hop_latency.csv`(구간별, `trace/`에서 변환) | 하연·민지, #33 |
+| Fleet 지연 기록 방법 | rclpy 기록 노드 대신 rosbag2로 녹화 후 오프라인 변환 (Python 수신 시각 지연 방지) | 하연·민지, #33 |
+| 손실 판정 | 관측 마감(종료 − 주입 지연 − 여유) 이후 보낸 메시지는 지연·손실에서 제외 | 하연·민지, #33 |
+| 지연 신뢰구간 | 실행 단위 부트스트랩 (메시지 단위로 섞지 않음) | 하연·민지, #33 |
+| `meta.json` 추가 필드 | `rmw_implementation`, `qos_profile`, `observation_cutoff` | 하연·민지, #33 |
 
-남은 것: 응답 시간 판정 임계값(0.01 m/s·0.05 rad/s)은 초안이다. 하네스 구현 때 정지 상태 `odom` 노이즈를 보고 확정한다.
+남은 것 (실측 후 확정)
 
-리뷰 중 (D5, 하연 제안): `response_time.csv` Ack 컬럼, 연구 1 지연(`fleet_latency.csv`, `hop_latency.csv`), `trace/`, `meta.json`의 `rmw_implementation`·`qos_profile`·`observation_cutoff`. 민지 의견(rosbag2 녹화, 관측 마감, 실행 단위 신뢰구간) 반영. 민지가 승인하면 위 표로 옮긴다.
+- 응답 시간 판정 임계값(0.01 m/s·0.05 rad/s): 하네스 구현 때 정지 상태 `odom` 노이즈를 보고 확정한다.
+- 위치 오차 `segment` 분류 기준(0.05 rad/s·0.01 m/s, 곡선은 `rotation`): 우리 로봇 EKF 측정 때 정답 속도 분포를 보고 확정한다.
 
 ### 참고
 
