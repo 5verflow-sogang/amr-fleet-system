@@ -185,6 +185,13 @@ map
 | Publish | `/<ns>/ground_truth/odom` | `nav_msgs/msg/Odometry` | GT, frame `world`. 평가 전용 |
 | Subscribe | `/<ns>/cmd_vel` | `geometry_msgs/msg/Twist` | 속도 명령 |
 
+동적 장애물 (`sim.launch.py dynamic_obstacles:=true`, `<id>` = `config/dynamic_obstacles.yaml`의 id: `worker_1` 등 5개):
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Publish | `/dynamic_obstacles/<id>/ground_truth/odom` | `nav_msgs/msg/Odometry` | 장애물 GT, 50 Hz, frame `world`. 평가 전용 (추적 정확도 등) |
+| Subscribe | `/dynamic_obstacles/<id>/cmd_vel` | `geometry_msgs/msg/Twist` | 장애물 속도 명령 (sim 내부용) |
+
 ### amr_odometry (로봇별)
 
 | 종류 | 이름 | 타입 | 설명 |

@@ -1,7 +1,7 @@
 # amr_gazebo
 
 - 담당: 지수
-- 빌드 타입: ament_cmake (자원 전용, C++ 코드 없음)
+- 빌드 타입: ament_cmake (월드·모델 자원 + 동적 장애물 Python 노드)
 - 책임: 60x40m 물류센터 월드, 동적 장애물, 센서 노이즈 모델
 
 ## 제공 인터페이스
@@ -19,6 +19,8 @@
 | Publish | `/<ns>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` | RGB·Depth 공통 내부 파라미터 (fx = fy = 337.2, cx 320, cy 240) |
 | Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `<ns>/odom` → `<ns>/base_footprint` (`publish_odom_tf:=true`, 기본). EKF(`ekf_local`)를 띄우면 `false`로 끈다 (D4) |
 | Subscribe | `/<ns>/cmd_vel` | `geometry_msgs/msg/Twist` | 속도 명령. 2.0 m/s, 1.0 m/s², 1.5 rad/s로 제한 |
+| Publish | `/dynamic_obstacles/<id>/ground_truth/odom` | `nav_msgs/msg/Odometry` | 동적 장애물 GT (위치·속도), 50 Hz. `frame_id: world`, `child_frame_id: <id>/base_footprint`, twist는 몸체 기준. **평가 전용** (`dynamic_obstacles:=true`일 때) |
+| Subscribe | `/dynamic_obstacles/<id>/cmd_vel` | `geometry_msgs/msg/Twist` | 장애물 속도 명령 (몸체 기준, `dynamic_obstacles_node`가 낸다) |
 | Service | | | |
 | Action | | | |
 
@@ -114,7 +116,40 @@ noVNC로 확인해보니 광원 바로 아래만 동그랗게 밝고 사이가 �
 
 색상: 작업자=주황, 지게차=빨강, 다른 로봇=보라 (기존 통로선 노랑·충전 파랑·대기 회색과 구분).
 
-아직 없는 것 (지수 담당): 실제 스폰·이동 동작, 충돌체.
+### 동적 장애물 이동 (3주차, 지수)
+
+`sim.launch.py dynamic_obstacles:=true`(또는 `dynamic_obstacles.launch.py`)로 위 5개를 스폰하고 움직인다.
+기본은 꺼져 있다 (지도 매핑에 장애물이 섞이지 않게).
+
+| 종류 | 모델 | 크기 | 질량 |
+| --- | --- | --- | --- |
+| 작업자 | `models/dynamic_worker` | 원기둥 지름 0.5 m, 키 1.7 m | 70 kg |
+| 지게차 | `models/dynamic_forklift` | 1.2 × 0.9 × 2.0 m | 1500 kg |
+| 다른 로봇 | `models/dynamic_robot` | 0.6 × 0.4 × 0.3 m (우리 로봇과 같은 크기) | 30 kg |
+
+- 이동: `dynamic_obstacles_node`가 장애물 GT로 위치를 보고 20 Hz로 속도를 낸다 (`amr_gazebo/obstacle_motion.py`)
+  - `straight`: 첫 점 ↔ 끝 점 직선 왕복
+  - `curve`: 경유점을 모두 지나는 Catmull-Rom 곡선을 따라 왕복
+  - `random`: 경유점이 이루는 사각 영역 안 무작위 목표점으로 직선 이동 (random waypoint)
+  - 속도는 구간(왕복 한 번, 무작위 목표점 하나)마다 `speed_range_mps` 안에서 무작위. `obstacle_seed`로 재현한다 (0이면 실행마다 무작위)
+  - 몸체는 진행 방향을 보도록 돈다 (최대 1.5 rad/s). 이동 자체는 방향과 상관없이 경로를 따른다
+- Gazebo 쪽: `VelocityControl`(속도 명령) + `OdometryPublisher`(GT). 중력을 끄고 충돌체를 바닥에서 2.5 cm 띄웠다.
+  바닥에 닿으면 마찰이 발밑을 잡아 키 큰 작업자가 넘어졌다. 로봇과는 충돌한다
+- `VelocityControl`은 마지막 명령을 유지한다. 노드만 죽으면 장애물이 계속 같은 방향으로 가니 sim도 같이 다시 띄운다
+
+sim 확인 (로봇 (0, 10.5), seed 1, 150 s):
+
+| id | 이동 | 측정 속도 (GT) | 범위 |
+| --- | --- | --- | --- |
+| `worker_1` | 81 m, x −24.0\~23.9 | 0.38\~0.75 m/s | 직선 위 (y 13.0) |
+| `worker_2` | 53 m, x −20.0\~19.9 | 0.25\~0.37 m/s | y 1.0\~3.8 |
+| `forklift_1` | 182 m, x −24.0\~19.9 | 0.98\~1.46 m/s | y −6.7\~−6.5 |
+| `forklift_2` | 168 m | 0.60\~1.49 m/s | x 5.0\~17.8, y −16.9\~−13.0 |
+| `robot_1` | 125 m | 0.55\~1.11 m/s | x −26.3\~−22.1, y −17.2\~13.0 |
+
+- 측정 속도 최솟값이 범위보다 약간 낮은 것은 방향이 바뀌는 순간 `OdometryPublisher`가 위치 차분을 평균 내기 때문이다. 명령 속도가 범위 안인지는 단위 테스트로 확인한다
+- LiDAR: 로봇 12 m 안에 들어온 `worker_1`은 858회 모두 스캔 거리가 GT 거리 ±0.3 m 안. `worker_2`는 A열 랙에 가려 틈으로 보일 때만 잡힌다
+- 카메라(YOLO)에는 단순 도형이라 사람·지게차로 인식되지 않는다. 사람 메시는 연우 YOLO 작업과 맞춰 정한다
 
 센서 시스템(`Sensors`, `Imu`)은 월드에 있다. `Sensors`는 LiDAR·카메라를 렌더링(ogre2)으로 만든다.
 화면(DISPLAY)이 없는 dev 컨테이너에서도 ogre2가 headless 모드로 바꿔 동작한다
@@ -136,7 +171,8 @@ launch 파일과 인자:
 | --- | --- | --- |
 | `world.launch.py` | `world` (`warehouse.sdf`), `gui` (`true`), `verbosity` (`2`) | 월드만. `gui:=false`면 서버만 |
 | `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`), `enable_camera` (`true`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
-| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`), `enable_camera` (`true`) | 월드 + 로봇 1대 + RViz |
+| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `dynamic_obstacles` (`false`), `obstacle_seed` (`0`) | 월드 + 로봇 1대 + RViz (+ 동적 장애물) |
+| `dynamic_obstacles.launch.py` | `config` (`config/dynamic_obstacles.yaml`), `only` (전부, 쉼표로 id), `seed` (`0`), `use_sim_time` (`true`) | 실행 중인 Gazebo에 동적 장애물 스폰 + 브리지 + 이동 노드 |
 
 ## 실행
 
@@ -146,6 +182,8 @@ colcon build --packages-select amr_description amr_gazebo && source install/setu
 ros2 launch amr_gazebo sim.launch.py                          # 월드 + 로봇 + RViz (gui 프로필의 noVNC 화면에서)
 ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false   # 서버만 (dev 컨테이너)
 ros2 launch amr_gazebo world.launch.py                        # 월드만
+ros2 launch amr_gazebo sim.launch.py dynamic_obstacles:=true  # + 동적 장애물 5개
+ros2 launch amr_gazebo dynamic_obstacles.launch.py only:=forklift_1 seed:=42  # 실행 중인 sim에 1개만
 ```
 
 ## 테스트
@@ -153,3 +191,6 @@ ros2 launch amr_gazebo world.launch.py                        # 월드만
 ```bash
 colcon test --packages-select amr_gazebo
 ```
+
+`test/test_obstacle_motion.py`: 실제 `config/dynamic_obstacles.yaml`로 장애물을 굴려 명세(5개 이상, 0.3~1.5 m/s, 직선·곡선·무작위),
+속도 범위, 직선 왕복, 곡선이 경유점을 지나는지, 무작위가 영역 안에 머무는지, seed 재현을 확인한다.

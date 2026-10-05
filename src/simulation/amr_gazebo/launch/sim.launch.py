@@ -5,6 +5,7 @@
     ros2 launch amr_gazebo sim.launch.py publish_odom_tf:=false  # EKF가 odom TF를 낼 때 (D4)
     ros2 launch amr_gazebo sim.launch.py payload_mass:=25.0      # 적재 질량 [kg]
     ros2 launch amr_gazebo sim.launch.py enable_camera:=false    # 카메라 끔 (CPU 렌더링 부담 줄이기)
+    ros2 launch amr_gazebo sim.launch.py dynamic_obstacles:=true # 동적 장애물 5개 (config/dynamic_obstacles.yaml)
 """
 
 import os
@@ -37,6 +38,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_camera', default_value='true',
             description='RGBD 카메라 센서와 브리지를 만들지. CPU sim에서 여러 대를 띄울 때 false'),
+        DeclareLaunchArgument(
+            'dynamic_obstacles', default_value='false',
+            description='동적 장애물을 띄울지. 지도 매핑 때는 끈다'),
+        DeclareLaunchArgument(
+            'obstacle_seed', default_value='0',
+            description='동적 장애물 속도·무작위 경로 seed. 0이면 실행마다 무작위'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(launch_dir, 'world.launch.py')),
             launch_arguments={'gui': LaunchConfiguration('gui')}.items(),
@@ -52,6 +59,11 @@ def generate_launch_description():
                 'publish_odom_tf': LaunchConfiguration('publish_odom_tf'),
                 'enable_camera': LaunchConfiguration('enable_camera'),
             }.items(),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(launch_dir, 'dynamic_obstacles.launch.py')),
+            launch_arguments={'seed': LaunchConfiguration('obstacle_seed')}.items(),
+            condition=IfCondition(LaunchConfiguration('dynamic_obstacles')),
         ),
         Node(
             package='rviz2',
