@@ -123,7 +123,7 @@ noVNC로 확인해보니 광원 바로 아래만 동그랗게 밝고 사이가 �
 
 | 종류 | 모델 | 크기 | 질량 |
 | --- | --- | --- | --- |
-| 작업자 | `models/dynamic_worker` | 원기둥 지름 0.5 m, 키 1.7 m | 70 kg |
+| 작업자 | `models/dynamic_worker` | 겉모습 사람 메시(키 1.77 m), 충돌체 원기둥 지름 0.5 m | 70 kg |
 | 지게차 | `models/dynamic_forklift` | 1.2 × 0.9 × 2.0 m | 1500 kg |
 | 다른 로봇 | `models/dynamic_robot` | 0.6 × 0.4 × 0.3 m (우리 로봇과 같은 크기) | 30 kg |
 
@@ -148,8 +148,17 @@ sim 확인 (로봇 (0, 10.5), seed 1, 150 s):
 | `robot_1` | 125 m | 0.55\~1.11 m/s | x −26.3\~−22.1, y −17.2\~13.0 |
 
 - 측정 속도 최솟값이 범위보다 약간 낮은 것은 방향이 바뀌는 순간 `OdometryPublisher`가 위치 차분을 평균 내기 때문이다. 명령 속도가 범위 안인지는 단위 테스트로 확인한다
-- LiDAR: 로봇 12 m 안에 들어온 `worker_1`은 858회 모두 스캔 거리가 GT 거리 ±0.3 m 안. `worker_2`는 A열 랙에 가려 틈으로 보일 때만 잡힌다
-- 카메라(YOLO)에는 단순 도형이라 사람·지게차로 인식되지 않는다. 사람 메시는 연우 YOLO 작업과 맞춰 정한다
+- LiDAR: 로봇 12 m 안에 들어온 `worker_1`은 858회 중 856회 사람 폭(±0.45 m) 안 최근접 스캔이 GT 거리 ±0.3 m 안. `worker_2`는 A열 랙에 가려 틈으로 보일 때만 잡힌다
+- 작업자 겉모습은 사람 메시라 LiDAR 스캔 높이(0.2 m)에서는 원기둥이 아니라 **다리 두 개**로 보인다 (실제 사람과 같다)
+- 카메라(YOLO): 사전학습 `yolov8n`으로 정면 3.5 m에서 `person` 0.88, 옆모습 6 m에서 0.63. 지게차·다른 로봇은 단순 상자라 COCO 클래스로 잡히지 않는다
+
+### 작업자 사람 메시
+
+`models/dynamic_worker/meshes/MaleVisitorWalk.dae` + `materials/textures/MaleVisitor.png`:
+OpenRobotics "Male visitor" ([Gazebo Fuel](https://app.gazebosim.org/OpenRobotics/fuel/models/Male%20visitor), 작성 Wan Yi Seow, **CC0 1.0**), 약 0.9 MB.
+
+- 걷기 애니메이션용 메시라 정지 메시로 쓰면 **T자 자세**(팔 폭 1.64 m)로 그려진다. 팔은 1.4 m 높이라 LiDAR·로봇 충돌에는 영향이 없다
+- 정면이 +x라 몸체가 진행 방향을 보면 사람도 앞을 보고 걷는다 (다리는 움직이지 않고 미끄러지듯 이동)
 
 센서 시스템(`Sensors`, `Imu`)은 월드에 있다. `Sensors`는 LiDAR·카메라를 렌더링(ogre2)으로 만든다.
 화면(DISPLAY)이 없는 dev 컨테이너에서도 ogre2가 headless 모드로 바꿔 동작한다
