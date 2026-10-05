@@ -23,7 +23,7 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            # 'node_name = amr_fault_injector.node_module:main',
+            'fault_injector = amr_fault_injector.relay_node:main',
         ],
     },
 )
