@@ -1,0 +1,25 @@
+[project]
+name = "amr-research2"
+version = "0.0.0"
+description = "연구 2 (후보 A: 적재 질량 RL) 학습 환경"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "torch>=2.4",
+    "stable-baselines3>=2.5",
+    "gymnasium>=1.0",
+    "tensorboard",
+    "matplotlib",
+]
+
+[tool.uv]
+# 설치할 패키지가 아니라 학습 스크립트 모음이다
+package = false
+
+# Linux(학교 서버, CI)에서는 CUDA가 빠진 CPU용 torch를 받는다. 작은 MLP 정책은 CPU로 학습한다
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

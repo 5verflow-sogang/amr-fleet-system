@@ -94,6 +94,31 @@ babeltrace /tmp/tracing/demo | grep -oE 'ros2:[a-z_]+' | sort | uniq -c
 - launch로 띄울 때는 `tracetools_launch.action.Trace`를 launch 파일에 넣으면 노드와 함께 세션이 열리고 닫힌다 (`events_kernel=[]`).
 - 수집되는 주요 이벤트: `rclcpp_publish`(발행), `callback_start`·`callback_end`(구독·타이머 콜백). 검증은 rclcpp 데모 노드로 했다. rclpy 노드(Fleet 서버, 장애주입기)에서 어떤 이벤트가 남는지는 따로 확인한다.
 
+## RL 학습 (연구 2)
+
+ROS·Docker와 무관한 Python 환경이다. 설치와 확인은 [experiments/research2](../experiments/research2/README.md)를 따른다.
+
+```bash
+cd experiments/research2 && uv sync && uv run python scripts/smoke_ppo.py
+```
+
+- **학습은 노트북에서 한다.** 작은 MLP 정책과 Python 환경이라 GPU보다 CPU 속도가 중요하다. 학교 GPU 서버는 코어당 속도가 Mac의 약 절반이고 2.3코어라 더 느리다(명세서 11-3절).
+- `uv`가 없으면 설치한다: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+### 학교 GPU 서버에서 오래 돌릴 때 (보조)
+
+노트북을 끄고 여러 시드를 오래 돌릴 때만 쓴다.
+
+- **기본 이미지(Ubuntu 18.04)에서는 설치되지 않는다.** `uv.lock`의 Linux torch는 glibc 2.28 이상(`manylinux_2_28`)이 필요한데 18.04는 2.27이다. Docker Hub의 Ubuntu 22.04 기반 이미지로 워크스페이스를 만든다(AIPub 정책 3절, ssh가 들어 있어야 접속 가능).
+- 접속: AIPub에 표시되는 주소로 `ssh -p <포트> root@<주소>`
+- 코드는 `git clone`으로 받는다. 비공개 저장소라 GitHub 토큰이 필요하다.
+- 스레드 수를 꼭 제한한다. `nproc`가 호스트 전체(256)를 보여 줘서 그대로 두면 스레드를 수백 개 만들고 오히려 느려진다.
+  ```bash
+  export OMP_NUM_THREADS=2
+  ```
+- 결과는 `~/mnt`(개인 NAS)에 저장한다. 그 밖의 경로는 워크스페이스를 반납하면 지워진다. 워크스페이스는 7일 뒤 자동 삭제되고(연장은 조교에게 요청), 학기가 바뀌면 계정이 초기화된다.
+- 접속이 끊겨도 계속 돌도록 `tmux`나 `nohup`으로 실행한다.
+
 ## 환경 변수
 
 | 변수 | 기본값 | 설명 |
