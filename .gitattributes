@@ -1,3 +1,6 @@
 # Windows(core.autocrlf=true)에서 체크아웃해도 셸 스크립트는 LF로 유지한다.
 # CRLF면 컨테이너 안 bash가 'set -o pipefail\r' 등을 읽지 못해 이미지 빌드가 실패한다 (#32).
 *.sh text eol=lf
+# ROS 노드로 바로 실행하는 스크립트(#!/usr/bin/env python3)도 LF로 둔다.
+# CRLF면 첫 줄이 'python3\r'로 읽혀 노드가 exit 127로 죽는다 (amr_gazebo dynamic_obstacles_node.py).
+**/scripts/** text eol=lf
