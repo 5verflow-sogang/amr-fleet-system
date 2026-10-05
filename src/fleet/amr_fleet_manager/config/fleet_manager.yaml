@@ -1,0 +1,25 @@
+# Fleet 서버 파라미터. 실험마다 바뀌는 값(assignments_csv)은 launch 인자로 받는다.
+fleet_manager:
+  ros__parameters:
+    server_id: fleet_manager
+    assignment:
+      # nearest / load_balance / hungarian. 기본값은 비교 실험 후 확정 (amr_fleet_core README 미결)
+      algorithm: nearest
+      # 이보다 배터리가 낮은 로봇은 할당 후보에서 뺀다 (%)
+      min_battery_percent: 20.0
+    # 이 시간 동안 RobotState가 안 오면 할당 후보에서 뺀다 (실제 시간, s)
+    robot_timeout_s: 3.0
+    resend:
+      # Ack가 없으면 같은 assignment_id를 이 간격으로 다시 보낸다 (실제 시간, s).
+      # 주입 지연 최대 500ms + 로봇 처리 시간보다 커야 불필요한 재전송이 줄어든다
+      interval_s: 1.0
+      # 재전송 한도. 넘으면 작업을 큐로 되돌려 다시 할당한다. 첫 발송은 세지 않는다
+      max_resends: 5
+    # heartbeat 주기 (실제 시간, s). 연구 1 실험 변수
+    heartbeat_period_s: 0.2
+    # 작업표 방송 주기 (실제 시간, s)
+    task_table_period_s: 1.0
+    # 재전송 확인 주기 (s)
+    tick_s: 0.05
+    # 서버 재시작 번호를 남기는 파일. 강제종료 후 다시 띄우면 epoch가 1 늘어난다
+    epoch_file: /tmp/amr_fleet_manager/epoch
