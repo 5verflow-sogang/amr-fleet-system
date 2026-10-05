@@ -1,0 +1,30 @@
+# 연구 2 RL 학습 환경 확인
+# Linux에서 uv.lock 그대로 설치되는지(CPU 전용 torch 포함)와 PPO 학습이 도는지 본다.
+name: RL Env
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "experiments/research2/**"
+      - ".github/workflows/rl-env.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: uv sync + PPO 스모크
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: experiments/research2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install from lock
+        run: uv sync --locked
+      - name: PPO smoke
+        run: uv run python scripts/smoke_ppo.py --steps 5000
