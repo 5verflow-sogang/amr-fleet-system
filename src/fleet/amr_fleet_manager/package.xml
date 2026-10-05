@@ -7,9 +7,18 @@
   <maintainer email="TODO@example.com">하연</maintainer>
   <license>TODO: License declaration</license>
 
-  <!-- TODO: 구현 시 의존성 추가 (예: rclpy, amr_msgs) -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>amr_msgs</exec_depend>
+  <exec_depend>builtin_interfaces</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <!-- 할당 알고리즘. 단위 테스트에서도 import하므로 CI(rosdep -t build)가 설치하도록 depend로 둔다 -->
+  <depend>amr_fleet_core</depend>
 
   <test_depend>python3-pytest</test_depend>
+  <!-- test_fake_fleet_launch.py: 서버와 가짜 로봇을 띄워 작업 완료까지 확인 -->
+  <test_depend>launch_testing</test_depend>
+  <test_depend>launch_testing_ros</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

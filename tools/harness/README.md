@@ -77,7 +77,7 @@
 - `tasks.csv`: `/fleet/task_status`의 마지막 이벤트(COMPLETED·FAILED)를 작업 1건당 1행으로 옮긴다. 명세서가 요구하는 작업 로그 필드와 Fleet 지표(평균 작업 시간·처리량·총 이동 거리)를 여기서 계산한다.
   - 컬럼: `task_id, robot, state, start_time, end_time, duration, distance_traveled, error_code`
   - 로봇 가동률은 `/fleet/robot_states`의 `mode`가 BUSY인 시간 비율로 따로 계산한다.
-- `assignments.csv`: 할당 알고리즘을 호출할 때마다 결과를 남긴다. `AssignmentResult`는 토픽으로 나가지 않으므로 `amr_fleet_manager`가 직접 기록해야 한다(2주차 구현 때 반영 요청).
+- `assignments.csv`: 할당 알고리즘을 호출할 때마다 결과를 남긴다. `AssignmentResult`는 토픽으로 나가지 않으므로 `amr_fleet_manager`가 직접 기록한다(launch 인자 `assignments_csv`에 실행별 경로를 준다).
   - 컬럼: `timestamp, call_id, algorithm, cost_fn, task_id, robot_id, cost`
   - 할당 못 한 작업은 `robot_id`를 비운다. 호출별 `total_cost`는 같은 `call_id`의 `cost` 합이다.
   - 알고리즘 3종 비교(연구 1)의 할당 최적성 지표로 쓴다.
@@ -99,7 +99,7 @@
   - `latency_ms` = (`recv_time` − `send_time`) × 1000. 주입 지연 + 중계 1홉 + DDS. 주입 0ms 조건이 중계 오버헤드 기준선이다
   - `delivered`: 중계본이 오면 `1`, 안 오면 `0`(`recv_time`, `latency_ms`는 비움). 관측 마감 뒤에 보낸 메시지는 비운다(판정 안 함). 손실률은 `0`/`1`인 행만으로 센다
   - 같은 `key`가 여러 번 오면(재전송) 첫 도착만 쓴다
-  - **관측 마감**: 실행 종료 시각에서 `delay_ms` + 여유 시간(`grace_s`, 기본 1초)을 뺀 시각 이후에 보낸 메시지는 지연·손실 계산에서 뺀다. 예를 들어 지연 0.5초 조건에서 실행이 10초에 끝나면, 9.8초에 보낸 메시지는 10.3초에 도착할 예정이라 아직 오는 중이다. 이걸 손실로 세면 지연이 클수록 손실이 많은 것처럼 나와 연구 1의 결론이 왜곡된다(민지, #33). Ack도 같은 규칙을 쓰되, 여유 시간에 서버 재전송 간격 × 최대 재전송 횟수를 더한다(`amr_fleet_manager` 파라미터 확정 후). 쓴 마감 시각은 `meta.json`의 `observation_cutoff`에 남긴다
+  - **관측 마감**: 실행 종료 시각에서 `delay_ms` + 여유 시간(`grace_s`, 기본 1초)을 뺀 시각 이후에 보낸 메시지는 지연·손실 계산에서 뺀다. 예를 들어 지연 0.5초 조건에서 실행이 10초에 끝나면, 9.8초에 보낸 메시지는 10.3초에 도착할 예정이라 아직 오는 중이다. 이걸 손실로 세면 지연이 클수록 손실이 많은 것처럼 나와 연구 1의 결론이 왜곡된다(민지, #33). Ack도 같은 규칙을 쓰되, 여유 시간에 서버 재전송 간격 × 최대 재전송 횟수를 더한다(`amr_fleet_manager`의 `resend.interval_s` × `resend.max_resends`, 기본 1초 × 5 = 5초). 쓴 마감 시각은 `meta.json`의 `observation_cutoff`에 남긴다
 - `hop_latency.csv`: 구독 노드가 메시지를 꺼낸 1건(`ros2:rmw_take`, `taken=1`)마다 1행. `trace/`에서 오프라인으로 변환한다
   - 컬럼: `layer, node, topic, source_time, take_time, dds_ms, callback_ms`
   - `layer`: 토픽 이름이 `/fleet/*` 또는 `/<robot>/fleet/*`면 `2`, 나머지는 `1`

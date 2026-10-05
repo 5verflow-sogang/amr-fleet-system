@@ -135,8 +135,8 @@ launch 파일과 인자:
 | launch | 인자 (기본값) | 설명 |
 | --- | --- | --- |
 | `world.launch.py` | `world` (`warehouse.sdf`), `gui` (`true`), `verbosity` (`2`) | 월드만. `gui:=false`면 서버만 |
-| `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
-| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`) | 월드 + 로봇 1대 + RViz |
+| `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`), `enable_camera` (`true`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
+| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`), `enable_camera` (`true`) | 월드 + 로봇 1대 + RViz |
 
 ## 실행
 

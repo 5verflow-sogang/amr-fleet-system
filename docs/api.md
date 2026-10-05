@@ -180,7 +180,7 @@ map
 | Publish | `/<ns>/imu/data_raw` | `sensor_msgs/msg/Imu` | IMU 원본 (노이즈·바이어스, 공분산 비어 있음), 100 Hz, frame `<ns>/imu_link` |
 | Publish | `/<ns>/camera/color/image_raw` | `sensor_msgs/msg/Image` | RGB `rgb8` 640×480, 30 Hz, frame `<ns>/camera_optical_frame` |
 | Publish | `/<ns>/camera/depth/image_raw` | `sensor_msgs/msg/Image` | Depth `32FC1` (m, 0.3~10 m), 30 Hz, RGB와 픽셀 1:1 |
-| Publish | `/<ns>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` | RGB·Depth 공통 내부 파라미터 |
+| Publish | `/<ns>/camera/camera_info` | `sensor_msgs/msg/CameraInfo` | RGB·Depth 공통 내부 파라미터. `camera/*` 3개는 `enable_camera:=false`면 나오지 않는다 |
 | Publish | `/<ns>/diff_drive/odom` | `nav_msgs/msg/Odometry` | DiffDrive 이상적 odom (노이즈·공분산 없음). 로봇 판단에는 `/<ns>/odom`을 쓴다 |
 | Publish | `/<ns>/ground_truth/odom` | `nav_msgs/msg/Odometry` | GT, frame `world`. 평가 전용 |
 | Subscribe | `/<ns>/cmd_vel` | `geometry_msgs/msg/Twist` | 속도 명령 |
@@ -199,6 +199,19 @@ map
 | --- | --- | --- | --- |
 | Subscribe | `perception/obstacle_measurements` | `geometry_msgs/msg/PoseArray` | 장애물 위치 측정, `odom` 좌표계. 인지 도메인 내부 |
 | Publish | `perception/obstacles` | `amr_msgs/msg/TrackedObstacleArray` | 확정 트랙의 위치·속도·공분산, `odom` 좌표계 (DWA 입력). `header`는 측정을 그대로 따른다 |
+### amr_fleet_manager
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `/fleet/task_requests` | `amr_msgs/msg/Task` | 새 작업 |
+| Subscribe | `/fleet/robot_states` | `amr_msgs/msg/RobotState` | 할당 후보 판단, Ack 유실 확인 (`current_task_id`) |
+| Subscribe | `/fleet/task_assignment_acks` | `amr_msgs/msg/TaskAssignmentAck` | 재전송 중지, 거부 시 재할당 |
+| Subscribe | `/fleet/task_status` | `amr_msgs/msg/TaskStatus` | 작업 상태, 완료·실패 시 다음 할당 |
+| Publish | `/fleet/task_assignments` | `amr_msgs/msg/TaskAssignment` | 할당. Ack 없으면 같은 번호로 재전송 |
+| Publish | `/fleet/heartbeat` | `amr_msgs/msg/FleetHeartbeat` | 고정 주기 |
+| Publish | `/fleet/task_table` | `amr_msgs/msg/FleetTaskTable` | 고정 주기 |
+
+가짜 로봇(`fake_robot`)과 동작 규칙은 [amr_fleet_manager README](../src/fleet/amr_fleet_manager/README.md)에 있다.
 
 <!-- TODO: 나머지 패키지 섹션을 같은 형식으로 추가 -->
 

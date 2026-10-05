@@ -2,7 +2,7 @@
 <!--
   AMR 조립 파일.
 
-    xacro amr.urdf.xacro namespace:=amr_01 payload_mass:=0.0 gt_rate:=100
+    xacro amr.urdf.xacro namespace:=amr_01 payload_mass:=0.0 gt_rate:=100 enable_camera:=true
 
   TF 트리 (docs/api.md 2장, prefix = "<namespace>/"):
     base_footprint
@@ -22,10 +22,14 @@
   <xacro:arg name="payload_mass" default="0.0"/>
   <!-- GT 토픽 발행 주기 [Hz]. 평가용이라 실행마다 바꿀 수 있게 인자로 둔다 (제동 거리 테스트 등) -->
   <xacro:arg name="gt_rate" default="100"/>
+  <!-- RGBD 카메라 센서를 만들지. false면 camera_link·광학 프레임(TF)은 남기고 Gazebo 센서만 뺀다.
+       CPU 렌더링 sim에서 로봇 여러 대를 띄울 때 카메라가 병목이라 끈다 (GCP 러너, #43 하연 리뷰) -->
+  <xacro:arg name="enable_camera" default="true"/>
 
   <xacro:property name="namespace" value="$(arg namespace)"/>
   <xacro:property name="payload_mass" value="$(arg payload_mass)"/>
   <xacro:property name="gt_rate" value="$(arg gt_rate)"/>
+  <xacro:property name="enable_camera" value="$(arg enable_camera)"/>
   <xacro:property name="prefix" value="${namespace + '/' if namespace else ''}"/>
   <xacro:property name="topic_ns" value="${'/' + namespace if namespace else ''}"/>
 

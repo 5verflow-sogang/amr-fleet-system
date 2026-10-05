@@ -138,7 +138,9 @@
   <!--
     RGB와 Depth를 한 센서로 낸다. 센서는 camera_link의 +x를 보고, 메시지 frame_id는 광학 프레임이다.
     Gazebo 토픽 camera/{image, depth_image, camera_info}는 spawn_robot.launch.py가 ROS 이름으로 바꾼다.
+    enable_camera가 false면 센서를 만들지 않는다 (링크·TF는 위에서 그대로 만든다).
   -->
+  <xacro:if value="${enable_camera}">
   <gazebo reference="${prefix}camera_link">
     <sensor name="rgbd_camera" type="rgbd_camera">
       <always_on>true</always_on>
@@ -171,6 +173,7 @@
       </camera>
     </sensor>
   </gazebo>
+  </xacro:if>
 
   <gazebo reference="${prefix}imu_link">
     <sensor name="imu" type="imu">
