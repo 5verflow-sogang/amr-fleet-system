@@ -36,6 +36,13 @@ dist/
 # 비밀 정보
 .env
 
+# Terraform 상태·변수 (자원 정보와 결제 계정이 들어 있다). 잠금 파일(.terraform.lock.hcl)은 커밋한다
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+
 # 주차별 명세 템플릿·주차별 명세 (PM 로컬용)
 docs/template/
 docs/plan/

@@ -1,0 +1,6 @@
+# cp terraform.tfvars.example terraform.tfvars 후 값을 채운다. terraform.tfvars는 커밋하지 않는다
+project_id = "amr-fleet"
+# 결제 계정 ID: gcloud billing accounts list. 비우면 예산 알림을 만들지 않는다
+billing_account_id = ""
+budget_amount      = 50000
+budget_currency    = "KRW"
