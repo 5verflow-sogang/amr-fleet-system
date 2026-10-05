@@ -1,6 +1,6 @@
 # 추적 중인 장애물 1개. LiDAR로 추적하고, 카메라에 보이면 YOLO 검출을 짝지어 클래스를 붙인다.
 # DetectedObject3D와 달리 프레임이 바뀌어도 유지되는 ID와 속도가 있다.
-# 이 로봇과의 충돌 예측(TTC, safety margin)은 CollisionRisk로 분리했다 (장애물의 성질이 아니라 관계라서).
+# 이 로봇과의 충돌 예측(TTC)은 CollisionRisk로 분리했다 (장애물의 성질이 아니라 관계라서).
 
 uint8 SOURCE_UNKNOWN=0        # 출처를 모르거나 아직 구분하지 않음
 uint8 SOURCE_LIDAR=1          # LiDAR만 (카메라 시야 밖이거나 YOLO 미검출)
