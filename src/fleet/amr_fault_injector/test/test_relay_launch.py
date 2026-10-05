@@ -56,9 +56,11 @@ class TestRelayDelay(unittest.TestCase):
     def test_fixed_delay(self):
         received = {}
         publisher = self.node.create_publisher(FleetHeartbeat, '/fleet/heartbeat', 10)
+        # colcon test는 패키지를 병렬로 돌린다. amr_fleet_manager 테스트의 서버 heartbeat도 이 주입기를 거쳐 오고
+        # seq가 겹치므로, 이 테스트가 보낸 것(server_id='test')만 센다
         self.node.create_subscription(
             FleetHeartbeat, '/amr_01/fleet/heartbeat',
-            lambda msg: received.setdefault(msg.seq, time.monotonic()), 10)
+            lambda msg: received.setdefault(msg.seq, time.monotonic()) if msg.server_id == 'test' else None, 10)
 
         # 주입기와 서로 발견될 때까지 기다린다. 발견 전에 보낸 메시지는 전달되지 않는다
         deadline = time.monotonic() + 15.0
