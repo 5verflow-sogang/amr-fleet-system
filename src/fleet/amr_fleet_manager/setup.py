@@ -23,7 +23,8 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            # 'node_name = amr_fleet_manager.node_module:main',
+            'fleet_manager = amr_fleet_manager.fleet_manager_node:main',
+            'fake_robot = amr_fleet_manager.fake_robot_node:main',
         ],
     },
 )

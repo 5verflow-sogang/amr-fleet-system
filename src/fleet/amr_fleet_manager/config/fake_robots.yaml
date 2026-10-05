@@ -1,0 +1,25 @@
+# 가짜 로봇 파라미터. 공통 값은 /**, 시작 위치는 로봇별로 둔다 (map 좌표, m).
+/**:
+  ros__parameters:
+    speed_mps: 1.0
+    # 싣기·내리기에 걸리는 시간 (s)
+    dwell_s: 1.0
+    battery_percent: 100.0
+    state_rate_hz: 2.0
+    step_hz: 10.0
+
+/amr_01/fake_robot:
+  ros__parameters:
+    start_xy: [2.0, 2.0]
+/amr_02/fake_robot:
+  ros__parameters:
+    start_xy: [4.0, 2.0]
+/amr_03/fake_robot:
+  ros__parameters:
+    start_xy: [6.0, 2.0]
+/amr_04/fake_robot:
+  ros__parameters:
+    start_xy: [8.0, 2.0]
+/amr_05/fake_robot:
+  ros__parameters:
+    start_xy: [10.0, 2.0]
