@@ -87,9 +87,14 @@ ros2 service call /amr_01/localization_eval/save std_srvs/srv/Trigger   # 중간
 | Subscribe | `odometry/filtered` | `nav_msgs/msg/Odometry` | 추정, map 기준. `estimate_type:=pose`면 `geometry_msgs/msg/PoseWithCovarianceStamped` (예: `amcl_pose`) |
 | Service | `~/save` | `std_srvs/srv/Trigger` | 지금까지 기록 저장, 응답에 구간별 요약 |
 
-- `map_origin_in_world`: world에서 본 map 원점 `[x, y, yaw]`. 지도 인계 때 받은 매핑 시작 자세를 넣는다 ([amr_gazebo README](../../simulation/amr_gazebo/README.md) "GT 사용 시 주의"). 틀리면 그만큼 RMSE에 더해진다.
+- `map_origin_in_world`: world에서 본 map 원점 `[x, y, yaw]`. 지도 인계 때 받은 매핑 시작 자세를 넣는다. 기본값은 창고 지도 v0 기준 `[0.0, 1.5, 0.0]`, sandbox 미로(TurtleBot4)는 `[0.0, 0.0, 0.0]` ([amr_gazebo README](../../simulation/amr_gazebo/README.md) "GT 사용 시 주의"). 틀리면 그만큼 RMSE에 더해진다.
 - 정답은 추정 시각으로 **선형 보간**해 짝짓는다. 두 토픽의 발행 시각이 어긋나서 생기는 오차를 없애기 위해서다.
 - 저장 위치: `output_dir` (비우면 `/tmp/amr_eval/<robot>_<시각>`). `localization.csv`, `localization_summary.json`, `trajectories/<robot>_gt.tum`·`_est.tum`
+- 궤적(원자료)은 받는 즉시 `trajectories/`에 이어 쓴다(약 1초마다 디스크로 내보냄). 오차 CSV·요약은 종료할 때 계산한다. 강제 종료돼 원자료만 남았으면 다시 계산한다:
+
+```bash
+ros2 run amr_localization eval_offline <결과 폴더> --robot amr_01   # 구간 기준을 바꿔 다시 계산할 때도
+```
 
 ## 파라미터
 

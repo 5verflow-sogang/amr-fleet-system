@@ -8,7 +8,8 @@
       estimate_topic: odometry/filtered    # EKF 출력, map 기준
       estimate_type: odometry              # odometry | pose (amcl_pose 직접 평가 시)
       # world에서 본 map 원점 [x, y, yaw]. 지도 인계 때 받은 매핑 시작 자세 (amr_gazebo README "GT 사용 시 주의")
-      map_origin_in_world: [0.0, 0.0, 0.0]
+      # 창고 지도 v0(amr_mapping maps/warehouse_v0.yaml): [0.0, 1.5, 0.0]. sandbox 미로(TurtleBot4): [0.0, 0.0, 0.0]
+      map_origin_in_world: [0.0, 1.5, 0.0]
       output_dir: ""                       # 비우면 /tmp/amr_eval/<robot>_<시각>
       max_gap: 0.05                        # 정답 보간 허용 간격 [s]
       moving_v: 0.01                       # 구간 분류 기준 [m/s] (초안)

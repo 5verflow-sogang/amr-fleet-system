@@ -83,3 +83,60 @@ def test_recorder_save_writes_harness_files(tmp_path):
     with open(tmp_path / 'localization_summary.json', encoding='utf-8') as f:
         assert json.load(f)['counts']['est'] == 100
     assert 'straight n=' in format_summary(summary)
+
+
+def _fill(rec, n=300):
+    # world y=1.5 위를 1 m/s 직진, 추정은 map 기준 y=0.02 (2 cm 어긋남)
+    for i in range(n):
+        t = i * 0.01
+        rec.add_gt(Pose2D(t, t, 1.5, 0.0))
+        if i % 2 == 1:
+            rec.add_est(Pose2D(t, t, 0.02, 0.0))
+
+
+def test_streaming_writes_raw_before_save(tmp_path):
+    rec = EvalRecorder('amr_01', (0.0, 1.5, 0.0), stream_dir=str(tmp_path))
+    _fill(rec)
+    rec.flush()
+    # save 전인데도 원자료가 파일에 있다 (강제 종료 대비)
+    gt = read_tum(tmp_path / 'trajectories' / 'amr_01_gt.tum')
+    est = read_tum(tmp_path / 'trajectories' / 'amr_01_est.tum')
+    assert len(gt) == 300 and len(est) == 150
+    assert gt[0].y == pytest.approx(0.0)   # map 기준으로 변환돼 있음
+    rec.close()
+
+
+def test_offline_recompute_matches_live(tmp_path):
+    live = EvalRecorder('amr_01', (0.0, 1.5, 0.0), stream_dir=str(tmp_path))
+    _fill(live)
+    live_summary = live.save(str(tmp_path))
+    live.close()
+    # 원자료만으로 다시 계산 (eval_offline과 같은 경로)
+    offline = EvalRecorder.from_tum(str(tmp_path), 'amr_01')
+    off_summary = offline.save(str(tmp_path))
+    assert off_summary['counts'] == live_summary['counts']
+    for seg, s in live_summary['segments'].items():
+        if s is None:
+            assert off_summary['segments'][seg] is None
+        else:
+            assert off_summary['segments'][seg]['rmse'] == pytest.approx(s['rmse'], abs=1e-6)
+    assert off_summary['map_origin_in_world'] is None
+
+
+def test_precomputed_times_give_same_result():
+    from amr_localization.eval.metrics import gt_velocity
+    gt = [Pose2D(i * 0.01, i * 0.01, 0.0, 0.1 * i * 0.01) for i in range(50)]
+    times = [p.t for p in gt]
+    for t in (0.005, 0.123, 0.37):
+        assert interpolate(gt, t, 0.05) == interpolate(gt, t, 0.05, times)
+        assert gt_velocity(gt, t) == gt_velocity(gt, t, times)
+
+
+def test_eval_offline_cli(tmp_path, capsys):
+    from amr_localization.eval_offline import main
+    rec = EvalRecorder('amr_01', (0.0, 1.5, 0.0), stream_dir=str(tmp_path))
+    _fill(rec)
+    rec.close()   # save 없이 끝남 = 강제 종료된 상황
+    assert main([str(tmp_path), '--robot', 'amr_01']) == 0
+    assert 'straight n=' in capsys.readouterr().out
+    assert (tmp_path / 'localization.csv').exists()
