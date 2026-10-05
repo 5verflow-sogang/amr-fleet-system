@@ -26,4 +26,8 @@ uv run python scripts/smoke_ppo.py            # 설치 확인: CartPole PPO 학�
 | 머신 | steps/s |
 | --- | --- |
 | Mac (Apple Silicon) | 약 7,300 |
+| GCP `n2d-standard-4` (Linux, CPU torch) | 약 1,600 |
 | 학교 GPU 서버 | 미측정. 단일 코어 속도가 Mac의 약 절반이라 더 느릴 것으로 본다 |
+
+- Linux 설치 확인(10/5, GCP Ubuntu 22.04): `uv sync --locked` 약 4초, torch `2.14.1+cpu`(CUDA 없음), `.venv` 약 1GB
+- 클라우드 CPU는 Mac보다 4배 이상 느리다. 학습은 노트북에서 한다
