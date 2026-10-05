@@ -199,6 +199,5 @@ TODO: 구현 진행에 맞춰 아래 시나리오를 추가한다 (원 명세서
 | `perception` | 기본 | YOLO 추론. GPU는 `docker-compose.gpu.yml`을 겹쳐 쓴다 |
 | `dev` | `--profile dev` 또는 `run dev` | 개발 셸 컨테이너 |
 | `gui`, `gui-proxy` | `--profile gui` | 브라우저 GUI (Xvfb + noVNC, RViz2). `gui-proxy`가 6080 포트를 호스트에 중계 |
-| `sandbox` | `--profile sandbox` | TurtleBot4 + AMCL + Nav2 임시 환경. 우리 로봇으로 교체되면 제거 |
 | (예정) `monitoring` | — | Prometheus, Grafana |
 | (예정) `dashboard` | — | 웹 대시보드 |
