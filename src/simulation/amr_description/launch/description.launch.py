@@ -26,6 +26,7 @@ def generate_launch_description():
             ' namespace:=', namespace,
             ' payload_mass:=', LaunchConfiguration('payload_mass'),
             ' gt_rate:=', LaunchConfiguration('gt_rate'),
+            ' enable_camera:=', LaunchConfiguration('enable_camera'),
         ]),
         value_type=str)
 
@@ -39,6 +40,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'gt_rate', default_value='100',
             description='GT 토픽(ground_truth/odom) 발행 주기 [Hz]'),
+        DeclareLaunchArgument(
+            'enable_camera', default_value='true',
+            description='RGBD 카메라 센서를 만들지. false면 TF 프레임만 남는다'),
         DeclareLaunchArgument(
             'use_sim_time', default_value='true',
             description='Gazebo /clock 사용 여부'),
