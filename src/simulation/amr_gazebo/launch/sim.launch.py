@@ -4,6 +4,7 @@
     ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false  # 서버만
     ros2 launch amr_gazebo sim.launch.py publish_odom_tf:=false  # EKF가 odom TF를 낼 때 (D4)
     ros2 launch amr_gazebo sim.launch.py payload_mass:=25.0      # 적재 질량 [kg]
+    ros2 launch amr_gazebo sim.launch.py enable_camera:=false    # 카메라 끔 (CPU 렌더링 부담 줄이기)
 """
 
 import os
@@ -33,6 +34,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'publish_odom_tf', default_value='true',
             description='odom → base_footprint TF를 DiffDrive에서 낼지. EKF를 띄우면 false (D4)'),
+        DeclareLaunchArgument(
+            'enable_camera', default_value='true',
+            description='RGBD 카메라 센서와 브리지를 만들지. CPU sim에서 여러 대를 띄울 때 false'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(launch_dir, 'world.launch.py')),
             launch_arguments={'gui': LaunchConfiguration('gui')}.items(),
@@ -46,6 +50,7 @@ def generate_launch_description():
                 'yaw': LaunchConfiguration('yaw'),
                 'payload_mass': LaunchConfiguration('payload_mass'),
                 'publish_odom_tf': LaunchConfiguration('publish_odom_tf'),
+                'enable_camera': LaunchConfiguration('enable_camera'),
             }.items(),
         ),
         Node(
