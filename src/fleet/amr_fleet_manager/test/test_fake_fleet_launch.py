@@ -57,7 +57,10 @@ class TestFakeFleet(unittest.TestCase):
         self.node.create_subscription(TaskAssignment, '/fleet/task_assignments', assignments.append, 10)
         self.node.create_subscription(TaskAssignmentAck, '/fleet/task_assignment_acks', acks.append, 10)
         self.node.create_subscription(TaskStatus, '/fleet/task_status', statuses.append, 10)
-        self.node.create_subscription(FleetHeartbeat, '/fleet/heartbeat', heartbeats.append, 10)
+        # colcon test는 패키지를 병렬로 돌린다. 장애 주입기 테스트도 같은 토픽에 heartbeat를 보내므로 이 서버 것만 센다
+        self.node.create_subscription(
+            FleetHeartbeat, '/fleet/heartbeat',
+            lambda msg: heartbeats.append(msg) if msg.server_id == 'fleet_manager' else None, 10)
         publisher = self.node.create_publisher(Task, '/fleet/task_requests', 10)
 
         # 서버와 서로 발견될 때까지 기다린다. 발견 전에 보낸 요청은 전달되지 않는다
