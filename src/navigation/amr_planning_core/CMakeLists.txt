@@ -13,6 +13,7 @@ find_package(ament_cmake REQUIRED)
 add_library(${PROJECT_NAME}
   src/grid.cpp
   src/astar.cpp
+  src/dwa.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -40,6 +41,8 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_astar test/test_astar.cpp)
   target_link_libraries(test_astar ${PROJECT_NAME})
+  ament_add_gtest(test_dwa test/test_dwa.cpp)
+  target_link_libraries(test_dwa ${PROJECT_NAME})
 endif()
 
 ament_package()
