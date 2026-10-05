@@ -6,13 +6,14 @@
 
 > 상태: 최소판(3주차). 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송, `assignments.csv` 기록, 구역 허가(정원·lease·대기열)까지 구현했다. 교차로 우선순위, 교착 해소, 작업 취소, 실패 작업 재할당은 아직 없다.
 
-노드 두 개와 지표 변환 도구를 제공한다.
+노드 세 개와 지표 변환 도구를 제공한다.
 
 | 실행 파일 | 역할 |
 | --- | --- |
 | `fleet_manager` | Fleet 서버 |
 | `fake_robot` | 가짜 로봇. Nav2·BT 없이 Fleet 메시지만 주고받는다. `amr_bt`가 완성되기 전에 서버·장애 주입기·하네스를 끝까지 돌려볼 때 쓴다 |
 | `fleet_metrics` | rosbag → `fleet_latency.csv`, `response_time.csv` (하네스가 실행마다 부른다) |
+| `task_generator` | 작업 생성기. 시나리오(seed로 재현) 또는 JSON Task 파일의 일정대로 작업을 요청한다 |
 
 ## 제공 인터페이스
 
@@ -43,6 +44,12 @@
 `<prefix>`는 `server_topic_prefix` 파라미터다. 기본 `/fleet`(서버 원본), 장애 주입기를 거치면 `fleet`(네임스페이스 안 상대 이름 → `/amr_0N/fleet/...`).
 
 작업은 픽업·목적지까지 직선으로 `speed_mps`로 가고 싣기·내리기에 `dwell_s`를 쓴다. 이미 작업 중이면 `ASSIGN_ALREADY_BUSY`로 거부한다.
+
+### `task_generator`
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Publish | `/fleet/task_requests` | `amr_msgs/msg/Task` | 일정의 `at_s`마다 1건. 자세는 map 좌표, `created_time`은 발행 시각 |
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
@@ -111,6 +118,35 @@
 - 다시 띄운 서버는 epoch가 1 오르고, 작업·구역 장부가 비어 있다. 서버가 죽기 전에 맡긴 작업을 이어받는 일(작업표 복구)은 아직 없다.
 - `fault_events.csv` 컬럼: `time, event`. `time`은 실제 시간(UNIX 초)이라 rosbag2의 수신 시각과 맞춰 볼 수 있다. `event`는 `kill`·`restart`.
 
+### 작업 생성기
+
+명세의 "JSON 형식 Task Description"을 받는 곳이자, 하네스가 같은 작업 일정을 반복해 넣는 도구다.
+
+- **일정 만들기**: 시나리오([config/scenarios/basic.yaml](config/scenarios/basic.yaml))의 작업 수·간격(`fixed`·`poisson`)·흐름(픽업 → 목적지 스테이션, `*` 패턴)·물품 비율·우선순위·마감으로 일정을 만든다. 같은 시나리오·`seed`면 같은 일정이다. `task_id`는 `task_s<seed>_<번호>`.
+- **JSON Task 파일**: `tasks_file`을 주면 시나리오 대신 그 일정을 그대로 발행한다. `schedule_out`으로 만든 일정을 같은 형식으로 남길 수 있어, 실행 폴더의 `tasks.json`을 다시 넣으면 그 실행을 재현한다.
+
+```json
+{"tasks": [
+  {"at_s": 5.0, "task_id": "task_s3_0001", "type": "delivery", "item": "small",
+   "pickup": "dock_1", "dropoff": "rack_a4", "priority": 0, "deadline_s": 0.0},
+  {"at_s": 15.0, "task_id": "task_s3_0002", "type": "charge", "item": "none",
+   "pickup": "", "dropoff": "charger_c1", "priority": 0, "deadline_s": 0.0}
+]}
+```
+
+| 필드 | 값 |
+| --- | --- |
+| `at_s` | 일정 시작 후 발행 시각 (노드 시계, s) |
+| `type` | `delivery` / `charge` / `return`. `delivery`만 `pickup`이 있다 |
+| `item` | `none` / `small` / `medium` / `large` (원 명세서 물품 유형) |
+| `pickup`, `dropoff` | [config/stations.yaml](config/stations.yaml)의 스테이션 이름 |
+| `priority` | 0~255 |
+| `deadline_s` | 요청 후 마감까지 (s). 0이면 마감 없음 |
+
+- 스테이션 자세는 world 좌표로 적고 발행할 때 `map_origin_in_world`(기본 `[0.0, 1.5, 0.0]`, warehouse_v0 지도)로 map 좌표로 바꾼다. 스테이션 목록은 **제안**이다. 도킹 자세는 지수가 ArUco 마커에 맞춰 확정한다.
+- 시각은 노드 시계(`use_sim_time`이면 시뮬레이션 시간)다. 시뮬레이터가 느려져도 로봇 속도에 비해 작업이 몰리지 않는다.
+- `/fleet/task_requests`를 구독하는 노드가 하나라도 생겨야 일정을 시작한다. 서버보다 rosbag 녹화가 먼저 구독하면 그때 시작하므로, 하네스는 서버를 먼저 띄운다.
+
 ## 파라미터
 
 `fleet_manager` ([config/fleet_manager.yaml](config/fleet_manager.yaml))
@@ -147,6 +183,17 @@
 | `step_hz` | `10.0` | 이동 계산 주기 |
 | `server_topic_prefix` | `/fleet` | 서버 → 로봇 토픽 앞부분. launch 인자 `relayed:=true`면 `fleet` |
 
+`task_generator` ([launch/task_generator.launch.py](launch/task_generator.launch.py) 인자)
+
+| 이름 | 기본값 | 설명 |
+| --- | --- | --- |
+| `scenario_file` | `config/scenarios/basic.yaml` | 작업 시나리오. `tasks_file`을 주면 무시 |
+| `tasks_file` | `''` | JSON Task 파일 |
+| `seed` | `0` | 일정 난수 seed. 하네스 반복 번호 |
+| `stations_file` | `config/stations.yaml` | 스테이션 자세 (world) |
+| `schedule_out` | `''` | 만든 일정을 JSON Task 파일로 남길 경로 |
+| `map_origin_in_world` | `[0.0, 1.5, 0.0]` | 노드 파라미터. world에서 본 map 원점 |
+
 ## 실행
 
 ```bash
@@ -154,10 +201,13 @@
 ros2 launch amr_fleet_manager fleet_manager.launch.py algorithm:=hungarian
 # 터미널 2: 가짜 로봇 3대 (amr_01~03)
 ros2 launch amr_fleet_manager fake_robots.launch.py count:=3
-# 터미널 3: 작업 요청
+# 터미널 3: 작업 요청 (기본 시나리오: 10초마다 60건)
+ros2 launch amr_fleet_manager task_generator.launch.py seed:=3 schedule_out:=/tmp/run1/tasks.json
+ros2 topic echo /fleet/task_status
+
+# 작업 하나만 손으로 넣을 때
 ros2 topic pub --once /fleet/task_requests amr_msgs/msg/Task \
   "{task_id: task_0001, task_type: 0, item_type: 1, pickup_pose: {position: {x: 5.0, y: 5.0}}, dropoff_pose: {position: {x: 20.0, y: 5.0}}}"
-ros2 topic echo /fleet/task_status
 ```
 
 ### 장애 주입기를 거쳐 돌리기
@@ -199,10 +249,11 @@ ros2 run amr_fleet_manager fleet_metrics /tmp/run1/rosbag --out /tmp/run1 --dela
 colcon test --packages-select amr_fleet_manager
 ```
 
-- `test/test_dispatcher.py`, `test/test_robot_sim.py`, `test/test_fleet_metrics.py`: rclpy 없이 할당·재전송·수신 규칙·이동 모델·지표 변환을 확인한다.
+- `test/test_dispatcher.py`, `test/test_robot_sim.py`, `test/test_fleet_metrics.py`, `test/test_task_gen.py`: rclpy 없이 할당·재전송·수신 규칙·이동 모델·지표 변환·작업 일정을 확인한다.
 - `test/test_fleet_metrics_bag.py`: 실제 rosbag2(sqlite3)을 써서 `fleet_metrics`가 읽고 변환하는지 확인한다 (ROS 환경에서만).
 - `test/test_fake_fleet_launch.py`: 서버와 가짜 로봇 1대를 띄워 요청 → 할당 → Ack → 완료, 구역 허가 → 대기 → 반납 후 넘김을 확인한다.
 - `test/test_server_kill_launch.py`: 서버를 죽였다 다시 띄워 heartbeat가 끊겼다가 epoch 2로 돌아오는지, `fault_events.csv`가 남는지 확인한다.
+- `test/test_task_generator_launch.py`: JSON Task 일정대로, map 좌표로 바꿔 발행하는지 확인한다.
 
 ## 미결
 

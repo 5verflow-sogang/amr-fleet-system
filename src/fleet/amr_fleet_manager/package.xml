@@ -10,7 +10,7 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>amr_msgs</exec_depend>
   <exec_depend>builtin_interfaces</exec_depend>
-  <!-- config/zones.yaml 읽기. 단위 테스트에서도 쓴다 -->
+  <!-- config/zones.yaml, 시나리오·스테이션 yaml 읽기. 단위 테스트에서도 쓴다 -->
   <depend>python3-yaml</depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
