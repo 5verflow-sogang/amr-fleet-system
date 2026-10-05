@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
+from .common import assign_greedy
 from .cost import euclidean_cost
 from .types import AssignmentResult, CostFn, RobotInfo, TaskInfo
 
@@ -17,5 +18,4 @@ def assign_nearest(
 
     비용이 같으면 robot_id 사전순. O(T·R).
     """
-    # TODO(하연, 2주차): 구현
-    raise NotImplementedError
+    return assign_greedy(tasks, robots, cost_fn, rank=lambda r, cost: (cost, r.robot_id))

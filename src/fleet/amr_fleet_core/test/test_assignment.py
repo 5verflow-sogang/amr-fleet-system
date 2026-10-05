@@ -67,16 +67,91 @@ def test_algorithm_registry():
     assert set(ALGORITHMS) == {'nearest', 'load_balance', 'hungarian'}
 
 
-# ---- 2주차 구현 후 skip 해제 ----
-
-@pytest.mark.skip(reason='2주차 구현')
 @pytest.mark.parametrize('name', sorted(ALGORITHMS))
 def test_empty_input(name):
     result = ALGORITHMS[name]([], [])
     assert result.assignments == {} and result.unassigned == []
+    assert result.total_cost == 0.0
 
 
-@pytest.mark.skip(reason='2주차 구현')
+@pytest.mark.parametrize('name', sorted(ALGORITHMS))
+def test_no_robots_leaves_all_unassigned(name):
+    result = ALGORITHMS[name]([task('low', priority=1), task('high', priority=9)], [])
+    assert result.assignments == {}
+    assert result.unassigned == ['high', 'low']
+
+
+@pytest.mark.parametrize('name', sorted(ALGORITHMS))
+def test_duplicate_ids_raise(name):
+    with pytest.raises(ValueError):
+        ALGORITHMS[name]([task('a'), task('a')], [robot('amr_01')])
+
+
+@pytest.mark.parametrize('name', sorted(ALGORITHMS))
+def test_more_robots_than_tasks(name):
+    tasks = [task('t1', pickup=(10.0, 0.0))]
+    robots = [robot('amr_01', xy=(0.0, 0.0)), robot('amr_02', xy=(9.0, 0.0)), robot('amr_03', xy=(30.0, 0.0))]
+    result = ALGORITHMS[name](tasks, robots)
+    assert result.assignments == {'t1': 'amr_02'}
+    assert result.unassigned == []
+    assert result.total_cost == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize('name', sorted(ALGORITHMS))
+def test_more_tasks_than_robots(name):
+    tasks = [task('t1', priority=3), task('t2', priority=2), task('t3', priority=1)]
+    robots = [robot('amr_01'), robot('amr_02')]
+    result = ALGORITHMS[name](tasks, robots)
+    assert set(result.assignments) == {'t1', 't2'}
+    assert set(result.assignments.values()) == {'amr_01', 'amr_02'}
+    assert result.unassigned == ['t3']
+
+
+@pytest.mark.parametrize('name', sorted(ALGORITHMS))
+def test_tie_broken_by_robot_id(name):
+    # 비용이 모두 같으면 우선순위 순 작업이 robot_id 사전순 로봇을 받는다
+    tasks = [task('t_b', priority=1), task('t_a', priority=2)]
+    robots = [robot('amr_02'), robot('amr_01')]
+    result = ALGORITHMS[name](tasks, robots)
+    assert result.assignments == {'t_a': 'amr_01', 't_b': 'amr_02'}
+
+
+@pytest.mark.parametrize('name', sorted(ALGORITHMS))
+def test_deterministic(name):
+    tasks = [task(f't{i}', priority=i % 3, pickup=(float(i), 0.0)) for i in range(6)]
+    robots = [robot(f'amr_0{i}', xy=(float(i * 2), 1.0)) for i in range(4)]
+    first = ALGORITHMS[name](tasks, robots)
+    second = ALGORITHMS[name](list(reversed(tasks)), list(reversed(robots)))
+    assert first == second
+
+
+def test_nearest_picks_closest():
+    tasks = [task('t1', pickup=(5.0, 0.0))]
+    robots = [robot('amr_01', xy=(0.0, 0.0)), robot('amr_02', xy=(4.0, 0.0))]
+    assert ALGORITHMS['nearest'](tasks, robots).assignments == {'t1': 'amr_02'}
+
+
+def test_load_balance_prefers_low_load():
+    # amr_02가 더 가깝지만 load가 커서 amr_01이 받는다
+    tasks = [task('t1', pickup=(5.0, 0.0))]
+    robots = [robot('amr_01', xy=(0.0, 0.0), load=0), robot('amr_02', xy=(4.0, 0.0), load=2)]
+    result = ALGORITHMS['load_balance'](tasks, robots)
+    assert result.assignments == {'t1': 'amr_01'}
+    assert result.total_cost == pytest.approx(5.0)
+
+
+def test_load_balance_same_load_uses_cost():
+    tasks = [task('t1', pickup=(5.0, 0.0))]
+    robots = [robot('amr_01', xy=(0.0, 0.0), load=1), robot('amr_02', xy=(4.0, 0.0), load=1)]
+    assert ALGORITHMS['load_balance'](tasks, robots).assignments == {'t1': 'amr_02'}
+
+
+def test_load_is_not_mutated():
+    robots = [robot('amr_01', load=3)]
+    ALGORITHMS['load_balance']([task('t1')], robots)
+    assert robots[0].load == 3
+
+
 def test_hungarian_beats_greedy():
     # 탐욕은 t1(급함)에 가까운 amr_01을 주고 t2에 먼 amr_02를 준다: 1 + 5 = 6
     # 최적은 t1←amr_02, t2←amr_01: 2 + 2 = 4
@@ -88,7 +163,6 @@ def test_hungarian_beats_greedy():
     assert optimal.total_cost == pytest.approx(4.0)
 
 
-@pytest.mark.skip(reason='2주차 구현')
 @pytest.mark.parametrize('name', sorted(ALGORITHMS))
 def test_priority_wins_when_robots_short(name):
     tasks = [task('urgent', priority=9, pickup=(100.0, 0.0)), task('near', priority=0)]

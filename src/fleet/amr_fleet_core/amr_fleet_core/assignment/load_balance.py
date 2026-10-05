@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
+from .common import assign_greedy
 from .cost import euclidean_cost
 from .types import AssignmentResult, CostFn, RobotInfo, TaskInfo
 
@@ -18,5 +19,4 @@ def assign_load_balance(
     load가 같으면 비용이 작은 쪽, 그것도 같으면 robot_id 사전순. O(T·R).
     RobotInfo.load는 바꾸지 않는다. 할당 후 증가는 호출 측(amr_fleet_manager)이 한다.
     """
-    # TODO(하연, 2주차): 구현
-    raise NotImplementedError
+    return assign_greedy(tasks, robots, cost_fn, rank=lambda r, cost: (r.load, cost, r.robot_id))
