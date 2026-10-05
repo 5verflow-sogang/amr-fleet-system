@@ -54,7 +54,7 @@ map
 | --- | --- | --- |
 | 인식 결과 메시지 | 연우 ↔ 이진·지수 | 3D 객체 메시지(class, confidence, PoseWithCovariance) — Costmap·BT가 소비. 초안: [4절](#4-amr_msgs-인터페이스-초안) |
 | 중앙 ↔ 분산 Fleet | 하연 ↔ 이진 | 작업 할당·확인, 구역 허가, 경매 메시지, 서버 heartbeat. 초안: [4절](#4-amr_msgs-인터페이스-초안) |
-| 하네스 지표 | 민지 ↔ 하연 | 수집 지표와 로그 포맷 (명세서 1-4절 측정 절차 표 기준, 초안: [tools/harness/README.md](../tools/harness/README.md#로그-포맷-초안-하연과-합의-중)) |
+| 하네스 지표 | 민지 ↔ 하연 | 수집 지표와 로그 포맷 (명세서 1-4절 측정 절차 표 기준, 합의: [tools/harness/README.md](../tools/harness/README.md#로그-포맷)) |
 | 매핑 → 위치추정 인계 | 지수 → 민지 | 지도 파일, `/odom`·`/scan`·`/imu/data` 합격 조건, 센서 노이즈 파라미터 변경 통보 ([명세서 8-2절](project-spec.md#8-2-매핑위치추정-분업-지수--민지)) |
 
 ## 4. amr_msgs 인터페이스 (초안)
