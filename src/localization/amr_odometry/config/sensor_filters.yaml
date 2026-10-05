@@ -26,6 +26,16 @@
     # 보정 중 축별 표준편차가 이보다 크면 움직인 것으로 보고 다시 잰다 (노이즈 σ의 약 50배)
     stationary_gyro_stddev: 0.01
     stationary_accel_stddev: 0.1
+    # 평균 각속도가 이보다 크면 회전 중 (일정 속도 회전은 표준편차가 작아 위 기준만으로는 정지로 오판한다)
+    stationary_gyro_mean_max: 0.05
+    # 평균 가속도가 중력 (0, 0, g)에서 축별로 이만큼 넘게 벗어나면 가속 중·기울어짐 (바이어스 0.1보다 크게)
+    stationary_accel_mean_tolerance: 0.3
+    # 보정이 이 횟수(1번 = calibration_duration)만큼 연속 실패하면 미보정으로 발행 시작 (5번 ≈ 10초 동안 계속 움직임).
+    # 0이면 보정될 때까지 발행하지 않는다. 하네스 자동 실행에서 IMU가 영영 안 나오는 것을 막는다
+    max_calibration_attempts: 5
+    # 미보정 발행 때 공분산에 더하는 바이어스 σ. 자이로 0.01 rad/s(저가 MEMS 수준), 가속도는 sensors.yaml 바이어스 0.1의 2배
+    uncalibrated_gyro_bias_stddev: 0.01
+    uncalibrated_accel_bias_stddev: 0.2
     # 공분산에 쓰는 센서 노이즈 σ. amr_description/config/sensors.yaml의 IMU 값과 같게 둔다
     gyro_noise_stddev: 2.0e-4
     accel_noise_stddev: 1.7e-2
