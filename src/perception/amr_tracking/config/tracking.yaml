@@ -24,6 +24,6 @@
 /**/synthetic_obstacles:
   ros__parameters:
     rate: 10.0           # Hz. LiDAR 주기
-    frame_id: odom       # 고정 좌표계
+    frame_id: odom       # perception/obstacles 좌표계 (DWA 입력, api.md amr_tracking 절)
     noise_std: 0.05      # m. measurement_noise_std와 같게
     seed: 0

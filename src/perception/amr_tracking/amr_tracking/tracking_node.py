@@ -1,7 +1,7 @@
 """perception/obstacle_measurements → 다중 장애물 KF 추적 → perception/obstacles.
 
 측정은 장애물 위치(LiDAR 군집 중심)를 geometry_msgs/PoseArray로 받는다. 위치만 쓰고 방향은 무시한다.
-측정은 고정 좌표계(odom 또는 map) 기준이어야 한다. 로봇 기준 좌표면 로봇의 움직임이 장애물 속도로 잡힌다.
+측정과 출력은 odom 좌표계다 (DWA가 odom에서 동작하고, map은 위치 보정 때 점프해 가짜 속도가 생긴다).
 LiDAR 군집화 노드가 이 토픽을 발행할 예정이고, 그전에는 synthetic_obstacles_node로 시험한다.
 radius는 군집 반경이 나오기 전까지 고정값, is_dynamic은 속도 기반 임시 규칙(tracker.py)이다.
 """
