@@ -48,12 +48,17 @@ def read_tum(path: str) -> list[Pose2D]:
     return sorted(poses, key=lambda p: p.t)
 
 
+def tum_line(p: Pose2D) -> str:
+    """TUM 한 줄 (줄바꿈 포함). 평면 로봇이라 z는 0이다."""
+    qx, qy, qz, qw = quaternion_from_yaw(p.yaw)
+    return f'{p.t:.9f} {p.x:.6f} {p.y:.6f} 0.0 {qx:.9f} {qy:.9f} {qz:.9f} {qw:.9f}\n'
+
+
 def write_tum(path: str, poses: Iterable[Pose2D]) -> None:
-    """TUM 파일로 쓴다. 평면 로봇이라 z는 0이다."""
+    """TUM 파일로 쓴다."""
     with open(path, 'w', encoding='utf-8') as f:
         for p in poses:
-            qx, qy, qz, qw = quaternion_from_yaw(p.yaw)
-            f.write(f'{p.t:.9f} {p.x:.6f} {p.y:.6f} 0.0 {qx:.9f} {qy:.9f} {qz:.9f} {qw:.9f}\n')
+            f.write(tum_line(p))
 
 
 def transform_to_map(poses: Iterable[Pose2D], map_origin_in_world: tuple[float, float, float]) -> list[Pose2D]:
@@ -72,15 +77,22 @@ def transform_to_map(poses: Iterable[Pose2D], map_origin_in_world: tuple[float, 
     return result
 
 
-def interpolate(gt: Sequence[Pose2D], t: float, max_gap: float) -> Pose2D | None:
+def interpolate(
+    gt: Sequence[Pose2D],
+    t: float,
+    max_gap: float,
+    times: Sequence[float] | None = None,
+) -> Pose2D | None:
     """시각 t를 사이에 둔 두 정답 시점을 선형 보간한다. 방향은 짧은 쪽으로 돈다.
 
     t가 정답 범위 밖이거나 두 시점 간격이 max_gap(초)보다 크면 None.
-    gt는 시각 순으로 정렬돼 있어야 한다.
+    gt는 시각 순으로 정렬돼 있어야 한다. 여러 번 부를 때는 times(gt의 시각 목록)를
+    미리 만들어 넘긴다. 매번 만들면 전체 계산이 기록 길이의 제곱으로 느려진다.
     """
     if not gt:
         return None
-    times = [p.t for p in gt]
+    if times is None:
+        times = [p.t for p in gt]
     i = bisect.bisect_left(times, t)
     if i < len(gt) and times[i] == t:
         return gt[i]
@@ -106,9 +118,10 @@ def associate_interpolated(
     (2 m/s에서 10 ms면 2 cm). 보간하면 이 오차가 사라진다. 기본 max_gap 0.05초는
     100 Hz 정답에서 샘플 몇 개가 빠져도 보간하고, 그보다 긴 공백은 버린다.
     """
+    times = [p.t for p in gt]
     pairs = []
     for e in est:
-        g = interpolate(gt, e.t, max_gap)
+        g = interpolate(gt, e.t, max_gap, times)
         if g is not None:
             pairs.append((g, e))
     return pairs

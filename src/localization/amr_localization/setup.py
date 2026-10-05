@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'eval_node = amr_localization.eval_node:main',
+            'eval_offline = amr_localization.eval_offline:main',
         ],
     },
 )

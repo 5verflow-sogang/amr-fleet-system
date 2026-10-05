@@ -53,11 +53,19 @@ def normalize_angle(a: float) -> float:
     return math.atan2(math.sin(a), math.cos(a))
 
 
-def gt_velocity(gt: Sequence[Pose2D], t: float) -> tuple[float, float]:
-    """정답 궤적에서 시각 t 근처의 선속도 [m/s]·각속도 [rad/s]를 앞뒤 차분으로 구한다."""
+def gt_velocity(
+    gt: Sequence[Pose2D],
+    t: float,
+    times: Optional[Sequence[float]] = None,
+) -> tuple[float, float]:
+    """정답 궤적에서 시각 t 근처의 선속도 [m/s]·각속도 [rad/s]를 앞뒤 차분으로 구한다.
+
+    여러 번 부를 때는 times(gt의 시각 목록)를 미리 만들어 넘긴다.
+    """
     if len(gt) < 2:
         return 0.0, 0.0
-    times = [p.t for p in gt]
+    if times is None:
+        times = [p.t for p in gt]
     i = min(max(bisect.bisect_left(times, t), 1), len(gt) - 1)
     a, b = gt[i - 1], gt[i]
     dt = b.t - a.t
@@ -88,9 +96,10 @@ def compute_errors(
     moving_w: float = 0.05,
 ) -> list[ErrorSample]:
     """짝지어진 (정답, 추정)마다 위치 오차·방향 오차·구간을 계산한다. 구간은 정답 궤적의 속도로 정한다."""
+    times = [p.t for p in gt]
     samples = []
     for g, e in pairs:
-        v, w = gt_velocity(gt, g.t)
+        v, w = gt_velocity(gt, g.t, times)
         samples.append(ErrorSample(
             gt=g,
             est=e,

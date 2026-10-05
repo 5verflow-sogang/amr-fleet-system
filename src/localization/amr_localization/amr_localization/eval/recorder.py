@@ -5,6 +5,9 @@
     <out_dir>/trajectories/<robot>_est.tum   추정 궤적 (map 기준)
     <out_dir>/localization.csv               시점별 오차
     <out_dir>/localization_summary.json      구간별 RMSE·Max와 KPI 판정
+
+stream_dir를 주면 궤적(원자료)을 받는 즉시 TUM 파일에 이어 쓴다. 실행이 강제 종료돼도
+원자료는 남고, 오차는 나중에 from_tum()(또는 eval_offline 명령)으로 다시 계산할 수 있다.
 """
 
 from __future__ import annotations
@@ -15,13 +18,30 @@ from dataclasses import asdict
 from typing import Optional
 
 from .metrics import compute_errors, kpi_check, summarize_by_segment, write_localization_csv
-from .trajectory import Pose2D, associate_interpolated, transform_to_map, write_tum
+from .trajectory import (
+    Pose2D,
+    associate_interpolated,
+    read_tum,
+    transform_to_map,
+    tum_line,
+    write_tum,
+)
+
+# 스트리밍할 때 이만큼 줄을 쓸 때마다 디스크로 내보낸다 (100 Hz 정답이면 약 1초)
+FLUSH_EVERY = 100
+
+
+def trajectory_paths(out_dir: str, robot: str) -> tuple[str, str]:
+    """(정답 TUM 경로, 추정 TUM 경로)."""
+    traj_dir = os.path.join(out_dir, 'trajectories')
+    return os.path.join(traj_dir, f'{robot}_gt.tum'), os.path.join(traj_dir, f'{robot}_est.tum')
 
 
 class EvalRecorder:
     """정답(world 기준)과 추정(map 기준) 자세를 모은다.
 
     map_origin_in_world: world에서 본 map 원점 (x, y, yaw). 지도 인계 때 받은 매핑 시작 자세.
+    stream_dir: 주면 궤적을 받는 즉시 <stream_dir>/trajectories에 이어 쓴다.
     """
 
     def __init__(
@@ -31,48 +51,93 @@ class EvalRecorder:
         max_gap: float = 0.05,
         moving_v: float = 0.01,
         moving_w: float = 0.05,
+        stream_dir: Optional[str] = None,
     ):
         self.robot = robot
         self.map_origin_in_world = map_origin_in_world
         self.max_gap = max_gap
         self.moving_v = moving_v
         self.moving_w = moving_w
-        self._gt_world: list[Pose2D] = []
+        # 정답은 받을 때 바로 map 기준으로 바꿔 둔다 (저장·평가 때 다시 변환하지 않게)
+        self._gt_map: list[Pose2D] = []
         self._est: list[Pose2D] = []
+        self.stream_dir = stream_dir
+        self._streams = None
+        self._unflushed = 0
+        if stream_dir:
+            gt_path, est_path = trajectory_paths(stream_dir, robot)
+            os.makedirs(os.path.dirname(gt_path), exist_ok=True)
+            self._streams = (open(gt_path, 'w', encoding='utf-8'), open(est_path, 'w', encoding='utf-8'))
+
+    @classmethod
+    def from_tum(cls, out_dir: str, robot: str, **kwargs) -> 'EvalRecorder':
+        """저장된(또는 스트리밍된) TUM 궤적으로 다시 만든다. 정답 TUM은 이미 map 기준이다."""
+        rec = cls(robot, (0.0, 0.0, 0.0), **kwargs)
+        # 원래 변환값은 TUM에 남지 않는다. 요약에 null로 남겨 이미 map 기준임을 표시한다
+        rec.map_origin_in_world = None
+        gt_path, est_path = trajectory_paths(out_dir, robot)
+        rec._gt_map = read_tum(gt_path)
+        rec._est = read_tum(est_path)
+        return rec
+
+    def _write(self, index: int, pose: Pose2D) -> None:
+        if self._streams is None:
+            return
+        self._streams[index].write(tum_line(pose))
+        self._unflushed += 1
+        if self._unflushed >= FLUSH_EVERY:
+            self.flush()
 
     def add_gt(self, pose: Pose2D) -> None:
-        self._gt_world.append(pose)
+        [p] = transform_to_map([pose], self.map_origin_in_world)
+        self._gt_map.append(p)
+        self._write(0, p)
 
     def add_est(self, pose: Pose2D) -> None:
         self._est.append(pose)
+        self._write(1, pose)
+
+    def flush(self) -> None:
+        if self._streams is not None:
+            for f in self._streams:
+                f.flush()
+        self._unflushed = 0
+
+    def close(self) -> None:
+        if self._streams is not None:
+            for f in self._streams:
+                f.close()
+            self._streams = None
 
     @property
     def counts(self) -> tuple[int, int]:
         """(정답 수, 추정 수)."""
-        return len(self._gt_world), len(self._est)
+        return len(self._gt_map), len(self._est)
 
     def evaluate(self) -> tuple[list, dict, dict]:
         """(시점별 오차, 구간별 요약, KPI 판정)."""
-        gt = sorted(transform_to_map(self._gt_world, self.map_origin_in_world), key=lambda p: p.t)
+        gt = sorted(self._gt_map, key=lambda p: p.t)
         est = sorted(self._est, key=lambda p: p.t)
         samples = compute_errors(associate_interpolated(gt, est, self.max_gap), gt, self.moving_v, self.moving_w)
         summaries = summarize_by_segment(samples)
         return samples, summaries, kpi_check(summaries)
 
     def save(self, out_dir: str) -> dict:
-        """파일로 저장하고 요약을 돌려준다."""
-        traj_dir = os.path.join(out_dir, 'trajectories')
-        os.makedirs(traj_dir, exist_ok=True)
-        gt_map = sorted(transform_to_map(self._gt_world, self.map_origin_in_world), key=lambda p: p.t)
-        write_tum(os.path.join(traj_dir, f'{self.robot}_gt.tum'), gt_map)
-        write_tum(os.path.join(traj_dir, f'{self.robot}_est.tum'), sorted(self._est, key=lambda p: p.t))
+        """파일로 저장하고 요약을 돌려준다. 같은 곳에 스트리밍 중이면 궤적은 다시 쓰지 않는다."""
+        if self._streams is not None and os.path.abspath(out_dir) == os.path.abspath(self.stream_dir):
+            self.flush()
+        else:
+            gt_path, est_path = trajectory_paths(out_dir, self.robot)
+            os.makedirs(os.path.dirname(gt_path), exist_ok=True)
+            write_tum(gt_path, sorted(self._gt_map, key=lambda p: p.t))
+            write_tum(est_path, sorted(self._est, key=lambda p: p.t))
 
         samples, summaries, kpi = self.evaluate()
         write_localization_csv(os.path.join(out_dir, 'localization.csv'), samples, robot=self.robot)
         summary = {
             'robot': self.robot,
-            'map_origin_in_world': list(self.map_origin_in_world),
-            'counts': {'gt': len(self._gt_world), 'est': len(self._est), 'paired': len(samples)},
+            'map_origin_in_world': None if self.map_origin_in_world is None else list(self.map_origin_in_world),
+            'counts': {'gt': len(self._gt_map), 'est': len(self._est), 'paired': len(samples)},
             'segments': {seg: (None if s is None else asdict(s)) for seg, s in summaries.items()},
             'kpi_pass': kpi,
         }
