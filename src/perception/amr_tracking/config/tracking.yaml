@@ -1,0 +1,29 @@
+# 장애물 추적 노드 파라미터 (tracking_node, synthetic_obstacles_node)
+/**/tracking:
+  ros__parameters:
+    # 가속도 잡음 σa [m/s²]. 사람 방향 전환·지게차 가감속 수준.
+    # 0.5로 낮추면 정지 물체 속도 잡음은 줄지만 보행자 방향 전환을 못 따라가 ID가 자주 바뀌었다
+    accel_noise_std: 1.0
+    # 위치 관측 잡음 σ [m]. LiDAR σ 0.03 m(amr_description/config/sensors.yaml) + 군집 중심 치우침
+    measurement_noise_std: 0.05
+    # 첫 관측의 속도 표준편차 [m/s]. 명세 장애물 최대 속도
+    initial_velocity_std: 1.5
+    # 연관 게이트 (마할라노비스 거리²). 2자유도 χ² 99.9%. 99%(9.21)는 ID 전환이 잦았다
+    gate_mahalanobis_sq: 13.82
+    # 이 횟수 관측되면 확정 트랙으로 발행
+    confirm_hits: 3
+    # 마지막 관측 후 이 시간 [s]이 지나면 삭제 (LiDAR 10 Hz 5프레임)
+    max_coast_time: 0.5
+    # 속력이 dynamic_speed_threshold [m/s]를 넘는 프레임이 dynamic_confirm_frames번 연속되면 동적 (이후 유지).
+    # 동적 장애물 분류 작업 전까지의 임시 규칙
+    dynamic_speed_threshold: 0.25
+    dynamic_confirm_frames: 5
+    # 임시 고정 반경 [m] (LiDAR 군집 반경으로 교체)
+    obstacle_radius: 0.3
+
+/**/synthetic_obstacles:
+  ros__parameters:
+    rate: 10.0           # Hz. LiDAR 주기
+    frame_id: odom       # perception/obstacles 좌표계 (DWA 입력, api.md amr_tracking 절)
+    noise_std: 0.05      # m. measurement_noise_std와 같게
+    seed: 0

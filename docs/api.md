@@ -86,7 +86,7 @@ map
 | 대주제 | 이름 | 종류 | 타입 | 발행 (서버) | 구독 (클라이언트) | 발행 시점 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 인식 | `perception/objects` | 토픽 | `amr_msgs/msg/DetectedObject3DArray` | `amr_detection` | `amr_tracking`, Costmap, `amr_bt` | 카메라 프레임마다 |
-| 추적 | `perception/obstacles` | 토픽 | `amr_msgs/msg/TrackedObstacleArray` | `amr_tracking` | `amr_safety`, Costmap, DWA | 추적 주기마다 |
+| 추적 | `perception/obstacles` | 토픽 | `amr_msgs/msg/TrackedObstacleArray` | `amr_tracking` | `amr_safety`, DWA | 추적 주기마다 |
 | 추적 | `perception/collision_risks` | 토픽 | `amr_msgs/msg/CollisionRiskArray` | `amr_tracking` | `amr_safety` | 추적 주기마다 |
 | 안전 | `safety/status` | 토픽 | `amr_msgs/msg/SafetyStatus` | `amr_safety` | `amr_control`, `amr_bt`, `amr_fleet_manager`, 대시보드 | 바뀌면 즉시, 그 외 주기 |
 | 안전 | `safety/estop` | 서비스 | `std_srvs/srv/SetBool` | `amr_safety` | 대시보드, 운영자 | 요청 시 |
@@ -111,7 +111,7 @@ map
 | --- | --- |
 | `robot_id` | 로봇 네임스페이스 이름과 같다 (예: `"amr_01"`) |
 | `task_id` | 시스템 전체에서 유일. UUID 권장 (서버 장애 뒤 로봇이 만든 ID가 겹치지 않도록) |
-| 좌표계 | 위치는 `header.frame_id` 기준이며 기본 `"map"` |
+| 좌표계 | 위치는 `header.frame_id` 기준이며 기본 `"map"`. 예외: `perception/obstacles`는 `odom` (DWA 입력, 위치 보정 점프 회피) |
 | 방향을 모를 때 | `PoseWithCovariance`의 orientation은 (0, 0, 0, 1), 공분산의 회전 성분 대각은 `1e6`. 소비 측은 위치 3×3 블록만 쓴다 |
 | 특수 값 | `inf`: 해당 없음 (예: 충돌 경로가 아님, 장애물 없음) / `NaN`: 계산하지 않음 (예: 연구 2 기능을 끈 baseline) / `-1`: 관련 트랙 없음 (`related_track_id`) |
 | 빈 결과 | 검출·장애물이 없어도 빈 배열로 발행한다. 발행이 끊기면 노드 이상으로 본다 |
@@ -193,6 +193,12 @@ map
 | Publish | `/<ns>/scan` | `sensor_msgs/msg/LaserScan` | 필터 스캔 (거리·각도·아웃라이어), 10 Hz |
 | Publish | `/<ns>/imu/data` | `sensor_msgs/msg/Imu` | 바이어스 보정·저역통과, 100 Hz, 공분산 채움. 시작 2초 정지 보정 뒤 발행 |
 
+### amr_tracking
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `perception/obstacle_measurements` | `geometry_msgs/msg/PoseArray` | 장애물 위치 측정, `odom` 좌표계. 인지 도메인 내부 |
+| Publish | `perception/obstacles` | `amr_msgs/msg/TrackedObstacleArray` | 확정 트랙의 위치·속도·공분산, `odom` 좌표계 (DWA 입력). `header`는 측정을 그대로 따른다 |
 ### amr_fleet_manager
 
 | 종류 | 이름 | 타입 | 설명 |
