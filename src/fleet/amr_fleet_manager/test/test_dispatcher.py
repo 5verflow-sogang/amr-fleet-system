@@ -1,13 +1,14 @@
 """Dispatcher 장부·재전송 로직. rclpy 없이 돈다."""
 
 import csv
+from pathlib import Path
 
 import pytest
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
 
 from amr_fleet_manager.dispatcher import (STATE_COMPLETED, STATE_FAILED, STATE_IN_PROGRESS, STATE_PENDING,
                                           Dispatcher, DispatcherConfig)
-from amr_fleet_manager.records import ASSIGNMENTS_HEADER, AssignmentLog, next_epoch
+from amr_fleet_manager.records import ASSIGNMENTS_HEADER, AssignmentLog, load_zones, next_epoch
 
 IDLE, BUSY = 0, 1
 
@@ -189,3 +190,15 @@ def test_assignment_log(tmp_path):
         ['12.500000', '1', 'nearest', 'euclidean', 't1', 'amr_01', '5.000000'],
         ['12.500000', '1', 'nearest', 'euclidean', 't2', '', ''],
     ]
+
+
+def test_load_zones(tmp_path):
+    shipped = Path(__file__).resolve().parents[1] / 'config' / 'zones.yaml'
+    zones = load_zones(str(shipped))
+    assert [z.zone_id for z in zones] == ['narrow_01', 'narrow_02']
+    assert all(z.capacity == 1 for z in zones)
+
+    path = tmp_path / 'zones.yaml'
+    path.write_text('zones:\n  - id: wide\n    capacity: 2\n  - id: junction_01\n')
+    assert [(z.zone_id, z.capacity) for z in load_zones(str(path))] == [('wide', 2), ('junction_01', 1)]
+    assert load_zones('') == []

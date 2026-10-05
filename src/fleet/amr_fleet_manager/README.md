@@ -4,7 +4,7 @@
 - 빌드 타입: ament_python
 - 책임: 중앙집중 Fleet 서버: 작업 할당, Traffic Management, 교착 해소
 
-> 상태: 최소판(3주차). 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송, `assignments.csv` 기록까지 구현했다. Traffic Management(`ZoneRequest`/`ZoneGrant`), 교착 해소, 작업 취소, 실패 작업 재할당은 아직 없다.
+> 상태: 최소판(3주차). 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송, `assignments.csv` 기록, 구역 허가(정원·lease·대기열)까지 구현했다. 교차로 우선순위, 교착 해소, 작업 취소, 실패 작업 재할당은 아직 없다.
 
 노드 두 개를 제공한다.
 
@@ -23,9 +23,11 @@
 | Subscribe | `/fleet/robot_states` | `amr_msgs/msg/RobotState` | 할당 후보 판단 (`mode`, `battery_percent`, `pose`). `current_task_id`로 Ack 유실도 확인 |
 | Subscribe | `/fleet/task_assignment_acks` | `amr_msgs/msg/TaskAssignmentAck` | 재전송 중지. 거부면 작업을 큐로 되돌린다 |
 | Subscribe | `/fleet/task_status` | `amr_msgs/msg/TaskStatus` | 작업 상태 갱신. COMPLETED·FAILED면 로봇을 비우고 다음 할당 |
+| Subscribe | `/fleet/zone_requests` | `amr_msgs/msg/ZoneRequest` | 구역 진입 요청·연장·반납 |
 | Publish | `/fleet/task_assignments` | `amr_msgs/msg/TaskAssignment` | 할당 명령. Ack가 없으면 같은 `assignment_id`·`header.stamp`로 재전송 |
 | Publish | `/fleet/heartbeat` | `amr_msgs/msg/FleetHeartbeat` | `heartbeat_period_s`마다. `mode`는 항상 CENTRALIZED |
 | Publish | `/fleet/task_table` | `amr_msgs/msg/FleetTaskTable` | `task_table_period_s`마다. 받은 작업 전부 (끝난 작업 포함) |
+| Publish | `/fleet/zone_grants` | `amr_msgs/msg/ZoneGrant` | 요청에 대한 답, 대기 로봇 차례가 오면 |
 
 ### `fake_robot`
 
@@ -80,6 +82,15 @@
 | 마지막으로 처리한 번호보다 작음 (지연으로 뒤바뀜) | 무시 |
 | `FleetHeartbeat.epoch`가 바뀜 | 기준을 0으로 초기화 |
 
+### 구역 허가
+
+판단 규칙은 [amr_fleet_core README](../amr_fleet_core/README.md) "구역 허가" 절에 있다. 서버는 구역 목록 파일([config/zones.yaml](config/zones.yaml))의 `id`·`capacity`만 쓴다.
+
+- `lease_expiry`는 노드 시계 기준이다. 로봇은 구역 안에 있는 동안 `traffic.lease_s`(5초)보다 짧은 주기로 같은 `request_id`를 다시 보내 연장한다.
+- 대기 중인 로봇도 같은 주기로 다시 요청한다. `lease_s` 동안 요청이 없으면 대기열에서 빠진다.
+- 서버가 죽으면 연장이 안 되므로 허가가 자연히 풀린다 (ZoneGrant.msg 주석).
+- 구역 목록은 **제안**이다. 지금은 월드의 좁은 통로 두 곳(`narrow_01`, `narrow_02`)만 있다. 교차로와 로봇 측 진입 판단(구역 앞 어디서 요청할지)은 이진과 정한다.
+
 ### epoch
 
 서버가 뜰 때 `epoch_file`의 값에 1을 더해 쓴다. 하네스가 서버를 강제종료하고 다시 띄우면 epoch가 바뀌어 로봇이 명령 번호 기준을 초기화한다. 경로를 비우면 항상 1이다.
@@ -98,7 +109,9 @@
 | `resend.max_resends` | `5` | 재전송 한도. 첫 발송은 세지 않는다 |
 | `heartbeat_period_s` | `0.2` | heartbeat 주기 (s). 연구 1 실험 변수 |
 | `task_table_period_s` | `1.0` | 작업표 방송 주기 (s) |
-| `tick_s` | `0.05` | 재전송 확인 주기 (s) |
+| `traffic.lease_s` | `5.0` | 구역 허가 유효 시간 (노드 시계, s) |
+| `traffic.zones_file` | `''` | 구역 목록 파일. 비우면 모든 구역 요청을 거부. launch 인자 `zones_file` (기본 `config/zones.yaml`) |
+| `tick_s` | `0.05` | 재전송·구역 만료 확인 주기 (s) |
 | `epoch_file` | `/tmp/amr_fleet_manager/epoch` | 서버 재시작 번호 파일 |
 | `assignments_csv` | `''` | 할당 호출 기록 경로. 비우면 기록 안 함. launch 인자 `assignments_csv` |
 
@@ -147,13 +160,16 @@ colcon test --packages-select amr_fleet_manager
 ```
 
 - `test/test_dispatcher.py`, `test/test_robot_sim.py`: rclpy 없이 할당·재전송·수신 규칙·이동 모델을 확인한다.
-- `test/test_fake_fleet_launch.py`: 서버와 가짜 로봇 1대를 띄워 요청 → 할당 → Ack → 완료까지 확인한다.
+- `test/test_fake_fleet_launch.py`: 서버와 가짜 로봇 1대를 띄워 요청 → 할당 → Ack → 완료, 구역 허가 → 대기 → 반납 후 넘김을 확인한다.
 
 ## 미결
 
 | 쟁점 | 초안 |
 | --- | --- |
-| Traffic Management | `ZoneRequest`/`ZoneGrant` 서버 측. 먼저 항상 허가하는 스텁으로 이진 측 연동을 연다 |
+| 구역 목록 | 좁은 통로 2곳만. 교차로 추가와 로봇 측 진입 판단은 이진과 합의 |
+| 교차로 우선순위 | 대기열이 FIFO다. 급한 작업을 가진 로봇 먼저(`REASON_PRIORITY_YIELD`)는 이후 |
+| 교착 해소 | 구역 대기 그래프에서 순환 탐지 → `GRANT_REVOKED` 등 2가지 이상 |
+| 가짜 로봇의 구역 요청 | `fake_robot`은 구역을 요청하지 않는다 |
 | 작업 취소 | `ACTION_CANCEL` 발행 경로 없음 (가짜 로봇은 받으면 처리한다) |
 | FAILED 작업 | 실패로 남긴다. 재할당 정책은 `ErrorInfo.code`별로 정한다 |
 | 로봇 끊김 | 작업 중인 로봇의 `RobotState`가 끊겨도 작업을 회수하지 않는다 |

@@ -19,7 +19,11 @@ fleet_manager:
     heartbeat_period_s: 0.2
     # 작업표 방송 주기 (실제 시간, s)
     task_table_period_s: 1.0
-    # 재전송 확인 주기 (s)
+    traffic:
+      # 구역 허가 유효 시간 (노드 시계, s). 로봇은 구역 안에서 이보다 짧은 주기로 다시 요청해 연장한다.
+      # 구역 목록 파일(traffic.zones_file)은 launch 인자 zones_file로 받는다 (기본 config/zones.yaml)
+      lease_s: 5.0
+    # 재전송·구역 만료 확인 주기 (s)
     tick_s: 0.05
     # 서버 재시작 번호를 남기는 파일. 강제종료 후 다시 띄우면 epoch가 1 늘어난다
     epoch_file: /tmp/amr_fleet_manager/epoch

@@ -2,8 +2,8 @@
 
     ros2 launch amr_fleet_manager fleet_manager.launch.py algorithm:=hungarian assignments_csv:=/tmp/run1/assignments.csv
 
-구독: /fleet/{task_requests,robot_states,task_assignment_acks,task_status}
-발행: /fleet/{task_assignments,heartbeat,task_table}
+구독: /fleet/{task_requests,robot_states,task_assignment_acks,task_status,zone_requests}
+발행: /fleet/{task_assignments,heartbeat,task_table,zone_grants}
 """
 
 import os
@@ -17,8 +17,8 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
-    config = os.path.join(
-        get_package_share_directory('amr_fleet_manager'), 'config', 'fleet_manager.yaml')
+    share = get_package_share_directory('amr_fleet_manager')
+    config = os.path.join(share, 'config', 'fleet_manager.yaml')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -27,12 +27,16 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'assignments_csv', default_value='',
             description='할당 호출 기록 파일. 비우면 기록하지 않는다 (하네스가 실행마다 경로를 준다)'),
+        DeclareLaunchArgument(
+            'zones_file', default_value=os.path.join(share, 'config', 'zones.yaml'),
+            description='구역 허가 대상 구역 목록'),
         Node(
             package='amr_fleet_manager',
             executable='fleet_manager',
             parameters=[config, {
                 'assignment.algorithm': ParameterValue(LaunchConfiguration('algorithm'), value_type=str),
                 'assignments_csv': ParameterValue(LaunchConfiguration('assignments_csv'), value_type=str),
+                'traffic.zones_file': ParameterValue(LaunchConfiguration('zones_file'), value_type=str),
             }],
             output='screen',
         ),

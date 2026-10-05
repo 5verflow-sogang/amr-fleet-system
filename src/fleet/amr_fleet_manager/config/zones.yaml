@@ -1,0 +1,15 @@
+# 구역 허가(ZoneRequest/ZoneGrant) 대상 구역. 한 번에 capacity대까지만 들어간다.
+# 상태: 제안. 교차로 목록과 로봇 측 진입 판단 방식은 이진과 합의해 채운다.
+#
+# area_world: 참고용 범위 [x_min, x_max, y_min, y_max] (m, Gazebo world 좌표, amr_gazebo README 표).
+#             서버는 zone_id와 capacity만 쓰고 이 값은 읽지 않는다.
+#             map 좌표는 world에서 지도 원점(warehouse_v0: map_origin_in_world [0.0, 1.5, 0.0])을 뺀 값이다.
+zones:
+  - id: narrow_01
+    capacity: 1
+    area_world: [-5.0, -4.4, -2.6, -1.4]
+    description: 좁은 통로 ① rack_b3–rack_b4 사이, 폭 0.6 m 길이 1.2 m
+  - id: narrow_02
+    capacity: 1
+    area_world: [-2.5, 2.5, -1.4, -0.8]
+    description: 좁은 통로 ② rack_lane_divider–B열 사이, 폭 0.6 m 길이 5.0 m
