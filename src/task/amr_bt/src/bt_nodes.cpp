@@ -17,11 +17,7 @@ BT::NodeStatus WaitForTask::onStart() {return onRunning();}
 
 BT::NodeStatus WaitForTask::onRunning()
 {
-  if (!ctx_->busy() || ctx_->started) {
-    return BT::NodeStatus::RUNNING;
-  }
-  ctx_->started = true;
-  return BT::NodeStatus::SUCCESS;
+  return ctx_->busy() ? BT::NodeStatus::SUCCESS : BT::NodeStatus::RUNNING;
 }
 
 IsDelivery::IsDelivery(
@@ -41,6 +37,9 @@ ReportPhase::ReportPhase(
 
 BT::NodeStatus ReportPhase::tick()
 {
+  if (!ctx_->busy()) {
+    return BT::NodeStatus::FAILURE;
+  }
   auto phase = getInput<std::string>("phase");
   if (!phase) {
     throw BT::RuntimeError("ReportPhase: phase 포트가 없다: ", phase.error());
@@ -64,7 +63,7 @@ BT::NodeStatus StubWait::onStart()
 
 BT::NodeStatus StubWait::onRunning()
 {
-  if (ctx_->cancel_requested) {
+  if (!ctx_->busy()) {
     return BT::NodeStatus::FAILURE;
   }
   return ctx_->now() >= until_ ? BT::NodeStatus::SUCCESS : BT::NodeStatus::RUNNING;
@@ -89,6 +88,10 @@ FailTask::FailTask(
 
 BT::NodeStatus FailTask::tick()
 {
+  if (!ctx_->busy()) {
+    return BT::NodeStatus::SUCCESS;
+  }
+  // 코드는 실패한 동작 노드가 ctx.fail()로 남긴 값. 원인을 모르면 NONE
   ErrorInfo error = ctx_->failure;
   if (error.message.empty()) {
     error.message = "failed in phase " + ctx_->phase;
@@ -96,6 +99,19 @@ BT::NodeStatus FailTask::tick()
   ctx_->report(TaskStatus::STATE_FAILED, ctx_->phase, error, true);
   ctx_->clear();
   return BT::NodeStatus::SUCCESS;
+}
+
+bool cancel_task(
+  BT::Tree & tree, TaskContext & ctx, const std::string & task_id, const ErrorInfo & error)
+{
+  if (!ctx.busy() || ctx.task->task_id != task_id) {
+    return false;
+  }
+  // 멈춘 뒤 다음 tick은 WaitForTask부터 다시 시작한다 (진행 중이던 MoveTo 등은 halt)
+  tree.haltTree();
+  ctx.report(TaskStatus::STATE_FAILED, ctx.phase, error, true);
+  ctx.clear();
+  return true;
 }
 
 namespace
