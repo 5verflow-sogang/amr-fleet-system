@@ -8,7 +8,6 @@ import time
 import unittest
 
 import launch
-import launch_ros.actions
 import launch_testing
 import launch_testing.actions
 import launch_testing.asserts
@@ -16,6 +15,7 @@ import pytest
 import rclpy
 from amr_msgs.msg import Task
 from ament_index_python.packages import get_package_share_directory
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 TASKS = {'tasks': [
     {'at_s': 0.0, 'task_id': 'gen_0001', 'type': 'delivery', 'item': 'large',
@@ -30,14 +30,16 @@ def generate_test_description():
     tasks_file = os.path.join(tmp, 'tasks.json')
     with open(tasks_file, 'w', encoding='utf-8') as f:
         json.dump(TASKS, f)
-    generator = launch_ros.actions.Node(
-        package='amr_fleet_manager',
-        executable='task_generator',
-        parameters=[{
+    # 실제 launch 파일을 거쳐 인자(map_origin_in_world의 실수 목록 변환, server_node)까지 확인한다
+    generator = launch.actions.IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory('amr_fleet_manager'), 'launch', 'task_generator.launch.py')),
+        launch_arguments={
             'tasks_file': tasks_file,
-            'stations_file': os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', 'stations.yaml'),
-            'map_origin_in_world': [0.0, 1.5, 0.0],
-        }],
+            'map_origin_in_world': '[0.0, 1.5, 0.0]',
+            # 이 테스트 노드를 서버로 본다. 다른 이름의 구독자로는 시작하지 않는다
+            'server_node': 'test_task_generator',
+        }.items(),
     )
     return launch.LaunchDescription([generator, launch_testing.actions.ReadyToTest()])
 

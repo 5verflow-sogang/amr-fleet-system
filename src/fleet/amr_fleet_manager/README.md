@@ -145,7 +145,9 @@
 
 - 스테이션 자세는 world 좌표로 적고 발행할 때 `map_origin_in_world`(기본 `[0.0, 1.5, 0.0]`, warehouse_v0 지도)로 map 좌표로 바꾼다. 스테이션 목록은 **제안**이다. 도킹 자세는 지수가 ArUco 마커에 맞춰 확정한다.
 - 시각은 노드 시계(`use_sim_time`이면 시뮬레이션 시간)다. 시뮬레이터가 느려져도 로봇 속도에 비해 작업이 몰리지 않는다.
-- `/fleet/task_requests`를 구독하는 노드가 하나라도 생겨야 일정을 시작한다. 서버보다 rosbag 녹화가 먼저 구독하면 그때 시작하므로, 하네스는 서버를 먼저 띄운다.
+- Fleet 서버(`server_node`, 기본 `fleet_manager`)가 `/fleet/task_requests`를 구독해야 일정을 시작한다. rosbag 녹화 같은 다른 구독자가 먼저 떠도 시작하지 않는다.
+- **seed 0도 고정 seed다.** 0을 넣으면 매번 같은 일정이 나온다(무작위가 아님). 장애 주입기의 `seed`도 같다. 지수 쪽 `encoder_seed`·`obstacle_seed`는 0이 "매번 무작위"라 의미가 다르므로, 하네스는 반복 번호를 그대로 넘기면 된다.
+- 서버가 꺼져 있는 동안(강제종료 실험) 발행한 작업은 받을 노드가 없어 사라진다. 생성기는 다시 보내지 않는다. 하네스가 `tasks.json`의 `at_s`와 `fault_events.csv`로 다운 중 투입 건수를 따로 센다.
 
 ## 파라미터
 
@@ -189,10 +191,11 @@
 | --- | --- | --- |
 | `scenario_file` | `config/scenarios/basic.yaml` | 작업 시나리오. `tasks_file`을 주면 무시 |
 | `tasks_file` | `''` | JSON Task 파일 |
-| `seed` | `0` | 일정 난수 seed. 하네스 반복 번호 |
+| `seed` | `0` | 일정 난수 seed. 하네스 반복 번호. 0도 고정 seed |
 | `stations_file` | `config/stations.yaml` | 스테이션 자세 (world) |
 | `schedule_out` | `''` | 만든 일정을 JSON Task 파일로 남길 경로 |
-| `map_origin_in_world` | `[0.0, 1.5, 0.0]` | 노드 파라미터. world에서 본 map 원점 |
+| `map_origin_in_world` | `[0.0, 1.5, 0.0]` | world에서 본 map 원점 `[x, y, yaw]`. 실수로 적는다. 지도가 바뀌면 그 지도의 매핑 시작 자세를 넣는다 |
+| `server_node` | `fleet_manager` | 이 노드가 구독해야 일정을 시작한다. 비우면 아무 구독자나 |
 
 ## 실행
 
