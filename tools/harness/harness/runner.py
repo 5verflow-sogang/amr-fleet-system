@@ -85,10 +85,12 @@ def stop(proc: Proc, grace_s: float = 10.0) -> None:
         pass
 
 
-def wait_topic(topic: str, timeout_s: float) -> float:
-    """토픽이 보일 때까지 기다린다. 걸린 시간(s)을 돌려준다."""
+def wait_topic(topic: str, timeout_s: float, proc: Optional[Proc] = None) -> float:
+    """토픽이 보일 때까지 기다린다. 걸린 시간(s)을 돌려준다. 기다리는 동안 proc이 끝나면 바로 실패한다."""
     t0 = time.monotonic()
     while time.monotonic() - t0 < timeout_s:
+        if proc is not None and proc.popen.poll() is not None:
+            raise RunError('error', f'{proc.name}이(가) 끝남 (로그: {proc.log})', startup=True)
         out = subprocess.run(['ros2', 'topic', 'list'], capture_output=True, text=True, timeout=30).stdout
         if topic in out.split():
             return time.monotonic() - t0
@@ -213,7 +215,7 @@ def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[Co
             procs.append(start(p['name'], p['cmd'], log_dir, stop_first=p.get('stop_first', False),
                                wait_files=p.get('wait_files', [])))
             if 'ready_topic' in p:
-                wait_topic(p['ready_topic'], float(p.get('ready_timeout_s', 180)))
+                wait_topic(p['ready_topic'], float(p.get('ready_timeout_s', 180)), procs[-1])
             for cmd in p.get('ready_cmds', []):
                 wait_cmd(cmd, float(p.get('ready_timeout_s', 60)))
             time.sleep(float(p.get('settle_s', 0)))
