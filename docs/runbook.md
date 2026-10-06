@@ -38,7 +38,7 @@ docker compose down           # 종료
 
 ### Fleet 서버 (`fleet`)
 
-시작할 때 Fleet 패키지(`amr_msgs`, `amr_fleet_core`, `amr_fleet_manager`, `amr_fault_injector`)를 빌드한 뒤 Fleet 서버와 장애 주입기를 띄운다. 첫 시작은 빌드로 1~2분 걸린다. 둘 중 하나가 죽으면 컨테이너가 끝나므로 `docker compose ps`로 확인한다.
+시작할 때 Fleet 패키지(`amr_msgs`, `amr_fleet_core`, `amr_fleet_manager`, `amr_fault_injector`)를 다시 빌드해 호스트에서 바뀐 코드를 반영한 뒤 Fleet 서버와 장애 주입기를 띄운다(10초 안팎). `ModuleNotFoundError`(예: scipy)가 나면 의존성이 이미지보다 새로운 것이므로 `docker compose build`로 이미지를 다시 만든다. 둘 중 하나가 죽으면 컨테이너가 끝나므로 `docker compose ps`로 확인한다.
 
 | 환경 변수 | 기본값 | 설명 |
 | --- | --- | --- |

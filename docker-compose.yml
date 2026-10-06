@@ -36,7 +36,8 @@ services:
     <<: *ros
     command: ["bash", "-c", "echo 'TODO: ros2 launch amr_bringup robots.launch.py num_robots:=5' && sleep infinity"]
 
-  # Fleet 서버 + 장애 주입기. 시작할 때 Fleet 패키지만 빌드한다 (이미지에는 워크스페이스 빌드가 없다).
+  # Fleet 서버 + 장애 주입기. 이미지를 만든 뒤 호스트에서 바뀐 코드(./src 마운트)를 반영하려고 시작할 때 Fleet 패키지만 다시 빌드한다.
+  # 의존성(package.xml)이 바뀌었으면 먼저 docker compose build로 이미지를 다시 만든다 (예: ModuleNotFoundError: scipy).
   # 둘 중 하나가 죽으면 컨테이너가 끝난다. 조건은 환경 변수로 바꾼다:
   #   FAULT_DELAY_MS=200 FAULT_LOSS_PCT=5 FLEET_ALGORITHM=hungarian docker compose up -d fleet
   fleet:
