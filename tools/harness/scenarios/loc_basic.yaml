@@ -1,0 +1,65 @@
+# 위치추정 KPI 기본 시나리오 (민지). 로봇 1대, 창고 월드, 지도 v0.
+# 정지 → 직진 3 m → 제자리 한 바퀴 → 반 바퀴 → 돌아오는 직진 3 m → 정지 (0.5 m/s, 0.5 rad/s)
+# 정지·직선·회전 구간이 각각 100개 시점 이상 나온다 (EKF 50 Hz).
+name: loc_basic
+num_robots: 1
+use_sim_time: true
+# 반복 i의 seed = seed_base + i. 엔코더 노이즈 seed로 쓴다 (0은 "매번 무작위"라 쓰지 않는다)
+seed_base: 1
+timeout_s: 300
+params:
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v0.yaml
+  # world에서 본 map 원점 (지도 인계 때 받은 매핑 시작 자세)
+  map_origin: "[0.0, 1.5, 0.0]"
+processes:
+  - name: sim
+    cmd: ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false publish_odom_tf:=false enable_camera:=false
+    ready_topic: /amr_01/scan_raw
+  - name: odometry
+    cmd: ros2 launch amr_odometry odometry.launch.py encoder_seed:={seed}
+  - name: sensor_filters
+    cmd: ros2 launch amr_odometry sensor_filters.launch.py
+    # IMU 바이어스 보정(정지 2초)
+    settle_s: 3
+  - name: localization
+    cmd: ros2 launch amr_localization localization.launch.py map:={map}
+    ready_topic: /amr_01/odometry/filtered
+    # lifecycle 전환 응답이 가끔 유실돼 지도 서버나 AMCL이 inactive로 남는다(10/6 하네스 30회 중 3회).
+    # 둘 다 active인지 확인하고, 아니면 기동 실패로 보고 다시 시도한다
+    ready_cmds:
+      - ros2 lifecycle get /map_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/amcl | grep -q '^active'
+    settle_s: 5
+  - name: eval_ekf
+    cmd: >-
+      ros2 run amr_localization eval_node --ros-args -r __ns:=/amr_01 -r __node:=eval_ekf
+      -p use_sim_time:=true -p robot:=amr_01 -p estimate_topic:=odometry/filtered -p estimate_type:=odometry
+      -p "map_origin_in_world:={map_origin}" -p output_dir:={run_dir}/eval_ekf
+    stop_first: true
+    wait_files: ["{run_dir}/eval_ekf/localization_summary.json"]
+  - name: eval_amcl
+    cmd: >-
+      ros2 run amr_localization eval_node --ros-args -r __ns:=/amr_01 -r __node:=eval_amcl
+      -p use_sim_time:=true -p robot:=amr_01 -p estimate_topic:=amcl_pose -p estimate_type:=pose
+      -p "map_origin_in_world:={map_origin}" -p output_dir:={run_dir}/eval_amcl
+    stop_first: true
+    wait_files: ["{run_dir}/eval_amcl/localization_summary.json"]
+    settle_s: 2
+driver:
+  mode: segments
+  topic: /amr_01/cmd_vel
+  use_sim_time: true
+  segments:
+    - [0.0, 0.0, 5.0]
+    - [0.5, 0.0, 6.0]
+    - [0.0, 0.0, 2.0]
+    - [0.0, 0.5, 12.566]   # 2π / 0.5
+    - [0.0, 0.0, 2.0]
+    - [0.0, 0.5, 6.283]    # π / 0.5
+    - [0.0, 0.0, 2.0]
+    - [0.5, 0.0, 6.0]
+    - [0.0, 0.0, 5.0]
+# 프로세스 그룹 정리 뒤에도 남을 수 있는 Gazebo 서버
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true

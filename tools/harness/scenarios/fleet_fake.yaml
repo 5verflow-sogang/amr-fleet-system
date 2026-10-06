@@ -1,0 +1,44 @@
+# Fleet 메시지 신뢰성 시나리오 (가짜 로봇). 시뮬레이터·Nav2 없이 서버·장애주입기·가짜 로봇 5대·작업 생성기.
+# 연구 1 Before 데이터용: fleet_latency.csv(지연·손실), response_time.csv(Ack 왕복시간).
+# 가짜 로봇은 odom을 내지 않으므로 response_time(움직임 응답)은 비어 있다.
+#
+#   python3 tools/harness/run.py fleet_fake -n 10 --set delay_ms=200 --set loss_pct=5 --label d200_l5
+name: fleet_fake
+num_robots: 5
+use_sim_time: false
+seed_base: 1
+timeout_s: 900
+params:
+  delay_ms: 0
+  loss_pct: 0
+  kill_at_s: -1
+  restart_after_s: -1
+  algorithm: nearest
+  # 작업 생성기 basic.yaml: 첫 작업 5초 + 10초 간격 60건 ≈ 600초. 마지막 Ack까지 여유를 둔다
+  duration_s: 620
+processes:
+  - name: fleet_manager
+    cmd: >-
+      ros2 launch amr_fleet_manager fleet_manager.launch.py algorithm:={algorithm}
+      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
+      kill_at_s:={kill_at_s} restart_after_s:={restart_after_s} fault_events_file:={run_dir}/fault_events.csv
+    ready_topic: /fleet/heartbeat
+  - name: fault_injector
+    cmd: ros2 launch amr_fault_injector fault_injector.launch.py delay_ms:={delay_ms} loss_pct:={loss_pct} seed:={seed}
+    settle_s: 2
+  - name: fake_robots
+    cmd: ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 relayed:=true
+    settle_s: 3
+  # 녹화를 작업 생성기보다 먼저 시작한다 (작업 생성기는 서버 구독을 확인한 뒤 일정을 시작한다)
+  - name: rosbag
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_0[1-5]/fleet/.*|/amr_0[1-5]/odom'
+    settle_s: 3
+  - name: task_generator
+    cmd: ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json
+driver:
+  mode: wait
+  use_sim_time: false
+  duration_s: "{duration_s}"
+postprocess:
+  - name: fleet_metrics
+    cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --robots amr_01 amr_02 amr_03 amr_04 amr_05
