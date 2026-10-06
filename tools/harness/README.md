@@ -74,7 +74,7 @@
     - `ack_rtt_ms` = (`ack_time` − `cmd_time`) × 1000. 첫 발송 기준이라 재전송에 걸린 시간이 들어간다.
     - `resends`: 기록기가 같은 `assignment_id`를 받은 횟수 − 1.
     - Ack를 못 받으면 `ack_time`, `ack_rtt_ms`를 비운다. 단 실행 끝 무렵에 보낸 명령은 Ack가 오는 중에 실행이 끝날 수 있으므로, 아래 "관측 마감" 규칙으로 빼고 센다.
-    - 로봇 → 서버 방향은 지금 장애 주입을 하지 않으므로([api.md 4-4절](../../docs/api.md#4-4-쟁점-정리)) `ack_rtt_ms`에는 주입 지연이 한 번만 들어간다.
+    - 로봇 → 서버 방향은 장애 주입을 하지 않으므로(D8, [api.md 4-4절](../../docs/api.md#4-4-쟁점-정리)) `ack_rtt_ms`에는 주입 지연이 한 번만 들어간다. 왕복 지연이 아니라 "서버 → 로봇 지연 + 되돌아오는 1홉"으로 해석한다. 역방향 주입을 추가하면 `meta.json`의 `fault.direction`으로 구분한다.
 - `tasks.csv`: `/fleet/task_status`의 마지막 이벤트(COMPLETED·FAILED)를 작업 1건당 1행으로 옮긴다. 명세서가 요구하는 작업 로그 필드와 Fleet 지표(평균 작업 시간·처리량·총 이동 거리)를 여기서 계산한다.
   - 컬럼: `task_id, robot, state, start_time, end_time, duration, distance_traveled, error_code`
   - 로봇 가동률은 `/fleet/robot_states`의 `mode`가 BUSY인 시간 비율로 따로 계산한다.
@@ -146,7 +146,7 @@ tools/harness/results/<run_id>/
 | --- | --- | --- |
 | `git_sha` | `9ef33ea` | 어느 코드로 나온 결과인지 |
 | `scenario`, `repeat`, `seed` | `loc_square_10m`, `3`, `42` | 반복·재현 |
-| `fault` | `{"delay_ms": 100, "loss_pct": 0, "kill_at_s": 60, "restart_after_s": 10}` | 연구 1 조건별 비교. 서버 강제종료가 없으면 `kill_at_s`는 -1 |
+| `fault` | `{"delay_ms": 100, "loss_pct": 0, "direction": "server_to_robot", "kill_at_s": 60, "restart_after_s": 10}` | 연구 1 조건별 비교. 서버 강제종료가 없으면 `kill_at_s`는 -1. `direction`은 지연·손실을 건 방향(`server_to_robot`, 역방향 추가 시 `both`) |
 | `num_robots` | `5` | 다중 로봇 조건 |
 | `assignment_algorithm`, `cost_fn` | `hungarian`, `euclidean` | 할당 알고리즘 비교. 비용 함수가 다르면 `total_cost`끼리 비교할 수 없다 |
 | `controller` | `pure_pursuit` · `stanley` | 경로 추종 제어기 비교 (이진 요청, #5) |
@@ -181,6 +181,7 @@ tools/harness/results/<run_id>/
 | 손실 판정 | 관측 마감(종료 − 주입 지연 − 여유) 이후 보낸 메시지는 지연·손실에서 제외 | 하연·민지, #33 |
 | 지연 신뢰구간 | 실행 단위 부트스트랩 (메시지 단위로 섞지 않음) | 하연·민지, #33 |
 | `meta.json` 추가 필드 | `rmw_implementation`, `qos_profile`, `observation_cutoff` | 하연·민지, #33 |
+| 장애 주입 방향 (D8) | 서버 → 로봇만. 로봇 → 서버(`zone_requests`, `task_assignment_acks`)는 그대로 둔다. 양방향이 필요하면 연구 1 After 실험 때 역방향 링크를 추가하고 `fault.direction`으로 구분한다 | 하연·민지, D8 |
 
 남은 것 (실측 후 확정)
 
