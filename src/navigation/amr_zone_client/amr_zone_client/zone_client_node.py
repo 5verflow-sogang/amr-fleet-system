@@ -32,7 +32,10 @@ class ZoneClientNode(Node):
     def __init__(self):
         super().__init__('zone_client')
         p = self.declare_parameter
-        self._robot_id = p('robot_id', 'amr_01').value
+        # 기본값은 노드 네임스페이스에서 가져온다(/amr_03 -> amr_03). 네임스페이스가 없으면(테스트 등)
+        # amr_01로 떨어진다. 파라미터로 주면 그 값이 우선한다 (#66)
+        default_robot_id = self.get_namespace().strip('/') or 'amr_01'
+        self._robot_id = p('robot_id', default_robot_id).value
         zones_file = p('zones_file', '').value
         self._map_frame = p('map_frame', 'map').value
         self._base_frame = p('base_frame', 'base_footprint').value
@@ -49,6 +52,10 @@ class ZoneClientNode(Node):
         cmd_vel_out_topic = p('cmd_vel_out_topic', 'cmd_vel_zone_limited').value
         update_rate_hz = p('update_rate_hz', 10.0).value
 
+        # lookahead_m: 0.0(기본)이면 core가 trigger_distance_m + 여유로 알아서 정한다. ROS 파라미터는
+        # None을 못 담아서 0.0을 "안 줌"의 신호로 쓴다 (#66)
+        lookahead_m = p('lookahead_m', 0.0).value
+
         zones = load_zone_configs(zones_file)
         self._core = ZoneClientCore(ZoneClientConfig(
             robot_id=self._robot_id,
@@ -57,6 +64,8 @@ class ZoneClientNode(Node):
             stop_margin_m=p('stop_margin_m', 0.5).value,
             decel_mps2=p('decel_mps2', 1.0).value,
             resend_period_s=p('resend_period_s', 1.0).value,
+            retry_period_s=p('retry_period_s', 5.0).value,
+            lookahead_m=lookahead_m if lookahead_m > 0.0 else None,
         ))
 
         self._path_xy: List[tuple] = []
@@ -84,8 +93,10 @@ class ZoneClientNode(Node):
         lease_expiry = None
         if msg.grant == ZoneGrant.GRANT_GRANTED:
             lease_expiry = Time.from_msg(msg.lease_expiry).nanoseconds * 1e-9
+        now = self.get_clock().now().nanoseconds * 1e-9
         warning = self._core.on_grant(
-            msg.robot_id, msg.zone_id, msg.request_id, msg.grant, lease_expiry, msg.reason, msg.holder_robot_id)
+            now, msg.robot_id, msg.zone_id, msg.request_id, msg.grant, lease_expiry, msg.reason,
+            msg.holder_robot_id)
         if warning:
             self.get_logger().warn(warning)
 
@@ -108,6 +119,9 @@ class ZoneClientNode(Node):
     def _update(self):
         robot_xy = self._lookup_robot_xy()
         if robot_xy is None:
+            # 위치를 모르면 fail-closed: 상한을 0으로 묶어 멈춰 세운다. 경고는 TF 조회 쪽에서
+            # 이미 throttle해서 남긴다 (#66)
+            self._speed_cap = 0.0
             return
         now = self.get_clock().now().nanoseconds * 1e-9
         outgoing, speed_cap = self._core.update(now, self._path_xy, robot_xy)

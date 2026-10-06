@@ -40,6 +40,22 @@ def test_remaining_distance_diagonal_path():
     assert math.isclose(remaining_distance_to_rect(path, (0.0, 0.0), RECT), 5.0, abs_tol=1e-6)
 
 
+def test_remaining_distance_ignores_points_behind_robot():
+    # 경로가 로봇 뒤쪽 점도 담고 있으면, 그 점부터 거꾸로 거리를 쌓지 않고 로봇과 가장 가까운
+    # 점부터 잰다 (#66 하연 리뷰)
+    far_rect = (8.0, 9.0, -1.0, 1.0)
+    path = straight_path(0.0, 10.0)  # 0.1 ~ 10.0, 로봇(5.0) 뒤쪽 점(0.1~4.9)도 섞여 있다
+    assert math.isclose(remaining_distance_to_rect(path, (5.0, 0.0), far_rect), 3.0, abs_tol=1e-6)
+
+
+def test_remaining_distance_max_distance_cutoff():
+    path = straight_path(2.0, 10.0)
+    # 실제 거리는 3.0m. max_distance를 그보다 짧게 주면 못 찾은 것으로 본다
+    assert remaining_distance_to_rect(path, (2.0, 0.0), RECT, max_distance=2.0) is None
+    assert math.isclose(
+        remaining_distance_to_rect(path, (2.0, 0.0), RECT, max_distance=3.0), 3.0, abs_tol=1e-6)
+
+
 def test_speed_cap_for_stop_profile():
     # 경계 3 m 앞(트리거 지점), stop_margin 0.5, decel 1.0 -> sqrt(2*1*2.5)
     assert math.isclose(speed_cap_for_stop(3.0, 0.5, 1.0), math.sqrt(5.0), abs_tol=1e-6)

@@ -234,10 +234,12 @@ map
 | Publish | `/fleet/zone_requests` | `amr_msgs/msg/ZoneRequest` | 경계 3 m 앞 요청, 대기·통과 중 1초마다 연장, 벗어나면 반납 |
 | Publish | `cmd_vel_zone_limited` | `geometry_msgs/msg/Twist` | 게이팅 후 속도 명령. 허가 전엔 선속도 상한만 건다(각속도는 그대로). **로봇의 최종 `cmd_vel`이 아니다** — 아래 참고 |
 
-상태 흐름(구역마다 독립): `IDLE`(트리거 거리 밖) → `APPROACHING`(요청 보냄, 허가 전엔 경계 0.5 m 앞에
-감속 정지) → `INSIDE`(허가와 상관없이 위치가 구역 안이면 전환, lease가 지나도 안 멈춘다) → `IDLE`(벗어나며
-반납). `REJECTED`면 `BLOCKED`로 가 경고만 남기고 재시도하지 않는다. 자세한 흐름·파라미터는
-[amr_zone_client README](../src/navigation/amr_zone_client/README.md).
+상태 흐름(구역마다 독립): `IDLE`(트리거 거리 밖) → `APPROACHING`(요청 보냄, 유효한 `GRANTED`(lease
+안 지남) 전엔 경계 0.5 m 앞에 감속 정지, 허가 없이 넘어가도 상한 0 유지) → `INSIDE`(위치가 구역 안
+**and** 유효한 허가일 때만 전환, 안에서는 lease가 지나도 안 멈춘다) → `IDLE`(벗어나며 반납). `REJECTED`면
+`BLOCKED`로 가 경고를 남기고, 경로에 구역이 남아 있으면 `retry_period_s` 뒤 새 번호로 재시도한다. 경로가
+바뀌어 대기·통과 허가 중이던 구역이 빠지고 로봇도 구역 밖이면 반납하고 `IDLE`로 돌아간다. 자세한
+흐름·파라미터는 [amr_zone_client README](../src/navigation/amr_zone_client/README.md).
 
 cmd_vel 체인: 최종 `cmd_vel`을 가로채는 건 안전 노드(`amr_safety`)의 몫으로 합의했으므로(4-4절
 "감속·정지를 누가 실행하나"), `amr_zone_client`는 `cmd_vel_zone_limited`까지만 내고 그 뒤

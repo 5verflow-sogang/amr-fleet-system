@@ -44,19 +44,43 @@ def _segment_rect_entry(a: Point, b: Point, rect: Rect) -> Optional[Point]:
     return (a[0] + dx * t_near, a[1] + dy * t_near)
 
 
-def remaining_distance_to_rect(path_xy: Sequence[Point], robot_xy: Point, rect: Rect) -> Optional[float]:
-    """robot_xy에서 path_xy를 따라갈 때 rect에 처음 들어가는 지점까지 남은 거리.
+def _closest_index(path_xy: Sequence[Point], robot_xy: Point) -> int:
+    """robot_xy와 가장 가까운 path_xy의 인덱스. 경로가 로봇 뒤쪽 점도 담고 있을 때,
+    그 지난 점들부터 거리를 쌓지 않으려고 쓴다(하연 리뷰, #66)."""
+    best_index = 0
+    best_distance = _dist(robot_xy, path_xy[0])
+    for i in range(1, len(path_xy)):
+        d = _dist(robot_xy, path_xy[i])
+        if d < best_distance:
+            best_distance = d
+            best_index = i
+    return best_index
 
-    이미 rect 안이면 0.0. path가 rect에 닿지 않으면 None (아직 그 구역으로 안 간다는 뜻).
+
+def remaining_distance_to_rect(
+    path_xy: Sequence[Point], robot_xy: Point, rect: Rect, max_distance: Optional[float] = None,
+) -> Optional[float]:
+    """robot_xy에서, path_xy 중 robot_xy와 가장 가까운 점부터 따라갈 때 rect에 처음
+    들어가는 지점까지 남은 거리(그 앞쪽 점은 이미 지난 것으로 보고 무시한다).
+
+    이미 rect 안이면 0.0. path가 rect에 닿지 않거나, max_distance(주면)보다 멀면 None
+    (지금은 그 구역을 신경 쓸 때가 아니라는 뜻 - 긴 경로를 끝까지 훑지 않게 한다).
     """
     if point_in_rect(robot_xy, rect):
         return 0.0
+    if not path_xy:
+        return None
+
+    start = _closest_index(path_xy, robot_xy)
     total = 0.0
     prev = robot_xy
-    for point in path_xy:
+    for point in path_xy[start:]:
+        if max_distance is not None and total > max_distance:
+            return None
         hit = _segment_rect_entry(prev, point, rect)
         if hit is not None:
-            return total + _dist(prev, hit)
+            distance = total + _dist(prev, hit)
+            return None if (max_distance is not None and distance > max_distance) else distance
         total += _dist(prev, point)
         prev = point
     return None

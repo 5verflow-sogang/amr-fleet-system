@@ -9,7 +9,7 @@
 
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
-| Publish | `/fleet/zone_requests` | `amr_msgs/msg/ZoneRequest` | 진입 요청·연장·반납. 중계되지 않는 절대 토픽 (`fleet_manager_node.py`) |
+| Publish | `/fleet/zone_requests` (파라미터 `zone_requests_topic`) | `amr_msgs/msg/ZoneRequest` | 진입 요청·연장·반납. 중계되지 않는 절대 토픽이라 기본값이 항상 `/fleet/zone_requests`다 (`fleet_manager_node.py`) |
 | Subscribe | `fleet/zone_grants` (파라미터 `zone_grants_topic`) | `amr_msgs/msg/ZoneGrant` | 서버 응답. 네임스페이스 안 상대 이름 → `amr_fault_injector`가 중계한 `/<robot_id>/fleet/zone_grants` |
 | Subscribe | `plan` (파라미터 `plan_topic`) | `nav_msgs/msg/Path` | Nav2 전역 계획 경로. 로봇 현재 위치 기준으로 다시 계산된 것을 그대로 쓴다 |
 | Subscribe | `cmd_vel_nav` (파라미터 `cmd_vel_in_topic`) | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 (Nav2 controller_server, 향후 velocity_smoother의 출력) |
@@ -27,29 +27,47 @@
 
 구역마다 독립된 상태 기계를 둔다 (두 구역을 연달아 지나도 서로 안 엮인다).
 
-```
-IDLE ──(경로 기준 경계까지 남은 거리 ≤ trigger_distance_m)──> APPROACHING ──(위치가 구역 안)──> INSIDE ──(위치가 구역 밖)──> IDLE
-         │                                                        │
-         │                                        grant == REJECTED
-         └── (이 전환에서 request_id를 1 늘려 TYPE_ACCESS 발행)      ▼
-                                                                 BLOCKED (재시도 안 함, 경고 로그)
-```
+| 지금 상태 | 조건 | 다음 상태 | 보내는 것 |
+| --- | --- | --- | --- |
+| `IDLE` | 남은 거리 ≤ `trigger_distance_m` | `APPROACHING` | `TYPE_ACCESS` (새 `request_id`) |
+| `APPROACHING` | 위치가 구역 안 **and** 유효한 `GRANTED` | `INSIDE` | — |
+| `APPROACHING` | `GRANT_REJECTED` 응답 | `BLOCKED` | — |
+| `APPROACHING` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 | `IDLE` | `TYPE_RELEASE` |
+| `BLOCKED` | `retry_period_s` 경과, 경로에 구역이 남아 있음 | `APPROACHING` | `TYPE_ACCESS` (새 `request_id`) |
+| `BLOCKED` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 | `IDLE` | (반납 없음 — 서버가 쥔 적이 없다) |
+| `INSIDE` | 위치가 구역 밖으로 나감 | `IDLE` | `TYPE_RELEASE` |
 
-- **IDLE → APPROACHING**: 계획 경로를 따라 구역 경계까지 남은 거리가 `trigger_distance_m`(기본 3 m) 이하가
-  되면 새 `request_id`(1부터 증가)로 `TYPE_ACCESS`를 보낸다.
-- **APPROACHING 중**: 같은 `request_id`로 `resend_period_s`(기본 1 s)마다 재전송(연장)한다. 허가
-  (`GRANT_GRANTED`)가 없으면 경계 `stop_margin_m`(기본 0.5 m) 앞에서 멈추도록, 기준 감속
-  `decel_mps2`(기본 1.0 m/s²)로 선속도 상한을 미리 건다(`geometry.speed_cap_for_stop`). `GRANT_QUEUED`도
-  같은 취급 — 서버가 자리가 나면 이 로봇의 마지막 `request_id`로 알아서 `GRANTED`를 보낸다.
-  `GRANT_REJECTED`면 `BLOCKED`로 가서 경고를 남기고 더 보내지 않는다 (그래도 정지 상한은 유지한다, 즉
-  진입하지 않는다).
-- **APPROACHING → INSIDE**: 허가와 상관없이 위치가 실제로 구역 사각형 안에 들어오면 전환한다 (제어가
-  정지를 못 지켜도 상태는 현실을 따라간다). 안에서는 1 s마다 같은 `request_id`로 계속 연장하고, 정지
-  상한은 걸지 않는다 — **lease가 지나도 멈추지 않고 빠져나간다** (서버도 반납 전까지 구역을 쥐고 있는다).
+표에 없는 조합(예: `APPROACHING`에서 유효한 허가 없이 경계를 넘었거나, 구역 밖에서 lease가 지난
+경우)은 상태를 그대로 유지하면서 같은 `request_id`로 계속 요청하고 정지 상한을 다시 건다 — 아래
+설명 참고.
+
+- **IDLE → APPROACHING**: 계획 경로를 따라(로봇과 가장 가까운 경로 점부터, 뒤쪽 점은 안 본다) 구역
+  경계까지 남은 거리가 `trigger_distance_m`(기본 3 m) 이하가 되면 새 `request_id`(1부터 증가)로
+  `TYPE_ACCESS`를 보낸다. 아직 안 건드린 구역은 `lookahead_m`(기본 `trigger_distance_m + 2 m`) 안에서만
+  찾는다 — 긴 경로를 매번 끝까지 훑지 않으려고.
+- **APPROACHING 중**: 같은 `request_id`로 `resend_period_s`(기본 1 s)마다 재전송(연장)한다. **유효한
+  허가**(`GRANT_GRANTED`이고 `lease_expiry`가 아직 안 지남)가 없으면 경계 `stop_margin_m`(기본 0.5 m)
+  앞에서 멈추도록, 기준 감속 `decel_mps2`(기본 1.0 m/s²)로 선속도 상한을 미리 건다
+  (`geometry.speed_cap_for_stop`). `GRANT_QUEUED`도 같은 취급이다. 허가 없이 경계를 넘어가 버려도
+  `INSIDE`로는 안 바뀐다 — 상한이 0으로 묶인 채 같은 `request_id`로 계속 요청한다. 구역 밖에서 허가
+  lease가 지나면 허가 없음으로 보고 정지 상한을 다시 건다(같은 `request_id` 유지). `GRANT_REJECTED`면
+  `BLOCKED`로 간다.
+- **APPROACHING → INSIDE**: 위치가 구역 사각형 안이고 **그 순간 유효한 허가**(`GRANT_GRANTED`이고
+  lease 안 지남)가 있을 때만 전환한다. 안에서는 1 s마다 같은 `request_id`로 계속 연장하고, 정지 상한은
+  걸지 않는다 — **lease가 지나도 멈추지 않고 빠져나간다** (서버도 반납 전까지 구역을 쥐고 있는다).
+- **BLOCKED**: 재시도 없이 경고만 남기던 걸 바꿔서, 경로에 그 구역이 남아 있으면 `retry_period_s`
+  (기본 5 s) 뒤 새 `request_id`로 다시 요청하며 `APPROACHING`으로 돌아간다 (영원히 막힌 채로 안 둔다).
+  경로가 바뀌어 그 구역을 더는 지나지 않고 로봇도 구역 밖이면 반납 없이 바로 `IDLE`로 돌아간다 — REJECTED는
+  서버가 자리를 쥔 적이 없어서 반납할 게 없다.
+- **APPROACHING/INSIDE → IDLE (경로 변경)**: 전역 경로가 바뀌어 대기·통과 허가 중인 구역이 경로에서
+  빠지고 로봇도 그 구역 밖이면, 서버가 자리를 계속 쥐고 있지 않도록 `TYPE_RELEASE`를 보내고 `IDLE`로
+  돌아간다.
 - **INSIDE → IDLE**: 위치가 구역을 벗어나면 그 즉시 `TYPE_RELEASE`를 보내고 상태를 초기화한다.
 - `ZoneGrant`는 전체 로봇에 방송되므로 `robot_id`가 다르면 무시한다. 추가로, 지금 기다리는
   `request_id`와 다른 응답(늦게 온 지난 요청의 응답 등)도 무시한다 — 메시지 규약에는 없는, 장애 주입기의
   지연·재배열을 견디기 위한 구현 선택이다.
+- TF(`map_frame`→`base_frame`) 조회에 실패하면 fail-closed로 속도 상한을 0으로 묶는다(경고 로그는
+  5초 throttle).
 
 ## 파라미터
 
@@ -57,7 +75,7 @@ IDLE ──(경로 기준 경계까지 남은 거리 ≤ trigger_distance_m)─�
 
 | 파라미터 | 기본값 | 설명 |
 | --- | --- | --- |
-| `robot_id` | `amr_01` | `ZoneRequest.robot_id`, `ZoneGrant` 필터링 기준 |
+| `robot_id` | 노드 네임스페이스(`/amr_03` → `amr_03`, 없으면 `amr_01`) | `ZoneRequest.robot_id`, `ZoneGrant` 필터링 기준. 파라미터로 주면 그 값이 우선한다 |
 | `zones_file` | `''` | 구역 목록 yaml 경로. 서버(`amr_fleet_manager`)와 같은 파일을 가리켜야 한다. 비어 있으면 구역 없음 |
 | `map_frame` | `map` | TF 대상 좌표계 이름. `zones.yaml`의 `area_world`도 이 좌표계 기준으로 본다 |
 | `base_frame` | `base_footprint` | TF 로봇 좌표계 이름 |
@@ -69,9 +87,9 @@ IDLE ──(경로 기준 경계까지 남은 거리 ≤ trigger_distance_m)─�
 | `stop_margin_m` | `0.5` | 허가 전 정지 여유 (이진, 10/5) |
 | `decel_mps2` | `1.0` | 정지 속도 프로파일 기준 감속 |
 | `resend_period_s` | `1.0` | 재전송(연장) 주기 |
-
-`zone_requests_topic`(기본 `/fleet/zone_requests`)는 파라미터로 빼지 않았다 — 로봇 → 서버 토픽은 장애
-주입기가 중계하지 않는 절대 토픽이라 네임스페이스와 상관없이 항상 같다 (`fleet_manager_node.py`).
+| `retry_period_s` | `5.0` | `BLOCKED`(REJECTED) 뒤 재시도까지 기다리는 시간 |
+| `lookahead_m` | `0.0` (= `trigger_distance_m + 2.0`) | 아직 안 건드린 구역을 로봇 앞 이 거리까지만 찾는다. `0.0`이면 `trigger_distance_m`에 여유를 더해 자동으로 정한다 |
+| `zone_requests_topic` | `/fleet/zone_requests` | 로봇 → 서버 토픽. 다른 파라미터처럼 `declare_parameter`로 선언돼 있지만, 장애 주입기가 중계하지 않는 절대 토픽이라 네임스페이스와 상관없이 항상 같은 기본값을 쓴다(`fleet_manager_node.py`) — 보통 바꿀 일이 없다 |
 
 ## cmd_vel 체인
 
@@ -120,5 +138,3 @@ colcon test --packages-select amr_zone_client
 - `GRANT_REVOKED`(교착 해소용)는 메시지에는 있지만 서버(`amr_fleet_core.traffic.zones.ZoneManager`)가 아직
   만들어 보내지 않는다. 이 노드도 별도 처리를 하지 않는다 (들어오면 `grant` 상태만 갱신, 구역 안에서 받아도
   대피 로직 없음) — 서버 쪽 구현이 생기면 다시 본다.
-- 경로가 그 구역을 더는 지나지 않게 다시 계획됐을 때(예: REJECTED 뒤 우회) `APPROACHING`/`BLOCKED` 상태를
-  정리하는 로직은 없다. 우회 계획 자체가 이 패키지 범위 밖이라 범위에서 뺐다.
