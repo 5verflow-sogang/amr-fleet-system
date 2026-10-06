@@ -95,7 +95,7 @@
   - 컬럼: `topic, robot, key, send_time, recv_time, latency_ms, delivered`
   - `key`: 원본과 중계본을 짝짓는 번호. `task_assignments`는 `assignment_id`, `zone_grants`는 `request_id`, `heartbeat`·`task_table`은 `epoch:seq`. 장애주입기는 이 필드를 바꾸지 않는다([amr_fault_injector](../../src/fleet/amr_fault_injector/README.md))
   - `send_time`: 기록기가 원본 `/fleet/<topic>`을 받은 시각. `recv_time`: 기록기가 중계본 `/<robot>/fleet/<topic>`을 받은 시각. 둘 다 실제 시간
-  - **기록 방법**: rclpy 기록 노드를 쓰지 않고 rosbag2로 `/fleet/*`, `/<robot>/fleet/*`, `/fleet/task_assignment_acks`를 녹화한 뒤 CSV를 오프라인으로 만든다. 수신 시각은 bag에 저장된 수신 시각을 쓴다. Python 노드는 부하가 걸리면 수신 시각을 수 ms 늦게 적는데, 재려는 값이 바로 그 ms 단위 지연이라 측정이 틀어진다(민지, #33). `response_time.csv`의 Ack 컬럼도 같은 bag에서 만든다
+  - **기록 방법**: rclpy 기록 노드를 쓰지 않고 rosbag2로 `/fleet/*`, `/<robot>/fleet/*`, `/fleet/task_assignment_acks`를 녹화한 뒤 CSV를 오프라인으로 만든다. 변환은 `ros2 run amr_fleet_manager fleet_metrics <bag> --out <실행 폴더> --delay-ms <지연>`이 한다([amr_fleet_manager README](../../src/fleet/amr_fleet_manager/README.md) "Fleet 지표 변환"). 수신 시각은 bag에 저장된 수신 시각을 쓴다. Python 노드는 부하가 걸리면 수신 시각을 수 ms 늦게 적는데, 재려는 값이 바로 그 ms 단위 지연이라 측정이 틀어진다(민지, #33). `response_time.csv`의 Ack 컬럼도 같은 bag에서 만든다
   - `latency_ms` = (`recv_time` − `send_time`) × 1000. 주입 지연 + 중계 1홉 + DDS. 주입 0ms 조건이 중계 오버헤드 기준선이다
   - `delivered`: 중계본이 오면 `1`, 안 오면 `0`(`recv_time`, `latency_ms`는 비움). 관측 마감 뒤에 보낸 메시지는 비운다(판정 안 함). 손실률은 `0`/`1`인 행만으로 센다
   - 같은 `key`가 여러 번 오면(재전송) 첫 도착만 쓴다

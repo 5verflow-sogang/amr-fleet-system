@@ -6,12 +6,13 @@
 
 > 상태: 최소판(3주차). 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송, `assignments.csv` 기록, 구역 허가(정원·lease·대기열)까지 구현했다. 교차로 우선순위, 교착 해소, 작업 취소, 실패 작업 재할당은 아직 없다.
 
-노드 두 개를 제공한다.
+노드 두 개와 지표 변환 도구를 제공한다.
 
 | 실행 파일 | 역할 |
 | --- | --- |
 | `fleet_manager` | Fleet 서버 |
 | `fake_robot` | 가짜 로봇. Nav2·BT 없이 Fleet 메시지만 주고받는다. `amr_bt`가 완성되기 전에 서버·장애 주입기·하네스를 끝까지 돌려볼 때 쓴다 |
+| `fleet_metrics` | rosbag → `fleet_latency.csv`, `response_time.csv` (하네스가 실행마다 부른다) |
 
 ## 제공 인터페이스
 
@@ -155,13 +156,37 @@ ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 relayed:=true
 
 하네스는 이 상태에서 `/fleet/*`, `/<robot>/fleet/*`를 rosbag2로 녹화하면 `response_time.csv`(Ack 컬럼)·`fleet_latency.csv`의 원자료가 된다. 가짜 로봇은 `/<robot>/odom`을 내지 않으므로 응답 시간(`response_time`) 자체는 실제 로봇 스택에서만 잰다.
 
+### Fleet 지표 변환 (`fleet_metrics`)
+
+```bash
+# 녹화: 서버 원본, 로봇별 중계본, 로봇 → 서버, odom (응답 시간용)
+ros2 bag record -o /tmp/run1/rosbag -e '/fleet/.*|/amr_0[1-5]/fleet/.*|/amr_0[1-5]/odom'
+# 변환: --delay-ms는 그 실행의 주입 지연 (관측 마감 계산)
+ros2 run amr_fleet_manager fleet_metrics /tmp/run1/rosbag --out /tmp/run1 --delay-ms 200
+```
+
+| 결과 | 내용 |
+| --- | --- |
+| `fleet_latency.csv` | 원본 메시지 1건 × 로봇 1대마다 1행 (`topic, robot, key, send_time, recv_time, latency_ms, delivered`) |
+| `response_time.csv` | 할당 명령 1건마다 1행 (명세서 컬럼 + `robot, task_id, latency_sim_ms, assignment_id, ack_time, ack_rtt_ms, resends`) |
+| `meta.json` | `observation_cutoff` (`end, delay_ms, grace_s, resend_grace_s, cutoff, ack_cutoff`). 다른 키는 그대로 둔다 |
+
+형식과 정의는 [하네스 README](../../../tools/harness/README.md#지표-csv)를 따르고, 아래는 구현에서 정한 것이다.
+
+- 원본과 중계본은 **직렬화 바이트**로 짝짓는다. 장애 주입기가 바이트를 그대로 넘기므로 정확하고, `zone_grants`의 `request_id`처럼 로봇마다 겹치는 번호에 헷갈리지 않는다. `key` 컬럼은 읽기용이다.
+- 할당 명령은 (`robot_id`, `assignment_id`, `header.stamp`)로 구분한다. 서버가 재시작하면 번호가 1부터 다시 시작하지만 stamp가 달라 섞이지 않는다. Ack는 `assignment_stamp`로 짝짓는다. 취소(`ACTION_CANCEL`)는 응답 시간 대상이 아니다.
+- 관측 마감: `cutoff` = 끝 − `delay_ms` − `grace_s`(1초) 뒤에 보낸 메시지는 `delivered`를 비운다. `ack_cutoff` = `cutoff` − `resend_grace_s`(5초 = 서버 재전송 1초 × 5회) 뒤에 보낸 명령은 `response_time.csv`에 행을 만들지 않는다.
+- `response_time`은 `/<robot>/odom`이 bag에 있을 때만 채운다. 임계값: 선속도 0.01 m/s 또는 각속도 0.05 rad/s.
+- 로봇 → 서버 방향은 장애를 걸지 않는다(D8 제안). 걸게 되면 Ack 원본·중계본 짝짓기를 추가한다.
+
 ## 테스트
 
 ```bash
 colcon test --packages-select amr_fleet_manager
 ```
 
-- `test/test_dispatcher.py`, `test/test_robot_sim.py`: rclpy 없이 할당·재전송·수신 규칙·이동 모델을 확인한다.
+- `test/test_dispatcher.py`, `test/test_robot_sim.py`, `test/test_fleet_metrics.py`: rclpy 없이 할당·재전송·수신 규칙·이동 모델·지표 변환을 확인한다.
+- `test/test_fleet_metrics_bag.py`: 실제 rosbag2(sqlite3)을 써서 `fleet_metrics`가 읽고 변환하는지 확인한다 (ROS 환경에서만).
 - `test/test_fake_fleet_launch.py`: 서버와 가짜 로봇 1대를 띄워 요청 → 할당 → Ack → 완료, 구역 허가 → 대기 → 반납 후 넘김을 확인한다.
 
 ## 미결
