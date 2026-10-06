@@ -1,36 +1,152 @@
 # 회귀 테스트 하네스 (명세서 5-2절)
-# self-hosted GPU 러너(학교 서버 또는 AWS Spot)에서 Fleet 시나리오를 N회 반복 실행한다.
-# 러너 등록과 tools/harness 구현 전까지는 수동/라벨 트리거만 둔다.
+# GCP Spot 일회용 러너(tools/infra/gcp)를 만들어 Fleet 시나리오를 돌리고, 결과를 버킷에 올린 뒤 러너를 지운다.
+# 하네스(tools/harness)가 나오기 전까지는 스모크 시나리오(tools/infra/gcp/smoke_fleet.sh)를 돌린다.
+#
+# 필요한 설정 (tools/infra/gcp/README.md)
+# - 저장소 변수 GCP_WIF_PROVIDER, GCP_GHA_SA: terraform output
+# - 시크릿 RUNNER_ADMIN_TOKEN: 이 저장소 Administration 쓰기 권한 토큰 (러너 등록용)
+#
+# 포크 PR의 pull_request 이벤트는 GCP 로그인 토큰을 받지 못하므로 수동 실행만 둔다.
+# PR 코드를 돌리려면 ref에 refs/pull/<번호>/head를 넣는다.
 name: Fleet Regression Test
 
 on:
-  pull_request:
-    types: [labeled]
   workflow_dispatch:
     inputs:
-      repeats:
-        description: 시나리오 반복 횟수 N
-        default: "10"
-  # TODO: 러너 준비 후 활성화 (매일 03:00 KST)
+      ref:
+        description: 돌릴 코드 (브랜치·SHA 또는 refs/pull/<번호>/head)
+        default: dev
+      duration_s:
+        description: 시나리오 시간 (s)
+        default: "120"
+      delay_ms:
+        description: 장애 주입 지연 (ms, 0~500)
+        default: "100"
+  # TODO: 하네스 연결 후 활성화 (매일 03:00 KST)
   # schedule:
   #   - cron: "0 18 * * *"
 
+permissions:
+  contents: read
+  id-token: write
+
+# N2D 한도(16 vCPU)로 러너는 동시에 1대만 뜬다
+concurrency:
+  group: fleet-test
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: amr-fleet
+  ZONE: asia-northeast3-a
+  TEMPLATE: fleet-runner
+  RESULTS_BUCKET: amr-fleet-results
+  DOCKER_REPO: asia-northeast3-docker.pkg.dev/amr-fleet/amr
+
 jobs:
+  start-runner:
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.name.outputs.name }}
+    steps:
+      - id: name
+        run: echo "name=fleet-runner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_GHA_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # 일회용(JIT) 러너 설정. 작업 하나만 받고 스스로 등록을 지운다
+      - name: Create runner VM
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+          NAME: ${{ steps.name.outputs.name }}
+        run: |
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runners/generate-jitconfig" \
+            -f name="$NAME" -F runner_group_id=1 \
+            -f 'labels[]=self-hosted' -f 'labels[]=linux' -f "labels[]=$NAME" \
+            -q .encoded_jit_config > jit-config.txt
+          gcloud compute instances create "$NAME" \
+            --project "$PROJECT_ID" --zone "$ZONE" \
+            --source-instance-template "$TEMPLATE" \
+            --metadata-from-file jit-config=jit-config.txt
+          rm jit-config.txt
+
   fleet-test:
-    if: github.event_name != 'pull_request' || github.event.label.name == 'run-fleet-test'
-    runs-on: [self-hosted, linux, gpu]
+    needs: start-runner
+    runs-on: [self-hosted, linux, "${{ needs.start-runner.outputs.name }}"]
     timeout-minutes: 240
+    env:
+      RUN_DIR: ${{ github.workspace }}/results/${{ needs.start-runner.outputs.name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
 
-      # TODO(하네스): 아래 단계를 tools/harness 스크립트로 교체
-      # 1. docker compose 로 시뮬레이션 + 5대 스택 기동
-      # 2. 장애 조건별 시나리오 N회 반복, ros2_tracing 수집
-      # 3. colcon test --coverage, 커버리지 리포트
-      # 4. P95/P99 지연·신뢰구간·커버리지를 PR 코멘트로 게시
-      # 5. baseline 대비 유의미한 저하 또는 커버리지 70% 미달 시 실패
-      - name: Run harness
-        env:
-          REPEATS: ${{ github.event.inputs.repeats || '10' }}
+      # 러너 VM은 매번 새로 뜨므로 Artifact Registry의 빌드 캐시를 쓴다
+      - name: Build image
         run: |
-          echo "TODO: tools/harness 구현 후 연결 (N=$REPEATS)"
+          docker buildx create --use --driver docker-container
+          docker buildx build -f docker/Dockerfile --target base \
+            --cache-from "type=registry,ref=${DOCKER_REPO}/base:buildcache" \
+            --cache-to "type=registry,ref=${DOCKER_REPO}/base:buildcache,mode=max" \
+            -t amr-fleet-system:latest --load .
+
+      # 실행 전에 쓴다. 시나리오 안의 fleet_metrics가 observation_cutoff를 덧붙인다 (하네스 README meta.json)
+      - name: Write meta.json
+        run: |
+          mkdir -p "$RUN_DIR"
+          cat > "$RUN_DIR/meta.json" <<EOF
+          {"git_sha": "$(git rev-parse --short HEAD)", "ref": "${{ github.event.inputs.ref }}",
+           "scenario": "smoke_fleet", "repeat": 1, "seed": 0,
+           "fault": {"delay_ms": ${{ github.event.inputs.delay_ms }}, "loss_pct": 0, "direction": "server_to_robot",
+                     "kill_at_s": -1, "restart_after_s": -1},
+           "num_robots": 5, "assignment_algorithm": "nearest", "cost_fn": "euclidean",
+           "host": "$(nproc) vCPU $(free -g | awk '/Mem/ {print $2}') GiB, ${TEMPLATE}"}
+          EOF
+
+      - name: Run smoke scenario
+        run: |
+          # TODO(하네스): tools/harness 진입 스크립트로 교체
+          docker compose run --rm --no-deps \
+            -v "$PWD/tools:/tools:ro" -v "$RUN_DIR:/results" \
+            dev bash /tools/infra/gcp/smoke_fleet.sh /results \
+              "${{ github.event.inputs.duration_s }}" "${{ github.event.inputs.delay_ms }}"
+
+      - name: Upload results
+        if: always()
+        run: |
+          gcloud storage cp -r "$RUN_DIR" "gs://${RESULTS_BUCKET}/runs/"
+          echo "결과: gs://${RESULTS_BUCKET}/runs/$(basename "$RUN_DIR")" >> "$GITHUB_STEP_SUMMARY"
+
+  # 성공·실패·취소와 상관없이 러너 VM과 러너 등록을 지운다
+  stop-runner:
+    needs: [start-runner, fleet-test]
+    if: always() && needs.start-runner.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_GHA_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Delete runner VM
+        env:
+          NAME: ${{ needs.start-runner.outputs.name }}
+        run: |
+          gcloud compute instances delete "$NAME" --project "$PROJECT_ID" --zone "$ZONE" --quiet \
+            || echo "이미 없음 (Spot 회수 또는 최대 실행 시간 초과로 삭제됨)"
+
+      # 러너가 작업을 받기 전에 실패하면 등록이 남는다
+      - name: Remove runner registration
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+          NAME: ${{ needs.start-runner.outputs.name }}
+        run: |
+          id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runners" --paginate \
+            -q ".runners[] | select(.name == \"$NAME\") | .id")
+          if [ -n "$id" ]; then gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/runners/$id"; fi
