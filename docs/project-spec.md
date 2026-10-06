@@ -491,7 +491,8 @@ B2는 질량을 정확히 알면 충분히 강할 수 있다. 이 경우 H2의 �
 | 이진 (팀장) | 경로계획/모션제어(A*·DWA 직접구현, Pure Pursuit/Stanley, PID), 물류센터 정적 환경(월드), 로봇 측 구역 진입 처리 | `ZoneRequest`, 분산 폴백 시 `TaskAuction`·`TaskBid`(하연과 공동) | 분산 협상 로직(하연과 공동), 논문 구조·투고 일정 조율, **실물 네트워크 고도화 주도** |
 | 연우 | AI인지/동적장애물(YOLOv8, 3D 변환, KF 추적, TTC, ORCA), 안전 시스템(긴급정지·Safety Zone·E-Stop·센서 고장 감지) | `DetectedObject3DArray`, `TrackedObstacleArray`, `CollisionRiskArray`, `SafetyStatus`, E-Stop 서비스(`std_srvs/SetBool`) | 연구 2 주도(적재 질량 RL). 주저자는 10/12 회의에서 정한다 |
 
-> 로봇 측 `ZoneRequest` 담당(이진)은 제안이다. 구역 앞 정지·재개가 주행 제어에 붙는 기능이라 이진에 두었고, BT에서 처리하자는 의견이 나오면 지수로 옮긴다. 2주차에 확정한다.
+> 로봇 측 `ZoneRequest` 담당은 이진으로 확정했다(D6, 10/1 지수·하연 합의). 구역 앞 정지·재개가 주행 제어에 붙는 기능이라서다.
+> 프로토콜(#31·#57, 하연과 합의): 구역 경계 3 m 앞에서 요청하고, 허가가 없으면 경계 0.5 m 앞에서 정지한다. 같은 request_id로 1초마다 다시 요청해 연장하고(lease 5초), 구역을 벗어나면 반납한다. 구역 안에서 lease가 만료되면 멈추지 않고 빠져나간 뒤 반납하며, 서버는 반납이 올 때까지 그 구역을 다른 로봇에 주지 않는다. 허가는 장애주입기 중계본 `fleet/zone_grants`(네임스페이스 상대 이름)로 받는다. 구역 목록은 `amr_fleet_manager/config/zones.yaml`.
 
 ### 8-1. 세부 작업
 

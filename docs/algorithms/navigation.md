@@ -175,3 +175,11 @@ odom/map 프레임 ↔ 이 좌표계 변환은 core가 아니라 3주차 `amr_na
 
 TODO(3주차 이후): Pure Pursuit/Stanley 적응형 look-ahead 설계, PID 게인 튜닝 과정을
 작성한다.
+
+### 5-1. speed_limit 연동
+
+제어 쪽은 `safety/status`(`amr_msgs/msg/SafetyStatus`)의 `speed_limit`을 받아 명령
+선속도를 `min(명령, speed_limit)`으로 제한하고, 1.0 m/s² 이내로 감속한다. 값 정의
+(`inf`/0.0/WARNING 등)는 [docs/api.md](../api.md)를 참조한다.
+
+`safety/status`가 끊기면 제한 없음으로 본다. 최종 게이트가 `amr_safety`라서다.
