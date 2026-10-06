@@ -78,6 +78,9 @@ class TaskGenerator(Node):
                 self.get_logger().info(f'작업 {len(self._tasks)}건 발행 완료')
 
     def _server_ready(self) -> bool:
+        # 그래프에 보이는 것(발견)과 실제로 연결된 것(match)은 다르다. 연결 전에 보낸 작업은 사라지므로 둘 다 본다
+        if self._pub.get_subscription_count() < 1:
+            return False
         subscribers = self.get_subscriptions_info_by_topic('/fleet/task_requests')
         if not self._server_node:
             return len(subscribers) > 0

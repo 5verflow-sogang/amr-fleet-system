@@ -22,12 +22,16 @@ def write_bag(path, messages):
     writer.open(rosbag2_py.StorageOptions(uri=str(path), storage_id='sqlite3'),
                 rosbag2_py.ConverterOptions(input_serialization_format='cdr', output_serialization_format='cdr'))
     created = set()
+    # 같은 메시지 객체는 한 번만 직렬화해 원본과 중계본에 같은 바이트를 쓴다. CDR 정렬용 빈 바이트는 초기화되지 않아
+    # 직렬화할 때마다 달라질 수 있다 (실제로는 장애 주입기가 받은 바이트를 그대로 넘기므로 원본과 중계본이 같다)
+    serialized = {}
     for topic, msg, t_ns in messages:
         if topic not in created:
             type_name = f'{type(msg).__module__.split(".")[0]}/msg/{type(msg).__name__}'
             writer.create_topic(rosbag2_py.TopicMetadata(name=topic, type=type_name, serialization_format='cdr'))
             created.add(topic)
-        writer.write(topic, serialize_message(msg), t_ns)
+        data = serialized.setdefault(id(msg), serialize_message(msg))
+        writer.write(topic, data, t_ns)
     del writer  # 닫아야 metadata.yaml이 써진다
 
 
