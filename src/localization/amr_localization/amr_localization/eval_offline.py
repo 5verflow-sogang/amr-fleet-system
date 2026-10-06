@@ -19,9 +19,12 @@ def main(argv=None):
     parser.add_argument('--max-gap', type=float, default=0.05, help='정답 보간 허용 간격 [s]')
     parser.add_argument('--moving-v', type=float, default=0.01, help='구간 분류 기준 [m/s]')
     parser.add_argument('--moving-w', type=float, default=0.05, help='구간 분류 기준 [rad/s]')
+    parser.add_argument('--keep-initial-stationary', action='store_true',
+                        help='처음 움직이기 전 샘플도 평가에 넣는다 (기본: 뺀다)')
     args = parser.parse_args(argv)
     rec = EvalRecorder.from_tum(
-        args.out_dir, args.robot, max_gap=args.max_gap, moving_v=args.moving_v, moving_w=args.moving_w)
+        args.out_dir, args.robot, max_gap=args.max_gap, moving_v=args.moving_v, moving_w=args.moving_w,
+        skip_initial_stationary=not args.keep_initial_stationary)
     print(format_summary(rec.save(args.out_dir)))
     return 0
 

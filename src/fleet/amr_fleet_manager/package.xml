@@ -10,17 +10,24 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>amr_msgs</exec_depend>
   <exec_depend>builtin_interfaces</exec_depend>
-  <!-- config/zones.yaml 읽기. 단위 테스트에서도 쓴다 -->
+  <!-- config/zones.yaml, 시나리오·스테이션 yaml 읽기. 단위 테스트에서도 쓴다 -->
   <depend>python3-yaml</depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <!-- 할당 알고리즘. 단위 테스트에서도 import하므로 CI(rosdep -t build)가 설치하도록 depend로 둔다 -->
   <depend>amr_fleet_core</depend>
+  <!-- fleet_metrics: rosbag 읽기. bag 테스트에서도 쓰므로 CI(rosdep -t build)가 설치하도록 depend로 둔다 -->
+  <depend>rosbag2_py</depend>
+  <depend>rosbag2_storage_default_plugins</depend>
+  <exec_depend>rosidl_runtime_py</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
   <!-- test_fake_fleet_launch.py: 서버와 가짜 로봇을 띄워 작업 완료까지 확인 -->
   <test_depend>launch_testing</test_depend>
   <test_depend>launch_testing_ros</test_depend>
+  <!-- test_fleet_metrics_bag.py: odom 메시지로 bag을 만든다 -->
+  <test_depend>nav_msgs</test_depend>
+  <test_depend>rosidl_runtime_py</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

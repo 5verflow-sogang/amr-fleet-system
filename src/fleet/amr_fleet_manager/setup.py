@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
+        ('share/' + package_name + '/config/scenarios', glob('config/scenarios/*.yaml')),
     ],
     install_requires=['setuptools'],
     extras_require={'test': ['pytest']},
@@ -25,6 +26,8 @@ setup(
         'console_scripts': [
             'fleet_manager = amr_fleet_manager.fleet_manager_node:main',
             'fake_robot = amr_fleet_manager.fake_robot_node:main',
+            'fleet_metrics = amr_fleet_manager.fleet_metrics_cli:main',
+            'task_generator = amr_fleet_manager.task_generator_node:main',
         ],
     },
 )

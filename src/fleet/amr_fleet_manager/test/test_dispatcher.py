@@ -8,7 +8,8 @@ from amr_fleet_core.assignment import RobotInfo, TaskInfo
 
 from amr_fleet_manager.dispatcher import (STATE_COMPLETED, STATE_FAILED, STATE_IN_PROGRESS, STATE_PENDING,
                                           Dispatcher, DispatcherConfig)
-from amr_fleet_manager.records import ASSIGNMENTS_HEADER, AssignmentLog, load_zones, next_epoch
+from amr_fleet_manager.records import (ASSIGNMENTS_HEADER, AssignmentLog, append_fault_event, load_zones,
+                                       next_epoch)
 
 IDLE, BUSY = 0, 1
 
@@ -202,3 +203,12 @@ def test_load_zones(tmp_path):
     path.write_text('zones:\n  - id: wide\n    capacity: 2\n  - id: junction_01\n')
     assert [(z.zone_id, z.capacity) for z in load_zones(str(path))] == [('wide', 2), ('junction_01', 1)]
     assert load_zones('') == []
+
+
+def test_append_fault_event(tmp_path):
+    path = tmp_path / 'run' / 'fault_events.csv'
+    assert append_fault_event('', 'kill', now=1.0) == 1.0
+    append_fault_event(str(path), 'kill', now=100.25)
+    append_fault_event(str(path), 'restart', now=110.5)
+    with path.open(newline='') as f:
+        assert list(csv.reader(f)) == [['time', 'event'], ['100.250000', 'kill'], ['110.500000', 'restart']]

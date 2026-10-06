@@ -6,12 +6,14 @@
 
 > 상태: 최소판(3주차). 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송, `assignments.csv` 기록, 구역 허가(정원·lease·대기열)까지 구현했다. 교차로 우선순위, 교착 해소, 작업 취소, 실패 작업 재할당은 아직 없다.
 
-노드 두 개를 제공한다.
+노드 세 개와 지표 변환 도구를 제공한다.
 
 | 실행 파일 | 역할 |
 | --- | --- |
 | `fleet_manager` | Fleet 서버 |
 | `fake_robot` | 가짜 로봇. Nav2·BT 없이 Fleet 메시지만 주고받는다. `amr_bt`가 완성되기 전에 서버·장애 주입기·하네스를 끝까지 돌려볼 때 쓴다 |
+| `fleet_metrics` | rosbag → `fleet_latency.csv`, `response_time.csv` (하네스가 실행마다 부른다) |
+| `task_generator` | 작업 생성기. 시나리오(seed로 재현) 또는 JSON Task 파일의 일정대로 작업을 요청한다 |
 
 ## 제공 인터페이스
 
@@ -42,6 +44,12 @@
 `<prefix>`는 `server_topic_prefix` 파라미터다. 기본 `/fleet`(서버 원본), 장애 주입기를 거치면 `fleet`(네임스페이스 안 상대 이름 → `/amr_0N/fleet/...`).
 
 작업은 픽업·목적지까지 직선으로 `speed_mps`로 가고 싣기·내리기에 `dwell_s`를 쓴다. 이미 작업 중이면 `ASSIGN_ALREADY_BUSY`로 거부한다.
+
+### `task_generator`
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Publish | `/fleet/task_requests` | `amr_msgs/msg/Task` | 일정의 `at_s`마다 1건. 자세는 map 좌표, `created_time`은 발행 시각 |
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
@@ -94,7 +102,52 @@
 
 ### epoch
 
-서버가 뜰 때 `epoch_file`의 값에 1을 더해 쓴다. 하네스가 서버를 강제종료하고 다시 띄우면 epoch가 바뀌어 로봇이 명령 번호 기준을 초기화한다. 경로를 비우면 항상 1이다.
+서버가 뜰 때 `epoch_file`의 값에 1을 더해 쓴다. 서버를 강제종료하고 다시 띄우면 epoch가 바뀌어 로봇이 명령 번호 기준을 초기화한다. 경로를 비우면 항상 1이다.
+
+### 서버 강제종료 (연구 1 장애)
+
+`fleet_manager.launch.py`가 정해진 시각에 서버를 SIGKILL로 죽이고, 원하면 다시 띄운다. launch는 자기가 띄운 프로세스에만 신호를 보낼 수 있어 장애 주입기 노드가 아니라 서버 launch에 두었다.
+
+| launch 인자 | 기본값 | 설명 |
+| --- | --- | --- |
+| `kill_at_s` | `-1` | launch 시작 후 이 시각(실제 시간, s)에 SIGKILL. 음수면 끄기 |
+| `restart_after_s` | `-1` | 죽인 뒤 이 시간(s)이 지나면 다시 띄운다. 음수면 죽은 채로 둔다 |
+| `fault_events_file` | `''` | 강제종료·재시작 시각 기록 (`fault_events.csv`). 비우면 기록 안 함 |
+
+- 정리 과정 없이 죽이므로 마지막 heartbeat 이후 아무 메시지도 나가지 않는다. 로봇은 heartbeat 타임아웃으로 알아챈다.
+- 다시 띄운 서버는 epoch가 1 오르고, 작업·구역 장부가 비어 있다. 서버가 죽기 전에 맡긴 작업을 이어받는 일(작업표 복구)은 아직 없다.
+- `fault_events.csv` 컬럼: `time, event`. `time`은 실제 시간(UNIX 초)이라 rosbag2의 수신 시각과 맞춰 볼 수 있다. `event`는 `kill`·`restart`.
+
+### 작업 생성기
+
+명세의 "JSON 형식 Task Description"을 받는 곳이자, 하네스가 같은 작업 일정을 반복해 넣는 도구다.
+
+- **일정 만들기**: 시나리오([config/scenarios/basic.yaml](config/scenarios/basic.yaml))의 작업 수·간격(`fixed`·`poisson`)·흐름(픽업 → 목적지 스테이션, `*` 패턴)·물품 비율·우선순위·마감으로 일정을 만든다. 같은 시나리오·`seed`면 같은 일정이다. `task_id`는 `task_s<seed>_<번호>`.
+- **JSON Task 파일**: `tasks_file`을 주면 시나리오 대신 그 일정을 그대로 발행한다. `schedule_out`으로 만든 일정을 같은 형식으로 남길 수 있어, 실행 폴더의 `tasks.json`을 다시 넣으면 그 실행을 재현한다.
+
+```json
+{"tasks": [
+  {"at_s": 5.0, "task_id": "task_s3_0001", "type": "delivery", "item": "small",
+   "pickup": "dock_1", "dropoff": "rack_a4", "priority": 0, "deadline_s": 0.0},
+  {"at_s": 15.0, "task_id": "task_s3_0002", "type": "charge", "item": "none",
+   "pickup": "", "dropoff": "charger_c1", "priority": 0, "deadline_s": 0.0}
+]}
+```
+
+| 필드 | 값 |
+| --- | --- |
+| `at_s` | 일정 시작 후 발행 시각 (노드 시계, s) |
+| `type` | `delivery` / `charge` / `return`. `delivery`만 `pickup`이 있다 |
+| `item` | `none` / `small` / `medium` / `large` (원 명세서 물품 유형) |
+| `pickup`, `dropoff` | [config/stations.yaml](config/stations.yaml)의 스테이션 이름 |
+| `priority` | 0~255 |
+| `deadline_s` | 요청 후 마감까지 (s). 0이면 마감 없음 |
+
+- 스테이션 자세는 world 좌표로 적고 발행할 때 `map_origin_in_world`(기본 `[0.0, 1.5, 0.0]`, warehouse_v0 지도)로 map 좌표로 바꾼다. 스테이션 목록은 **제안**이다. 도킹 자세는 지수가 ArUco 마커에 맞춰 확정한다.
+- 시각은 노드 시계(`use_sim_time`이면 시뮬레이션 시간)다. 시뮬레이터가 느려져도 로봇 속도에 비해 작업이 몰리지 않는다.
+- Fleet 서버(`server_node`, 기본 `fleet_manager`)가 `/fleet/task_requests`를 구독해야 일정을 시작한다. rosbag 녹화 같은 다른 구독자가 먼저 떠도 시작하지 않는다.
+- **seed 0도 고정 seed다.** 0을 넣으면 매번 같은 일정이 나온다(무작위가 아님). 장애 주입기의 `seed`도 같다. 지수 쪽 `encoder_seed`·`obstacle_seed`는 0이 "매번 무작위"라 의미가 다르므로, 하네스는 반복 번호를 그대로 넘기면 된다.
+- 서버가 꺼져 있는 동안(강제종료 실험) 발행한 작업은 받을 노드가 없어 사라진다. 생성기는 다시 보내지 않는다. 하네스가 `tasks.json`의 `at_s`와 `fault_events.csv`로 다운 중 투입 건수를 따로 센다.
 
 ## 파라미터
 
@@ -114,7 +167,7 @@
 | `traffic.release_timeout_s` | `30.0` | 점유 로봇이 이 시간 동안 요청·반납이 없으면 구역을 푼다 (노드 시계, s) |
 | `traffic.zones_file` | `''` | 구역 목록 파일. 비우면 모든 구역 요청을 거부. launch 인자 `zones_file` (기본 `config/zones.yaml`) |
 | `tick_s` | `0.05` | 재전송·구역 만료 확인 주기 (s) |
-| `epoch_file` | `/tmp/amr_fleet_manager/epoch` | 서버 재시작 번호 파일 |
+| `epoch_file` | `''` | 서버 재시작 번호 파일. launch 인자 `epoch_file` (기본 `/tmp/amr_fleet_manager/epoch`) |
 | `assignments_csv` | `''` | 할당 호출 기록 경로. 비우면 기록 안 함. launch 인자 `assignments_csv` |
 
 `assignments.csv`의 컬럼은 [하네스 README](../../../tools/harness/README.md#지표-csv)를 따른다. `timestamp`는 노드 시계(`use_sim_time`이면 시뮬레이션 시간), `cost_fn`은 지금 `euclidean`뿐이다.
@@ -132,6 +185,18 @@
 | `step_hz` | `10.0` | 이동 계산 주기 |
 | `server_topic_prefix` | `/fleet` | 서버 → 로봇 토픽 앞부분. launch 인자 `relayed:=true`면 `fleet` |
 
+`task_generator` ([launch/task_generator.launch.py](launch/task_generator.launch.py) 인자)
+
+| 이름 | 기본값 | 설명 |
+| --- | --- | --- |
+| `scenario_file` | `config/scenarios/basic.yaml` | 작업 시나리오. `tasks_file`을 주면 무시 |
+| `tasks_file` | `''` | JSON Task 파일 |
+| `seed` | `0` | 일정 난수 seed. 하네스 반복 번호. 0도 고정 seed |
+| `stations_file` | `config/stations.yaml` | 스테이션 자세 (world) |
+| `schedule_out` | `''` | 만든 일정을 JSON Task 파일로 남길 경로 |
+| `map_origin_in_world` | `[0.0, 1.5, 0.0]` | world에서 본 map 원점 `[x, y, yaw]`. 실수로 적는다. 지도가 바뀌면 그 지도의 매핑 시작 자세를 넣는다 |
+| `server_node` | `fleet_manager` | 이 노드가 구독해야 일정을 시작한다. 비우면 아무 구독자나 |
+
 ## 실행
 
 ```bash
@@ -139,10 +204,13 @@
 ros2 launch amr_fleet_manager fleet_manager.launch.py algorithm:=hungarian
 # 터미널 2: 가짜 로봇 3대 (amr_01~03)
 ros2 launch amr_fleet_manager fake_robots.launch.py count:=3
-# 터미널 3: 작업 요청
+# 터미널 3: 작업 요청 (기본 시나리오: 10초마다 60건)
+ros2 launch amr_fleet_manager task_generator.launch.py seed:=3 schedule_out:=/tmp/run1/tasks.json
+ros2 topic echo /fleet/task_status
+
+# 작업 하나만 손으로 넣을 때
 ros2 topic pub --once /fleet/task_requests amr_msgs/msg/Task \
   "{task_id: task_0001, task_type: 0, item_type: 1, pickup_pose: {position: {x: 5.0, y: 5.0}}, dropoff_pose: {position: {x: 20.0, y: 5.0}}}"
-ros2 topic echo /fleet/task_status
 ```
 
 ### 장애 주입기를 거쳐 돌리기
@@ -155,14 +223,40 @@ ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 relayed:=true
 
 하네스는 이 상태에서 `/fleet/*`, `/<robot>/fleet/*`를 rosbag2로 녹화하면 `response_time.csv`(Ack 컬럼)·`fleet_latency.csv`의 원자료가 된다. 가짜 로봇은 `/<robot>/odom`을 내지 않으므로 응답 시간(`response_time`) 자체는 실제 로봇 스택에서만 잰다.
 
+### Fleet 지표 변환 (`fleet_metrics`)
+
+```bash
+# 녹화: 서버 원본, 로봇별 중계본, 로봇 → 서버, odom (응답 시간용)
+ros2 bag record -o /tmp/run1/rosbag -e '/fleet/.*|/amr_0[1-5]/fleet/.*|/amr_0[1-5]/odom'
+# 변환: --delay-ms는 그 실행의 주입 지연 (관측 마감 계산)
+ros2 run amr_fleet_manager fleet_metrics /tmp/run1/rosbag --out /tmp/run1 --delay-ms 200
+```
+
+| 결과 | 내용 |
+| --- | --- |
+| `fleet_latency.csv` | 원본 메시지 1건 × 로봇 1대마다 1행 (`topic, robot, key, send_time, recv_time, latency_ms, delivered`) |
+| `response_time.csv` | 할당 명령 1건마다 1행 (명세서 컬럼 + `robot, task_id, latency_sim_ms, assignment_id, ack_time, ack_rtt_ms, resends`) |
+| `meta.json` | `observation_cutoff` (`end, delay_ms, grace_s, resend_grace_s, cutoff, ack_cutoff`). 다른 키는 그대로 둔다 |
+
+형식과 정의는 [하네스 README](../../../tools/harness/README.md#지표-csv)를 따르고, 아래는 구현에서 정한 것이다.
+
+- 원본과 중계본은 **직렬화 바이트**로 짝짓는다. 장애 주입기가 바이트를 그대로 넘기므로 정확하고, `zone_grants`의 `request_id`처럼 로봇마다 겹치는 번호에 헷갈리지 않는다. `key` 컬럼은 읽기용이다.
+- 할당 명령은 (`robot_id`, `assignment_id`, `header.stamp`)로 구분한다. 서버가 재시작하면 번호가 1부터 다시 시작하지만 stamp가 달라 섞이지 않는다. Ack는 `assignment_stamp`로 짝짓는다. 취소(`ACTION_CANCEL`)는 응답 시간 대상이 아니다.
+- 관측 마감: `cutoff` = 끝 − `delay_ms` − `grace_s`(1초) 뒤에 보낸 메시지는 `delivered`를 비운다. `ack_cutoff` = `cutoff` − `resend_grace_s`(5초 = 서버 재전송 1초 × 5회) 뒤에 보낸 명령은 `response_time.csv`에 행을 만들지 않는다.
+- `response_time`은 `/<robot>/odom`이 bag에 있을 때만 채운다. 임계값: 선속도 0.01 m/s 또는 각속도 0.05 rad/s.
+- 로봇 → 서버 방향은 장애를 걸지 않는다(D8 제안). 걸게 되면 Ack 원본·중계본 짝짓기를 추가한다.
+
 ## 테스트
 
 ```bash
 colcon test --packages-select amr_fleet_manager
 ```
 
-- `test/test_dispatcher.py`, `test/test_robot_sim.py`: rclpy 없이 할당·재전송·수신 규칙·이동 모델을 확인한다.
+- `test/test_dispatcher.py`, `test/test_robot_sim.py`, `test/test_fleet_metrics.py`, `test/test_task_gen.py`: rclpy 없이 할당·재전송·수신 규칙·이동 모델·지표 변환·작업 일정을 확인한다.
+- `test/test_fleet_metrics_bag.py`: 실제 rosbag2(sqlite3)을 써서 `fleet_metrics`가 읽고 변환하는지 확인한다 (ROS 환경에서만).
 - `test/test_fake_fleet_launch.py`: 서버와 가짜 로봇 1대를 띄워 요청 → 할당 → Ack → 완료, 구역 허가 → 대기 → 반납 후 넘김을 확인한다.
+- `test/test_server_kill_launch.py`: 서버를 죽였다 다시 띄워 heartbeat가 끊겼다가 epoch 2로 돌아오는지, `fault_events.csv`가 남는지 확인한다.
+- `test/test_task_generator_launch.py`: JSON Task 일정대로, map 좌표로 바꿔 발행하는지 확인한다.
 
 ## 미결
 

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "payload-braking-model"
+version = "0.1.0"
+description = "적재 질량에 따른 가속·제동 거리/시간 물리 모델 (ROS 비의존, RL 환경용)"
+requires-python = ">=3.8"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["payload_braking_model*"]

@@ -14,6 +14,6 @@ zones:
     description: 좁은 통로 ① rack_b3–rack_b4 사이, 폭 0.6 m 길이 1.2 m
   - id: narrow_02
     capacity: 1
-    # 월드 수정(랙 이동, 이진) 후 값. 수정 전에는 양쪽이 막힌 구간이 3.1 m뿐이다
+    # 수정됨: rack_lane_divider를 x=-1.9(rack_b4와 같은 x)로 옮겨 이 값과 월드가 맞다.
     area_world: [-4.4, 0.6, -1.4, -0.8]
     description: 좁은 통로 ② B열 북쪽, 폭 0.6 m 길이 5.0 m

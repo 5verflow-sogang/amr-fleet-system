@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<!--
+  작업 1건 수행 사이클 (architecture.md 5-1절). 끝나면 처음으로 돌아가 다음 작업을 기다린다.
+
+  배송: move_to_pickup → loading → move_to_dropoff → unloading → COMPLETED
+  충전·복귀: move_to_dropoff → COMPLETED
+  어느 단계든 실패·취소면 FailTask가 FAILED를 보낸다.
+
+  MoveTo·Dwell은 지금 자리채움(정해진 시간만 기다림)이다. 작업 9에서 Nav2 navigate_to_pose와
+  docking/dock(Dock.action, 3회 재시도)으로 바꾼다.
+-->
+<root main_tree_to_execute="TaskCycle">
+  <BehaviorTree ID="TaskCycle">
+    <Sequence name="cycle">
+      <WaitForTask/>
+      <Fallback name="run_or_fail">
+        <Sequence name="run_task">
+          <IfThenElse name="pickup_if_delivery">
+            <IsDelivery/>
+            <Sequence name="pickup">
+              <ReportPhase phase="move_to_pickup"/>
+              <MoveTo goal="pickup"/>
+              <ReportPhase phase="loading"/>
+              <Dwell/>
+            </Sequence>
+            <AlwaysSuccess/>
+          </IfThenElse>
+          <ReportPhase phase="move_to_dropoff"/>
+          <MoveTo goal="dropoff"/>
+          <IfThenElse name="unload_if_delivery">
+            <IsDelivery/>
+            <Sequence name="unload">
+              <ReportPhase phase="unloading"/>
+              <Dwell/>
+            </Sequence>
+            <AlwaysSuccess/>
+          </IfThenElse>
+          <FinishTask/>
+        </Sequence>
+        <FailTask/>
+      </Fallback>
+    </Sequence>
+  </BehaviorTree>
+</root>

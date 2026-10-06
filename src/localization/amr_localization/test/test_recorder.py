@@ -140,3 +140,25 @@ def test_eval_offline_cli(tmp_path, capsys):
     assert main([str(tmp_path), '--robot', 'amr_01']) == 0
     assert 'straight n=' in capsys.readouterr().out
     assert (tmp_path / 'localization.csv').exists()
+
+
+def test_skip_initial_stationary(tmp_path):
+    # 처음 2초 정지(오차 0) → 1 m/s 직진(y 2 cm 어긋남) → 2초 정지(y 2 cm 어긋남)
+    def fill(rec):
+        for i in range(600):
+            t = i * 0.01
+            x = 0.0 if t < 2.0 else min(t - 2.0, 2.0)
+            off = 0.0 if t < 2.0 else 0.02
+            rec.add_gt(Pose2D(t, x, 1.5, 0.0))
+            if i % 2 == 1:
+                rec.add_est(Pose2D(t, x, off, 0.0))
+    skip = EvalRecorder('amr_01', (0.0, 1.5, 0.0))
+    fill(skip)
+    keep = EvalRecorder('amr_01', (0.0, 1.5, 0.0), skip_initial_stationary=False)
+    fill(keep)
+    s_skip, s_keep = skip.save(str(tmp_path / 'a')), keep.save(str(tmp_path / 'b'))
+    # 뺀 쪽은 마지막 정지 구간만 남아 정지 RMSE가 실제 오차(2 cm)다
+    assert s_skip['segments']['stationary']['rmse'] == pytest.approx(0.02, abs=1e-6)
+    assert s_keep['segments']['stationary']['rmse'] < 0.015
+    assert s_skip['counts']['skipped_initial_stationary'] == 100
+    assert s_keep['counts']['skipped_initial_stationary'] == 0

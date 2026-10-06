@@ -51,6 +51,7 @@ class EvalNode(Node):
         self.declare_parameter('max_gap', 0.05)
         self.declare_parameter('moving_v', 0.01)
         self.declare_parameter('moving_w', 0.05)
+        self.declare_parameter('skip_initial_stationary', True)
 
         p = self.get_parameter
         robot = p('robot').value
@@ -62,7 +63,8 @@ class EvalNode(Node):
         self.output_dir = out
         # 궤적(원자료)은 받는 즉시 파일에 이어 쓴다. 강제 종료돼도 남고, eval_offline으로 다시 계산한다
         self.recorder = EvalRecorder(
-            robot, origin, p('max_gap').value, p('moving_v').value, p('moving_w').value, stream_dir=out)
+            robot, origin, p('max_gap').value, p('moving_v').value, p('moving_w').value, stream_dir=out,
+            skip_initial_stationary=p('skip_initial_stationary').value)
 
         # best effort 구독은 reliable·best effort 발행자 모두와 호환된다.
         # (Gazebo 브리지·시뮬레이터 정답 토픽 중 best effort로 발행하는 것이 있다)

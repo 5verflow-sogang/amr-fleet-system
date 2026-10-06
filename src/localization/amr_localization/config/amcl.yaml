@@ -1,6 +1,6 @@
 # nav2_amcl 설정 (docs/algorithms/localization.md 3절)
 #
-# 값은 Nav2 Humble 기본값에서 시작한다 (sandbox에서 실제 로드값 확인, #39). 튜닝값과 근거는 3주차에 기록한다.
+# Nav2 Humble 기본값에서 시작해 3주차에 튜닝했다. 근거와 실측은 docs/algorithms/localization.md 3절.
 # 프레임 이름(로봇 접두어 amr_01/)과 초기 위치는 localization.launch.py가 채운다.
 
 /**:
@@ -18,22 +18,29 @@
       min_particles: 500
       max_particles: 2000
       # 움직임 노이즈. alpha1 회전→회전, alpha2 직진→회전, alpha3 직진→직진, alpha4 회전→직진
-      # 3주차에 amr_odometry 엔코더 모델(k, 계통 오차) 값에서 계산해 근거로 쓴다 (#35)
-      alpha1: 0.2
-      alpha2: 0.2
-      alpha3: 0.2
-      alpha4: 0.2
+      # 값은 분산 비율이라 표준편차는 √α배. 0.05 → 이동량의 약 22%.
+      # 엔코더 모델(#35, k 0.01·반지름 배율 σ 0.5%)의 0.1 m 이동당 약 3%보다 7배 크게 둔다 (기본 0.2는 약 45%)
+      alpha1: 0.05
+      alpha2: 0.05
+      alpha3: 0.05
+      alpha4: 0.05
       alpha5: 0.2                 # 옴니휠 전용, 차동구동에서는 쓰지 않음
 
       laser_model_type: likelihood_field
       laser_min_range: 0.12       # LiDAR 사양 (sensors.yaml)
       laser_max_range: 20.0       # slam_toolbox 매핑과 같은 값 (amr_mapping, 먼 빔은 비스듬해 노이즈가 큼)
-      max_beams: 60               # 720빔 중 갱신에 쓰는 빔 수 (Nav2 기본)
-      sigma_hit: 0.2              # Nav2 기본. LiDAR σ 0.03 m보다 크다 → 3주차 튜닝 대상
+      max_beams: 180              # 720빔 중 4개마다 1개 (2° 간격). 기본 60은 6° 간격
+      # 끝점-장애물 거리 오차의 σ. LiDAR σ 0.03 m, 지도 칸 양자화 0.05/√12 ≈ 0.014 m,
+      # 지도 v0 물체 위치 오차 중앙값 0.025 m를 합치면 약 0.04 m → 0.05 (기본 0.2)
+      sigma_hit: 0.05
+      # 측정 혼합 비율. 정적 환경이라 z_hit을 높인다 (기본 0.5 / 0.5). 동적 장애물 환경에서 다시 확인한다
+      z_hit: 0.9
+      z_rand: 0.1
 
       # 필터 갱신 조건. AMCL은 움직일 때만 갱신·발행하므로 EKF가 받는 보정 빈도를 정한다
-      update_min_d: 0.25
-      update_min_a: 0.2
+      # 기본 0.25 m / 0.2 rad에서 줄여 보정 빈도를 약 2배로 올렸다
+      update_min_d: 0.1
+      update_min_a: 0.1
       resample_interval: 1
 
       # Kidnapped 복구용 무작위 파티클 주입. 0이면 꺼짐. 권장값(0.001 / 0.1)은 복구 작업(3주차)에서 켠다

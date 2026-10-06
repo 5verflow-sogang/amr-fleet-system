@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""회귀 테스트 하네스 진입점. 시나리오를 N회 반복 실행하고 요약한다.
+
+ROS 환경(워크스페이스를 source한 셸 또는 컨테이너) 안에서 실행한다.
+
+    python3 tools/harness/run.py loc_basic -n 10
+    python3 tools/harness/run.py loc_basic -n 10 --label q01 \\
+        --config amr_localization/config/ekf.yaml=/tmp/ekf_q01.yaml
+    python3 tools/harness/run.py fleet_fake -n 5 --set delay_ms=200 --set loss_pct=5 --label d200_l5
+
+결과: tools/harness/results/<run_id>/ (README "실행 결과 배치"), 끝나면 summary.md를 출력한다.
+"""
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from harness.runner import ConfigOverrides, run_once  # noqa: E402
+from harness.summary import summarize, to_markdown  # noqa: E402
+
+HERE = Path(__file__).resolve().parent
+
+
+def load_scenario(name: str) -> dict:
+    path = Path(name)
+    if not path.exists():
+        path = HERE / 'scenarios' / f'{name}.yaml'
+    scenario = yaml.safe_load(path.read_text(encoding='utf-8'))
+    for key in ('name', 'processes', 'driver'):
+        if key not in scenario:
+            raise ValueError(f'{path}: {key}가 없다')
+    return scenario
+
+
+def parse_set(items):
+    out = {}
+    for item in items or []:
+        key, sep, value = item.partition('=')
+        if not sep:
+            raise ValueError(f'--set은 이름=값 형식 (지금 {item!r})')
+        out[key] = value
+    return out
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description='시나리오 N회 반복 실행 + 실행 단위 신뢰구간')
+    ap.add_argument('scenario', help='scenarios/<이름>.yaml의 이름 또는 파일 경로')
+    ap.add_argument('-n', '--repeats', type=int, default=10)
+    ap.add_argument('--seed-base', type=int, default=None,
+                    help='반복 i의 seed = seed_base + i (기본 1 = 본 실험. 튜닝·예비 실험은 1001)')
+    ap.add_argument('--label', default='', help='조건 이름. 요약에서 같은 라벨끼리 묶는다')
+    ap.add_argument('--set', action='append', help='시나리오 params 덮어쓰기 (이름=값, 여러 번)')
+    ap.add_argument('--config', action='append', default=[],
+                    help='설치된 설정 파일을 실행 동안 바꿔 끼움: <패키지>/<share 경로>=<파일>')
+    ap.add_argument('--out', default=str(HERE / 'results'))
+    ap.add_argument('--max-attempts', type=int, default=3,
+                    help='기동 단계에서 실패하면 같은 반복을 다시 시도하는 최대 횟수. 실패한 시도 폴더는 _failN으로 남긴다')
+    args = ap.parse_args(argv)
+
+    scenario = load_scenario(args.scenario)
+    params = {**(scenario.get('params') or {}), **parse_set(args.set), 'label': args.label}
+    seed_base = args.seed_base if args.seed_base is not None else int(scenario.get('seed_base', 1))
+    if seed_base < 1:
+        # 0은 패키지마다 뜻이 다르다(매번 무작위 / 고정값). 하네스는 0을 넘기지 않는다 (README "seed 규칙")
+        ap.error('--seed-base는 1 이상이어야 한다 (튜닝 실험은 1001부터)')
+    stamp = time.strftime('%Y%m%d-%H%M%S')
+    out = Path(args.out)
+    run_dirs = []
+    with ConfigOverrides(args.config) as overrides:
+        for i in range(args.repeats):
+            tag = f"{scenario['name']}{'-' + args.label if args.label else ''}"
+            run_dir = out / f'{tag}_{stamp}_{i:02d}'
+            run_params = {**params, 'repeat': i, 'seed': seed_base + i}
+            for attempt in range(1, args.max_attempts + 1):
+                meta = run_once(scenario, run_params, run_dir, overrides)
+                if not meta.get('startup_failure') or attempt == args.max_attempts:
+                    break
+                # 기동 실패(예: lifecycle 전환 응답 유실)는 시도 폴더를 남기고 같은 seed로 다시 한다
+                print(f"  기동 실패, 다시 시도 ({attempt}/{args.max_attempts}): {meta.get('error')}", flush=True)
+                run_dir.rename(run_dir.with_name(f'{run_dir.name}_fail{attempt}'))
+            run_dirs.append(run_dir)
+            print(f"[{i + 1}/{args.repeats}] {run_dir.name}: {meta['outcome']} "
+                  f"(RTF {meta.get('real_time_factor')}, {meta['duration_wall_s']}s)", flush=True)
+
+    summary_md = to_markdown(summarize(run_dirs))
+    path = out / f"summary_{scenario['name']}{'-' + args.label if args.label else ''}_{stamp}.md"
+    path.write_text(summary_md, encoding='utf-8')
+    print(summary_md)
+    print(f'요약: {path}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,24 +1,83 @@
-"""중앙집중 Fleet 서버.
+"""중앙집중 Fleet 서버. 서버 강제종료 장애(연구 1)도 여기서 건다.
 
     ros2 launch amr_fleet_manager fleet_manager.launch.py algorithm:=hungarian assignments_csv:=/tmp/run1/assignments.csv
+    # 60초에 서버를 SIGKILL로 죽이고 10초 뒤 다시 띄운다. 시각은 fault_events.csv에 남는다
+    ros2 launch amr_fleet_manager fleet_manager.launch.py kill_at_s:=60.0 restart_after_s:=10.0 \\
+        fault_events_file:=/tmp/run1/fault_events.csv
 
 구독: /fleet/{task_requests,robot_states,task_assignment_acks,task_status,zone_requests}
 발행: /fleet/{task_assignments,heartbeat,task_table,zone_grants}
+
+launch는 자기가 띄운 프로세스에만 신호를 보낼 수 있으므로 강제종료를 장애 주입기 노드가 아니라 이 launch에 둔다.
+kill_at_s는 이 launch를 시작한 때부터 잰 실제 시간이다.
 """
 
 import os
+import signal
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, EmitEvent, LogInfo, OpaqueFunction, TimerAction
+from launch.events import matches_action
+from launch.events.process import SignalProcess
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
+from amr_fleet_manager.records import append_fault_event
+
+# Node 파라미터 이름 ← launch 인자 이름
+SERVER_ARGS = [
+    ('assignment.algorithm', 'algorithm'),
+    ('assignments_csv', 'assignments_csv'),
+    ('traffic.zones_file', 'zones_file'),
+    ('epoch_file', 'epoch_file'),
+]
+
+
+def _record(context, path, event):
+    now = append_fault_event(path, event)
+    return [LogInfo(msg=f'[장애 주입] Fleet 서버 {event} (time={now:.3f})')]
+
+
+def _server(context):
+    config = os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', 'fleet_manager.yaml')
+
+    def arg(name):
+        return LaunchConfiguration(name).perform(context)
+
+    def server():
+        return Node(
+            package='amr_fleet_manager',
+            executable='fleet_manager',
+            parameters=[config, {
+                param: ParameterValue(arg(launch_arg), value_type=str) for param, launch_arg in SERVER_ARGS
+            }],
+            output='screen',
+        )
+
+    first = server()
+    actions = [first]
+    kill_at = float(arg('kill_at_s'))
+    restart_after = float(arg('restart_after_s'))
+    events_file = arg('fault_events_file')
+    if kill_at >= 0:
+        actions.append(TimerAction(period=kill_at, actions=[
+            OpaqueFunction(function=_record, args=[events_file, 'kill']),
+            # 정리 과정 없이 죽인다 (서버 장애). 로봇은 heartbeat가 끊기는 것으로 알아챈다
+            EmitEvent(event=SignalProcess(signal_number=signal.SIGKILL, process_matcher=matches_action(first))),
+        ]))
+        if restart_after >= 0:
+            # 새 프로세스는 epoch_file의 값을 1 올려 쓰므로 로봇이 명령 번호 기준을 초기화한다
+            actions.append(TimerAction(period=kill_at + restart_after, actions=[
+                OpaqueFunction(function=_record, args=[events_file, 'restart']),
+                server(),
+            ]))
+    return actions
+
 
 def generate_launch_description():
     share = get_package_share_directory('amr_fleet_manager')
-    config = os.path.join(share, 'config', 'fleet_manager.yaml')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -30,14 +89,17 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'zones_file', default_value=os.path.join(share, 'config', 'zones.yaml'),
             description='구역 허가 대상 구역 목록'),
-        Node(
-            package='amr_fleet_manager',
-            executable='fleet_manager',
-            parameters=[config, {
-                'assignment.algorithm': ParameterValue(LaunchConfiguration('algorithm'), value_type=str),
-                'assignments_csv': ParameterValue(LaunchConfiguration('assignments_csv'), value_type=str),
-                'traffic.zones_file': ParameterValue(LaunchConfiguration('zones_file'), value_type=str),
-            }],
-            output='screen',
-        ),
+        DeclareLaunchArgument(
+            'epoch_file', default_value='/tmp/amr_fleet_manager/epoch',
+            description='서버 재시작 번호 파일. 서버가 뜰 때마다 1씩 올린다'),
+        DeclareLaunchArgument(
+            'kill_at_s', default_value='-1',
+            description='launch 시작 후 이 시각(실제 시간, s)에 서버를 SIGKILL. 음수면 죽이지 않는다'),
+        DeclareLaunchArgument(
+            'restart_after_s', default_value='-1',
+            description='죽인 뒤 이 시간(s)이 지나면 서버를 다시 띄운다. 음수면 다시 띄우지 않는다'),
+        DeclareLaunchArgument(
+            'fault_events_file', default_value='',
+            description='강제종료·재시작 시각 기록 파일 (fault_events.csv). 비우면 기록하지 않는다'),
+        OpaqueFunction(function=_server),
     ])
