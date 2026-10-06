@@ -17,7 +17,7 @@ import os
 from dataclasses import asdict
 from typing import Optional
 
-from .metrics import compute_errors, kpi_check, summarize_by_segment, write_localization_csv
+from .metrics import STATIONARY, compute_errors, kpi_check, summarize_by_segment, write_localization_csv
 from .trajectory import (
     Pose2D,
     associate_interpolated,
@@ -42,6 +42,9 @@ class EvalRecorder:
 
     map_origin_in_world: world에서 본 map 원점 (x, y, yaw). 지도 인계 때 받은 매핑 시작 자세.
     stream_dir: 주면 궤적을 받는 즉시 <stream_dir>/trajectories에 이어 쓴다.
+    skip_initial_stationary: 로봇이 처음 움직이기 전 샘플을 평가에서 뺀다. 초기 위치를 정답으로 주므로
+        이 구간은 모든 추정기가 오차 0이라 정지 RMSE를 실제보다 낮춘다(10/6 실측: 대기 60초가 정지 RMSE를
+        5.5 → 2.4 cm로 낮춤). 궤적 원자료(TUM)에는 그대로 남는다.
     """
 
     def __init__(
@@ -52,12 +55,15 @@ class EvalRecorder:
         moving_v: float = 0.01,
         moving_w: float = 0.05,
         stream_dir: Optional[str] = None,
+        skip_initial_stationary: bool = True,
     ):
         self.robot = robot
         self.map_origin_in_world = map_origin_in_world
         self.max_gap = max_gap
         self.moving_v = moving_v
         self.moving_w = moving_w
+        self.skip_initial_stationary = skip_initial_stationary
+        self.skipped_initial = 0
         # 정답은 받을 때 바로 map 기준으로 바꿔 둔다 (저장·평가 때 다시 변환하지 않게)
         self._gt_map: list[Pose2D] = []
         self._est: list[Pose2D] = []
@@ -119,6 +125,10 @@ class EvalRecorder:
         gt = sorted(self._gt_map, key=lambda p: p.t)
         est = sorted(self._est, key=lambda p: p.t)
         samples = compute_errors(associate_interpolated(gt, est, self.max_gap), gt, self.moving_v, self.moving_w)
+        if self.skip_initial_stationary:
+            first = next((i for i, s in enumerate(samples) if s.segment != STATIONARY), len(samples))
+            self.skipped_initial = first
+            samples = samples[first:]
         summaries = summarize_by_segment(samples)
         return samples, summaries, kpi_check(summaries)
 
@@ -137,7 +147,8 @@ class EvalRecorder:
         summary = {
             'robot': self.robot,
             'map_origin_in_world': None if self.map_origin_in_world is None else list(self.map_origin_in_world),
-            'counts': {'gt': len(self._gt_map), 'est': len(self._est), 'paired': len(samples)},
+            'counts': {'gt': len(self._gt_map), 'est': len(self._est), 'paired': len(samples),
+                       'skipped_initial_stationary': self.skipped_initial},
             'segments': {seg: (None if s is None else asdict(s)) for seg, s in summaries.items()},
             'kpi_pass': kpi,
         }

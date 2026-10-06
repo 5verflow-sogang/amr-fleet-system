@@ -66,6 +66,10 @@ jobs:
           colcon test --event-handlers console_cohesion+ --return-code-on-test-failure
           colcon test-result --verbose
 
+      # 하네스(tools/harness)는 colcon 패키지가 아니라 따로 돈다. ROS 없이 도는 통계·요약 테스트만
+      - name: Harness unit tests
+        run: python3 -m pytest -q tools/harness/tests
+
       - name: Upload logs
         if: failure()
         uses: actions/upload-artifact@v4

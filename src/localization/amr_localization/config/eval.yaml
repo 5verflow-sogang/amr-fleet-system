@@ -14,3 +14,5 @@
       max_gap: 0.05                        # 정답 보간 허용 간격 [s]
       moving_v: 0.01                       # 구간 분류 기준 [m/s] (초안)
       moving_w: 0.05                       # 구간 분류 기준 [rad/s] (초안)
+      # 처음 움직이기 전 샘플을 뺀다. 초기 위치를 정답으로 주므로 그 구간은 오차 0이라 정지 RMSE를 낮춘다
+      skip_initial_stationary: true

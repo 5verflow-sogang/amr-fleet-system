@@ -1,0 +1,177 @@
+"""실행 폴더(results/<run_id>/)들을 모아 지표별 평균·95% 신뢰구간을 낸다. ROS 없이 돈다.
+
+실행 하나 = 표본 하나다. 실행마다 지표를 먼저 계산하고(예: 그 실행의 정지 구간 RMSE),
+그 값들로 신뢰구간을 낸다. `outcome`이 `completed`가 아닌 실행은 빼고 실패 수로 따로 보고한다(README "요약 통계").
+"""
+
+from __future__ import annotations
+
+import csv
+import json
+import math
+from collections import defaultdict
+from pathlib import Path
+from typing import Iterable, Optional
+
+from .stats import percentile, summarize_runs
+
+# 원 명세서 위치 오차 KPI [m] (amr_localization/eval/metrics.py KPI_THRESHOLDS와 같은 값)
+LOCALIZATION_KPI = {'stationary': 0.03, 'straight': 0.05, 'rotation': 0.08}
+# 원 명세서 응답 시간 KPI [ms]
+RESPONSE_KPI_MS = 200.0
+
+
+def load_meta(run_dir: Path) -> dict:
+    path = run_dir / 'meta.json'
+    return json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+
+
+def localization_metrics(run_dir: Path) -> dict[str, float]:
+    """localization_summary.json(로봇마다 하위 폴더 또는 실행 폴더 바로 아래) → {지표 이름: 값}."""
+    out = {}
+    for path in sorted(run_dir.glob('**/localization_summary.json')):
+        s = json.loads(path.read_text(encoding='utf-8'))
+        # 같은 로봇을 여러 추정기로 재면 폴더 이름으로 구분한다 (예: eval_ekf/, eval_amcl/)
+        source = path.parent.name if path.parent != run_dir else 'est'
+        for seg, v in (s.get('segments') or {}).items():
+            if v is None:
+                continue
+            prefix = f"loc.{s.get('robot', 'robot')}.{source}.{seg}"
+            out[f'{prefix}.rmse'] = v['rmse']
+            out[f'{prefix}.max'] = v['max']
+            out[f'{prefix}.n'] = v['n']
+    return out
+
+
+def _read_csv(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    with path.open(newline='', encoding='utf-8') as f:
+        return list(csv.DictReader(f))
+
+
+def _floats(rows: Iterable[dict], key: str) -> list[float]:
+    return [float(r[key]) for r in rows if r.get(key) not in (None, '')]
+
+
+def fleet_metrics(run_dir: Path) -> dict[str, float]:
+    """fleet_latency.csv, response_time.csv → 실행 하나의 요약 값."""
+    out = {}
+    lat_rows = _read_csv(run_dir / 'fleet_latency.csv')
+    judged = [r for r in lat_rows if r.get('delivered') in ('0', '1')]
+    if judged:
+        out['fleet.loss_rate'] = sum(r['delivered'] == '0' for r in judged) / len(judged)
+        lat = sorted(_floats((r for r in judged if r['delivered'] == '1'), 'latency_ms'))
+        if lat:
+            out['fleet.latency_ms.mean'] = sum(lat) / len(lat)
+            out['fleet.latency_ms.p95'] = percentile(lat, 0.95)
+            out['fleet.latency_ms.p99'] = percentile(lat, 0.99)
+            out['fleet.latency_ms.max'] = lat[-1]
+    resp_rows = _read_csv(run_dir / 'response_time.csv')
+    if resp_rows:
+        out['fleet.commands'] = len(resp_rows)
+        acked = sorted(_floats(resp_rows, 'ack_rtt_ms'))
+        out['fleet.ack_rate'] = len(acked) / len(resp_rows)
+        if acked:
+            out['fleet.ack_rtt_ms.mean'] = sum(acked) / len(acked)
+            out['fleet.ack_rtt_ms.p95'] = percentile(acked, 0.95)
+            out['fleet.ack_rtt_ms.max'] = acked[-1]
+        out['fleet.resends.mean'] = sum(_floats(resp_rows, 'resends')) / len(resp_rows)
+        resp = sorted(_floats(resp_rows, 'latency_ms'))
+        if resp:
+            out['fleet.response_ms.mean'] = sum(resp) / len(resp)
+            out['fleet.response_ms.max'] = resp[-1]
+            out['fleet.response_ms.n'] = len(resp)
+    return out
+
+
+def run_metrics(run_dir: Path) -> dict[str, float]:
+    meta = load_meta(run_dir)
+    out = {**localization_metrics(run_dir), **fleet_metrics(run_dir)}
+    rtf = meta.get('real_time_factor')
+    if isinstance(rtf, (int, float)):
+        out['run.real_time_factor'] = float(rtf)
+    return out
+
+
+def group_key(meta: dict) -> str:
+    """같은 조건끼리 묶는 이름: 시나리오 + 라벨 (라벨은 run.py --label)."""
+    label = meta.get('label') or ''
+    return f"{meta.get('scenario', '?')}{'/' + label if label else ''}"
+
+
+def kpi_verdict(metric: str, mean: float, ci_high: Optional[float]) -> Optional[str]:
+    """KPI가 있는 지표만 판정한다. CI 상한까지 기준 안이면 PASS, 평균만 안이면 MARGINAL, 아니면 FAIL."""
+    threshold = None
+    parts = metric.split('.')
+    if parts[0] == 'loc' and parts[-1] == 'rmse':
+        threshold = LOCALIZATION_KPI.get(parts[-2])
+    elif metric == 'fleet.response_ms.mean':
+        threshold = RESPONSE_KPI_MS
+    if threshold is None:
+        return None
+    if ci_high is not None and ci_high <= threshold:
+        return 'PASS'
+    return 'MARGINAL' if mean <= threshold else 'FAIL'
+
+
+def summarize(run_dirs: Iterable[Path]) -> dict:
+    """{그룹: {"runs": [...], "failed": [...], "metrics": {지표: Interval + verdict}}}."""
+    groups: dict[str, dict] = defaultdict(lambda: {'runs': [], 'failed': [], 'values': defaultdict(list)})
+    for run_dir in sorted(Path(d) for d in run_dirs):
+        meta = load_meta(run_dir)
+        if not meta:
+            continue
+        g = groups[group_key(meta)]
+        if meta.get('outcome') != 'completed':
+            g['failed'].append({'run_id': run_dir.name, 'outcome': meta.get('outcome')})
+            continue
+        g['runs'].append(run_dir.name)
+        for k, v in run_metrics(run_dir).items():
+            g['values'][k].append(v)
+
+    result = {}
+    for name, g in sorted(groups.items()):
+        metrics = {}
+        for i, (metric, values) in enumerate(sorted(g['values'].items())):
+            iv = summarize_runs(values, seed=i)
+            if iv is None:
+                continue
+            d = iv.as_dict()
+            verdict = kpi_verdict(metric, iv.mean, iv.ci_high)
+            if verdict:
+                d['kpi'] = verdict
+            metrics[metric] = d
+        result[name] = {'runs': g['runs'], 'failed': g['failed'], 'metrics': metrics}
+    return result
+
+
+def _fmt(v: Optional[float], metric: str) -> str:
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return '—'
+    # 위치 오차는 cm로 보여 준다 (원값은 m)
+    if metric.startswith('loc.') and not metric.endswith('.n'):
+        return f'{v * 100:.2f}'
+    return f'{v:.3g}' if abs(v) < 1000 else f'{v:.0f}'
+
+
+def to_markdown(summary: dict) -> str:
+    """사람이 읽는 표. 위치 오차는 cm, 지연은 ms."""
+    lines = []
+    for name, g in summary.items():
+        lines.append(f'## {name}')
+        lines.append('')
+        lines.append(f"완료 {len(g['runs'])}회, 실패 {len(g['failed'])}회"
+                     + (f" ({', '.join(f['run_id'] + ':' + str(f['outcome']) for f in g['failed'])})" if g['failed'] else ''))
+        lines.append('')
+        lines.append('| 지표 | N | 평균 | 95% CI | 최소 | 최대 | KPI |')
+        lines.append('| --- | --- | --- | --- | --- | --- | --- |')
+        for metric, d in g['metrics'].items():
+            if metric.endswith('.n'):
+                continue
+            ci = '—' if d['ci_low'] is None else f"{_fmt(d['ci_low'], metric)} ~ {_fmt(d['ci_high'], metric)}"
+            lines.append(f"| `{metric}` | {d['n']} | {_fmt(d['mean'], metric)} | {ci} | "
+                         f"{_fmt(d['min'], metric)} | {_fmt(d['max'], metric)} | {d.get('kpi', '')} |")
+        lines.append('')
+    lines.append('위치 오차(`loc.*`)는 cm. KPI: CI 상한까지 기준 안이면 PASS, 평균만 안이면 MARGINAL.')
+    return '\n'.join(lines) + '\n'
