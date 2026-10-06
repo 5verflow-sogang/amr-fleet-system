@@ -9,7 +9,9 @@ from stable_baselines3.common.env_checker import check_env
 from payload_nav import (OBS_DIM, EnvConfig, PayloadNavEnv, Popout, RobotState, Scenario,
                          braking_distance, env_config_for, load_experiment, max_linear_accel,
                          step)
-from payload_nav.scenarios import ScenarioConfig, min_trigger_x
+from payload_nav.scenarios import ScenarioConfig, min_trigger_x, sample_scenario
+from payload_nav.seeds import (EVAL_SEED_BASE, TRAIN_ENV_SEED_STRIDE, VAL_SEED_BASE,
+                               train_env_seed)
 
 # 관측 뒤쪽 칸: ... 경로 옆 오차, 경로 방향 오차, 왼쪽 벽, 오른쪽 벽, 남은 시간, 질량 값, 질량 앎 여부
 LAT, HEAD, WALL_L, WALL_R, TIME_LEFT, MASS, KNOWN = range(OBS_DIM - 7, OBS_DIM)
@@ -340,3 +342,44 @@ def test_mass_never_hidden_when_given_explicitly():
     env = PayloadNavEnv(EnvConfig(observe_mass=True, mass_hide_prob=1.0))
     obs, _ = env.reset(seed=0, options={'payload_kg': 10.0, 'mass_obs_kg': 10.0})
     assert obs[KNOWN] == 1.0
+
+
+# ---------------------------------------------------------------- 평가용 S1·S2 강제
+def test_forced_popout_sets_scenario_kind():
+    for seed in range(50):
+        s1 = sample_scenario(np.random.default_rng(seed), popout=True)
+        s2 = sample_scenario(np.random.default_rng(seed), popout=False)
+        assert s1.popout is not None and s2.popout is None
+
+
+def test_forcing_keeps_random_stream():
+    # 저절로 나온 종류로 강제하면 같은 시나리오다 (popout_prob 난수를 강제해도 소비한다)
+    for seed in range(50):
+        mixed = sample_scenario(np.random.default_rng(seed))
+        forced = sample_scenario(np.random.default_rng(seed), popout=mixed.popout is not None)
+        assert forced == mixed
+
+
+def test_reset_option_forces_popout():
+    env = PayloadNavEnv()
+    env.reset(seed=0, options={'popout': True})
+    assert env.scenario.popout is not None
+    env.reset(seed=0, options={'popout': False})
+    assert env.scenario.popout is None
+
+
+# ---------------------------------------------------------------- 시드 규칙
+def test_train_env_seeds_do_not_overlap():
+    n_envs, used = 8, set()
+    for train_seed in range(200):   # 본 실험 0~99 + 예비 100~199
+        base = train_env_seed(train_seed, n_envs)
+        seeds = set(range(base, base + n_envs))
+        assert not seeds & used
+        used |= seeds
+    # 검증·평가 시나리오 범위와도 겹치지 않는다
+    assert min(used) > EVAL_SEED_BASE + 100_000 > VAL_SEED_BASE + 10_000
+
+
+def test_train_env_seed_rejects_too_many_envs():
+    with pytest.raises(ValueError):
+        train_env_seed(0, TRAIN_ENV_SEED_STRIDE + 1)

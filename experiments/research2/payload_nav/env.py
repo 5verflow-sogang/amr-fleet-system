@@ -104,6 +104,7 @@ class PayloadNavEnv(gym.Env):
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         """options (평가·테스트용):
             scenario: Scenario      시나리오를 직접 지정
+            popout: bool|None       True면 S1(돌발 장애물), False면 S2(없음)로 강제. 기본은 popout_prob
             payload_kg: float       실제 적재 질량 지정
             mass_obs_kg: float|None 관측에 넣을 질량 (오차 조건). None이면 "모름". 기본은 실제 질량
                                     이 값을 주면 학습용 질량 가림(mass_hide_prob)은 적용하지 않는다
@@ -112,7 +113,7 @@ class PayloadNavEnv(gym.Env):
         super().reset(seed=seed)
         options = options or {}
         self.scenario: Scenario = options.get('scenario') or sample_scenario(
-            self.np_random, self.cfg.scenario, self.cfg.robot)
+            self.np_random, self.cfg.scenario, self.cfg.robot, options.get('popout'))
         if 'payload_kg' in options:
             self.payload = float(options['payload_kg'])
         elif self.cfg.mass_mode == 'fixed':

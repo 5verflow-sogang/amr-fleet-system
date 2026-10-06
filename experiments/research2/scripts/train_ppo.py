@@ -27,14 +27,15 @@ from stable_baselines3.common.vec_env import VecNormalize
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from payload_nav import PayloadNavEnv, env_config_for, load_experiment  # noqa: E402
+from payload_nav import (VAL_SEED_BASE, PayloadNavEnv, env_config_for, load_experiment,  # noqa: E402
+                         train_env_seed)
 from payload_nav.evaluation import run_episode  # noqa: E402
 
 
 class SuccessEvalCallback(BaseCallback):
     """학습 질량만으로 구성한 검증 환경의 성공률로 체크포인트를 고른다 (학습 보상 아님)."""
 
-    def __init__(self, env_config, vecnorm, run_dir, every_steps, episodes, seed_base=10_000):
+    def __init__(self, env_config, vecnorm, run_dir, every_steps, episodes, seed_base=VAL_SEED_BASE):
         super().__init__()
         self.env = PayloadNavEnv(env_config)
         self.vecnorm, self.run_dir = vecnorm, run_dir
@@ -78,16 +79,17 @@ def main():
     if args.n_envs:
         n_envs = args.n_envs
     net_arch = list(ppo.pop('net_arch', [64, 64]))
+    env_seed = train_env_seed(args.seed, n_envs)  # 시드끼리 환경 시드가 겹치지 않게 (seeds.py)
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     run_dir = ROOT / 'raw' / f'{args.variant}_s{args.seed}_{stamp}'
     run_dir.mkdir(parents=True)
     shutil.copyfile(args.config, run_dir / 'config.toml')
     (run_dir / 'config.json').write_text(json.dumps(
         {'variant': args.variant, 'args': {**vars(args), 'config': str(args.config)},
-         'n_envs': n_envs, 'ppo': {**ppo, 'net_arch': net_arch}, 'env': asdict(env_config),
-         'torch': torch.__version__}, indent=2, ensure_ascii=False))
+         'n_envs': n_envs, 'env_seed_base': env_seed, 'ppo': {**ppo, 'net_arch': net_arch},
+         'env': asdict(env_config), 'torch': torch.__version__}, indent=2, ensure_ascii=False))
 
-    venv = make_vec_env(PayloadNavEnv, n_envs=n_envs, seed=args.seed,
+    venv = make_vec_env(PayloadNavEnv, n_envs=n_envs, seed=env_seed,
                         env_kwargs={'config': env_config})
     venv = VecNormalize(venv, norm_obs=True, norm_reward=True, gamma=ppo.get('gamma', 0.99))
 

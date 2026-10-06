@@ -78,7 +78,13 @@ def min_trigger_x(initial_speed: float, config: 'ScenarioConfig',
 
 
 def sample_scenario(rng: np.random.Generator, config: ScenarioConfig = ScenarioConfig(),
-                    params: RobotParams = DEFAULT_PARAMS) -> Scenario:
+                    params: RobotParams = DEFAULT_PARAMS,
+                    popout: Optional[bool] = None) -> Scenario:
+    """popout: True면 S1(돌발 장애물 있음), False면 S2(없음)로 강제한다 (평가용). None이면 popout_prob.
+
+    강제해도 popout_prob 난수는 그대로 소비한다. 그래서 같은 rng 상태에서 저절로 S1이 나왔던
+    시나리오는 S1로 강제해도 똑같다.
+    """
     def uniform(bounds: Range) -> float:
         return float(rng.uniform(bounds[0], bounds[1]))
 
@@ -88,8 +94,11 @@ def sample_scenario(rng: np.random.Generator, config: ScenarioConfig = ScenarioC
     width = uniform(config.corridor_width)
     initial_y = uniform((-config.start_lateral_offset, config.start_lateral_offset))
 
+    has_popout = rng.random() < config.popout_prob
+    if popout is not None:
+        has_popout = popout
     popout = None
-    if rng.random() < config.popout_prob:
+    if has_popout:
         lo = min_trigger_x(initial_speed, config, params)
         hi = goal_distance - config.trigger_goal_margin_m
         if hi <= lo:

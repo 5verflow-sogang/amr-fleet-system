@@ -40,9 +40,9 @@ uv run python scripts/smoke_ppo.py            # 설치 확인: CartPole PPO 학�
 uv run --frozen --with pytest pytest tests                         # 환경 검사
 uv run python scripts/train_ppo.py --variant proposed --steps 200000   # 파이프라인 확인 (짧게)
 uv run python scripts/train_ppo.py --variant r2 --seed 0
-uv run python scripts/evaluate.py raw/proposed_s0_* raw/r2_s0_* raw/r1_s0_*
-uv run python scripts/evaluate.py raw/proposed_s0_* --mass-obs none        # 질량 정보 없음
-uv run python scripts/evaluate.py raw/proposed_s0_* --mass-obs scale:1.3   # 질량 정보 +30% 오차
+uv run python scripts/evaluate.py raw/proposed_s0_* raw/r2_s0_* raw/r1_s0_*   # S1·S2 각 200개, 정확한 질량
+uv run python scripts/evaluate.py raw/proposed_s0_* --mass-obs exact plus30 minus30 unknown   # 정보 조건 4개
+uv run python scripts/evaluate.py raw/proposed_s0_* --scenarios mixed      # 학습과 같은 섞인 분포
 uv run tensorboard --logdir raw
 ```
 
@@ -53,6 +53,7 @@ uv run tensorboard --logdir raw
 | `payload_nav/scenarios.py` | 직선 통로(폭 1.2~2.0 m)에서 S1 돌발 장애물(가로지름·멈춰 섬) + S2 정밀 정지. 시나리오는 질량과 무관하게 뽑는다 |
 | `payload_nav/env.py` | gymnasium 환경. 관측 48차원(경로 오차·벽 거리·남은 시간·질량 값 + 앎 여부 포함) |
 | `payload_nav/evaluation.py` | 에피소드 1회 실행과 지표 (학습 콜백·평가 공용) |
+| `payload_nav/seeds.py` | 시드 규칙 (아래) |
 
 **환경 규칙**
 
@@ -61,10 +62,26 @@ uv run tensorboard --logdir raw
 - 통로가 좁으면 멈춰 선 장애물을 비켜 갈 수 없어 장애물 앞에서 서야 한다(`popout_blocked`)
 - 벽에 닿아도 충돌로 끝난다. 시간 초과(30 s)는 남은 시간을 관측하므로 실패(terminated)로 끝내고 −10을 준다
 
+**시드 규칙** (실험 설계 #72 2절)
+
+| 용도 | 시드 |
+| --- | --- |
+| PPO 신경망 초기화 | 학습 시드 k (`--seed`) |
+| 학습 환경 | 1,000,000 + 100·k + i (i = 병렬 환경 번호). 학습 시드끼리 겹치지 않는다 |
+| 검증 시나리오 (체크포인트 선택) | 10,000 + 에피소드 번호 |
+| 평가 시나리오 | 100,000 + 에피소드 번호. S1·S2는 같은 번호를 쓰므로 (`scenario`, `scenario_seed`)로 구분한다 |
+
+- SB3 `make_vec_env(seed=s)`는 환경 i에 s + i를 준다. 학습 시드를 그대로 넘기면 시드 k와 k+1이 환경 7개(8개 중)를 공유해서 학습 환경 시드를 따로 둔다
+- `--scenarios S1`·`S2`는 돌발 장애물 유무만 강제하고 나머지 난수 흐름은 그대로다. 같은 시드에서 저절로 S1이 나왔던 시나리오는 S1로 강제해도 같다
+
 **평가 CSV 주요 열**
 
 | 열 | 뜻 |
 | --- | --- |
+| `variant`, `train_seed` | 비교군, 학습 시드 |
+| `scenario`, `scenario_seed` | S1 / S2 / mixed, 평가 시나리오 시드 |
+| `mass_obs`, `mass_obs_kg` | 정보 조건 exact / plus30 / minus30 / unknown과 관측에 넣은 질량(unknown이면 빈칸). 질량을 보지 않는 비교군(r1·r2)은 exact로 한 번만 평가한다 |
+| `payload_kg` | 실제 적재 질량 |
 | `outcome` | success / collision / timeout / overshoot |
 | `collision_with`, `impact_speed` | 충돌 대상(obstacle / wall)과 충돌 순간 속도 |
 | `min_clearance`, `near_miss`, `min_ttc` | 장애물과의 최소 거리, 0.3 m 미만 여부, 최소 TTC |
@@ -75,7 +92,10 @@ uv run tensorboard --logdir raw
 | `popout_stop_distance`, `popout_stop_margin` | 실제 제동 거리, 제동 거리 여유(나타날 때 간격 − 제동 거리). stopped일 때만 |
 | `jerk_rms`, `jerk_max` | 출발 직후 2스텝을 뺀 jerk |
 
+- 요약 출력의 장애물 충돌률(`장충돌`)은 장애물이 나타난 에피소드 전체가 분모다. 설 수 없던(`popout_stoppable` 0) 에피소드도 빼지 않는다. 나타난 순간 속도는 정책이 고른 것이라, 빼면 너무 빨리 달려 생긴 충돌이 사라진다. `못섬`은 그 충돌 중 이미 설 수 없던 개수다
+- `--mass-obs`의 예전 표기(true, none, scale:1.3, scale:0.7)도 받는다
+
 - 비교군: `r1`(0 kg 고정), `r2`(질량 무작위, 질량 모름), `proposed`(질량 무작위 + 관측, 학습 중 20%는 질량을 가림)
-- 체크포인트는 학습 질량 검증 환경의 성공률로 고른다(`best_*`). 평가 seed는 학습·검증과 겹치지 않는다
+- 체크포인트는 학습 질량 검증 환경의 성공률로 고른다(`best_*`)
 - 평가 질량 기본값: 학습 0·2·10·25 kg + 미학습 15·30 kg
 - pytest는 `uv.lock`을 바꾸지 않으려고 `--with`로만 쓴다
