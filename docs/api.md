@@ -70,7 +70,7 @@ map
 | 공통 | `ErrorInfo` | 오류 코드 + 설명. 할당 거부, 작업 실패에 쓴다 | 전원 | — |
 | 인식 | `DetectedObject3D`, `DetectedObject3DArray` | 카메라로 본 것 (한 장면, ID 없음) | 연우, 이진, 지수 | — |
 | 추적 | `TrackedObstacle`, `TrackedObstacleArray` | 시간에 걸쳐 따라가는 장애물 (ID, 속도, 크기) | 연우, 이진 | — |
-| 추적 | `CollisionRisk`, `CollisionRiskArray` | 장애물과 이 로봇의 충돌 위험 (TTC, safety margin) | 연우 | 이진 |
+| 추적 | `CollisionRisk`, `CollisionRiskArray` | 장애물과 이 로봇의 충돌 위험 (TTC) | 연우 | 이진 |
 | 안전 | `SafetyStatus` | 감속·정지 여부와 원인 | 연우, 이진, 지수 | — |
 | Fleet 서버 → 로봇 | `Task`, `TaskAssignment`, `FleetHeartbeat`, `ZoneGrant`, `FleetTaskTable`, `TaskRecord` | 작업 할당, 서버 생존 신호, 구역 허가, 전체 작업 현황 | 지수, 이진 | 민지 |
 | Fleet 로봇 → 서버 | `TaskAssignmentAck`, `TaskStatus`, `RobotState`, `ZoneRequest` | 할당 확인, 작업 진행 보고, 로봇 상태, 구역 진입 요청 | 지수 | 민지 |
@@ -113,7 +113,7 @@ map
 | `task_id` | 시스템 전체에서 유일. UUID 권장 (서버 장애 뒤 로봇이 만든 ID가 겹치지 않도록) |
 | 좌표계 | 위치는 `header.frame_id` 기준이며 기본 `"map"`. 예외: `perception/obstacles`는 `odom` (DWA 입력, 위치 보정 점프 회피) |
 | 방향을 모를 때 | `PoseWithCovariance`의 orientation은 (0, 0, 0, 1), 공분산의 회전 성분 대각은 `1e6`. 소비 측은 위치 3×3 블록만 쓴다 |
-| 특수 값 | `inf`: 해당 없음 (예: 충돌 경로가 아님, 장애물 없음) / `NaN`: 계산하지 않음 (예: 연구 2 기능을 끈 baseline) / `-1`: 관련 트랙 없음 (`related_track_id`) |
+| 특수 값 | `inf`: 해당 없음 (예: 충돌 경로가 아님, 장애물 없음) / `NaN`: 계산하지 않음 / `-1`: 관련 트랙 없음 (`related_track_id`) |
 | 빈 결과 | 검출·장애물이 없어도 빈 배열로 발행한다. 발행이 끊기면 노드 이상으로 본다 |
 | 시각 | 인식 결과의 `header.stamp`는 처리 완료 시각이 아니라 **센서 촬영 시각**이다. 시각 필드는 모두 `builtin_interfaces/Time` |
 | 장애 주입기 | 중계할 때 `header.stamp`와 번호 필드(`assignment_id`, `request_id`, `epoch`, `seq`)를 바꾸지 않는다 |
@@ -154,7 +154,7 @@ map
 
 | 대주제 | 쟁점 | 결정 | 초안 |
 | --- | --- | --- | --- |
-| 추적 | `ttc_p5`, `collision_probability`를 `CollisionRisk`에 둘지 (회의 문서에서 빠졌지만 `SafetyStatus` 원인과 연구 2에서 씀) | 연우 | `CollisionRisk`에 둔다 |
+| 추적 | `ttc_p5`, `collision_probability`를 `CollisionRisk`에 둘지 (회의 문서에서 빠졌지만 `SafetyStatus` 원인과 연구 2에서 씀) | 연우 | **결정: 뺀다** (10/6). 연구 2 주제 변경(D7)으로 `safety_margin`과 함께 삭제. 원 명세의 "충돌 가능성"은 `ttc`가 유한한지로 표현 |
 | 로봇 | `RobotState` 발행 주체와 가상 배터리 모델 담당 | 지수 | `amr_bt` |
 | 로봇 | 도킹 3회 재시도를 `Dock` 액션 안에서 할지 BT에서 할지 | 지수 | BT (에러 자동 복구 요구와 맞음) |
 | 공통 | `ErrorInfo` 코드 목록 확정 (지금은 대역별 예시만) | 전원 | 구현하면서 대역 안에 추가 |

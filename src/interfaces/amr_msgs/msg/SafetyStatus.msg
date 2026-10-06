@@ -8,7 +8,7 @@ uint8 LEVEL_ESTOP=3      # E-Stop: 해제 요청 전까지 정지 유지
 
 uint8 REASON_NONE=0
 uint8 REASON_OBSTACLE_PROXIMITY=1   # 장애물이 Safety Zone 안에 있음
-uint8 REASON_COLLISION_RISK=2       # CollisionRisk의 TTC 또는 충돌 확률이 임계값을 넘음
+uint8 REASON_COLLISION_RISK=2       # CollisionRisk의 TTC가 임계값 이하
 uint8 REASON_ESTOP_REQUEST=3        # 외부 E-Stop 요청
 uint8 REASON_SENSOR_FAULT=4         # 센서 고장 감지
 
