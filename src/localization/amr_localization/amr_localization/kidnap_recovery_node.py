@@ -40,6 +40,10 @@ class KidnapRecoveryNode(Node):
         self.check_hz = d('check_hz', 2.0).value
         self.match_tol = d('match_tol', 0.1).value
         self.rotate_speed = d('rotate_speed', 0.5).value
+        # 탐색 단계에서 앞이 비어 있으면 천천히 전진한다 (반복 구조에서 통로 방향 위치를 찾으려면 움직여야 한다)
+        self.explore_forward = d('explore_forward', False).value
+        self.explore_speed = d('explore_speed', 0.2).value
+        self.front_clearance = d('front_clearance', 1.0).value
         self.base_frame = d('base_frame', 'base_footprint').value
         self.events_file = d('events_file', '').value
         cfg = RecoveryConfig(
@@ -48,8 +52,9 @@ class KidnapRecoveryNode(Node):
             settle_s=d('settle_s', 10.0).value, allow_rotate=d('allow_rotate', True).value,
             rotate_s=d('rotate_s', 15.0).value, max_attempts=d('max_attempts', 3).value,
             local_first=d('local_first', True).value)
-        # 국소 재초기화 때 뿌리는 파티클 범위 (1σ). 바퀴 미끄러짐·충돌로 몇 m 어긋난 경우를 덮는다
-        self.local_std_m = d('local_std_m', 1.0).value
+        # 국소 재초기화 때 뿌리는 파티클 범위 (1σ). 바퀴 미끄러짐·충돌로 몇 m 어긋난 경우를 덮는다.
+        # 1.0 m에서는 1.9 m 이동을 못 찾았고(통로 방향 1.5 m 오차 남음) 2.5 m에서 9.5초에 복구했다 (10/6)
+        self.local_std_m = d('local_std_m', 2.5).value
         self.local_std_yaw = d('local_std_yaw', 0.8).value
         self.last_good = None
         self.machine = KidnapRecovery(cfg)
@@ -149,11 +154,24 @@ class KidnapRecoveryNode(Node):
         msg.pose.covariance = cov
         self.initialpose_pub.publish(msg)
 
+    def _front_free(self) -> bool:
+        """스캔 앞쪽 ±20° 안 최소 거리가 front_clearance보다 큰지 (센서 앞 = 로봇 앞으로 본다)."""
+        s = self.scan
+        if s is None:
+            return False
+        lim = math.radians(20.0)
+        front = [r for k, r in enumerate(s.ranges)
+                 if abs(s.angle_min + k * s.angle_increment) <= lim and math.isfinite(r) and r > s.range_min]
+        return bool(front) and min(front) > self.front_clearance
+
     def _drive(self):
-        # 회전 중에만 cmd_vel을 낸다. 다른 때는 제어(Nav2·BT)가 cmd_vel을 쓴다 (사용 우선순위는 4절)
+        # 탐색 중에만 cmd_vel을 낸다. 다른 때는 제어(Nav2·BT)가 cmd_vel을 쓴다 (사용 우선순위는 4절)
         if self.machine.state == ROTATING:
             cmd = Twist()
-            cmd.angular.z = float(self.rotate_speed)
+            if self.explore_forward and self._front_free():
+                cmd.linear.x = float(self.explore_speed)
+            else:
+                cmd.angular.z = float(self.rotate_speed)
             self.cmd_pub.publish(cmd)
 
     def _log_event(self, e):
