@@ -93,12 +93,12 @@ map
 | Fleet | `/fleet/task_requests` | 토픽 | `amr_msgs/msg/Task` | 작업 생성기, 대시보드 | `amr_fleet_manager` | 요청 시 |
 | Fleet | `/fleet/task_assignments` | 토픽 | `amr_msgs/msg/TaskAssignment` | `amr_fleet_manager` | `amr_bt` | 할당·취소 시, Ack 없으면 재전송 |
 | Fleet | `/fleet/heartbeat` | 토픽 | `amr_msgs/msg/FleetHeartbeat` | `amr_fleet_manager` | 각 로봇, `amr_fleet_decentralized` | 고정 주기 |
-| Fleet | `/fleet/zone_grants` | 토픽 | `amr_msgs/msg/ZoneGrant` | `amr_fleet_manager` | 로봇 측 구역 진입 처리 (이진). 네임스페이스 안 `fleet/zone_grants`(장애 주입기 중계본) | 요청에 대한 응답, 차례가 오면 |
+| Fleet | `/fleet/zone_grants` | 토픽 | `amr_msgs/msg/ZoneGrant` | `amr_fleet_manager` | `amr_zone_client`. 네임스페이스 안 `fleet/zone_grants`(장애 주입기 중계본) | 요청에 대한 응답, 차례가 오면 |
 | Fleet | `/fleet/task_table` | 토픽 | `amr_msgs/msg/FleetTaskTable` | `amr_fleet_manager` | `amr_fleet_decentralized`, 대시보드 | 고정 주기 |
 | 로봇 | `/fleet/task_assignment_acks` | 토픽 | `amr_msgs/msg/TaskAssignmentAck` | `amr_bt` | `amr_fleet_manager`, 하네스 | 할당·취소를 받을 때마다 |
 | 로봇 | `/fleet/robot_states` | 토픽 | `amr_msgs/msg/RobotState` | 각 로봇 (`amr_bt`, 안) | `amr_fleet_manager`, `amr_fleet_decentralized`, 대시보드, `amr_metrics_exporter` | 1~5Hz |
 | 로봇 | `/fleet/task_status` | 토픽 | `amr_msgs/msg/TaskStatus` | `amr_bt` | `amr_fleet_manager`, 대시보드, 하네스 | 상태·단계가 바뀔 때 |
-| 로봇 | `/fleet/zone_requests` | 토픽 | `amr_msgs/msg/ZoneRequest` | 로봇 측 구역 진입 처리 (이진, D6) | `amr_fleet_manager` | 구역 앞 도착 시, 대기·통과 중 주기적으로 (연장), 나올 때 |
+| 로봇 | `/fleet/zone_requests` | 토픽 | `amr_msgs/msg/ZoneRequest` | `amr_zone_client` (이진, D6) | `amr_fleet_manager` | 경로 기준 구역 경계 3 m 앞, 대기·통과 중 1초마다 (연장), 나올 때 |
 | 분산 | `/fleet/task_auctions` | 토픽 | `amr_msgs/msg/TaskAuction` | `amr_fleet_decentralized` (경매인 로봇) | `amr_fleet_decentralized` | 서버 장애 중 미할당 작업이 있을 때 |
 | 분산 | `/fleet/task_bids` | 토픽 | `amr_msgs/msg/TaskBid` | `amr_fleet_decentralized` | `amr_fleet_decentralized` | 경매 진행 중 |
 | 로봇 | `docking/dock` | 액션 | `amr_msgs/action/Dock` | `amr_docking` | `amr_bt` | BT가 요청할 때 |
@@ -221,6 +221,23 @@ map
 | Publish | `/fleet/zone_grants` | `amr_msgs/msg/ZoneGrant` | 요청에 대한 답, 대기 로봇 차례가 오면. `lease_expiry`는 노드 시계 기준 |
 
 가짜 로봇(`fake_robot`)과 동작 규칙은 [amr_fleet_manager README](../src/fleet/amr_fleet_manager/README.md)에 있다.
+
+### amr_zone_client (로봇별)
+
+구역 허가의 로봇 쪽 절반. 서버(`amr_fleet_manager`, 위 절)와 짝이다.
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `fleet/zone_grants` | `amr_msgs/msg/ZoneGrant` | 네임스페이스 안 상대 이름 → `amr_fault_injector`가 중계한 `/<ns>/fleet/zone_grants`. `robot_id`·`request_id`가 안 맞으면 버린다 |
+| Subscribe | `plan` | `nav_msgs/msg/Path` | Nav2 전역 경로. 구역 경계까지 남은 거리를 이 경로를 따라 계산한다 |
+| Subscribe | `cmd_vel_nav` | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 |
+| Publish | `/fleet/zone_requests` | `amr_msgs/msg/ZoneRequest` | 경계 3 m 앞 요청, 대기·통과 중 1초마다 연장, 벗어나면 반납 |
+| Publish | `cmd_vel` | `geometry_msgs/msg/Twist` | 게이팅 후 속도 명령. 허가 전엔 선속도 상한만 건다(각속도는 그대로), 상한은 뒤에 `SafetyStatus.speed_limit` 클램프가 같은 방식으로 더 끼워질 수 있게 `min()` 하나로 둔다 |
+
+상태 흐름(구역마다 독립): `IDLE`(트리거 거리 밖) → `APPROACHING`(요청 보냄, 허가 전엔 경계 0.5 m 앞에
+감속 정지) → `INSIDE`(허가와 상관없이 위치가 구역 안이면 전환, lease가 지나도 안 멈춘다) → `IDLE`(벗어나며
+반납). `REJECTED`면 `BLOCKED`로 가 경고만 남기고 재시도하지 않는다. 자세한 흐름·파라미터는
+[amr_zone_client README](../src/navigation/amr_zone_client/README.md).
 
 <!-- TODO: 나머지 패키지 섹션을 같은 형식으로 추가 -->
 

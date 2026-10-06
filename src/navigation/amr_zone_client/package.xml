@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>amr_zone_client</name>
+  <version>0.0.0</version>
+  <description>로봇 측 구역 진입 처리 (ZoneRequest/ZoneGrant 클라이언트, amr_fleet_manager 서버와 짝)</description>
+  <maintainer email="TODO@example.com">이진</maintainer>
+  <license>TODO: License declaration</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>amr_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>builtin_interfaces</exec_depend>
+  <exec_depend>tf2_ros_py</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <!-- zones.yaml 읽기. 단위 테스트에서도 쓴다 -->
+  <depend>python3-yaml</depend>
+
+  <test_depend>python3-pytest</test_depend>
+  <!-- test_zone_client_launch.py: 실제 fleet_manager 서버·fault_injector 중계를 띄워 요청→대기→허가→진입→반납까지 확인 -->
+  <test_depend>launch_testing</test_depend>
+  <test_depend>launch_testing_ros</test_depend>
+  <test_depend>amr_fleet_manager</test_depend>
+  <test_depend>amr_fault_injector</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

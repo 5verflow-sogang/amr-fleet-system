@@ -1,0 +1,51 @@
+"""경계까지 남은 거리, 정지 속도 프로파일 (ROS 비의존 순수 함수)."""
+
+import math
+
+from amr_zone_client.geometry import point_in_rect, remaining_distance_to_rect, speed_cap_for_stop
+
+RECT = (5.0, 6.0, -1.0, 1.0)
+
+
+def straight_path(x_from, x_to, step=0.1, y=0.0):
+    n = int(round((x_to - x_from) / step))
+    return [(x_from + i * step, y) for i in range(1, n + 1)]
+
+
+def test_point_in_rect():
+    assert point_in_rect((5.5, 0.0), RECT)
+    assert point_in_rect((5.0, -1.0), RECT)  # 경계 포함
+    assert not point_in_rect((4.9, 0.0), RECT)
+    assert not point_in_rect((5.5, 1.1), RECT)
+
+
+def test_remaining_distance_straight_path():
+    path = straight_path(2.0, 10.0)
+    assert math.isclose(remaining_distance_to_rect(path, (2.0, 0.0), RECT), 3.0, abs_tol=1e-6)
+
+
+def test_remaining_distance_already_inside():
+    path = straight_path(5.5, 10.0)
+    assert remaining_distance_to_rect(path, (5.5, 0.0), RECT) == 0.0
+
+
+def test_remaining_distance_path_never_reaches_zone():
+    path = straight_path(0.0, 3.0, y=5.0)  # y=5는 RECT(y -1..1)와 안 만난다
+    assert remaining_distance_to_rect(path, (0.0, 5.0), RECT) is None
+
+
+def test_remaining_distance_diagonal_path():
+    # (0,0) -> (10,0)을 y=0으로 가로지르는 대각선 경로. x=5에서 들어간다
+    path = [(10.0, 0.0)]
+    assert math.isclose(remaining_distance_to_rect(path, (0.0, 0.0), RECT), 5.0, abs_tol=1e-6)
+
+
+def test_speed_cap_for_stop_profile():
+    # 경계 3 m 앞(트리거 지점), stop_margin 0.5, decel 1.0 -> sqrt(2*1*2.5)
+    assert math.isclose(speed_cap_for_stop(3.0, 0.5, 1.0), math.sqrt(5.0), abs_tol=1e-6)
+    # stop_margin 지점 = 속도 0
+    assert speed_cap_for_stop(0.5, 0.5, 1.0) == 0.0
+    # 이미 stop_margin보다 가까우면 0 (음수 거리로 내려가지 않는다)
+    assert speed_cap_for_stop(0.0, 0.5, 1.0) == 0.0
+    # 단조 감소
+    assert speed_cap_for_stop(3.0, 0.5, 1.0) > speed_cap_for_stop(1.0, 0.5, 1.0) > speed_cap_for_stop(0.6, 0.5, 1.0)

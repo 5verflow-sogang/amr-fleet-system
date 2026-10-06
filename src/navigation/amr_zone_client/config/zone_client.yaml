@@ -1,0 +1,20 @@
+# 구역 진입 처리 노드 파라미터 (zone_client_node)
+/**/zone_client:
+  ros__parameters:
+    # 좌표계 이름 (TF map_frame → base_frame, zones.yaml area_world도 이 프레임 기준으로 본다).
+    # 지금은 Gazebo world와 map 원점이 같다고 본다. 지도 v1(10/9) 인계 뒤 틀어지면 이 값만 바꾸면 된다
+    map_frame: map
+    base_frame: base_footprint
+    # Nav2 전역 계획 경로. amr_bringup이 붙이는 상대 이름 (/<ns>/plan)
+    plan_topic: plan
+    # 서버 → 로봇(zone_grants)은 장애 주입기가 네임스페이스별로 중계한다 (api.md 4-2절).
+    # zone_requests는 중계되지 않는 절대 토픽이라 파라미터로 빼지 않는다 (fleet_manager_node.py)
+    zone_grants_topic: fleet/zone_grants
+    cmd_vel_in_topic: cmd_vel_nav
+    cmd_vel_out_topic: cmd_vel
+    update_rate_hz: 10.0
+    # 구역 규칙 (이진, 10/5, zones.yaml 주석과 같다)
+    trigger_distance_m: 3.0
+    stop_margin_m: 0.5
+    decel_mps2: 1.0
+    resend_period_s: 1.0

@@ -58,6 +58,7 @@ amr-fleet-system/
 | navigation    | `amr_planning_core`       | cmake          | 이진             | A\*, 평활화, DWA (ROS 비의존)                              |
 | navigation    | `amr_nav2_plugins`        | cmake          | 이진             | Nav2 Planner/Controller 플러그인 래퍼                      |
 | navigation    | `amr_control`             | cmake          | 이진             | Pure Pursuit/Stanley, PID, 속도 프로파일                   |
+| navigation    | `amr_zone_client`         | python         | 이진             | 구역 진입 처리 (ZoneRequest/ZoneGrant 클라이언트, #57 서버와 연동) |
 | perception    | `amr_detection`           | python         | 연우             | YOLOv8 인식, RViz2 마커                                    |
 | perception    | `amr_perception_core`     | python         | 연우             | Pinhole 3D, KF, TTC, ORCA (ROS 비의존)                     |
 | perception    | `amr_tracking`            | python         | 연우             | 동적 장애물 분류·추적, 카메라 연관, 충돌 예측              |
@@ -71,7 +72,7 @@ amr-fleet-system/
 | observability | `amr_metrics_exporter`    | python         | 지수             | Prometheus exporter, 사고 전후 rosbag 스냅샷               |
 | bringup       | `amr_bringup`             | python         | 공동             | 전체 launch 조립, 다중 로봇 스폰                           |
 
-빌드 타입 기준: Nav2 플러그인과 BehaviorTree.CPP 노드는 C++이 필수라 navigation·task(`amr_bt`)는 C++로 둔다. 나머지는 개발 속도를 위해 Python으로 시작한다. 구현 착수 전이라면 담당자가 PR로 변경할 수 있다.
+빌드 타입 기준: Nav2 플러그인과 BehaviorTree.CPP 노드는 C++이 필수라 navigation·task(`amr_bt`)는 C++로 둔다. `amr_zone_client`는 Fleet 쪽(`amr_msgs`) 토픽만 주고받는 독립 노드라 예외로 Python이다. 나머지는 개발 속도를 위해 Python으로 시작한다. 구현 착수 전이라면 담당자가 PR로 변경할 수 있다.
 
 ## 4. 컴포넌트 다이어그램
 
