@@ -29,9 +29,7 @@ struct TaskContext
 
   // ---- 작업 상태 ----
   std::optional<amr_msgs::msg::Task> task;   // 수락한 작업. 없으면 IDLE
-  bool started = false;                      // BT가 작업을 집어 들었는지
-  bool cancel_requested = false;
-  amr_msgs::msg::ErrorInfo failure;          // FAILED로 끝낼 때 보낼 원인
+  amr_msgs::msg::ErrorInfo failure;          // FAILED로 끝낼 때 보낼 원인 (코드 + 설명)
   std::string phase;                         // 지금 단계 (TaskStatus.phase)
 
   bool busy() const {return task.has_value();}
@@ -44,23 +42,21 @@ struct TaskContext
   void assign(const amr_msgs::msg::Task & t)
   {
     task = t;
-    started = false;
-    cancel_requested = false;
     failure = amr_msgs::msg::ErrorInfo();
     phase.clear();
   }
 
-  void request_cancel(const std::string & message)
+  // 동작 노드가 실패 원인을 남긴다. 그 노드가 FAILURE를 돌려주면 FailTask가 이 값으로 FAILED를 보낸다.
+  // code는 ErrorInfo 대역 (200 주행 / 300 교통 / 900 도킹 …). 하네스가 코드로 실패 원인을 나눈다
+  void fail(uint16_t code, const std::string & message)
   {
-    cancel_requested = true;
+    failure.code = code;
     failure.message = message;
   }
 
   void clear()
   {
     task.reset();
-    started = false;
-    cancel_requested = false;
     phase.clear();
   }
 };
