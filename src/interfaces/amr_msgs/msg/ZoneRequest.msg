@@ -4,7 +4,9 @@
 # 로봇이 지킬 규칙
 # - 유효한 허가(ZoneGrant.GRANT_GRANTED)가 있을 때만 구역에 들어간다. 응답이 없으면 들어가지 않는다.
 # - 기다리는 동안이나 구역 안에 있는 동안 같은 request_id로 주기적으로 다시 요청한다 (허가 연장).
-# - 구역을 벗어나면 TYPE_RELEASE를 보낸다. 못 보내도 lease_expiry가 지나면 자동으로 풀린다.
+# - 구역을 벗어나면 TYPE_RELEASE를 보낸다. 구역 안에서 lease_expiry가 지나면 멈추지 않고 빠져나간 뒤 반납한다.
+#   서버는 반납이 올 때까지 그 구역을 다른 로봇에 주지 않는다. 반납도 요청도 오래 없으면(서버 파라미터
+#   traffic.release_timeout_s) 로봇이 죽은 것으로 보고 푼다.
 
 uint8 TYPE_ACCESS=0    # 진입 요청 (연장 포함)
 uint8 TYPE_RELEASE=1   # 반납

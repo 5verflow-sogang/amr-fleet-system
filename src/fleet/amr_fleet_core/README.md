@@ -2,7 +2,7 @@
 
 - 담당: 하연
 - 빌드 타입: ament_python
-- 책임: 작업 할당(최소거리/부하균형/Hungarian), 경로 충돌 예측, 교착 탐지 (ROS 비의존 라이브러리)
+- 책임: 작업 할당(최소거리/부하균형/Hungarian), 구역 허가, 경로 충돌 예측, 교착 탐지 (ROS 비의존 라이브러리)
 
 ## 공개 API
 
@@ -132,6 +132,34 @@ def assign_xxx(
 | 배터리 하한 | 20% (파라미터) |
 | `load`의 정의 | 누적 할당 수. 누적 이동거리로 바꿀지 검토 |
 | 할당된 작업 재조정 | 하지 않는다. 한 번 맡긴 작업은 완료·실패·취소 전까지 유지 |
+
+### 구역 허가 (`traffic/zones.py`)
+
+> 상태: 정원·lease·대기열 구현(3주차). 교차로 우선순위(`REASON_PRIORITY_YIELD`)와 교착 해소(`GRANT_REVOKED`)는 아직 없다.
+
+`ZoneRequest`/`ZoneGrant`의 서버 측 판단만 한다. 메시지 변환과 발행은 `amr_fleet_manager`가 한다.
+
+```python
+zm = ZoneManager([ZoneSpec('narrow_01', capacity=1)], lease_s=5.0, release_timeout_s=30.0)
+zm.request(robot_id, zone_id, request_id, now) -> list[Decision]  # 요청한 로봇에 대한 답 1건
+zm.release(robot_id, zone_id, now) -> list[Decision]              # 자리가 나서 허가받은 대기 로봇의 답
+zm.expire(now) -> list[Decision]                                  # 주기 호출. 만료 정리 후 대기 로봇 허가
+```
+
+| 상황 | 답 |
+| --- | --- |
+| 모르는 `zone_id` | `REJECTED` |
+| 이미 허가받은 로봇이 다시 요청 (연장) | `GRANTED`, `lease_expiry = now + lease_s` |
+| 자리가 있음 | `GRANTED` |
+| 정원이 참 | `QUEUED` (`REASON_OCCUPIED`, `holder_robot_id` = 먼저 들어간 로봇), 대기열 끝에 넣는다 |
+| 점유 로봇이 반납 | 대기열 맨 앞 로봇에게 그 로봇의 마지막 `request_id`로 `GRANTED` |
+| 점유 로봇의 lease가 지남 | **넘기지 않는다.** 통로 안에서 만료되면 로봇은 빠져나간 뒤 반납한다 (이진 합의) |
+| 점유 로봇이 `release_timeout_s` 동안 요청도 반납도 없음 | 죽은 것으로 보고 풀어 대기 로봇에게 넘긴다 |
+| 대기 로봇이 `lease_s` 동안 다시 요청하지 않음 | 대기열에서 뺀다 (답 없음) |
+| 반납 | 반납한 로봇에게는 답하지 않는다 |
+
+- `now`는 로봇이 `lease_expiry`와 비교하는 시계와 같아야 한다. `amr_fleet_manager`는 노드 시계(`use_sim_time`이면 시뮬레이션 시간)를 넘긴다. 실제 시간으로 재면 시뮬레이터가 느릴 때 서버가 로봇보다 먼저 허가를 풀어 두 대가 동시에 들어갈 수 있다.
+- 대기 순서는 먼저 요청한 순서(FIFO)다.
 
 ## 파라미터
 

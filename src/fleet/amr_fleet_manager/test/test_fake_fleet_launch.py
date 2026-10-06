@@ -1,5 +1,10 @@
-"""Fleet 서버와 가짜 로봇 1대를 띄워 작업 요청 → 할당 → Ack → 완료까지 확인한다 (launch_testing)."""
+"""Fleet 서버와 가짜 로봇 1대를 띄워 확인한다 (launch_testing).
 
+- 작업 요청 → 할당 → Ack → 완료
+- 구역 허가: 한 대만 허가, 나머지는 대기, 반납하면 대기 로봇에게 허가
+"""
+
+import tempfile
 import time
 import unittest
 
@@ -10,16 +15,23 @@ import launch_testing.actions
 import launch_testing.asserts
 import pytest
 import rclpy
-from amr_msgs.msg import FleetHeartbeat, Task, TaskAssignment, TaskAssignmentAck, TaskStatus
+from amr_msgs.msg import (FleetHeartbeat, Task, TaskAssignment, TaskAssignmentAck, TaskStatus, ZoneGrant,
+                          ZoneRequest)
+
+
+ZONES_YAML = 'zones:\n  - id: test_zone\n    capacity: 1\n'
 
 
 @pytest.mark.launch_test
 def generate_test_description():
+    zones = tempfile.NamedTemporaryFile('w', suffix='.yaml', delete=False)
+    zones.write(ZONES_YAML)
+    zones.close()
     server = launch_ros.actions.Node(
         package='amr_fleet_manager',
         executable='fleet_manager',
         # config yaml을 쓰지 않으므로 epoch_file은 기본값('')이고 epoch는 1이다
-        parameters=[{'assignment.algorithm': 'hungarian'}],
+        parameters=[{'assignment.algorithm': 'hungarian', 'traffic.zones_file': zones.name}],
     )
     robot = launch_ros.actions.Node(
         package='amr_fleet_manager',
@@ -89,6 +101,37 @@ class TestFakeFleet(unittest.TestCase):
         final = statuses[-1]
         self.assertEqual(final.state, TaskStatus.STATE_COMPLETED)
         self.assertAlmostEqual(final.distance_traveled, 2.0, places=3)
+
+    def test_zone_handover(self):
+        grants = []
+        # 다른 패키지 테스트와 섞이지 않게 이 테스트의 구역만 센다
+        self.node.create_subscription(
+            ZoneGrant, '/fleet/zone_grants',
+            lambda msg: grants.append(msg) if msg.zone_id == 'test_zone' else None, 10)
+        publisher = self.node.create_publisher(ZoneRequest, '/fleet/zone_requests', 10)
+        self.assertTrue(self.spin_until(
+            lambda: publisher.get_subscription_count() >= 1
+            and self.node.count_publishers('/fleet/zone_grants') >= 1, 15.0))
+        self.spin_until(lambda: False, 1.0)
+
+        def request(robot_id, request_id, kind=ZoneRequest.TYPE_ACCESS):
+            publisher.publish(ZoneRequest(
+                robot_id=robot_id, zone_id='test_zone', request_id=request_id, type=kind))
+
+        request('amr_08', 1)
+        self.assertTrue(self.spin_until(lambda: len(grants) >= 1, 5.0))
+        request('amr_09', 7)
+        self.assertTrue(self.spin_until(lambda: len(grants) >= 2, 5.0))
+        request('amr_08', 1, ZoneRequest.TYPE_RELEASE)
+        self.assertTrue(self.spin_until(lambda: len(grants) >= 3, 5.0))
+
+        summary = [(g.robot_id, g.request_id, g.grant, g.holder_robot_id) for g in grants[:3]]
+        self.assertEqual(summary, [
+            ('amr_08', 1, ZoneGrant.GRANT_GRANTED, 'amr_08'),
+            ('amr_09', 7, ZoneGrant.GRANT_QUEUED, 'amr_08'),
+            ('amr_09', 7, ZoneGrant.GRANT_GRANTED, 'amr_09'),
+        ])
+        self.assertGreater(grants[0].lease_expiry.sec, 0)
 
 
 @launch_testing.post_shutdown_test()

@@ -1,6 +1,7 @@
 """중앙집중 Fleet 서버 (최소판): 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송.
 
-Traffic Management(ZoneRequest/ZoneGrant)와 교착 해소는 아직 없다. 흐름은 architecture.md 5-1절.
+구역 허가(ZoneRequest/ZoneGrant)는 정원·lease·대기열만 있다. 교차로 우선순위와 교착 해소는 아직 없다.
+흐름은 architecture.md 5-1절.
 """
 
 from __future__ import annotations
@@ -9,20 +10,27 @@ import time
 import uuid
 
 import rclpy
+from builtin_interfaces.msg import Time
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
+from amr_fleet_core.traffic import Decision, ZoneManager
 from amr_msgs.msg import (FleetHeartbeat, FleetTaskTable, RobotState, Task, TaskAssignment,
-                          TaskAssignmentAck, TaskRecord, TaskStatus)
+                          TaskAssignmentAck, TaskRecord, TaskStatus, ZoneGrant, ZoneRequest)
 from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 from .dispatcher import Dispatcher, DispatcherConfig, Outgoing
-from .records import AssignmentLog, next_epoch
+from .records import AssignmentLog, load_zones, next_epoch
 
 
 def stamp_to_sec(stamp) -> float:
     return stamp.sec + stamp.nanosec * 1e-9
+
+
+def sec_to_stamp(seconds: float) -> Time:
+    sec, nanosec = divmod(int(round(seconds * 1e9)), 1_000_000_000)
+    return Time(sec=sec, nanosec=nanosec)
 
 
 def task_info(msg: Task) -> TaskInfo:
@@ -58,6 +66,10 @@ class FleetManager(Node):
         task_table_period_s = self.declare_parameter('task_table_period_s', 1.0).value
         tick_s = self.declare_parameter('tick_s', 0.05).value
         self._epoch = next_epoch(self.declare_parameter('epoch_file', '').value)
+        self._zones = ZoneManager(
+            load_zones(self.declare_parameter('traffic.zones_file', '').value),
+            lease_s=self.declare_parameter('traffic.lease_s', 5.0).value,
+            release_timeout_s=self.declare_parameter('traffic.release_timeout_s', 30.0).value)
         csv_path = self.declare_parameter('assignments_csv', '').value
         self._log = AssignmentLog(csv_path) if csv_path else None
 
@@ -71,19 +83,23 @@ class FleetManager(Node):
         self._assignment_pub = self.create_publisher(TaskAssignment, '/fleet/task_assignments', qos)
         self._heartbeat_pub = self.create_publisher(FleetHeartbeat, '/fleet/heartbeat', qos)
         self._table_pub = self.create_publisher(FleetTaskTable, '/fleet/task_table', qos)
+        self._grant_pub = self.create_publisher(ZoneGrant, '/fleet/zone_grants', qos)
         self.create_subscription(Task, '/fleet/task_requests', self._on_task, qos)
         self.create_subscription(RobotState, '/fleet/robot_states', self._on_robot_state, qos)
         self.create_subscription(TaskAssignmentAck, '/fleet/task_assignment_acks', self._on_ack, qos)
         self.create_subscription(TaskStatus, '/fleet/task_status', self._on_status, qos)
+        self.create_subscription(ZoneRequest, '/fleet/zone_requests', self._on_zone_request, qos)
 
         # 재전송·heartbeat 주기는 네트워크 쪽 시간이라 use_sim_time과 상관없이 실제 시간으로 잰다
         steady = Clock(clock_type=ClockType.STEADY_TIME)
         self.create_timer(heartbeat_period_s, self._publish_heartbeat, clock=steady)
         self.create_timer(task_table_period_s, self._publish_table, clock=steady)
         self.create_timer(tick_s, self._resend, clock=steady)
+        self.create_timer(tick_s, self._expire_zones, clock=steady)
         self.get_logger().info(
             f'Fleet 서버 시작: epoch={self._epoch}, algorithm={self._dispatcher.config.algorithm}, '
-            f'resend={self._dispatcher.config.resend_interval_s}s x {self._dispatcher.config.max_resends}')
+            f'resend={self._dispatcher.config.resend_interval_s}s x {self._dispatcher.config.max_resends}, '
+            f'zones={self._zones.zone_ids}')
 
     # ---- 구독 ----
 
@@ -119,7 +135,36 @@ class FleetManager(Node):
             # TODO(하연): FAILED 작업 재할당 정책. 지금은 실패로 남긴다
             self._assign()
 
+    def _on_zone_request(self, msg: ZoneRequest):
+        # lease_expiry는 로봇이 자기 노드 시계와 비교하므로 서버도 노드 시계(use_sim_time이면 시뮬레이션 시간)로 잰다
+        now = self._now_sec()
+        if msg.type == ZoneRequest.TYPE_RELEASE:
+            self._publish_grants(self._zones.release(msg.robot_id, msg.zone_id, now))
+        else:
+            self._publish_grants(self._zones.request(msg.robot_id, msg.zone_id, msg.request_id, now))
+
     # ---- 발행 ----
+
+    def _expire_zones(self):
+        self._publish_grants(self._zones.expire(self._now_sec()))
+
+    def _publish_grants(self, decisions: list[Decision]):
+        for d in decisions:
+            msg = ZoneGrant()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.request_id = d.request_id
+            msg.robot_id = d.robot_id
+            msg.zone_id = d.zone_id
+            msg.grant = d.grant
+            if d.lease_expiry is not None:
+                msg.lease_expiry = sec_to_stamp(d.lease_expiry)
+            msg.reason = d.reason
+            msg.holder_robot_id = d.holder_robot_id
+            self._grant_pub.publish(msg)
+
+    def _now_sec(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
+
 
     def _assign(self):
         commands, rows = self._dispatcher.assign(time.monotonic())

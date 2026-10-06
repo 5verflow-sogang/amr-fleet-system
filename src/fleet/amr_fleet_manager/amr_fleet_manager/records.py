@@ -1,10 +1,13 @@
-"""서버 재시작 번호(epoch)와 assignments.csv 기록. rclpy를 import하지 않는다."""
+"""서버 재시작 번호(epoch), assignments.csv 기록, 구역 목록 읽기. rclpy를 import하지 않는다."""
 
 from __future__ import annotations
 
 import csv
 from pathlib import Path
 from typing import Iterable
+
+import yaml
+from amr_fleet_core.traffic import ZoneSpec
 
 from .dispatcher import AssignmentRow
 
@@ -51,3 +54,11 @@ class AssignmentLog:
 
     def close(self) -> None:
         self._file.close()
+
+
+def load_zones(path: str) -> list[ZoneSpec]:
+    """config/zones.yaml 형식의 구역 목록. 경로가 비면 빈 목록 (모든 구역 요청을 REJECTED)."""
+    if not path:
+        return []
+    data = yaml.safe_load(Path(path).read_text(encoding='utf-8')) or {}
+    return [ZoneSpec(str(z['id']), int(z.get('capacity', 1))) for z in data.get('zones') or []]

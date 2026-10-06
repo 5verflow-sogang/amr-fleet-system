@@ -93,12 +93,12 @@ map
 | Fleet | `/fleet/task_requests` | 토픽 | `amr_msgs/msg/Task` | 작업 생성기, 대시보드 | `amr_fleet_manager` | 요청 시 |
 | Fleet | `/fleet/task_assignments` | 토픽 | `amr_msgs/msg/TaskAssignment` | `amr_fleet_manager` | `amr_bt` | 할당·취소 시, Ack 없으면 재전송 |
 | Fleet | `/fleet/heartbeat` | 토픽 | `amr_msgs/msg/FleetHeartbeat` | `amr_fleet_manager` | 각 로봇, `amr_fleet_decentralized` | 고정 주기 |
-| Fleet | `/fleet/zone_grants` | 토픽 | `amr_msgs/msg/ZoneGrant` | `amr_fleet_manager` | `amr_bt` | 요청에 대한 응답, 차례가 오면 |
+| Fleet | `/fleet/zone_grants` | 토픽 | `amr_msgs/msg/ZoneGrant` | `amr_fleet_manager` | 로봇 측 구역 진입 처리 (이진). 네임스페이스 안 `fleet/zone_grants`(장애 주입기 중계본) | 요청에 대한 응답, 차례가 오면 |
 | Fleet | `/fleet/task_table` | 토픽 | `amr_msgs/msg/FleetTaskTable` | `amr_fleet_manager` | `amr_fleet_decentralized`, 대시보드 | 고정 주기 |
 | 로봇 | `/fleet/task_assignment_acks` | 토픽 | `amr_msgs/msg/TaskAssignmentAck` | `amr_bt` | `amr_fleet_manager`, 하네스 | 할당·취소를 받을 때마다 |
 | 로봇 | `/fleet/robot_states` | 토픽 | `amr_msgs/msg/RobotState` | 각 로봇 (`amr_bt`, 안) | `amr_fleet_manager`, `amr_fleet_decentralized`, 대시보드, `amr_metrics_exporter` | 1~5Hz |
 | 로봇 | `/fleet/task_status` | 토픽 | `amr_msgs/msg/TaskStatus` | `amr_bt` | `amr_fleet_manager`, 대시보드, 하네스 | 상태·단계가 바뀔 때 |
-| 로봇 | `/fleet/zone_requests` | 토픽 | `amr_msgs/msg/ZoneRequest` | `amr_bt` | `amr_fleet_manager` | 구역 앞 도착 시, 대기·통과 중 주기적으로 (연장), 나올 때 |
+| 로봇 | `/fleet/zone_requests` | 토픽 | `amr_msgs/msg/ZoneRequest` | 로봇 측 구역 진입 처리 (이진, D6) | `amr_fleet_manager` | 구역 앞 도착 시, 대기·통과 중 주기적으로 (연장), 나올 때 |
 | 분산 | `/fleet/task_auctions` | 토픽 | `amr_msgs/msg/TaskAuction` | `amr_fleet_decentralized` (경매인 로봇) | `amr_fleet_decentralized` | 서버 장애 중 미할당 작업이 있을 때 |
 | 분산 | `/fleet/task_bids` | 토픽 | `amr_msgs/msg/TaskBid` | `amr_fleet_decentralized` | `amr_fleet_decentralized` | 경매 진행 중 |
 | 로봇 | `docking/dock` | 액션 | `amr_msgs/action/Dock` | `amr_docking` | `amr_bt` | BT가 요청할 때 |
@@ -214,9 +214,11 @@ map
 | Subscribe | `/fleet/robot_states` | `amr_msgs/msg/RobotState` | 할당 후보 판단, Ack 유실 확인 (`current_task_id`) |
 | Subscribe | `/fleet/task_assignment_acks` | `amr_msgs/msg/TaskAssignmentAck` | 재전송 중지, 거부 시 재할당 |
 | Subscribe | `/fleet/task_status` | `amr_msgs/msg/TaskStatus` | 작업 상태, 완료·실패 시 다음 할당 |
+| Subscribe | `/fleet/zone_requests` | `amr_msgs/msg/ZoneRequest` | 구역 진입 요청·연장·반납 |
 | Publish | `/fleet/task_assignments` | `amr_msgs/msg/TaskAssignment` | 할당. Ack 없으면 같은 번호로 재전송 |
 | Publish | `/fleet/heartbeat` | `amr_msgs/msg/FleetHeartbeat` | 고정 주기 |
 | Publish | `/fleet/task_table` | `amr_msgs/msg/FleetTaskTable` | 고정 주기 |
+| Publish | `/fleet/zone_grants` | `amr_msgs/msg/ZoneGrant` | 요청에 대한 답, 대기 로봇 차례가 오면. `lease_expiry`는 노드 시계 기준 |
 
 가짜 로봇(`fake_robot`)과 동작 규칙은 [amr_fleet_manager README](../src/fleet/amr_fleet_manager/README.md)에 있다.
 
