@@ -96,6 +96,26 @@ ros2 service call /amr_01/localization_eval/save std_srvs/srv/Trigger   # 중간
 ros2 run amr_localization eval_offline <결과 폴더> --robot amr_01   # 구간 기준을 바꿔 다시 계산할 때도
 ```
 
+## Kidnapped 감지·복구 노드 (`kidnap_recovery`)
+
+> 상태: 착수. 감지는 동작, 복구는 통로 방향 위치를 아직 못 찾는다. 설계·실험·판정 기준은 [localization.md 4절](../../../docs/algorithms/localization.md#4-kidnapped-robot-복구).
+
+```bash
+ros2 run amr_localization kidnap_recovery --ros-args -r __ns:=/amr_01 -p use_sim_time:=true \
+    -p events_file:=/tmp/kidnap_events.csv
+```
+
+| 파라미터 | 기본값 | 설명 |
+| --- | --- | --- |
+| `lost_ratio`, `lost_checks` | 0.5, 3 | 스캔-지도 일치율이 이 값 아래로 연속 몇 번이면 위치 상실 (2 Hz) |
+| `ok_ratio`, `ok_std_m`, `ok_checks` | 0.8, 0.15, 3 | 수렴 판정 (일치율, AMCL 위치 표준편차) |
+| `local_first`, `local_std_m`, `local_std_yaw` | true, 1.0, 0.8 | 1차 시도는 마지막 확실한 자세 주변 국소 재초기화 |
+| `settle_s`, `allow_rotate`, `rotate_s`, `max_attempts` | 10, true, 15, 3 | 시도마다 정지 갱신 → 제자리 회전 |
+| `events_file` | `''` | 감지·재초기화·복구 시각 CSV |
+
+- 회전 중에만 `cmd_vel`을 낸다. 다른 노드와의 `cmd_vel` 우선순위는 아직 정하지 않았다(localization.md 4-5절).
+- 상태는 `kidnap_recovery/state`(std_msgs/String)로 낸다.
+
 ## 파라미터
 
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
