@@ -1,6 +1,6 @@
 # research2
 
-연구 2 (후보 A: 적재 질량 RL, 연우 주도). 주제와 실험 설계는 [명세서 4장](../../docs/project-spec.md)을 따른다.
+연구 2 (후보 A: 적재 질량 RL, 연우 주도). 주제와 실험 설계는 [명세서 4장](../../docs/project-spec.md)을 따른다. 반복 수·통계 방법·판정 기준은 [실험 설계](experiment_design.md)에 둔다.
 
 ## 학습 환경
 
