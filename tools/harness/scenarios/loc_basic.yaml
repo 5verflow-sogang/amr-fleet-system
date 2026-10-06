@@ -4,16 +4,20 @@
 name: loc_basic
 num_robots: 1
 use_sim_time: true
-# 반복 i의 seed = seed_base + i. 엔코더 노이즈 seed로 쓴다 (0은 "매번 무작위"라 쓰지 않는다)
+# 반복 i의 seed = seed_base + i. 엔코더 노이즈·동적 장애물에 같은 seed를 넘긴다 (README "seed 규칙")
 seed_base: 1
 timeout_s: 300
 params:
   map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v0.yaml
   # world에서 본 map 원점 (지도 인계 때 받은 매핑 시작 자세)
   map_origin: "[0.0, 1.5, 0.0]"
+  # 동적 장애물 (amr_gazebo #58). 켜면 obstacle_seed로 같은 seed를 쓴다
+  dynamic_obstacles: "false"
 processes:
   - name: sim
-    cmd: ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false publish_odom_tf:=false enable_camera:=false
+    cmd: >-
+      ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false publish_odom_tf:=false enable_camera:=false
+      dynamic_obstacles:={dynamic_obstacles} obstacle_seed:={seed}
     ready_topic: /amr_01/scan_raw
   - name: odometry
     cmd: ros2 launch amr_odometry odometry.launch.py encoder_seed:={seed}

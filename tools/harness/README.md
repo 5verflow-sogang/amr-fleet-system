@@ -39,6 +39,16 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 
 시나리오 파일은 `processes`(띄울 명령, `ready_topic`으로 준비 확인, `stop_first`·`wait_files`로 기록 노드를 먼저 끝냄), `driver`(`segments`: `cmd_vel` 구간 / `wait`: 시간만 기다림), `postprocess`(예: `fleet_metrics`), `cleanup`으로 이루어진다. 명령 안의 `{run_dir}`, `{seed}`, `params` 이름은 실행마다 채워진다.
 
+**seed 규칙** (하연 제안, 10/6)
+
+1. 하네스는 seed를 항상 직접 넘기고 1부터 시작한다. N회 반복이면 1, 2, …, N. 0은 넘기지 않는다(`--seed-base`가 1 미만이면 거부).
+2. 실행 하나에 seed 하나. 그 실행의 모든 무작위 요소(작업 일정, 통신 손실, 엔코더 노이즈, 동적 장애물)에 같은 값을 넘긴다. 패키지마다 내부 난수열을 따로 만들어 서로 얽히지 않는다.
+3. 0은 손으로 돌릴 때의 기본값으로 남긴다. 패키지마다 0의 뜻이 다르다(`amr_odometry`·`amr_gazebo`는 매번 무작위, Fleet 쪽은 고정값). 하네스 결과에는 0이 나오지 않는다.
+4. 튜닝·예비 실험은 `--seed-base 1001`, 본 실험(보고·KPI 판정)은 1~N. 튜닝에 쓴 seed로 성능을 보고하면 결과가 좋게 치우친다(명세서 4장 연구 2와 같은 원칙).
+5. `meta.json`의 `seed`에 실제로 넘긴 값을 남긴다.
+
+seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도 위치 오차 RMSE가 최대 2 cm 달랐다(10/6, AMCL 파티클 필터·Gazebo 센서 노이즈·메시지 도착 순서 등). 그래서 같은 seed가 "같은 조건"은 보장하지만 "같은 결과"는 보장하지 않고, 판정은 N회 반복의 신뢰구간으로 한다.
+
 **요약** (`summary_<시나리오>-<라벨>_<시각>.md`): 지표마다 실행별 값의 평균·표준편차·범위와 95% 신뢰구간. KPI가 있는 지표는 CI 상한까지 기준 안이면 PASS, 평균만 기준 안이면 MARGINAL, 아니면 FAIL이다.
 
 주의:

@@ -51,7 +51,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description='시나리오 N회 반복 실행 + 실행 단위 신뢰구간')
     ap.add_argument('scenario', help='scenarios/<이름>.yaml의 이름 또는 파일 경로')
     ap.add_argument('-n', '--repeats', type=int, default=10)
-    ap.add_argument('--seed-base', type=int, default=None, help='반복 i의 seed = seed_base + i (기본: 시나리오 값)')
+    ap.add_argument('--seed-base', type=int, default=None,
+                    help='반복 i의 seed = seed_base + i (기본 1 = 본 실험. 튜닝·예비 실험은 1001)')
     ap.add_argument('--label', default='', help='조건 이름. 요약에서 같은 라벨끼리 묶는다')
     ap.add_argument('--set', action='append', help='시나리오 params 덮어쓰기 (이름=값, 여러 번)')
     ap.add_argument('--config', action='append', default=[],
@@ -64,6 +65,9 @@ def main(argv=None) -> int:
     scenario = load_scenario(args.scenario)
     params = {**(scenario.get('params') or {}), **parse_set(args.set), 'label': args.label}
     seed_base = args.seed_base if args.seed_base is not None else int(scenario.get('seed_base', 1))
+    if seed_base < 1:
+        # 0은 패키지마다 뜻이 다르다(매번 무작위 / 고정값). 하네스는 0을 넘기지 않는다 (README "seed 규칙")
+        ap.error('--seed-base는 1 이상이어야 한다 (튜닝 실험은 1001부터)')
     stamp = time.strftime('%Y%m%d-%H%M%S')
     out = Path(args.out)
     run_dirs = []
