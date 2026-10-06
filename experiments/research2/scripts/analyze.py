@@ -8,7 +8,9 @@ DWA(B1·B2)는 시드 k의 평가 목록 k로 평가한 결과를 시드 k로 �
 
 열 이름은 scripts/evaluate.py(#74)를 따른다. 아직 확정되지 않은 열은 없어도 동작한다:
 - train_seed: 없으면 run 이름(<variant>_s<seed>_<시각>)에서 읽는다
-- popout_avoidable: 없으면 모든 에피소드를 충돌률 분모에 넣고 경고한다
+- popout_appeared: 충돌률 분모(돌발 장애물이 나타난 S1 에피소드 전체, #72 연우 리뷰). 없으면 전체를 넣고 경고한다
+- popout_stoppable: 분모에서 빼지 않고 충돌 원인을 나누는 데만 쓴다 ("설 수 있었는데 충돌" / "너무 빨라 못 섬").
+  출현 순간의 실제 속도로 계산하므로 정책마다 달라져, 분모에서 빼면 너무 빨리 달려 생긴 충돌이 통계에서 사라진다
 - mass_obs: true / none / scale:1.3 / scale:0.7 또는 exact / unknown / plus30 / minus30
 """
 
@@ -50,11 +52,11 @@ def normalize(row: dict, warn: set) -> dict:
     info = INFO_ALIASES.get(str(row.get('mass_obs', 'true')).lower())
     if info is None:
         warn.add(f"알 수 없는 mass_obs: {row.get('mass_obs')}")
-    if 'popout_avoidable' in row and row['popout_avoidable'] not in ('', None):
-        avoidable = truthy(row['popout_avoidable'])
+    if 'popout_appeared' in row and row['popout_appeared'] not in ('', None):
+        appeared = truthy(row['popout_appeared'])
     else:
-        warn.add('popout_avoidable 열이 없어 모든 에피소드를 충돌률 분모에 넣었다')
-        avoidable = True
+        warn.add('popout_appeared 열이 없어 모든 에피소드를 충돌률 분모에 넣었다')
+        appeared = True
     return {
         'variant': variant,
         'seed': int(seed) if str(seed).strip() != '' else None,
@@ -64,7 +66,8 @@ def normalize(row: dict, warn: set) -> dict:
         'collision': truthy(row.get('collision')),
         'success': truthy(row.get('success')),
         'time_s': float(row['time_s']) if row.get('time_s') not in ('', None) else math.nan,
-        'avoidable': avoidable,
+        'appeared': appeared,
+        'stoppable': truthy(row.get('popout_stoppable')),
     }
 
 
@@ -86,7 +89,8 @@ def group(rows: list[dict]) -> dict:
 
 
 def collision_rate(eps: list[dict]) -> Optional[float]:
-    den = [e for e in eps if e['avoidable']]
+    """돌발 장애물이 나타난 에피소드 중 충돌 비율."""
+    den = [e for e in eps if e['appeared']]
     return sum(e['collision'] for e in den) / len(den) if den else None
 
 
@@ -214,8 +218,12 @@ def seed_table(rows: list[dict]) -> list[dict]:
     for (v, info, mass, seed), eps in sorted(g.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2],
                                                                          -1 if kv[0][3] is None else kv[0][3])):
         times = [e['time_s'] for e in eps if e['success']]
+        appeared = [e for e in eps if e['appeared']]
         out.append({'variant': v, 'info': info, 'mass': mass, 'seed': seed, 'episodes': len(eps),
-                    'avoidable': sum(e['avoidable'] for e in eps), 'collision_rate': collision_rate(eps),
+                    'popout_appeared': len(appeared), 'collision_rate': collision_rate(eps),
+                    # 충돌 원인: 출현 순간 설 수 있었는데 충돌 / 너무 빨라 못 섬
+                    'collision_stoppable': sum(e['collision'] and e['stoppable'] for e in appeared),
+                    'collision_too_fast': sum(e['collision'] and not e['stoppable'] for e in appeared),
                     'success_rate': success_rate(eps),
                     'arrival_time_s': sum(times) / len(times) if times else None})
     return out
@@ -239,7 +247,8 @@ def to_markdown(results: list[dict], warn: set) -> str:
         ci = '—' if r['ci_low'] is None else f"{fmt(r['ci_low'])} ~ {fmt(r['ci_high'])}"
         lines.append(f"| {r['hypothesis']} | {r['condition']} | {r['n']} | {fmt(r['mean'])} | {ci} | "
                      f"{r['bound']:g} | {verdict} | {holm_mark} |")
-    lines += ['', '충돌률은 popout_avoidable 에피소드만 분모로 쓴다. 도착 시간은 두 비교군이 모두 성공한 같은 시나리오끼리 비교한다.']
+    lines += ['', '충돌률 분모는 돌발 장애물이 나타난 에피소드 전체다(popout_appeared). 충돌 원인(설 수 있었는데 / 너무 빨라)은 per_seed.csv에 있다. '
+              '도착 시간은 두 비교군이 모두 성공한 같은 시나리오끼리 비교한다.']
     return '\n'.join(lines) + '\n'
 
 

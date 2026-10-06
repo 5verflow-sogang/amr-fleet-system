@@ -12,11 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import analyze  # noqa: E402
 
 FIELDS = ['run', 'variant', 'mass_obs', 'episode', 'payload_kg', 'collision', 'success', 'time_s',
-          'popout_avoidable']
+          'popout_appeared', 'popout_stoppable']
 
 
 def write_csv(path, rates, seeds=range(10), episodes=100, masses=(10.0, 25.0), mass_obs='true', times=None,
-              avoidable_rate=1.0):
+              appeared_rate=1.0):
     """rates: {variant: 충돌 확률}. 같은 에피소드 번호 = 같은 시나리오."""
     rng = random.Random(7)
     with path.open('w', newline='') as f:
@@ -30,7 +30,8 @@ def write_csv(path, rates, seeds=range(10), episodes=100, masses=(10.0, 25.0), m
                         w.writerow({'run': f'{variant}_s{s}_20261010', 'variant': variant, 'mass_obs': mass_obs,
                                     'episode': ep, 'payload_kg': mass, 'collision': coll, 'success': not coll,
                                     'time_s': (times or {}).get(variant, 15.0) + rng.gauss(0, 0.2),
-                                    'popout_avoidable': rng.random() < avoidable_rate})
+                                    'popout_appeared': rng.random() < appeared_rate,
+                                    'popout_stoppable': not coll or rng.random() < 0.5})
 
 
 def by_cond(results, prefix):
@@ -63,7 +64,7 @@ def test_dwa_without_seed_is_fixed_value(tmp_path):
             for ep in range(200):
                 w.writerow({'run': 'b1_dwa', 'variant': 'b1', 'mass_obs': 'true', 'episode': ep,
                             'payload_kg': mass, 'collision': ep < 60, 'success': ep >= 60, 'time_s': 15,
-                            'popout_avoidable': True})
+                            'popout_appeared': True, 'popout_stoppable': True})
     rows, _ = analyze.load([tmp_path / 'p.csv', tmp_path / 'b.csv'])
     h1 = [r for r in analyze.judge(rows) if r['hypothesis'] == 'H1']
     assert all(r['n'] == 10 and r['mean'] == pytest.approx(0.05 - 0.30, abs=0.03) for r in h1)
@@ -85,15 +86,22 @@ def test_h2b_degradation_and_h3_arrival(tmp_path):
     assert nonin[0]['bound'] == pytest.approx(0.02)
 
 
-def test_avoidable_denominator_and_missing_column_warning(tmp_path):
-    rows = [analyze.normalize({'run': 'proposed_s3_x', 'variant': 'proposed', 'mass_obs': 'true', 'episode': '0',
-                               'payload_kg': '30', 'collision': 'True', 'success': 'False', 'time_s': '30',
-                               'popout_avoidable': 'False'}, set())]
-    assert rows[0]['seed'] == 3 and analyze.collision_rate(rows) is None   # 피할 수 없던 에피소드는 분모에서 빠진다
+def test_denominator_is_appeared_and_stoppable_only_splits_cause(tmp_path):
+    def row(appeared, stoppable, collision):
+        return analyze.normalize({'run': 'proposed_s3_x', 'variant': 'proposed', 'mass_obs': 'true', 'episode': '0',
+                                  'payload_kg': '25', 'collision': str(collision), 'success': str(not collision),
+                                  'time_s': '20', 'popout_appeared': str(appeared),
+                                  'popout_stoppable': str(stoppable)}, set())
+    rows = [row(True, False, True), row(True, True, False), row(False, True, False)]
+    assert rows[0]['seed'] == 3
+    # 못 멈출 속도로 달려 난 충돌도 분모에 남는다 (1/2). 장애물이 안 나온 에피소드만 빠진다
+    assert analyze.collision_rate(rows) == pytest.approx(0.5)
+    t = analyze.seed_table(rows)[0]
+    assert t['popout_appeared'] == 2 and t['collision_too_fast'] == 1 and t['collision_stoppable'] == 0
     warn = set()
     analyze.normalize({'run': 'r2_s1_x', 'variant': 'r2', 'mass_obs': 'scale:1.3', 'episode': '0',
                        'payload_kg': '0', 'collision': 'False', 'success': 'True', 'time_s': '10'}, warn)
-    assert any('popout_avoidable' in w for w in warn)
+    assert any('popout_appeared' in w for w in warn)
 
 
 def test_holm():
