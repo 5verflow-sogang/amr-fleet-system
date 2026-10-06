@@ -94,9 +94,21 @@ jobs:
             --cache-to "type=registry,ref=${DOCKER_REPO}/base:buildcache,mode=max" \
             -t amr-fleet-system:latest --load .
 
-      - name: Run smoke scenario
+      # 실행 전에 쓴다. 시나리오 안의 fleet_metrics가 observation_cutoff를 덧붙인다 (하네스 README meta.json)
+      - name: Write meta.json
         run: |
           mkdir -p "$RUN_DIR"
+          cat > "$RUN_DIR/meta.json" <<EOF
+          {"git_sha": "$(git rev-parse --short HEAD)", "ref": "${{ github.event.inputs.ref }}",
+           "scenario": "smoke_fleet", "repeat": 1, "seed": 0,
+           "fault": {"delay_ms": ${{ github.event.inputs.delay_ms }}, "loss_pct": 0, "direction": "server_to_robot",
+                     "kill_at_s": -1, "restart_after_s": -1},
+           "num_robots": 5, "assignment_algorithm": "nearest", "cost_fn": "euclidean",
+           "host": "$(nproc) vCPU $(free -g | awk '/Mem/ {print $2}') GiB, ${TEMPLATE}"}
+          EOF
+
+      - name: Run smoke scenario
+        run: |
           # TODO(하네스): tools/harness 진입 스크립트로 교체
           docker compose run --rm --no-deps \
             -v "$PWD/tools:/tools:ro" -v "$RUN_DIR:/results" \
@@ -106,11 +118,6 @@ jobs:
       - name: Upload results
         if: always()
         run: |
-          cat > "$RUN_DIR/meta.json" <<EOF
-          {"git_sha": "$(git rev-parse --short HEAD)", "ref": "${{ github.event.inputs.ref }}",
-           "scenario": "smoke_fleet", "fault": {"delay_ms": ${{ github.event.inputs.delay_ms }}, "loss_pct": 0},
-           "num_robots": 5, "host": "$(nproc) vCPU $(free -g | awk '/Mem/ {print $2}') GiB, ${TEMPLATE}"}
-          EOF
           gcloud storage cp -r "$RUN_DIR" "gs://${RESULTS_BUCKET}/runs/"
           echo "결과: gs://${RESULTS_BUCKET}/runs/$(basename "$RUN_DIR")" >> "$GITHUB_STEP_SUMMARY"
 

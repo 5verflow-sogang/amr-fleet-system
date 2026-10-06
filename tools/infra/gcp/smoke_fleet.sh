@@ -1,6 +1,7 @@
 #!/bin/bash
 # 러너 스모크 시나리오 (컨테이너 안에서 실행). 하네스(tools/harness)가 나오기 전 러너 확인용이다.
-# Fleet 서버 + 장애 주입기 + 가짜 로봇 5대 + 작업 생성기를 정해진 시간 돌리고 /fleet 토픽을 rosbag으로 남긴다.
+# Fleet 서버 + 장애 주입기 + 가짜 로봇 5대 + 작업 생성기를 정해진 시간 돌리고 /fleet 토픽을 rosbag으로 남긴 뒤
+# fleet_metrics로 지표 CSV를 만든다.
 # Gazebo는 띄우지 않는다.
 #
 #   bash smoke_fleet.sh <결과 폴더> [시간(s)=120] [delay_ms=100]
@@ -40,6 +41,8 @@ for pid in "${pids[@]}"; do kill -INT "$pid" 2>/dev/null || true; done
 wait || true
 
 ros2 bag info "$out/rosbag" | tee "$out/rosbag_info.txt"
+# D5 형식 Fleet 지표: fleet_latency.csv, response_time.csv, meta.json observation_cutoff
+ros2 run amr_fleet_manager fleet_metrics "$out/rosbag" --out "$out" --delay-ms "$delay_ms"
 echo "smoke done: duration=${duration}s delay_ms=${delay_ms}" | tee "$out/summary.txt"
 # 할당이 한 번도 안 일어났으면 실패로 본다 (헤더 한 줄만 있으면 실패)
 test "$(wc -l < "$out/assignments.csv")" -gt 1

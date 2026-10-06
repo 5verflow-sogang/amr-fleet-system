@@ -29,7 +29,7 @@ GitHub Actions (fleet-test.yml, 수동 실행)
 | `runner.tf` | 인스턴스 템플릿 `fleet-runner` (Spot, 최대 실행 시간 후 자동 삭제) |
 | `budget.tf` | 월 예산 알림 50/90/100% (`billing_account_id`를 줄 때만) |
 | `startup.sh` | VM 시작 스크립트 |
-| `smoke_fleet.sh` | 스모크 시나리오: Fleet 서버 + 장애 주입기 + 가짜 로봇 5대 + 작업 생성기, `/fleet` 토픽 rosbag |
+| `smoke_fleet.sh` | 스모크 시나리오: Fleet 서버 + 장애 주입기 + 가짜 로봇 5대 + 작업 생성기, `/fleet` 토픽 rosbag → `fleet_metrics`로 `fleet_latency.csv`·`response_time.csv` |
 
 ### 비용 안전장치
 
@@ -82,7 +82,7 @@ terraform output                          # 2번에 넣을 값
 Actions → Fleet Regression Test → Run workflow. `ref`에 브랜치나 `refs/pull/<번호>/head`를 넣는다.
 
 - 포크 PR의 `pull_request` 이벤트는 GCP 로그인 토큰을 받지 못해 PR 라벨로 자동 실행하지 않는다.
-- 결과는 `gs://amr-fleet-results/runs/<VM 이름>/`: `rosbag/`, `assignments.csv`, `tasks.json`, `meta.json`, 각 노드 로그.
+- 결과는 `gs://amr-fleet-results/runs/<VM 이름>/`: `rosbag/`, `fleet_latency.csv`, `response_time.csv`, `assignments.csv`, `tasks.json`, `meta.json`(`fault.direction`, `observation_cutoff` 포함), 각 노드 로그.
 
 ```bash
 gcloud storage ls gs://amr-fleet-results/runs/
