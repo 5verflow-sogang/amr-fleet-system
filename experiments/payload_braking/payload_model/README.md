@@ -13,6 +13,13 @@ model = BrakingModel()  # 지수 URDF(#44) 기본값
 distance = model.braking_distance_m(v_mps=1.0, payload_kg=10.0)  # 급정지(a_cmd 없음)
 ```
 
+RL 환경의 한 제어 스텝(연우 #51 `step(v, w, v_cmd, w_cmd, m, dt) -> (v', w')` 모양):
+
+```python
+v, w = model.step(v_mps=1.0, w_radps=0.0, v_cmd_mps=0.0, w_cmd_radps=0.0,
+                   payload_kg=10.0, dt_s=0.1)  # -> (0.8458, 0.0)
+```
+
 설치: `pip install -e experiments/payload_braking/payload_model` (또는 그 디렉토리 안에서 `pip install -e .`).
 
 ## 식
@@ -29,7 +36,37 @@ a     = min(a_cmd, a_max)              # a_cmd 없으면(None) a_max 그대로 -
 - `a_cmd`(명령 감속 한계)를 주면 "normal"(소프트웨어로 감속을 제한하는) 정지,
   안 주면(`None`) 토크 한계까지 그대로 쓰는 "emergency" 급정지다.
 - `t_delay`는 명령이 나간 순간부터 실제로 감속이 시작되기까지의 반응 지연이다
-  (아래 "파라미터 근거" 참고).
+  (아래 "파라미터 근거" 참고). **`step()`에는 지연을 안 쓴다** — 아래 "step()"
+  절 참고.
+
+### step(): RL 환경의 한 제어 스텝
+
+```
+a_limit = min(a_max(질량), a_cmd)      # a_cmd 없으면 a_max 그대로
+v' = clip(v + clip(v_cmd - v, -a_limit*dt, a_limit*dt), -2.0, 2.0)
+w' = clip(w + clip(w_cmd - w, -3.2*dt, 3.2*dt), -1.5, 1.5)   # 질량 반영 안 함(D7)
+```
+
+`braking_distance_m`/`time_to_reach_speed_s`는 "한 번에 멈출 때까지 걸리는
+거리·시간"을 닫힌 식으로 구하지만, `step()`은 RL 환경이 **매 타임스텝마다**
+부르는 용도라 "지금 한 스텝만큼만" (v, w)를 바꾼다 - 가속·감속 모두 같은 한계
+(`max_acceleration_mps2`)를 쓰고, 각속도는 질량과 무관하게 고정 한계
+(`angular_accel_max_radps2`, D7 v0 합의)로 바뀐다.
+
+**`step()`은 지연(`t_delay`)이 없다.** `t_delay`는 "명령이 나가고 토크가 실제로
+올라오기까지"의 반응 지연인데, 매 스텝 호출되는 `step()`에서 이걸 표현하려면
+과거 명령을 몇 스텝 들고 있어야 해서(명령 버퍼) 이 함수의 범위를 벗어난다.
+**지연이 필요하면 RL 환경 쪽에서 명령을 `t_delay_s`(기본 0.022 s)만큼 버퍼에
+쌓아 몇 스텝 늦게 `step()`에 넘기는 방식으로 처리한다.**
+
+### #51 환경과의 호환성
+
+이 작성 시점(#51 `feat/rl-env` 기준)에는 `experiments/research2/`에 uv 환경
+설정과 설치 확인용 `smoke_ppo.py`(CartPole)만 있고, AMR용 `gymnasium.Env`나
+실제 `step()` 호출부는 아직 없다 — 그래서 "거기서 쓰는 단위·인자 순서"를
+코드로 대조할 대상이 없다. `step(v, w, v_cmd, w_cmd, payload_kg, dt)` 순서와
+단위(m/s, rad/s, kg, s)는 이 작업 지시에 적힌 그대로 구현했다. 실제 환경
+코드가 올라오면 인자 순서·단위가 이것과 맞는지 다시 확인해야 한다.
 
 ## 파라미터 근거
 
@@ -40,7 +77,10 @@ a     = min(a_cmd, a_max)              # a_cmd 없으면(None) a_max 그대로 -
 | `robot_mass_kg` | 28.9 kg | #44 기준: 몸체 25 + 바퀴 1.5×2 + 캐스터 0.3×2 + 센서(LiDAR 0.2+카메라 0.1). **적재 제외** |
 | `floor_friction_mu` | 0.7 | #42 `world/flat_ground.sdf`·물류센터 월드 바닥 마찰 계수(둘 다 0.7로 같음) |
 | `gravity_mps2` | 9.81 | 표준 중력가속도 |
-| `t_delay_s` | 0.022 s | 아래 "t_delay 보정" |
+| `t_delay_s` | 0.022 s | 아래 "t_delay 보정". `step()`에는 안 씀 |
+| `linear_velocity_max_mps` | 2.0 m/s | `nav2_params.yaml` `FollowPath.max_vel_x`·#44 URDF `max_linear_velocity`와 동일. `step()`에서만 씀 |
+| `angular_velocity_max_radps` | 1.5 rad/s | `max_vel_theta`·URDF `max_angular_velocity`와 동일. `step()`에서만 씀 |
+| `angular_accel_max_radps2` | 3.2 rad/s² | `acc_lim_theta`·URDF `max_angular_acceleration`와 동일. `step()`에서만 씀, 질량 반영 안 함(D7) |
 
 **#42 최소 모델(`experiments/payload_braking/model/`)의 질량은 28 kg**(몸체 25 +
 바퀴 1.5×2, 캐스터·센서 질량은 이론값 계산에서 뺐다)로 지수 모델(28.9 kg)보다
