@@ -2,7 +2,7 @@
 
 Docker로 시스템을 빌드·실행·종료하는 방법.
 
-> 현재 `sim`, `robots`, `fleet`, `perception`은 자리만 잡아 둔 상태다. 컨테이너는 뜨지만 TODO 메시지를 출력하고 대기만 한다. 각 패키지의 launch 파일이 준비되면 [docker-compose.yml](../docker-compose.yml)의 `command`를 교체한다.
+> 현재 `sim`, `robots`, `perception`은 자리만 잡아 둔 상태다(`fleet`은 동작한다). 컨테이너는 뜨지만 TODO 메시지를 출력하고 대기만 한다. 각 패키지의 launch 파일이 준비되면 [docker-compose.yml](../docker-compose.yml)의 `command`를 교체한다.
 
 ## 준비
 
@@ -15,10 +15,11 @@ Docker로 시스템을 빌드·실행·종료하는 방법.
 | --- | --- | --- |
 | `sim` | Gazebo 시뮬레이터 (창고 월드) | O |
 | `robots` | 로봇 스폰, 로봇별 위치 추정·주행 | O |
-| `fleet` | 작업 할당, 다중 로봇 교통 관리 | O |
+| `fleet` | Fleet 서버(작업 할당·구역 허가) + 장애 주입기 | O |
 | `perception` | 카메라 기반 객체 인식 | O |
 | `dev` | 개발용 셸 | X (`run`으로 실행) |
 | `gui`, `gui-proxy` | 브라우저로 보는 RViz2 | X (`--profile gui`) |
+| `fake-robots` | 가짜 로봇 5대 (Gazebo·Nav2 없이 Fleet 흐름만). `robots`와 같이 띄우지 않는다 | X (`--profile fake`) |
 
 ## 빌드
 
@@ -34,6 +35,28 @@ docker compose ps             # 상태 확인
 docker compose logs -f fleet  # 서비스 로그 보기
 docker compose down           # 종료
 ```
+
+### Fleet 서버 (`fleet`)
+
+시작할 때 Fleet 패키지(`amr_msgs`, `amr_fleet_core`, `amr_fleet_manager`, `amr_fault_injector`)를 빌드한 뒤 Fleet 서버와 장애 주입기를 띄운다. 첫 시작은 빌드로 1~2분 걸린다. 둘 중 하나가 죽으면 컨테이너가 끝나므로 `docker compose ps`로 확인한다.
+
+| 환경 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `FLEET_ALGORITHM` | `nearest` | 할당 알고리즘: `nearest` / `load_balance` / `hungarian` |
+| `FAULT_DELAY_MS` | `100.0` | 서버 → 로봇 지연 (원 명세서 "통신 지연 100ms 반영") |
+| `FAULT_LOSS_PCT` | `0.0` | 서버 → 로봇 손실률 (%) |
+| `FAULT_SEED` | `0` | 손실 난수 seed |
+
+```bash
+FAULT_DELAY_MS=200 FLEET_ALGORITHM=hungarian docker compose up -d fleet
+docker compose logs -f fleet
+# Gazebo 없이 Fleet 흐름만 볼 때: 가짜 로봇 5대 + 작업 하나
+docker compose --profile fake up -d fake-robots
+docker compose exec fleet bash -c 'source /ros2_ws/install/setup.bash && ros2 topic pub --once /fleet/task_requests amr_msgs/msg/Task "{task_id: t1, task_type: 0, pickup_pose: {position: {x: 5.0}}, dropoff_pose: {position: {x: 20.0}}}"'
+```
+
+- 로봇은 장애 주입기를 거친 `/amr_0N/fleet/*`(네임스페이스 안 상대 이름 `fleet/*`)를 구독한다. 자세한 동작은 [amr_fleet_manager README](../src/fleet/amr_fleet_manager/README.md).
+- 서버를 강제종료하는 실험 조건은 `fleet_manager.launch.py`의 `kill_at_s`·`restart_after_s` 인자로 건다(하네스가 쓴다).
 
 ### GPU 사용 (NVIDIA)
 
