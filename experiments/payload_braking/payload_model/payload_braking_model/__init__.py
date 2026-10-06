@@ -3,6 +3,7 @@ from .model import (
     BrakingModelParams,
     braking_distance_m,
     max_acceleration_mps2,
+    step,
     time_to_reach_speed_s,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "BrakingModelParams",
     "braking_distance_m",
     "max_acceleration_mps2",
+    "step",
     "time_to_reach_speed_s",
 ]

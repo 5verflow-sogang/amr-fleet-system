@@ -38,7 +38,14 @@ class BrakingModelParams:
     gravity_mps2: float = 9.81
     # #42 results.csv 급정지(emergency) 40회 실측 평균 오차로 맞췄다(README
     # "t_delay 보정" 절 참고). v=1 m/s 기준이라 값 자체가 곧 보정 거리[m]다.
+    # step()에는 안 쓴다 - README "step()은 지연이 없다" 절 참고.
     t_delay_s: float = 0.022
+
+    # step() 전용 한계값. nav2_params.yaml(FollowPath)·#44 지수 URDF와 동일하다.
+    linear_velocity_max_mps: float = 2.0
+    angular_velocity_max_radps: float = 1.5
+    # 각가속은 D7(v0 합의)에 따라 질량을 반영하지 않는 고정값이다.
+    angular_accel_max_radps2: float = 3.2
 
 
 def max_acceleration_mps2(
@@ -85,6 +92,57 @@ def time_to_reach_speed_s(
     return params.t_delay_s + v_mps / a
 
 
+def _clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+def step(
+    v_mps: float,
+    w_radps: float,
+    v_cmd_mps: float,
+    w_cmd_radps: float,
+    payload_kg: float,
+    dt_s: float,
+    params: BrakingModelParams = BrakingModelParams(),
+    a_cmd_mps2: Optional[float] = None,
+):
+    """RL 환경의 한 제어 스텝: (v, w)를 (v_cmd, w_cmd) 쪽으로 dt만큼만 바꾼다.
+
+    `연우의 2D RL 환경(#51)`이 쓰는 모양 `step(v, w, v_cmd, w_cmd, m, dt) ->
+    (v', w')`을 그대로 따른다. 지연(`t_delay_s`)은 안 쓴다 - README "step()은
+    지연이 없다" 절 참고.
+
+    선속도: 이번 스텝에 낼 수 있는 가속·감속 한계는
+    `min(max_acceleration_mps2(payload_kg, params), a_cmd_mps2)`다(`a_cmd_mps2`가
+    `None`이면 토크 한계 그대로) - 가속·감속 모두 같은 한계를 쓴다(실제 바퀴는
+    앞뒤로 같은 토크를 낼 수 있다). `v`를 그 한계 안에서 `v_cmd` 쪽으로만
+    옮기고, 마지막에 `±linear_velocity_max_mps`로 자른다.
+
+    각속도: 질량을 반영하지 않는다(D7 v0 합의) - `angular_accel_max_radps2`
+    (고정값)로 `w`를 `w_cmd` 쪽으로 옮기고 `±angular_velocity_max_radps`로 자른다.
+
+    반환: `(v_new, w_new)` 튜플.
+    """
+    a_limit = max_acceleration_mps2(payload_kg, params)
+    if a_cmd_mps2 is not None:
+        a_limit = min(a_limit, a_cmd_mps2)
+    max_dv = a_limit * dt_s
+    dv = _clamp(v_cmd_mps - v_mps, -max_dv, max_dv)
+    v_new = _clamp(
+        v_mps + dv, -params.linear_velocity_max_mps, params.linear_velocity_max_mps
+    )
+
+    max_dw = params.angular_accel_max_radps2 * dt_s
+    dw = _clamp(w_cmd_radps - w_radps, -max_dw, max_dw)
+    w_new = _clamp(
+        w_radps + dw,
+        -params.angular_velocity_max_radps,
+        params.angular_velocity_max_radps,
+    )
+
+    return v_new, w_new
+
+
 class BrakingModel:
     """RL 환경에서 쓰기 편하게 params를 묶어 둔 얇은 래퍼.
 
@@ -108,3 +166,18 @@ class BrakingModel:
         self, v_mps: float, payload_kg: float, a_cmd_mps2: Optional[float] = None
     ):
         return time_to_reach_speed_s(v_mps, payload_kg, self.params, a_cmd_mps2)
+
+    def step(
+        self,
+        v_mps: float,
+        w_radps: float,
+        v_cmd_mps: float,
+        w_cmd_radps: float,
+        payload_kg: float,
+        dt_s: float,
+        a_cmd_mps2: Optional[float] = None,
+    ):
+        return step(
+            v_mps, w_radps, v_cmd_mps, w_cmd_radps, payload_kg, dt_s,
+            self.params, a_cmd_mps2,
+        )
