@@ -86,7 +86,7 @@
 
 열 이름은 #74 `evaluate.py`를 따른다. `train_seed`·`scenario_seed`는 #74에서 추가된다.
 
-`meta.json`: `git_sha`, `arm`, `train_seed`, 설정 파일 경로와 해시(`env_v0.toml`), 체크포인트 경로, 총 학습 스텝, 평가 시나리오 시드 범위.
+`meta.json`: `git_sha`, `variant`, `train_seed`, 설정 파일 경로와 해시(`env_v0.toml`), 체크포인트 경로, 총 학습 스텝, 평가 시나리오 시드 범위.
 
 ## 6. 통계 방법
 
