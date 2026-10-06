@@ -2,6 +2,9 @@
 
 계획 경로(/<ns>/plan)와 현재 위치(map_frame → base_frame TF)로 구역 경계까지 남은 거리를 계산해
 ZoneRequest를 보내고, 허가 전까지는 cmd_vel을 감속·정지시킨다. 흐름은 README '동작 규칙' 참고.
+
+cmd_vel 체인에서의 위치는 README 'cmd_vel 체인' 절 참고 — 최종 cmd_vel 발행은 이 노드 몫이
+아니다 (안전 노드가 가로채는 게 팀 결정, project-spec.md '안전 정지 책임' 절).
 """
 
 from __future__ import annotations
@@ -38,8 +41,12 @@ class ZoneClientNode(Node):
         # zone_requests(로봇 → 서버)는 중계되지 않는 절대 토픽이다 (fleet_manager_node.py, api.md 4-2절)
         zone_grants_topic = p('zone_grants_topic', 'fleet/zone_grants').value
         zone_requests_topic = p('zone_requests_topic', '/fleet/zone_requests').value
+        # cmd_vel 체인: Nav2 controller_server(향후 velocity_smoother)의 출력을 받아 구역 상한만 걸고,
+        # amr_safety에 넘긴다. 최종 cmd_vel 발행(가로채기)은 안전 노드의 몫이다 (9/28 회의,
+        # project-spec.md '안전 정지 책임' 절, api.md 4-4절) — 그래서 출력 기본값을 'cmd_vel'로 두지
+        # 않는다. amr_safety가 구현되기 전에는 amr_bringup이 이 토픽을 로봇 cmd_vel로 임시 리맵한다
         cmd_vel_in_topic = p('cmd_vel_in_topic', 'cmd_vel_nav').value
-        cmd_vel_out_topic = p('cmd_vel_out_topic', 'cmd_vel').value
+        cmd_vel_out_topic = p('cmd_vel_out_topic', 'cmd_vel_zone_limited').value
         update_rate_hz = p('update_rate_hz', 10.0).value
 
         zones = load_zone_configs(zones_file)

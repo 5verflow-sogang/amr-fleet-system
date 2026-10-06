@@ -12,8 +12,8 @@
 | Publish | `/fleet/zone_requests` | `amr_msgs/msg/ZoneRequest` | 진입 요청·연장·반납. 중계되지 않는 절대 토픽 (`fleet_manager_node.py`) |
 | Subscribe | `fleet/zone_grants` (파라미터 `zone_grants_topic`) | `amr_msgs/msg/ZoneGrant` | 서버 응답. 네임스페이스 안 상대 이름 → `amr_fault_injector`가 중계한 `/<robot_id>/fleet/zone_grants` |
 | Subscribe | `plan` (파라미터 `plan_topic`) | `nav_msgs/msg/Path` | Nav2 전역 계획 경로. 로봇 현재 위치 기준으로 다시 계산된 것을 그대로 쓴다 |
-| Subscribe | `cmd_vel_nav` (파라미터 `cmd_vel_in_topic`) | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 (Nav2 controller_server 출력 등) |
-| Publish | `cmd_vel` (파라미터 `cmd_vel_out_topic`) | `geometry_msgs/msg/Twist` | 게이팅 후 속도 명령. 허가 전엔 선속도만 깎는다, 각속도는 그대로 |
+| Subscribe | `cmd_vel_nav` (파라미터 `cmd_vel_in_topic`) | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 (Nav2 controller_server, 향후 velocity_smoother의 출력) |
+| Publish | `cmd_vel_zone_limited` (파라미터 `cmd_vel_out_topic`) | `geometry_msgs/msg/Twist` | 게이팅 후 속도 명령. 허가 전엔 선속도만 깎는다, 각속도는 그대로. **로봇의 최종 `cmd_vel`이 아니다** — 'cmd_vel 체인' 절 참고 |
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
@@ -63,7 +63,7 @@ IDLE ──(경로 기준 경계까지 남은 거리 ≤ trigger_distance_m)─�
 | `base_frame` | `base_footprint` | TF 로봇 좌표계 이름 |
 | `plan_topic` | `plan` | Nav2 전역 경로 (상대 이름) |
 | `zone_grants_topic` | `fleet/zone_grants` | 상대 이름 (네임스페이스 → 장애 주입기 중계본) |
-| `cmd_vel_in_topic` / `cmd_vel_out_topic` | `cmd_vel_nav` / `cmd_vel` | cmd_vel 게이트 입·출력 |
+| `cmd_vel_in_topic` / `cmd_vel_out_topic` | `cmd_vel_nav` / `cmd_vel_zone_limited` | cmd_vel 게이트 입·출력 ('cmd_vel 체인' 절 참고) |
 | `update_rate_hz` | `10.0` | TF 조회·구역 판단 주기 |
 | `trigger_distance_m` | `3.0` | 경계 앞 요청 거리 (이진, 10/5) |
 | `stop_margin_m` | `0.5` | 허가 전 정지 여유 (이진, 10/5) |
@@ -72,6 +72,24 @@ IDLE ──(경로 기준 경계까지 남은 거리 ≤ trigger_distance_m)─�
 
 `zone_requests_topic`(기본 `/fleet/zone_requests`)는 파라미터로 빼지 않았다 — 로봇 → 서버 토픽은 장애
 주입기가 중계하지 않는 절대 토픽이라 네임스페이스와 상관없이 항상 같다 (`fleet_manager_node.py`).
+
+## cmd_vel 체인
+
+안전 정지는 안전 노드(`amr_safety`, 연우)가 `cmd_vel`을 가로채는 방식으로 두고, 제어 쪽은
+`SafetyStatus.speed_limit`을 참고해 부드럽게 감속하는 부가 역할만 하기로 합의했다 (9/28 회의,
+[docs/project-spec.md](../../../docs/project-spec.md) '안전 정지 책임' 절, [docs/api.md](../../../docs/api.md)
+4-4절 "감속·정지를 누가 실행하나"). 구역 진입 제한도 같은 성격의 하드 제약이라, 이 노드가 최종 `cmd_vel`을
+직접 내보내면 안전 노드와 발행자가 둘이 된다.
+
+그래서 이 노드의 출력은 `cmd_vel`이 아니라 `cmd_vel_zone_limited`다. 의도한 체인은:
+
+```
+controller_server (Nav2) → cmd_vel_nav → [velocity_smoother, 아직 없음] → amr_zone_client → cmd_vel_zone_limited → amr_safety (아직 없음) → cmd_vel (로봇)
+```
+
+`amr_bringup`의 launch 조립과 `amr_safety` 구현이 둘 다 아직 없어서(스텁) 지금은 이 체인을 끝까지
+못 맞춰 본다. 그 전까지 시뮬레이션에서 단독으로 쓰려면 `amr_bringup`이 `cmd_vel_zone_limited`를
+로봇 `cmd_vel`로 임시 리맵하면 된다 — 다만 `amr_safety`가 들어오면 그 리맵은 지워야 한다.
 
 ## 좌표계에 대해
 

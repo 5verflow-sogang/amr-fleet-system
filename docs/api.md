@@ -230,14 +230,19 @@ map
 | --- | --- | --- | --- |
 | Subscribe | `fleet/zone_grants` | `amr_msgs/msg/ZoneGrant` | 네임스페이스 안 상대 이름 → `amr_fault_injector`가 중계한 `/<ns>/fleet/zone_grants`. `robot_id`·`request_id`가 안 맞으면 버린다 |
 | Subscribe | `plan` | `nav_msgs/msg/Path` | Nav2 전역 경로. 구역 경계까지 남은 거리를 이 경로를 따라 계산한다 |
-| Subscribe | `cmd_vel_nav` | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 |
+| Subscribe | `cmd_vel_nav` | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 (Nav2 controller_server, 향후 velocity_smoother의 출력) |
 | Publish | `/fleet/zone_requests` | `amr_msgs/msg/ZoneRequest` | 경계 3 m 앞 요청, 대기·통과 중 1초마다 연장, 벗어나면 반납 |
-| Publish | `cmd_vel` | `geometry_msgs/msg/Twist` | 게이팅 후 속도 명령. 허가 전엔 선속도 상한만 건다(각속도는 그대로), 상한은 뒤에 `SafetyStatus.speed_limit` 클램프가 같은 방식으로 더 끼워질 수 있게 `min()` 하나로 둔다 |
+| Publish | `cmd_vel_zone_limited` | `geometry_msgs/msg/Twist` | 게이팅 후 속도 명령. 허가 전엔 선속도 상한만 건다(각속도는 그대로). **로봇의 최종 `cmd_vel`이 아니다** — 아래 참고 |
 
 상태 흐름(구역마다 독립): `IDLE`(트리거 거리 밖) → `APPROACHING`(요청 보냄, 허가 전엔 경계 0.5 m 앞에
 감속 정지) → `INSIDE`(허가와 상관없이 위치가 구역 안이면 전환, lease가 지나도 안 멈춘다) → `IDLE`(벗어나며
 반납). `REJECTED`면 `BLOCKED`로 가 경고만 남기고 재시도하지 않는다. 자세한 흐름·파라미터는
 [amr_zone_client README](../src/navigation/amr_zone_client/README.md).
+
+cmd_vel 체인: 최종 `cmd_vel`을 가로채는 건 안전 노드(`amr_safety`)의 몫으로 합의했으므로(4-4절
+"감속·정지를 누가 실행하나"), `amr_zone_client`는 `cmd_vel_zone_limited`까지만 내고 그 뒤
+`amr_safety`(아직 미구현)가 최종 `cmd_vel`을 낸다. `amr_bringup`의 실제 조립(`velocity_smoother`
+포함 여부)도 아직 없어 이 체인은 설계만 돼 있고 끝까지 연결해 보지는 않았다.
 
 <!-- TODO: 나머지 패키지 섹션을 같은 형식으로 추가 -->
 

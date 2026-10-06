@@ -10,8 +10,11 @@
     # 서버 → 로봇(zone_grants)은 장애 주입기가 네임스페이스별로 중계한다 (api.md 4-2절).
     # zone_requests는 중계되지 않는 절대 토픽이라 파라미터로 빼지 않는다 (fleet_manager_node.py)
     zone_grants_topic: fleet/zone_grants
+    # cmd_vel 체인: 최종 cmd_vel을 가로채는 건 안전 노드(amr_safety) 몫이다 (9/28 회의,
+    # project-spec.md '안전 정지 책임' 절). 그래서 출력 이름을 cmd_vel로 두지 않는다.
+    # amr_safety가 생기기 전엔 amr_bringup이 cmd_vel_zone_limited를 로봇 cmd_vel로 임시 리맵한다
     cmd_vel_in_topic: cmd_vel_nav
-    cmd_vel_out_topic: cmd_vel
+    cmd_vel_out_topic: cmd_vel_zone_limited
     update_rate_hz: 10.0
     # 구역 규칙 (이진, 10/5, zones.yaml 주석과 같다)
     trigger_distance_m: 3.0
