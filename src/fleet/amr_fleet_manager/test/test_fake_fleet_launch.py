@@ -15,8 +15,8 @@ import launch_testing.actions
 import launch_testing.asserts
 import pytest
 import rclpy
-from amr_msgs.msg import (FleetHeartbeat, Task, TaskAssignment, TaskAssignmentAck, TaskStatus, ZoneGrant,
-                          ZoneRequest)
+from amr_msgs.msg import (FleetHeartbeat, RobotState, Task, TaskAssignment, TaskAssignmentAck, TaskStatus,
+                          ZoneGrant, ZoneRequest)
 
 
 ZONES_YAML = 'zones:\n  - id: test_zone\n    capacity: 1\n'
@@ -65,7 +65,7 @@ class TestFakeFleet(unittest.TestCase):
         return condition()
 
     def test_task_completes(self):
-        assignments, acks, statuses, heartbeats = [], [], [], []
+        assignments, acks, statuses, heartbeats, robot_states = [], [], [], [], []
         self.node.create_subscription(TaskAssignment, '/fleet/task_assignments', assignments.append, 10)
         self.node.create_subscription(TaskAssignmentAck, '/fleet/task_assignment_acks', acks.append, 10)
         self.node.create_subscription(TaskStatus, '/fleet/task_status', statuses.append, 10)
@@ -73,11 +73,15 @@ class TestFakeFleet(unittest.TestCase):
         self.node.create_subscription(
             FleetHeartbeat, '/fleet/heartbeat',
             lambda msg: heartbeats.append(msg) if msg.server_id == 'fleet_manager' else None, 10)
+        self.node.create_subscription(
+            RobotState, '/fleet/robot_states',
+            lambda msg: robot_states.append(msg) if msg.robot_id == 'amr_01' else None, 10)
         publisher = self.node.create_publisher(Task, '/fleet/task_requests', 10)
 
-        # 서버와 서로 발견될 때까지 기다린다. 발견 전에 보낸 요청은 전달되지 않는다
+        # 서버와 가짜 로봇 둘 다와 연결될 때까지 기다린다. 발견 전에 보낸 요청이나, 발견 전에 로봇이 보낸 상태 보고는
+        # 전달되지 않는다. 가짜 로봇은 작업을 1초 안에 끝내므로 로봇과 먼저 연결돼 있어야 보고를 받는다 (CI에서 실패한 경합)
         self.assertTrue(self.spin_until(
-            lambda: publisher.get_subscription_count() >= 1 and heartbeats, 15.0))
+            lambda: publisher.get_subscription_count() >= 1 and heartbeats and robot_states, 15.0))
 
         task = Task(task_id='task_test', task_type=Task.TYPE_DELIVERY, item_type=Task.ITEM_SMALL)
         task.pickup_pose.position.x = 1.0
