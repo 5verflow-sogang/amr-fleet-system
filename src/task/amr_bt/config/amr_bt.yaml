@@ -1,0 +1,18 @@
+# 작업 수행 노드 (amr_bt_node) 파라미터
+/**:
+  ros__parameters:
+    # 비우면 네임스페이스(/amr_01 → amr_01)를 쓴다
+    robot_id: ""
+    # 서버 → 로봇 토픽 앞부분. /fleet = 서버 원본, fleet = 장애 주입기 중계본 (/<ns>/fleet/...)
+    server_topic_prefix: /fleet
+    tick_hz: 10.0
+    # RobotState 발행 주기 [Hz] (RobotState.msg: 1~5 Hz)
+    state_rate_hz: 2.0
+    # RobotState.pose: global_frame 기준 base_frame 위치 (TF). base_frame을 비우면 <robot_id>/base_footprint
+    global_frame: map
+    base_frame: ""
+    # 자리채움 동작 시간 [s]. Nav2·도킹을 붙이기 전까지 이동·싣기를 시간만 흘려 흉내 낸다 (작업 9에서 바꿈)
+    stub_move_s: 5.0
+    stub_dwell_s: 2.0
+    # 가상 배터리 모델 전까지 고정값
+    battery_percent: 100.0

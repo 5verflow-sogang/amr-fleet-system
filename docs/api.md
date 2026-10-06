@@ -223,6 +223,18 @@ map
 
 가짜 로봇(`fake_robot`)과 동작 규칙은 [amr_fleet_manager README](../src/fleet/amr_fleet_manager/README.md)에 있다.
 
+### amr_bt (로봇별)
+
+`<prefix>` = `server_topic_prefix`: `/fleet`(서버 원본, 기본), 장애 주입기 중계본이면 `fleet`(→ `/<ns>/fleet/...`).
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `<prefix>/task_assignments` | `amr_msgs/msg/TaskAssignment` | 자기 `robot_id`만. 수신 규칙은 `TaskAssignment.msg` 주석 |
+| Subscribe | `<prefix>/heartbeat` | `amr_msgs/msg/FleetHeartbeat` | `epoch`가 바뀌면 명령 번호 기준 초기화 |
+| Publish | `/fleet/task_assignment_acks` | `amr_msgs/msg/TaskAssignmentAck` | 할당·취소마다. 재전송이면 같은 Ack |
+| Publish | `/fleet/task_status` | `amr_msgs/msg/TaskStatus` | PENDING → IN_PROGRESS(단계마다) → COMPLETED / FAILED |
+| Publish | `/fleet/robot_states` | `amr_msgs/msg/RobotState` | 2 Hz. 수락 즉시 `current_task_id`를 채운다 |
+
 <!-- TODO: 나머지 패키지 섹션을 같은 형식으로 추가 -->
 
 ## 6. QoS 기본값
