@@ -25,6 +25,7 @@ setup(
         'console_scripts': [
             'fleet_manager = amr_fleet_manager.fleet_manager_node:main',
             'fake_robot = amr_fleet_manager.fake_robot_node:main',
+            'fleet_metrics = amr_fleet_manager.fleet_metrics_cli:main',
         ],
     },
 )
