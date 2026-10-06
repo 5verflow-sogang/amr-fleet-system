@@ -176,32 +176,10 @@ odom/map 프레임 ↔ 이 좌표계 변환은 core가 아니라 3주차 `amr_na
 TODO(3주차 이후): Pure Pursuit/Stanley 적응형 look-ahead 설계, PID 게인 튜닝 과정을
 작성한다.
 
-### 5-1. speed_limit 연동 (연우 10/6 합의)
+### 5-1. speed_limit 연동
 
-안전 노드(`amr_safety`)가 `safety/status`(로봇 네임스페이스 상대 이름, 예: `/amr_01/safety/status`,
-`amr_msgs/msg/SafetyStatus`)를 발행한다. 상태가 바뀌면 즉시, 그 외엔 10 Hz다.
+제어 쪽은 `safety/status`(`amr_msgs/msg/SafetyStatus`)의 `speed_limit`을 받아 명령
+선속도를 `min(명령, speed_limit)`으로 제한하고, 1.0 m/s² 이내로 감속한다. 값 정의
+(`inf`/0.0/WARNING 등)는 [docs/api.md](../api.md)를 참조한다.
 
-`speed_limit`은 `SafetyStatus.level`로 정해진다.
-
-| 단계 | `speed_limit` |
-| --- | --- |
-| `LEVEL_NORMAL` | `inf` (제한 없음) |
-| `LEVEL_WARNING` | 0.6 m/s |
-| `LEVEL_CRITICAL` / `LEVEL_ESTOP` | 0.0 |
-
-WARNING의 0.6 m/s는 긴급정지 트리거 거리 0.3 m, 감지~정지 시작 지연 0.2 s, 최대 감속
-1.0 m/s²를 기준으로, CRITICAL로 넘어가는 순간의 속도가 이 값 이하여야 0.3 m 안에 설 수
-있다는 데서 나왔다: 지연 중 등속 이동 + 등감속 정지 거리의 합이 한계 거리 이하여야 한다.
-
-```
-v · 0.2 + v² / (2 · 1.0) ≤ 0.3   →   v ≤ 0.6 m/s
-```
-
-제어 쪽은 명령 선속도를 `min(명령, speed_limit)`으로 자르되, 1.0 m/s² 이내로 부드럽게
-감속한다 — 뚝 끊지 않는다. 최종 `cmd_vel` 발행은 안전 노드(`amr_safety`) 하나로 두고
-(9/28 합의), 제어는 그 앞단에서 값만 참고한다. cmd_vel 체인 전체 구성은
-[amr_zone_client README](../../src/navigation/amr_zone_client/README.md#cmd_vel-체인)와
-같다.
-
-`safety/status`가 끊기면(타임아웃) 제한 없음으로 본다. 최종 정지 책임이 `amr_safety`
-자신에게 있어서, 상태를 못 받았다고 제어가 스스로 멈춰 세울 필요가 없다.
+`safety/status`가 끊기면 제한 없음으로 본다. 최종 게이트가 `amr_safety`라서다.
