@@ -1,0 +1,27 @@
+# 기본 작업 시나리오: 입고 → 보관, 보관 → 출고 배송을 일정 간격으로 넣는다.
+# 응답 시간 KPI(50회 이상) 측정용. seed는 launch 인자로 받는다 (하네스 반복 번호).
+count: 60
+# 첫 작업까지 기다리는 시간 (노드 시계, s). 로봇이 자리 잡을 시간
+start_delay_s: 5.0
+# 작업 간격 (노드 시계, s). fixed: 항상 interval_s, poisson: 평균 interval_s인 지수 분포
+arrival: fixed
+interval_s: 10.0
+# 작업 종류별 흐름. pickup·dropoff는 stations.yaml의 이름이며 * 패턴을 쓸 수 있다. weight 비율로 고른다
+flows:
+  - type: delivery
+    pickup: [dock_1, dock_2]
+    dropoff: [rack_*]
+    weight: 1.0
+  - type: delivery
+    pickup: [rack_*]
+    dropoff: [dock_a, dock_b]
+    weight: 1.0
+# 물품 비율 (Task.ITEM_*). 원 명세서 물품 유형
+items:
+  small: 0.5
+  medium: 0.3
+  large: 0.2
+# 우선순위 범위 [min, max] (정수, 균등)
+priority: [0, 0]
+# 마감 시간 (요청 후 s). 0이면 마감 없음
+deadline_s: 0.0
