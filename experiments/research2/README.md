@@ -111,3 +111,16 @@ uv run tensorboard --logdir raw
 - 체크포인트는 학습 질량 검증 환경의 성공률로 고른다(`best_*`)
 - 평가 질량 기본값: 학습 0·2·10·25 kg + 미학습 15·30 kg
 - pytest는 `uv.lock`을 바꾸지 않으려고 `--with`로만 쓴다
+
+## 결과 분석 (가설 판정)
+
+`scripts/evaluate.py`가 만든 `episodes.csv`들을 모아 시드별 요약과 H1~H3 판정표를 만든다. 판정 기준은 [명세서 4장](../../docs/project-spec.md)과 실험 설계 메모(#72)를 따른다.
+
+```bash
+uv run python scripts/analyze.py raw/eval/*.csv --out raw/eval/analysis
+uv run --frozen --with pytest pytest tests/test_analyze.py
+```
+
+- 분석 단위는 학습 시드다. 비교군 간 차이를 시드 k끼리 짝지은 뒤 시드를 재표집하는 부트스트랩으로 95% CI를 낸다(하네스와 같은 방식). DWA는 시드 k의 평가 목록 k 결과를 시드 k로 짝짓고, 시드 없이 한 번만 평가했으면 그 값을 고정값으로 쓴다.
+- 충돌률 분모는 `popout_avoidable` 에피소드다. 도착 시간은 두 비교군이 모두 성공한 같은 시나리오끼리 비교한다.
+- 결과: `hypotheses.md`(판정표), `hypotheses.json`, `per_seed.csv`(비교군·정보 조건·질량·시드별 충돌률·성공률·도착 시간)
