@@ -88,7 +88,7 @@ map
 | 인식 | `perception/objects` | 토픽 | `amr_msgs/msg/DetectedObject3DArray` | `amr_detection` | `amr_tracking`, Costmap, `amr_bt` | 카메라 프레임마다 |
 | 추적 | `perception/obstacles` | 토픽 | `amr_msgs/msg/TrackedObstacleArray` | `amr_tracking` | `amr_safety`, DWA | 추적 주기마다 |
 | 추적 | `perception/collision_risks` | 토픽 | `amr_msgs/msg/CollisionRiskArray` | `amr_tracking` | `amr_safety` | 추적 주기마다 |
-| 안전 | `safety/status` | 토픽 | `amr_msgs/msg/SafetyStatus` | `amr_safety` | `amr_control`, `amr_bt`, `amr_fleet_manager`, 대시보드 | 바뀌면 즉시, 그 외 주기 |
+| 안전 | `safety/status` | 토픽 | `amr_msgs/msg/SafetyStatus` | `amr_safety` | `amr_control`, `amr_bt`, `amr_fleet_manager`, 대시보드 | 바뀌면 즉시, 그 외 10 Hz |
 | 안전 | `safety/estop` | 서비스 | `std_srvs/srv/SetBool` | `amr_safety` | 대시보드, 운영자 | 요청 시 |
 | Fleet | `/fleet/task_requests` | 토픽 | `amr_msgs/msg/Task` | 작업 생성기(`amr_fleet_manager` `task_generator`), 대시보드 | `amr_fleet_manager` | 요청 시 |
 | Fleet | `/fleet/task_assignments` | 토픽 | `amr_msgs/msg/TaskAssignment` | `amr_fleet_manager` | `amr_bt` | 할당·취소 시, Ack 없으면 재전송 |
@@ -143,6 +143,7 @@ map
 | 추적 | TTC를 `TrackedObstacle`에 둘지 | 분리. `CollisionRisk`로 뺀다 (장애물의 성질이 아니라 이 로봇과의 관계). DWA는 TTC를 쓰지 않는다 |
 | 추적 | 장애물 크기를 원으로 할지 사각형으로 할지 | 원(`radius`)으로 시작, 필요하면 확장 |
 | 안전 | 감속·정지를 누가 실행하나 | 안전 노드가 `cmd_vel`을 직접 막는다. 제어는 `speed_limit`을 참고해 부드럽게 감속한다 |
+| 안전 | `speed_limit`의 "제한 없음" 값과 제어 쪽 적용 | 제한 없음은 `inf`, WARNING은 `0.6`, 정지는 `0.0`, 음수 없음. WARNING 0.6 m/s는 반응 지연 0.2 s + 감속 1.0 m/s²로 긴급정지 거리 0.3 m 안에 서는 최대 속도다 (0.6×0.2 + 0.6²/2 = 0.30 m). 제어(`amr_control`)는 마지막 단계에서 명령 선속도를 `min(v, speed_limit)`으로 자른다 (DWA·Pure Pursuit 공통, 10/6 이진·연우) |
 | 안전 | E-Stop 걸기·해제 | 표준 서비스 `std_srvs/SetBool` (`safety/estop`). `amr_msgs`에 추가 없음 |
 | Fleet | 작업 전달을 토픽으로 할지 액션으로 할지 | 토픽. 확인은 `TaskAssignmentAck`로 받는다 (RMF DispatchAck, VDA orderUpdateId) |
 | Fleet | 할당 토픽을 하나로 모을지 로봇별로 나눌지 | 하나로 모으고 `robot_id`로 구분 |
