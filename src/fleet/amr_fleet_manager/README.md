@@ -95,7 +95,21 @@
 
 ### epoch
 
-서버가 뜰 때 `epoch_file`의 값에 1을 더해 쓴다. 하네스가 서버를 강제종료하고 다시 띄우면 epoch가 바뀌어 로봇이 명령 번호 기준을 초기화한다. 경로를 비우면 항상 1이다.
+서버가 뜰 때 `epoch_file`의 값에 1을 더해 쓴다. 서버를 강제종료하고 다시 띄우면 epoch가 바뀌어 로봇이 명령 번호 기준을 초기화한다. 경로를 비우면 항상 1이다.
+
+### 서버 강제종료 (연구 1 장애)
+
+`fleet_manager.launch.py`가 정해진 시각에 서버를 SIGKILL로 죽이고, 원하면 다시 띄운다. launch는 자기가 띄운 프로세스에만 신호를 보낼 수 있어 장애 주입기 노드가 아니라 서버 launch에 두었다.
+
+| launch 인자 | 기본값 | 설명 |
+| --- | --- | --- |
+| `kill_at_s` | `-1` | launch 시작 후 이 시각(실제 시간, s)에 SIGKILL. 음수면 끄기 |
+| `restart_after_s` | `-1` | 죽인 뒤 이 시간(s)이 지나면 다시 띄운다. 음수면 죽은 채로 둔다 |
+| `fault_events_file` | `''` | 강제종료·재시작 시각 기록 (`fault_events.csv`). 비우면 기록 안 함 |
+
+- 정리 과정 없이 죽이므로 마지막 heartbeat 이후 아무 메시지도 나가지 않는다. 로봇은 heartbeat 타임아웃으로 알아챈다.
+- 다시 띄운 서버는 epoch가 1 오르고, 작업·구역 장부가 비어 있다. 서버가 죽기 전에 맡긴 작업을 이어받는 일(작업표 복구)은 아직 없다.
+- `fault_events.csv` 컬럼: `time, event`. `time`은 실제 시간(UNIX 초)이라 rosbag2의 수신 시각과 맞춰 볼 수 있다. `event`는 `kill`·`restart`.
 
 ## 파라미터
 
@@ -115,7 +129,7 @@
 | `traffic.release_timeout_s` | `30.0` | 점유 로봇이 이 시간 동안 요청·반납이 없으면 구역을 푼다 (노드 시계, s) |
 | `traffic.zones_file` | `''` | 구역 목록 파일. 비우면 모든 구역 요청을 거부. launch 인자 `zones_file` (기본 `config/zones.yaml`) |
 | `tick_s` | `0.05` | 재전송·구역 만료 확인 주기 (s) |
-| `epoch_file` | `/tmp/amr_fleet_manager/epoch` | 서버 재시작 번호 파일 |
+| `epoch_file` | `''` | 서버 재시작 번호 파일. launch 인자 `epoch_file` (기본 `/tmp/amr_fleet_manager/epoch`) |
 | `assignments_csv` | `''` | 할당 호출 기록 경로. 비우면 기록 안 함. launch 인자 `assignments_csv` |
 
 `assignments.csv`의 컬럼은 [하네스 README](../../../tools/harness/README.md#지표-csv)를 따른다. `timestamp`는 노드 시계(`use_sim_time`이면 시뮬레이션 시간), `cost_fn`은 지금 `euclidean`뿐이다.
@@ -188,6 +202,7 @@ colcon test --packages-select amr_fleet_manager
 - `test/test_dispatcher.py`, `test/test_robot_sim.py`, `test/test_fleet_metrics.py`: rclpy 없이 할당·재전송·수신 규칙·이동 모델·지표 변환을 확인한다.
 - `test/test_fleet_metrics_bag.py`: 실제 rosbag2(sqlite3)을 써서 `fleet_metrics`가 읽고 변환하는지 확인한다 (ROS 환경에서만).
 - `test/test_fake_fleet_launch.py`: 서버와 가짜 로봇 1대를 띄워 요청 → 할당 → Ack → 완료, 구역 허가 → 대기 → 반납 후 넘김을 확인한다.
+- `test/test_server_kill_launch.py`: 서버를 죽였다 다시 띄워 heartbeat가 끊겼다가 epoch 2로 돌아오는지, `fault_events.csv`가 남는지 확인한다.
 
 ## 미결
 

@@ -1,4 +1,4 @@
-# Fleet 서버 파라미터. 실험마다 바뀌는 값(assignments_csv)은 launch 인자로 받는다.
+# Fleet 서버 파라미터. 실험마다 바뀌는 값(assignments_csv, epoch_file, zones_file, 강제종료 시각)은 launch 인자로 받는다.
 fleet_manager:
   ros__parameters:
     server_id: fleet_manager
@@ -28,5 +28,3 @@ fleet_manager:
       release_timeout_s: 30.0
     # 재전송·구역 만료 확인 주기 (s)
     tick_s: 0.05
-    # 서버 재시작 번호를 남기는 파일. 강제종료 후 다시 띄우면 epoch가 1 늘어난다
-    epoch_file: /tmp/amr_fleet_manager/epoch

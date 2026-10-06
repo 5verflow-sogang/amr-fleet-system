@@ -4,7 +4,7 @@
 - 빌드 타입: ament_python
 - 책임: 통신 지연·패킷 손실·중앙 서버 강제종료 장애 주입기
 
-> 상태: 착수(2주차). 고정 지연·손실 중계까지 구현. 서버 강제종료, 지터, 로봇 → 서버 방향은 미구현.
+> 상태: 고정 지연·손실 중계 구현(2주차). 서버 강제종료는 `amr_fleet_manager` launch에 구현(3주차, 아래 미결 표). 지터, 로봇 → 서버 방향은 미구현.
 
 ## 방식 결정: ROS 레이어 중계
 
@@ -80,6 +80,6 @@ colcon test --packages-select amr_fault_injector
 | 쟁점 | 초안 |
 | --- | --- |
 | 로봇별 출력 토픽 | 위 제안. 이진(`ZoneRequest`·heartbeat 폴백), 지수(`amr_bt`)와 합의 |
-| 서버 강제종료 | 3주차. 하네스가 `amr_fleet_manager` 프로세스를 정해진 시각에 kill |
+| 서버 강제종료 | 구현. launch는 자기가 띄운 프로세스에만 신호를 보낼 수 있어 `fleet_manager.launch.py`의 `kill_at_s`·`restart_after_s` 인자로 건다 ([amr_fleet_manager README](../amr_fleet_manager/README.md) "서버 강제종료") |
 | 로봇 → 서버 방향 | [api.md 4-4절](../../../docs/api.md#4-4-미결-쟁점-928-회의) 미결. 필요하면 같은 노드에 역방향 링크 추가 |
 | 지터 | 고정 지연만. 지터를 넣으면 FIFO가 깨지므로 큐를 도착 시각 순 힙으로 바꾼다 |
