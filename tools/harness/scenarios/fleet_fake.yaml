@@ -1,6 +1,7 @@
 # Fleet 메시지 신뢰성 시나리오 (가짜 로봇). 시뮬레이터·Nav2 없이 서버·장애주입기·가짜 로봇 5대·작업 생성기.
 # 연구 1 Before 데이터용: fleet_latency.csv(지연·손실), response_time.csv(Ack 왕복시간).
 # 가짜 로봇은 odom을 내지 않으므로 response_time(움직임 응답)은 비어 있다.
+# 응답 시간 KPI(200 ms)의 Before 데이터는 실제 로봇 스택 시나리오가 따로 필요하다.
 #
 #   python3 tools/harness/run.py fleet_fake -n 10 --set delay_ms=200 --set loss_pct=5 --label d200_l5
 name: fleet_fake
@@ -11,6 +12,8 @@ timeout_s: 900
 params:
   delay_ms: 0
   loss_pct: 0
+  # 서버 강제종료 시각은 서버 launch 시작부터 잰다(#68). 작업 생성기는 다른 프로세스가 뜬 뒤 약 10초 뒤에 일정을 시작하므로,
+  # 작업 시작 기준으로는 약 10초 빠르다
   kill_at_s: -1
   restart_after_s: -1
   algorithm: nearest
