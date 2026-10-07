@@ -94,6 +94,7 @@ amr_01/odom                         (발행: Gazebo DiffDrive 기본, EKF를 띄
 ```
 
 센서 위치는 원 명세서 TF 예시값이다. 확인: `ros2 run tf2_tools view_frames`
+위치추정(`map → odom`, EKF)까지 띄운 전체 트리 그림, 발행 주체·주기, `/tf_static` 값 확인은 [api.md 2-2절](../../../docs/api.md#2-2-전체-tf-트리-확인-view_frames-107).
 
 ### 옆에서 본 그림 (x–z, 오른쪽이 앞, 높이는 지면 기준)
 

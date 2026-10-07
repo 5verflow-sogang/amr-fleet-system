@@ -32,7 +32,7 @@ map
             └── amr_0N/rear_caster_link   (-0.22, 0, -0.15)
 ```
 
-좌표는 부모 프레임 기준 (x, y, z) [m]. 센서 위치는 원 명세서 TF 예시값이며, 1주차 URDF 골격에서 `view_frames`로 위 구조를 확인했다.
+좌표는 부모 프레임 기준 (x, y, z) [m]. 센서 위치는 원 명세서 TF 예시값이며, 1주차 URDF 골격에서 `view_frames`로 위 구조를 확인했다. 위치추정까지 띄운 전체 트리 확인은 [2-2절](#2-2-전체-tf-트리-확인-view_frames-107).
 센서 위치(extrinsic)는 2주차 센서 플러그인에서 위 값 그대로 확정했다. 센서 메시지의 `frame_id`는 위 링크 이름과 같다 (`lidar_link`, `imu_link`, `camera_optical_frame`, sim에서 확인).
 
 ### 2-1. TF 발행 주체 (D4, A안: EKF 두 개)
@@ -47,6 +47,42 @@ map
 - EKF의 `base_link_frame`은 `base_footprint`로 둔다 (위 TF 트리 기준).
 - `amr_odometry`의 `publish_tf`는 기본 `false`다. EKF 없이 오도메트리만 단독으로 시험할 때만 `true`로 켠다.
 - EKF 없이 sim만 띄우면 Gazebo DiffDrive가 `odom → base_footprint`를 발행한다 (`publish_odom_tf` 기본 `true`). EKF를 띄울 때는 `sim.launch.py publish_odom_tf:=false`로 끈다.
+
+### 2-2. 전체 TF 트리 확인 (`view_frames`, 10/7)
+
+위치추정 스택 전체를 띄우고 `ros2 run tf2_tools view_frames`로 뽑았다 (`amr_01`, 지도 v0, sim 시간 기준).
+
+![TF 트리 view_frames](reports/tf_tree.png)
+
+원본: [reports/tf_tree.gv](reports/tf_tree.gv) (graphviz). ROS 2 Humble tf2는 발행 노드 이름을 기록하지 않아 그림의 Broadcaster는 전부 `default_authority`로 나온다. 발행 주체는 아래 표처럼 노드 목록과 설정으로 확인했다.
+
+| TF | 발행 | 토픽 | 주기 (측정) |
+| --- | --- | --- | --- |
+| `map → amr_01/odom` | `ekf_global` | `/tf` | 50.4 Hz (`frequency: 50`) |
+| `amr_01/odom → amr_01/base_footprint` | `ekf_local` | `/tf` | 50.4 Hz (`frequency: 50`) |
+| `base_link → left/right_wheel_link` | `robot_state_publisher` (`joint_states`) | `/tf` | 20.4 Hz |
+| `base_footprint → base_link`, `base_link → 센서·캐스터`, `camera_link → camera_optical_frame` | `robot_state_publisher` | `/tf_static` | 한 번 (transient local) |
+
+확인한 것:
+
+- **프레임마다 부모가 하나다.** `map → odom → base_footprint`가 끊김 없이 이어지고 로봇 링크 9개(몸체·바퀴 2·캐스터 2·센서 4)가 모두 `base_footprint` 아래에 있다.
+- **`map→odom`·`odom→base_footprint`를 EKF만 낸다 (2-1절).** AMCL은 `/tf` 발행자로 잡히지만(브로드캐스터를 만들어 둠) `tf_broadcast: false`라 내지 않는다. 두 TF 주기가 EKF `frequency`(50 Hz)와 같다. DiffDrive TF는 `publish_odom_tf:=false`면 브리지를 만들지 않는다 (`spawn_robot.launch.py`).
+- **`/tf_static` 값이 위 2절 트리와 같다.** `base_link` (0, 0, 0.18), `lidar_link` (0.15, 0, 0.2), `camera_link` (0.18, 0, 0.25), `imu_link` (0, 0, 0.1), 캐스터 (±0.22, 0, −0.15), `camera_optical_frame` 회전 쿼터니언 (0.5, −0.5, 0.5, −0.5) = rpy (−π/2, 0, −π/2).
+- **센서 `frame_id`가 링크 이름과 같다.** `/amr_01/scan` → `amr_01/lidar_link`, `/amr_01/imu/data` → `amr_01/imu_link`.
+- **`map`에서 센서까지 변환이 된다.** 로봇을 조금 돌린 뒤 `tf2_echo map amr_01/base_footprint` = (0.504, 0.147, 0), yaw 29.9°일 때 `tf2_echo map amr_01/lidar_link` = (0.634, 0.222, 0.380). (0.15, 0)을 29.9° 돌려 더한 값, 높이 0.18 + 0.2와 같다.
+
+다시 뽑는 법 (컨테이너 안, 각각 다른 터미널):
+
+```bash
+ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false publish_odom_tf:=false
+ros2 launch amr_odometry odometry.launch.py
+ros2 launch amr_odometry sensor_filters.launch.py
+ros2 launch amr_localization localization.launch.py
+ros2 run tf2_tools view_frames            # frames_<시각>.pdf / .gv
+dot -Tpng frames_*.gv -o tf_tree.png
+```
+
+카메라는 꺼도(`enable_camera:=false`) `camera_link`·`camera_optical_frame` TF는 URDF에서 그대로 나온다.
 
 ## 3. 합의가 필요한 경계 (P0 확정 대상)
 
