@@ -666,7 +666,40 @@ P2 종료 시점에 데이터가 부족하면 MOST를 포기하고 KCSE에 집�
 | CARET: Chain-Aware ROS 2 Evaluation Tool | Kuboichi 외 (Tier IV) | IEEE EUC | 2022 |
 | Autoware_Perf: 트레이싱·성능분석 프레임워크 | Li, Hasegawa, Azumi | J. Syst. Architecture | 2022 |
 
-**차별점**: 위 논문은 모두 단일 로봇/차량 내부 지연을 다룬다. 이 프로젝트는 다중 로봇 Fleet 통신 레이어 + 중앙집중/분산 아키텍처 비교 + 장애 주입 기반 임계점 분석으로 확장한다. 분산 Fleet 아키텍처 문헌은 추가 조사가 필요하다.
+**차별점**: 위 논문은 모두 단일 로봇/차량 내부 지연을 다룬다. 이 프로젝트는 다중 로봇 Fleet 통신 레이어 + 중앙집중/분산 아키텍처 비교 + 장애 주입 기반 임계점 분석으로 확장한다.
+
+**다중 로봇 할당과 통신 열화 (10/6 추가 조사, 민지)**
+
+| 논문 | 저자 | 발표처 | 연도 | 우리와의 관계 |
+| --- | --- | --- | --- | --- |
+| Auctions for multi-robot task allocation in communication limited environments | Otte, Kuhlman, Sofge | Autonomous Robots 44 | 2020 | 통신 손실에 따른 경매 할당 열화. 핵심 질문이 가장 가깝다. 알고리즘 수준 시뮬레이션이고 ROS 2·창고 Fleet·하이브리드 전환은 없다 |
+| Decentralized MRTA Under Degraded Communication: A Benchmark of Performance, Reliability, and Computation | Lott, Honary | arXiv 2609.13711 | 2026 | 분산 MRTA 6종 × 통신 조건 25개. 분산끼리만 비교하고 중앙집중 기준선·지연 변수·ROS 2가 없다 |
+| Bundle Length Tradeoffs in Decentralized MRTA Under Degraded Communications | Lott, Honary | arXiv 2609.06273 | 2026 | 손실이 커지면 최적 설정이 바뀐다(번들 길이). 아키텍처 전환이 아니라 파라미터 이동 |
+| Event-Triggered Adaptive Consensus for Multi-Robot Task Allocation | Aznar, Pujol, Díez | arXiv 2604.06813 (Computer Communications 게재는 확인 필요) | 2026 | 필요할 때만 협상. 하이브리드 트리거와 개념이 닮았지만 알고리즘 안의 협상이다 |
+| Centralization vs. decentralization in multi-robot sweep coverage with ground robots and UAVs | Jamshidpey 외 | arXiv 2408.06553 | 2024 | 중앙 vs 분산 비교 틀은 같지만 과제가 커버리지이고 통신 지연·손실을 변수로 쓰지 않는다 |
+| Optimization techniques for MRTA problems: Review on the state-of-the-art | Chakraa 외 | Robotics and Autonomous Systems | 2023 | MRTA 중앙·분산 분류 배경 |
+| Task Allocation in Mobile Robot Fleets: A review | Meseguer Valenzuela, Blanes Noguera | arXiv 2501.08726 | 2025 | 이동 로봇 Fleet 할당 서베이 |
+
+**측정 도구·미들웨어**
+
+| 논문 | 저자 | 발표처 | 연도 | 용도 |
+| --- | --- | --- | --- | --- |
+| ros2_tracing: Multipurpose Low-Overhead Framework for Real-Time Tracing of ROS 2 | Bédard, Lütkebohle, Dagenais | IEEE RA-L 7(3) | 2022 | 측정 도구 원 논문 (필수 인용) |
+| Latency Analysis of ROS2 Multi-Node Systems | Kronauer 외 | IEEE MFI (arXiv 2101.02074) | 2021 | 종단간 지연이 DDS 구현에 크게 좌우됨. 로봇 내부 레이어·벤더 비교 근거 |
+| Performance Comparison of ROS2 Middlewares for Multi-robot Mesh Networks in Planetary Exploration | Chovet 외 | arXiv 2407.03091 | 2024 | 다중 로봇에서 Fast DDS·Cyclone·Zenoh 비교. After 단계 벤더 비교와 가장 가깝다. 할당 성능과는 연결하지 않았다 |
+| Real-Time Characteristics of ROS 2.0 in Multiagent Robot Systems: An Empirical Study | Park, Delgado, Choi | IEEE Access 8 | 2020 | 다중 에이전트 ROS 2 지연·손실·지터 |
+| When Discovery Becomes a Storm: A ROS 2 Discovery Model for Wireless Robotic Networks | Choi, Lee, Park | arXiv 2608.02242 | 2026 | 대수가 늘 때 DDS discovery 부하. 3/5/7/10대 실험의 교란 요인 |
+
+**조사 결론과 위치 잡기**: 같은 연구(실제 ROS 2 Fleet에서 지연·손실을 바꾸며 중앙집중과 분산을 비교하고 역전 지점·하이브리드 전환 기준을 제시)는 찾지 못했다. 가장 가까운 Otte 외(2020)와 Lott·Honary(2026)는 추상적 통신 모델의 알고리즘 시뮬레이션이다. 이 연구의 기여는 다음 넷으로 내세운다.
+
+1. 실제 ROS 2 스택에서 잰 중앙→분산 역전 지점과 그 신뢰구간 (대수별)
+2. ros2_tracing 2계층 추적으로 성능 열화 원인 분해 (로봇 내부 vs 로봇↔서버)
+3. 관측 가능한 값(Ack 왕복시간 P95)으로 표현한 하이브리드 전환 기준 (통계 설계: `experiments/research1/statistical_design.md`)
+4. 스펙 조건에서 QoS·DDS 벤더 튜닝 전후 개선폭 (지연 전체를 다시 돌리지 않는다)
+
+주의: 분산은 대조군 역할만 하고 단순 규칙으로 충분하다고 정했다(3-4절). 최근 분산 MRTA 벤치마크가 CBBA 계열을 쓰므로 "분산 대조군이 약하다"는 지적에 대비해 범위 제한의 이유를 원고에 밝힌다.
+
+서지 확인(10/7): arXiv 논문은 arXiv API로, 학술지 논문은 Crossref DOI로 모두 존재·제목·저자를 확인했다. 2026년 arXiv 논문은 동료 심사 전이라 원고 제출 때 게재 여부를 다시 확인한다.
 
 ### 10-2. 연구 2: 적재 질량 대응 RL 로컬 플래너 (조사 후보)
 
