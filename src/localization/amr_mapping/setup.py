@@ -24,7 +24,8 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            # 'node_name = amr_mapping.node_module:main',
+            'map_quality = amr_mapping.map_quality:main',
+            'map_route_driver = amr_mapping.route_driver:main',
         ],
     },
 )
