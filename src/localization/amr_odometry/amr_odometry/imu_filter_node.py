@@ -14,7 +14,7 @@ from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import Imu
 
-from amr_odometry.imu_filter import ImuFilter, ImuFilterConfig
+from amr_odometry.imu_filter import calibrated_variance, ImuFilter, ImuFilterConfig
 
 
 def diag3(variance: float):
@@ -27,7 +27,7 @@ class ImuFilterNode(Node):
         super().__init__('imu_filter')
         p = self.declare_parameter
         self.config = ImuFilterConfig(
-            gyro_cutoff_hz=p('gyro_cutoff_hz', 20.0).value,
+            gyro_cutoff_hz=p('gyro_cutoff_hz', 0.0).value,
             accel_cutoff_hz=p('accel_cutoff_hz', 5.0).value,
             calibration_duration=p('calibration_duration', 2.0).value,
             stationary_gyro_stddev=p('stationary_gyro_stddev', 0.01).value,
@@ -41,6 +41,8 @@ class ImuFilterNode(Node):
         # 공분산에 쓰는 센서 노이즈 σ. amr_description/config/sensors.yaml의 IMU 값과 같게 둔다
         self.gyro_sigma = p('gyro_noise_stddev', 2.0e-4).value
         self.accel_sigma = p('accel_noise_stddev', 1.7e-2).value
+        # 보정 후 각속도 분산 하한 [(rad/s)²]. 노이즈 모델에 없는 오차를 실측(GT 위치 미분 대비)에 맞춰 더한다
+        self.gyro_variance_floor = p('gyro_variance_floor', 1.0e-7).value
         self.filter = ImuFilter(self.config)
         self.pub = self.create_publisher(Imu, 'imu/data', 10)
         self.create_subscription(Imu, 'imu/data_raw', self.on_imu, qos_profile_sensor_data)
@@ -74,10 +76,9 @@ class ImuFilterNode(Node):
             return
         gyro, accel = result
         if cal.done:
-            # 보정 평균의 표준오차(σ/√N)를 남은 바이어스 불확실성으로 더한다
-            n = max(cal.samples, 1)
-            gyro_var = self.gyro_sigma ** 2 * (1.0 + 1.0 / n)
-            accel_var = self.accel_sigma ** 2 * (1.0 + 1.0 / n)
+            # 보정 평균의 표준오차(σ/√N)를 남은 바이어스 불확실성으로 더하고, 각속도는 하한도 더한다
+            gyro_var = calibrated_variance(self.gyro_sigma, cal.samples, self.gyro_variance_floor)
+            accel_var = calibrated_variance(self.accel_sigma, cal.samples)
         else:
             # 미보정: 바이어스를 모르므로 그 불확실성을 노이즈에 더한다
             gyro_var = self.gyro_sigma ** 2 + self.config.uncalibrated_gyro_bias_stddev ** 2

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from amr_odometry.imu_filter import (
-    BiasCalibrator, GRAVITY, ImuFilter, ImuFilterConfig, LowPass3,
+    BiasCalibrator, calibrated_variance, GRAVITY, ImuFilter, ImuFilterConfig, LowPass3,
 )
 
 DT = 0.01   # 100 Hz
@@ -111,14 +111,38 @@ def test_filter_outputs_nothing_until_calibrated_then_unbiased():
 
 def test_filter_tracks_rotation_after_calibration():
     rng = np.random.default_rng(4)
-    f = ImuFilter()
+    f = ImuFilter(ImuFilterConfig(gyro_cutoff_hz=20.0))
     for t, g, a in samples(250, rng):
         f.update(t, g, a)
     out = None
     for t, g, a in samples(50, rng, gyro=(0.0, 0.0, 1.0), t0=2.5):
         out = f.update(t, g, a)
-    # 20 Hz 저역통과는 0.5 s 안에 1 rad/s를 따라간다
+    # 20 Hz 저역통과를 켜도 0.5 s 안에 1 rad/s를 따라간다
     assert out[0][2] == pytest.approx(1.0, abs=0.01)
+
+
+def test_gyro_lowpass_off_by_default_has_no_lag():
+    # 기본값은 자이로 저역통과를 끈다 (#76·#81): 각속도가 바뀐 첫 샘플부터 그대로 나온다
+    assert ImuFilterConfig().gyro_cutoff_hz == 0.0
+    rng = np.random.default_rng(8)
+    f = ImuFilter()
+    for t, g, a in samples(250, rng):
+        f.update(t, g, a)
+    t, g, a = next(samples(1, rng, gyro=(0.0, 0.0, 1.0), t0=2.5))
+    out = f.update(t, g, a)
+    assert out[0][2] == pytest.approx(1.0, abs=1e-3)   # 노이즈 σ 2e-4의 5배 안
+
+
+def test_calibrated_variance():
+    # 노이즈 σ² × (1 + 1/N) + floor
+    assert calibrated_variance(2e-4, 200) == pytest.approx(4e-8 * (1 + 1 / 200))
+    assert calibrated_variance(2e-4, 200, 1e-7) == pytest.approx(4e-8 * (1 + 1 / 200) + 1e-7)
+    # 샘플 수 0은 1로 본다
+    assert calibrated_variance(1.0, 0) == pytest.approx(2.0)
+    with pytest.raises(ValueError):
+        calibrated_variance(-1.0, 10)
+    with pytest.raises(ValueError):
+        calibrated_variance(1.0, 10, -1e-7)
 
 
 def moving(n, rng, t0=0.0):
