@@ -40,7 +40,7 @@
       max_steer: 1.2
 
     # 선속도 PID: 추종기 선속도(목표)를 odom 선속도가 따라가게 보정한다. 끄면 추종기 출력 그대로.
-    # u = 목표 + kp·e + ki·∫e − kd·d(측정)/dt, 출력 [0, max_linear_speed]. 게인 근거는 navigation.md 5-3절
+    # u = 목표 + kp·e + ki·∫e − kd·d(측정)/dt, 출력 [0, max_linear_speed]. 게인 근거는 navigation.md 5-7절
     velocity_pid:
       enabled: false
       kp: 0.5
