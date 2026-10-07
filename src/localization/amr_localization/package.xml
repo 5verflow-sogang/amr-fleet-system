@@ -11,6 +11,12 @@
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
+  <!-- kidnap_recovery: 스캔·TF·상태 문자열, 거리장 계산 -->
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <!-- 단위 테스트도 numpy를 쓰므로 CI(rosdep -t build)가 설치하도록 depend로 둔다 -->
+  <depend>python3-numpy</depend>
   <!-- 위치추정 스택 (localization.launch.py) -->
   <exec_depend>robot_localization</exec_depend>
   <exec_depend>nav2_amcl</exec_depend>
