@@ -9,7 +9,9 @@
 
 구독: /map, scan, odometry/filtered, amcl_pose
 호출: reinitialize_global_localization, request_nomotion_update (AMCL, std_srvs/Empty)
-발행: cmd_vel (회전 중에만), initialpose (국소 재초기화), kidnap_recovery/state (std_msgs/String)
+발행: cmd_vel_recovery (탐색 중에만), initialpose (국소 재초기화), kidnap_recovery/state (std_msgs/String)
+      최종 cmd_vel은 amr_safety 하나만 낸다(9/28). cmd_vel_recovery는 twist_mux에서 내비(cmd_vel_nav)보다 우선하게
+      넣어 구역 허가·안전 노드를 그대로 거친다(#79 이진 리뷰). 복구 중 내비 목표 중지는 BT가 한다
 """
 
 import math
@@ -78,7 +80,7 @@ class KidnapRecoveryNode(Node):
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self._on_amcl, 10)
         self.reinit = self.create_client(Empty, 'reinitialize_global_localization')
         self.nomotion = self.create_client(Empty, 'request_nomotion_update')
-        self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        self.cmd_pub = self.create_publisher(Twist, d('cmd_vel_topic', 'cmd_vel_recovery').value, 10)
         self.initialpose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
         self.state_pub = self.create_publisher(String, 'kidnap_recovery/state', 10)
         self.create_timer(1.0 / self.check_hz, self._check)
@@ -165,7 +167,7 @@ class KidnapRecoveryNode(Node):
         return bool(front) and min(front) > self.front_clearance
 
     def _drive(self):
-        # 탐색 중에만 cmd_vel을 낸다. 다른 때는 제어(Nav2·BT)가 cmd_vel을 쓴다 (사용 우선순위는 4절)
+        # 탐색 중에만 낸다. twist_mux에서 내비보다 우선하므로 다른 때는 아무것도 내지 않는다
         if self.machine.state == ROTATING:
             cmd = Twist()
             if self.explore_forward and self._front_free():

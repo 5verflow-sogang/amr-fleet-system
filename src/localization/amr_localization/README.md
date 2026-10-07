@@ -114,7 +114,7 @@ ros2 run amr_localization kidnap_recovery --ros-args -r __ns:=/amr_01 -p use_sim
 | `settle_s`, `allow_rotate`, `rotate_s`, `max_attempts` | 10, true, 15, 3 | 시도마다 정지 갱신 → 제자리 회전 |
 | `events_file` | `''` | 감지·재초기화·복구 시각 CSV |
 
-- 회전 중에만 `cmd_vel`을 낸다. 다른 노드와의 `cmd_vel` 우선순위는 아직 정하지 않았다(localization.md 4-5절).
+- 탐색(회전·전진) 중에만 `cmd_vel_recovery`(`cmd_vel_topic` 파라미터)를 낸다. twist_mux에서 내비(`cmd_vel_nav`)보다 우선하게 넣고, 그 뒤로 구역 허가(`amr_zone_client`)·안전(`amr_safety`)을 거쳐 최종 `cmd_vel`이 된다(#79 이진). 복구 중 내비 목표 중지는 BT가 한다(지수와 합의 예정).
 - 상태는 `kidnap_recovery/state`(std_msgs/String)로 낸다.
 
 ## 파라미터
