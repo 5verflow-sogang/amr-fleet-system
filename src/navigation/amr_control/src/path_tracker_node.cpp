@@ -14,6 +14,7 @@
 
 #include "amr_control/core/cte_log.hpp"
 #include "amr_control/core/path_tracker.hpp"
+#include "amr_control/core/pid.hpp"
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -85,6 +86,19 @@ public:
 
     const double control_rate_hz = declare_parameter<double>("control_rate_hz", 20.0);
     odom_timeout_s_ = declare_parameter<double>("odom_timeout_s", 0.5);
+
+    // 선속도 PID (추종기 선속도 → odom 선속도). 끄면 추종기 출력을 그대로 낸다
+    pid_enabled_ = declare_parameter<bool>("velocity_pid.enabled", false);
+    PidConfig pid;
+    pid.kp = declare_parameter<double>("velocity_pid.kp", 0.0);
+    pid.ki = declare_parameter<double>("velocity_pid.ki", 0.0);
+    pid.kd = declare_parameter<double>("velocity_pid.kd", 0.0);
+    pid.integral_limit = declare_parameter<double>("velocity_pid.integral_limit", 0.3);
+    pid.derivative_filter_tau = declare_parameter<double>("velocity_pid.derivative_filter_tau", 0.05);
+    // 후진하지 않으므로 하한 0, 상한은 로봇 한계
+    pid.output_min = 0.0;
+    pid.output_max = config.max_linear_speed;
+    pid_ = Pid(pid);
     base_frame_ = declare_parameter<std::string>("base_frame", "");
 
     // cte.csv: 비우면 기록하지 않는다. 하네스가 {run_dir}/cte.csv를 넘긴다
@@ -123,8 +137,9 @@ public:
       [this]() {onControl();});
 
     RCLCPP_INFO(
-      get_logger(), "path_tracker 시작: %s, %.1f Hz, cte.csv %s", controller.c_str(),
-      control_rate_hz, cte_csv_path.empty() ? "기록 안 함" : cte_csv_path.c_str());
+      get_logger(), "path_tracker 시작: %s, %.1f Hz, 속도 PID %s, cte.csv %s", controller.c_str(),
+      control_rate_hz, pid_enabled_ ? "켬" : "끔",
+      cte_csv_path.empty() ? "기록 안 함" : cte_csv_path.c_str());
   }
 
 private:
@@ -191,7 +206,14 @@ private:
     }
 
     geometry_msgs::msg::Twist cmd;
-    cmd.linear.x = result.v;
+    const double measured_v = odom_->twist.twist.linear.x;
+    if (pid_enabled_ && result.status == TrackingStatus::kTracking) {
+      cmd.linear.x = pid_.update(result.v, measured_v, dt);
+    } else {
+      // 제자리 회전 중에는 선속도 0을 그대로 내고 PID는 비운다
+      pid_.reset();
+      cmd.linear.x = result.v;
+    }
     cmd.angular.z = result.w;
     cmd_pub_->publish(cmd);
     moving_ = true;
@@ -222,12 +244,15 @@ private:
     cmd_pub_->publish(geometry_msgs::msg::Twist());
     moving_ = false;
     tracker_.resetSpeed();
+    pid_.reset();
     if (cte_csv_.is_open()) {
       cte_csv_.flush();
     }
   }
 
   PathTracker tracker_;
+  Pid pid_;
+  bool pid_enabled_ = false;
   std::string path_frame_;
   std::string base_frame_;
   std::string robot_id_;

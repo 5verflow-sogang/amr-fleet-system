@@ -39,6 +39,18 @@
       front_offset: 0.3
       max_steer: 1.2
 
+    # 선속도 PID: 추종기 선속도(목표)를 odom 선속도가 따라가게 보정한다. 끄면 추종기 출력 그대로.
+    # u = 목표 + kp·e + ki·∫e − kd·d(측정)/dt, 출력 [0, max_linear_speed]. 게인 근거는 navigation.md 5-3절
+    velocity_pid:
+      enabled: false
+      kp: 0.5
+      ki: 1.0
+      kd: 0.0
+      # 적분항 상한 [m/s]
+      integral_limit: 0.3
+      # 측정값 미분 저역통과 시정수 [s]
+      derivative_filter_tau: 0.05
+
     # odom이 이 시간 [s]보다 오래되면 정지
     odom_timeout_s: 0.5
     # 경로 프레임과 odom 프레임이 다를 때 TF로 찾을 로봇 프레임. 비우면 odom child_frame_id
