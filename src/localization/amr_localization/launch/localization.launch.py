@@ -83,7 +83,7 @@ def _localization(context):
                 'base_frame_id': prefix + 'base_footprint',
                 'odom_frame_id': prefix + 'odom',
                 # 초기 위치는 map 기준. 지도 v0은 world (0, 1.5)에서 매핑을 시작해
-                # 기본 스폰 위치 world (0, 1.5)가 map (0, 0)이다 (amr_mapping maps/warehouse_v0.yaml)
+                # 기본 스폰 위치 world (0, 1.5)가 map (0, 0)이다 (amr_mapping maps/warehouse_v1.yaml, v0과 같다)
                 'initial_pose.x': float(LaunchConfiguration('initial_x').perform(context)),
                 'initial_pose.y': float(LaunchConfiguration('initial_y').perform(context)),
                 'initial_pose.yaw': float(LaunchConfiguration('initial_yaw').perform(context)),
@@ -129,7 +129,7 @@ def _localization(context):
 
 def generate_launch_description():
     default_map = os.path.join(
-        get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v0.yaml')
+        get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v1.yaml')
     return LaunchDescription([
         DeclareLaunchArgument('namespace', default_value='amr_01', description='로봇 네임스페이스'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
