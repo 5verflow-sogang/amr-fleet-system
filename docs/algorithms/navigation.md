@@ -1,7 +1,7 @@
 # 경로 계획 · 모션 제어 (A* · DWA · Costmap)
 
 > 상태: 진행 중 (2주차). 담당: 이진. Costmap(1절)·DWA(4절) 설정·구현 근거를 정리한다.
-> A* 알고리즘 설명(3절), Pure Pursuit/Stanley/PID(5절)는 아직 TODO.
+> A* 알고리즘 설명(3절), PID(5절)는 아직 TODO. Pure Pursuit/Stanley는 5절.
 > 파라미터 파일은 [amr_bringup/config/nav2_params.yaml](../../src/bringup/amr_bringup/config/nav2_params.yaml)이다.
 
 ## 1. Costmap
@@ -171,14 +171,109 @@ odom/map 프레임 ↔ 이 좌표계 변환은 core가 아니라 3주차 `amr_na
 | 연결 | ROS 비의존 core만(`amr_planning_core`) | `amr_nav2_plugins`에서 `nav2_core::Controller`로 감싸 `controller_server`에 꽂는다(1주차 DWB baseline을 교체) |
 | 비교 | — | DWB·TEB와 CTE·정지 횟수·경로 길이로 비교(원 명세 "DWA vs TEB") |
 
-## 5. Pure Pursuit · Stanley · PID (예정)
+## 5. Pure Pursuit · Stanley · PID
 
-TODO(3주차 이후): Pure Pursuit/Stanley 적응형 look-ahead 설계, PID 게인 튜닝 과정을
-작성한다.
+> 담당: 이진. ROS 비의존 코어 `amr_control/include/amr_control/core/`, 노드 `path_tracker_node`
+> (`plan` + `odom` → `cmd_vel_nav`). 파라미터는 [amr_control/config/path_tracker.yaml](../../src/navigation/amr_control/config/path_tracker.yaml).
+> Nav2 `controller_server` 플러그인화와 PID는 아직 안 했다.
 
-### 5-1. speed_limit 연동
+### 5-0. 공통: 가장 가까운 점과 CTE
 
-제어 쪽은 `safety/status`(`amr_msgs/msg/SafetyStatus`)의 `speed_limit`을 받아 명령
+경로는 점을 잇는 폴리라인으로 본다. 로봇 위치 p를 각 선분 [a, b]에 투영하고(t는 0~1로 자름)
+가장 가까운 점 p\*를 고른다. 진행 방향 단위벡터 u = (b − a)/|b − a|에 대해
+
+```
+CTE = sign(u × (p − p*)) · |p − p*|      (경로 진행 방향 왼쪽 +, 오른쪽 −)
+```
+
+되돌아오거나 교차하는 경로에서 한참 앞·뒤 구간으로 튀지 않도록, 직전에 투영된 선분부터
+`search_window`(2 m) 앞까지만 찾는다. 기록용 CTE는 두 방식 모두 **로봇 중심** 기준이다.
+
+### 5-1. Pure Pursuit
+
+경로에서 호 길이로 lookahead L_d 앞의 점을 목표로 잡고, 로봇을 지나며 그 점에 닿는 원호의
+곡률을 쓴다. 목표점의 로봇 좌표를 (x_l, y_l), 거리를 L이라 하면
+
+```
+κ = 2·y_l / L²,   ω = v·κ
+L_d = clamp(lookahead_time · |v|, min_lookahead, max_lookahead)    (adaptive_lookahead: true)
+```
+
+lookahead를 속도에 비례시키는 이유: 짧으면 저속에서 정확하지만 고속에서 진동하고, 길면
+안정적이지만 곡선 안쪽을 깎는다. 목표점을 경로 **위**에서 고르므로 원호에서는 정상상태
+오차가 이론상 0이다(시뮬레이션 R = 1 m에서 0.7 cm, 경로 점 간격 때문).
+
+| 파라미터 | 값 | 근거 |
+| --- | --- | --- |
+| `lookahead_time` | 1.0 s | 0.5 m/s 순항에서 L_d = 0.5 m |
+| `min_lookahead` / `max_lookahead` | 0.3 / 1.5 m | 하한은 풋프린트 반 길이(0.3 m). 상한은 로봇 최고속 1.5 m/s 근처에서 1초 앞 |
+| `lookahead_distance` | 0.6 m | `adaptive_lookahead: false`일 때 비교용 고정값 |
+
+### 5-2. Stanley
+
+원 논문(Thrun et al., 2006)은 앞바퀴 축 중심을 기준점으로 조향각 δ를 정한다. 차동구동은
+앞바퀴가 없으므로 로봇 중심에서 d(`front_offset`) 앞의 점을 기준점으로 쓴다.
+기준점의 투영으로 heading 오차 θ_e(경로 방향 − 로봇 방향)와 CTE e를 구하면
+
+```
+δ = θ_e − atan( k·e / (v_s + v) ),   |δ| ≤ max_steer
+ω = v·tan(δ) / d
+```
+
+ω 식은 기준점의 속도 방향이 로봇 방향에서 δ만큼 꺾이도록 고른 값이다(atan2(ω·d, v) = δ).
+축거 d인 자전거 모델과 같은 식이라, 직선에서 기준점 오차가 대략 exp(−k·t)로 줄어드는 원 논문
+성질이 남는다. 대신 원호에서는 기준점이 경로를 따라가므로 **중심이 안쪽으로 약 d²/(2R)만큼
+붙는다**(R = 1 m에서 4.5 cm, 시뮬레이션 3.9 cm). 곡선 KPI 10 cm 안이지만, R이 0.5 m 아래로
+가면 d를 줄여야 한다.
+
+| 파라미터 | 값 | 근거 |
+| --- | --- | --- |
+| `cte_gain` (k) | 2.0 | 1 m 옆 출발에서 1.5 m 안에 5 cm로 들어오고 넘침 없음 (단위 테스트 시뮬레이션) |
+| `softening_speed` (v_s) | 0.2 m/s | 출발 직후 v ≈ 0에서 atan 항이 튀지 않게 |
+| `front_offset` (d) | 0.3 m | 풋프린트 앞 끝 |
+| `max_steer` | 1.2 rad | tan이 발산하기 전에 자름 |
+
+### 5-3. 공통 속도 프로파일 · 정지
+
+| 단계 | 식 / 규칙 | 파라미터 |
+| --- | --- | --- |
+| 순항 | v = min(`desired_speed`, `max_linear_speed`) | 0.5 / 2.0 m/s |
+| 끝 감속 | v ≤ max(`min_approach_speed`, √(2·`max_linear_decel`·남은 호 길이)) | 0.05 m/s, 1.0 m/s² |
+| 가속 제한 | v ≤ 직전 명령 + `max_linear_accel`·dt | 1.0 m/s² |
+| 각속도 한계 | \|v·κ\| > `max_angular_speed`면 v = `max_angular_speed`/\|κ\| (곡률은 유지) | 1.5 rad/s |
+| 제자리 회전 | \|경로 방향 − 로봇 방향\| > `rotate_in_place_angle`면 v = 0, ω = ±`rotate_in_place_speed` | 1.0 rad, 0.8 rad/s |
+| 정지 | 끝점과 `goal_tolerance` 안이거나 마지막 선분에서 끝점을 지나치면 (0, 0), 새 경로까지 유지 | 0.1 m |
+
+로봇 한계(2.0 m/s, 1.0 m/s², 1.5 rad/s)는 `nav2_params.yaml` FollowPath와 같다. 재계획으로
+경로가 바뀌어도 직전 명령 속도는 이어 쓴다(1 Hz 재계획마다 멈칫하지 않게).
+
+### 5-4. CTE 기록 (`cte.csv`)
+
+`cte_csv_path`를 주면 제어 주기마다 하네스 형식([tools/harness/README.md](../../tools/harness/README.md) 로그 포맷)으로 쓴다:
+`timestamp, planned_x, planned_y, actual_x, actual_y, cte, segment, robot`.
+
+- `timestamp`: odom `header.stamp`(시뮬레이션 시간), `planned_*`: 로봇 중심의 투영점, `actual_*`: 로봇 위치(경로 프레임)
+- `cte`: 명세서 정의(수직 거리)대로 부호 없는 값. 부호는 코어 `PathProjection::cte`에 있다
+- `segment`: 투영점 앞뒤 0.25 m로 잰 경로 곡률이 `curve_curvature_threshold`(0.1 1/m, 반지름 10 m) 이상이면 `curve`, 아니면 `straight`
+
+### 5-5. 단위 테스트 (`test/test_path_tracker.cpp`)
+
+차동구동 모델(속도 1차 지연 0.1 s, 20 Hz)로 두 방식 모두 같은 시나리오를 돌린다.
+
+| 시나리오 | 판정 |
+| --- | --- |
+| 직선, 0.5 m 옆 출발 | 3 m 지난 뒤 \|CTE\| < 5 cm |
+| 직선, ±1 m 옆 + 바깥쪽으로 0.3 rad 틀어 출발 | 4 m 지난 뒤 \|CTE\| < 5 cm, 반대쪽 넘침 < 10 cm |
+| 원호 R = 1, 2, 5 m (반원) | 전 구간 \|CTE\| < 10 cm |
+| 3 m 직선 끝 | 끝점 0.13 m 안 정지, 끝점을 3 cm 넘게 지나치지 않음, 이후 계속 (0, 0) |
+| 반대 방향 출발 / R = 0.25 m 급커브 / 재계획 | 제자리 회전 후 추종 / \|ω\| ≤ 1.5 rad/s / 속도 유지 |
+
+TODO: Gazebo에서 하네스 시나리오로 실측 CTE(직선 5 cm·곡선 10 cm KPI)를 재고, Pure Pursuit과
+Stanley를 비교한다(`meta.json` `controller`). PID 속도 제어와 S-curve 프로파일은 그 다음.
+
+### 5-6. speed_limit 연동 (예정)
+
+아직 `path_tracker_node`에 붙이지 않았다. 제어 쪽은 `safety/status`(`amr_msgs/msg/SafetyStatus`)의 `speed_limit`을 받아 명령
 선속도를 `min(명령, speed_limit)`으로 제한하고, 1.0 m/s² 이내로 감속한다. 값 정의
 (`inf`/0.0/WARNING 등)는 [docs/api.md](../api.md)를 참조한다.
 

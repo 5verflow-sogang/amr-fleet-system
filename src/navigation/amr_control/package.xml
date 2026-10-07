@@ -9,7 +9,18 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- TODO: 구현 시 의존성 추가 (예: rclcpp, amr_msgs) -->
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+
+  <!-- launch/path_tracker.launch.py -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
