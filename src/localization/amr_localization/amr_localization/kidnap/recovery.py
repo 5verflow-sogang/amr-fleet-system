@@ -7,7 +7,8 @@
       ─(수렴)→ TRACKING
       ─(settle_s 지나도 미수렴)→ ROTATING (allow_rotate일 때) 또는 다음 시도
     ROTATING: 제자리 회전으로 스캔을 모은다 ─(수렴)→ TRACKING / ─(rotate_s 지남)→ 다음 시도
-    시도가 max_attempts를 넘으면 FAILED (사람·상위 BT가 처리)
+    시도가 max_attempts를 넘으면 FAILED (사람·상위 BT가 처리). FAILED에서도 계속 지켜보다가
+    수렴 조건을 다시 만족하면(사람이 위치를 다시 잡아 준 경우 등) TRACKING으로 돌아온다
 
 수렴: 일치율 ≥ ok_ratio이고 AMCL 위치 표준편차 ≤ ok_std_m가 ok_checks번 연속.
 """
@@ -103,4 +104,7 @@ class KidnapRecovery:
             if elapsed < c.rotate_s:
                 return [ROTATE]
             return self._start_attempt(now)
+        if self.state == FAILED and self._converged(ratio, std_m):
+            self.state, self.attempts = TRACKING, 0
+            self.events.append(Event(now, 'restored', f'일치율 {ratio:.2f}'))
         return []

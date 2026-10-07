@@ -9,7 +9,9 @@
 
 구독: /map, scan, odometry/filtered, amcl_pose
 호출: reinitialize_global_localization, request_nomotion_update (AMCL, std_srvs/Empty)
-발행: cmd_vel_recovery (탐색 중에만), initialpose (국소 재초기화), kidnap_recovery/state (std_msgs/String)
+발행: cmd_vel_recovery (탐색 중에만), initialpose (국소 재초기화),
+      kidnap_recovery/state (std_msgs/String, tracking·settling·rotating·failed 단어만. BT가 비교한다),
+      kidnap_recovery/match_ratio (std_msgs/Float32, 스캔-지도 일치율)
       최종 cmd_vel은 amr_safety 하나만 낸다(9/28). cmd_vel_recovery는 twist_mux에서 내비(cmd_vel_nav)보다 우선하게
       넣어 구역 허가·안전 노드를 그대로 거친다(#79 이진 리뷰). 복구 중 내비 목표 중지는 BT가 한다
 """
@@ -25,13 +27,12 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import String
+from std_msgs.msg import Float32, String
 from std_srvs.srv import Empty
 
-from .eval.trajectory import yaw_from_quaternion
+from .eval.trajectory import quaternion_from_yaw, yaw_from_quaternion
 from .kidnap import (LOCAL_REINIT, NOMOTION, REINIT, ROTATING, STOP, TRACKING, KidnapRecovery, RecoveryConfig,
                      endpoints, grid_from_occupancy, match_ratio)
-from .eval.trajectory import quaternion_from_yaw
 
 
 class KidnapRecoveryNode(Node):
@@ -83,6 +84,7 @@ class KidnapRecoveryNode(Node):
         self.cmd_pub = self.create_publisher(Twist, d('cmd_vel_topic', 'cmd_vel_recovery').value, 10)
         self.initialpose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
         self.state_pub = self.create_publisher(String, 'kidnap_recovery/state', 10)
+        self.ratio_pub = self.create_publisher(Float32, 'kidnap_recovery/match_ratio', 10)
         self.create_timer(1.0 / self.check_hz, self._check)
         self.create_timer(0.1, self._drive)
         self.get_logger().info('Kidnapped 감지 시작 (지도·스캔 대기)')
@@ -139,7 +141,8 @@ class KidnapRecoveryNode(Node):
         for e in self.machine.events[n_events:]:
             self.get_logger().warn(f'[kidnap] {e.kind} {e.detail}')
             self._log_event(e)
-        self.state_pub.publish(String(data=f'{self.machine.state} ratio={self.ratio:.2f} std={self.amcl_std:.2f}'))
+        self.state_pub.publish(String(data=self.machine.state))
+        self.ratio_pub.publish(Float32(data=float(self.ratio)))
 
     def _local_reinit(self):
         """마지막으로 확실했던 자세 주변에 파티클을 넓게 뿌린다 (AMCL initialpose). 없으면 지금 자세."""

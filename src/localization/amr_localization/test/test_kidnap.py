@@ -89,3 +89,12 @@ def test_rotates_then_fails_after_max_attempts():
     kinds = [e.kind for e in m.events]
     # 1차 국소, 2차 전역
     assert kinds.count('local_reinit') == 1 and kinds.count('reinit') == 1
+
+
+def test_failed_returns_to_tracking_when_relocalized():
+    # 실패한 뒤 사람이 위치를 다시 잡아 주면(일치율·σ 회복) 정상 추적으로 돌아와 BT가 다음 작업을 받는다
+    m = KidnapRecovery(RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, max_attempts=1, ok_checks=2))
+    run(m, [(0.1, 1.0)] * 8)
+    assert m.state == 'failed'
+    run(m, [(0.95, 0.05)] * 2, t0=10.0)
+    assert m.state == 'tracking' and m.events[-1].kind == 'restored'
