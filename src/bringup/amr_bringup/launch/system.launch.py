@@ -67,7 +67,7 @@ def _system(context):
                     namespace=ns, x=robot.x, y=robot.y, yaw=robot.yaw,
                     # EKF(ekf_local)가 odom → base_footprint를 내므로 DiffDrive TF는 끈다 (docs/api.md 2-1절)
                     publish_odom_tf='false' if localization else 'true',
-                    enable_camera=arg('enable_camera'), use_sim_time='true'),
+                    enable_camera=arg('enable_camera'), payload_mass=arg('payload_mass'), use_sim_time='true'),
             _launch('amr_odometry', 'odometry.launch.py',
                     namespace=ns, encoder_seed=encoder_seed(seed, i), use_sim_time='true'),
             _launch('amr_odometry', 'sensor_filters.launch.py', namespace=ns, use_sim_time='true'),
@@ -119,6 +119,7 @@ def generate_launch_description():
         ('enable_camera', 'false', 'RGBD 카메라. CPU로 5대를 그리면 RTF 0.37로 떨어진다 (명세서 11-3절)'),
         ('dynamic_obstacles', 'false', '동적 장애물 5개'),
         ('spawn_interval_s', '3.0', '로봇 스폰 시차 (실제 시간, s)'),
+        ('payload_mass', '0.0', '모든 로봇의 적재물 질량 [kg] (연구 2 Gazebo 평가)'),
         ('seed', '0', '실행 seed. 엔코더 노이즈·동적 장애물·손실 난수에 쓴다. 하네스는 1부터 준다'),
         # 위치추정
         ('localization', 'true', 'AMCL + EKF. 끄면 DiffDrive odom TF를 쓴다'),

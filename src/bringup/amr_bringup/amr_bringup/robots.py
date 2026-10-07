@@ -46,3 +46,28 @@ def encoder_seed(run_seed: int, index: int) -> int:
     하네스는 seed를 1부터 준다. 로봇마다 노이즈가 독립이도록 실행 seed마다 다른 구간을 쓴다.
     """
     return 0 if run_seed == 0 else run_seed * 100 + index + 1
+
+
+def _segment_distance(p, a, b) -> float:
+    (px, py), (ax, ay), (bx, by) = p, a, b
+    dx, dy = bx - ax, by - ay
+    length2 = dx * dx + dy * dy
+    t = 0.0 if length2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length2))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def obstacle_clearance(x: float, y: float, obstacle: dict) -> float:
+    """world 좌표 점에서 동적 장애물 하나의 활동 범위까지 거리 (m). 범위 안이면 0.
+
+    amr_gazebo config/dynamic_obstacles.yaml 형식: pattern이 random이면 waypoints를 감싼 사각형이 활동 범위이고,
+    straight·curve면 waypoints를 잇는 경로다.
+    """
+    points = [(float(w['x']), float(w['y'])) for w in obstacle['waypoints']]
+    if obstacle.get('pattern') == 'random':
+        xs, ys = [p[0] for p in points], [p[1] for p in points]
+        dx = max(min(xs) - x, 0.0, x - max(xs))
+        dy = max(min(ys) - y, 0.0, y - max(ys))
+        return math.hypot(dx, dy)
+    if len(points) == 1:
+        return math.hypot(x - points[0][0], y - points[0][1])
+    return min(_segment_distance((x, y), a, b) for a, b in zip(points, points[1:]))

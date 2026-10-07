@@ -5,9 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from amr_bringup.robots import encoder_seed, load_robots, world_to_map
+import yaml
+
+from amr_bringup.robots import encoder_seed, load_robots, obstacle_clearance, world_to_map
 
 ROBOTS = str(Path(__file__).resolve().parents[1] / 'config' / 'robots.yaml')
+# 같은 저장소의 amr_gazebo 동적 장애물 설정 (src/bringup/amr_bringup/test → src/simulation/amr_gazebo)
+OBSTACLES = Path(__file__).resolve().parents[3] / 'simulation' / 'amr_gazebo' / 'config' / 'dynamic_obstacles.yaml'
+# 로봇 반 길이 0.3 m + 지게차 반 폭 + 여유
+CLEARANCE_M = 1.0
 
 
 def test_shipped_robots_in_waiting_zone():
@@ -41,3 +47,23 @@ def test_encoder_seed():
     seeds = [encoder_seed(s, i) for s in (1, 2) for i in range(5)]
     assert len(set(seeds)) == len(seeds)
     assert all(v > 0 for v in seeds)
+
+
+def test_obstacle_clearance():
+    random_area = {'pattern': 'random', 'waypoints': [{'x': 5.0, 'y': -13.0}, {'x': 18.0, 'y': -17.0}]}
+    assert obstacle_clearance(17.0, -15.0, random_area) == 0.0          # 범위 안
+    assert obstacle_clearance(17.0, -19.0, random_area) == pytest.approx(2.0)
+    path = {'pattern': 'straight', 'waypoints': [{'x': 0.0, 'y': 0.0}, {'x': 10.0, 'y': 0.0}]}
+    assert obstacle_clearance(5.0, 3.0, path) == pytest.approx(3.0)
+    assert obstacle_clearance(-4.0, 3.0, path) == pytest.approx(5.0)    # 끝점까지
+
+
+def test_spawns_clear_of_dynamic_obstacles():
+    # dynamic_obstacles:=true일 때 서 있는 로봇을 장애물이 치지 않게 한다 (#95 지수 리뷰: forklift_2와 겹쳤음)
+    if not OBSTACLES.exists():
+        pytest.skip('amr_gazebo 설정이 없다 (패키지만 따로 받은 경우)')
+    obstacles = yaml.safe_load(OBSTACLES.read_text(encoding='utf-8'))['obstacles']
+    for robot in load_robots(ROBOTS, 5):
+        for obstacle in obstacles:
+            clearance = obstacle_clearance(robot.x, robot.y, obstacle)
+            assert clearance >= CLEARANCE_M, (robot.name, obstacle['id'], round(clearance, 2))
