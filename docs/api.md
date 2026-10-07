@@ -246,6 +246,16 @@ cmd_vel 체인: 최종 `cmd_vel`을 가로채는 건 안전 노드(`amr_safety`)
 "감속·정지를 누가 실행하나"), `amr_zone_client`는 `cmd_vel_zone_limited`까지만 내고 그 뒤
 `amr_safety`(아직 미구현)가 최종 `cmd_vel`을 낸다. `amr_bringup`의 실제 조립(`velocity_smoother`
 포함 여부)도 아직 없어 이 체인은 설계만 돼 있고 끝까지 연결해 보지는 않았다.
+### amr_control (로봇별)
+
+`path_tracker_node`. Pure Pursuit 또는 Stanley(`controller` 파라미터). 자세한 식·파라미터는 [docs/algorithms/navigation.md](algorithms/navigation.md) 5절.
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `plan` | `nav_msgs/msg/Path` | 따라갈 경로. 새로 받으면 진행 상태를 초기화한다 |
+| Subscribe | `odom` | `nav_msgs/msg/Odometry` | 선속도, 경로 프레임이 odom 프레임과 같으면 자세도. 다르면 자세는 TF(경로 프레임 ← `base_frame`) |
+| Publish | `cmd_vel_nav` | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 (→ `amr_zone_client`). Nav2 `controller_server`와 같은 토픽이라 둘을 같이 띄우지 않는다. 경로 끝·경로 없음·odom 끊김이면 0을 한 번 내고 멈춘다 |
+
 ### amr_bt (로봇별)
 
 `<prefix>` = `server_topic_prefix`: `/fleet`(서버 원본, 기본), 장애 주입기 중계본이면 `fleet`(→ `/<ns>/fleet/...`).
