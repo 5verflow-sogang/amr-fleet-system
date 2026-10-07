@@ -2,7 +2,11 @@
 
 import math
 
-from amr_zone_client.geometry import point_in_rect, remaining_distance_to_rect, speed_cap_for_stop
+import pytest
+
+from amr_zone_client.geometry import (
+    combine_caps, point_in_rect, ramp_cap_down, remaining_distance_to_rect, speed_cap_for_stop,
+)
 
 RECT = (5.0, 6.0, -1.0, 1.0)
 
@@ -65,3 +69,35 @@ def test_speed_cap_for_stop_profile():
     assert speed_cap_for_stop(0.0, 0.5, 1.0) == 0.0
     # 단조 감소
     assert speed_cap_for_stop(3.0, 0.5, 1.0) > speed_cap_for_stop(1.0, 0.5, 1.0) > speed_cap_for_stop(0.6, 0.5, 1.0)
+
+
+def test_combine_caps_picks_smaller():
+    assert combine_caps(1.0, 0.5) == 0.5
+    assert combine_caps(None, 0.5) == 0.5
+    assert combine_caps(None, None) is None
+    assert combine_caps() is None
+
+
+def test_ramp_cap_down_relaxation_is_immediate():
+    # 완화(상한이 올라가거나 그대로)는 바로 반영한다 - 부드럽게 할 필요 없음
+    assert ramp_cap_down(1.0, 0.5, dt=1.0, decel=1.0, no_limit_value=2.0) == 1.0
+    assert ramp_cap_down(None, 0.5, dt=1.0, decel=1.0, no_limit_value=2.0) is None
+
+
+def test_ramp_cap_down_limits_drop_rate():
+    # decel=1.0 m/s^2, dt=0.1s -> 0.1 m/s 이상 못 내려간다
+    assert ramp_cap_down(0.0, 0.5, dt=0.1, decel=1.0, no_limit_value=2.0) == pytest.approx(0.4)
+
+
+def test_ramp_cap_down_zero_dt_holds_previous_value():
+    assert ramp_cap_down(0.0, 0.5, dt=0.0, decel=1.0, no_limit_value=2.0) == 0.5
+
+
+def test_ramp_cap_down_from_no_limit_ramps_from_max_velocity():
+    # prev가 None(제한 없음)이면 no_limit_value(로봇 최고속)에서부터 내려간다
+    result = ramp_cap_down(0.0, None, dt=0.1, decel=1.0, no_limit_value=2.0)
+    assert result == pytest.approx(1.9)
+
+
+def test_ramp_cap_down_reaching_no_limit_value_returns_none():
+    assert ramp_cap_down(2.0, 1.9, dt=1.0, decel=1.0, no_limit_value=2.0) is None

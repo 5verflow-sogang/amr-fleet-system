@@ -3,6 +3,9 @@
 계획 경로(/<ns>/plan)와 현재 위치(map_frame → base_frame TF)로 구역 경계까지 남은 거리를 계산해
 ZoneRequest를 보내고, 허가 전까지는 cmd_vel을 감속·정지시킨다. 흐름은 README '동작 규칙' 참고.
 
+구역 상한에 더해 safety/status(SafetyStatus.speed_limit)도 반영한다(#69·#70) - 둘 중 더
+작은 쪽을 쓰고, 끊기면 제한 없음으로 본다. README 'SafetyStatus 연동' 절 참고.
+
 cmd_vel 체인에서의 위치는 README 'cmd_vel 체인' 절 참고 — 최종 cmd_vel 발행은 이 노드 몫이
 아니다 (안전 노드가 가로채는 게 팀 결정, project-spec.md '안전 정지 책임' 절).
 """
@@ -12,7 +15,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 import rclpy
-from amr_msgs.msg import ZoneGrant, ZoneRequest
+from amr_msgs.msg import SafetyStatus, ZoneGrant, ZoneRequest
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Path
 from rclpy.executors import ExternalShutdownException
@@ -52,6 +55,12 @@ class ZoneClientNode(Node):
         cmd_vel_out_topic = p('cmd_vel_out_topic', 'cmd_vel_zone_limited').value
         update_rate_hz = p('update_rate_hz', 10.0).value
 
+        # SafetyStatus 연동 (#69·#70): 네임스페이스 안 상대 이름(amr_msgs/msg/SafetyStatus.msg
+        # 주석 "토픽: safety/status"). 끊기면(이 시간 동안 못 받으면) 제한 없음으로 본다 - 최종
+        # 게이트가 amr_safety라서다 (docs/algorithms/navigation.md '5-1. speed_limit 연동').
+        safety_status_topic = p('safety_status_topic', 'safety/status').value
+        safety_status_timeout_s = p('safety_status_timeout_s', 1.0).value
+
         # lookahead_m: 0.0(기본)이면 core가 trigger_distance_m + 여유로 알아서 정한다. ROS 파라미터는
         # None을 못 담아서 0.0을 "안 줌"의 신호로 쓴다 (#66)
         lookahead_m = p('lookahead_m', 0.0).value
@@ -66,10 +75,14 @@ class ZoneClientNode(Node):
             resend_period_s=p('resend_period_s', 1.0).value,
             retry_period_s=p('retry_period_s', 5.0).value,
             lookahead_m=lookahead_m if lookahead_m > 0.0 else None,
+            max_linear_velocity_mps=p('max_linear_velocity_mps', 2.0).value,
         ))
 
         self._path_xy: List[tuple] = []
         self._speed_cap: Optional[float] = None
+        self._safety_status_timeout_s = safety_status_timeout_s
+        self._safety_speed_limit: Optional[float] = None
+        self._safety_status_last_t: Optional[float] = None
 
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -80,11 +93,13 @@ class ZoneClientNode(Node):
         self.create_subscription(ZoneGrant, zone_grants_topic, self._on_grant, qos)
         self.create_subscription(Path, plan_topic, self._on_path, 10)
         self.create_subscription(Twist, cmd_vel_in_topic, self._on_cmd_vel, 10)
+        self.create_subscription(SafetyStatus, safety_status_topic, self._on_safety_status, 10)
         self.create_timer(1.0 / update_rate_hz, self._update)
 
         self.get_logger().info(
             f'zone_client({self._robot_id}): 구역 {zones and [z.zone_id for z in zones] or "없음"}, '
-            f'구독 {zone_grants_topic} (허가), {plan_topic} (경로) · 발행 {zone_requests_topic}')
+            f'구독 {zone_grants_topic} (허가), {plan_topic} (경로), {safety_status_topic} '
+            f'(speed_limit) · 발행 {zone_requests_topic}')
 
     def _on_path(self, msg: Path):
         self._path_xy = [(pose.pose.position.x, pose.pose.position.y) for pose in msg.poses]
@@ -99,6 +114,10 @@ class ZoneClientNode(Node):
             msg.holder_robot_id)
         if warning:
             self.get_logger().warn(warning)
+
+    def _on_safety_status(self, msg: SafetyStatus):
+        self._safety_speed_limit = msg.speed_limit
+        self._safety_status_last_t = self.get_clock().now().nanoseconds * 1e-9
 
     def _on_cmd_vel(self, msg: Twist):
         out = Twist()
@@ -124,7 +143,13 @@ class ZoneClientNode(Node):
             self._speed_cap = 0.0
             return
         now = self.get_clock().now().nanoseconds * 1e-9
-        outgoing, speed_cap = self._core.update(now, self._path_xy, robot_xy)
+        # 끊김(한 번도 못 받았거나 timeout 넘게 조용함) 판단은 노드 몫이다 - core는 ROS 비의존
+        # 이라 타임스탬프 비교를 모른다. 끊겼으면 None(제한 없음)을 넘긴다 (#69).
+        safety_limit = self._safety_speed_limit
+        if (self._safety_status_last_t is None
+                or now - self._safety_status_last_t > self._safety_status_timeout_s):
+            safety_limit = None
+        outgoing, speed_cap = self._core.update(now, self._path_xy, robot_xy, safety_limit)
         self._speed_cap = speed_cap
         for item in outgoing:
             msg = ZoneRequest()

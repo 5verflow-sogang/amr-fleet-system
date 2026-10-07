@@ -13,6 +13,7 @@
 | Subscribe | `fleet/zone_grants` (파라미터 `zone_grants_topic`) | `amr_msgs/msg/ZoneGrant` | 서버 응답. 네임스페이스 안 상대 이름 → `amr_fault_injector`가 중계한 `/<robot_id>/fleet/zone_grants` |
 | Subscribe | `plan` (파라미터 `plan_topic`) | `nav_msgs/msg/Path` | Nav2 전역 계획 경로. 로봇 현재 위치 기준으로 다시 계산된 것을 그대로 쓴다 |
 | Subscribe | `cmd_vel_nav` (파라미터 `cmd_vel_in_topic`) | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 (Nav2 controller_server, 향후 velocity_smoother의 출력) |
+| Subscribe | `safety/status` (파라미터 `safety_status_topic`) | `amr_msgs/msg/SafetyStatus` | `speed_limit`을 구역 상한과 함께 선속도 상한에 반영 ('SafetyStatus 연동' 절 참고) |
 | Publish | `cmd_vel_zone_limited` (파라미터 `cmd_vel_out_topic`) | `geometry_msgs/msg/Twist` | 게이팅 후 속도 명령. 허가 전엔 선속도만 깎는다, 각속도는 그대로. **로봇의 최종 `cmd_vel`이 아니다** — 'cmd_vel 체인' 절 참고 |
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
@@ -90,13 +91,18 @@
 | `retry_period_s` | `5.0` | `BLOCKED`(REJECTED) 뒤 재시도까지 기다리는 시간 |
 | `lookahead_m` | `0.0` (= `trigger_distance_m + 2.0`) | 아직 안 건드린 구역을 로봇 앞 이 거리까지만 찾는다. `0.0`이면 `trigger_distance_m`에 여유를 더해 자동으로 정한다 |
 | `zone_requests_topic` | `/fleet/zone_requests` | 로봇 → 서버 토픽. 다른 파라미터처럼 `declare_parameter`로 선언돼 있지만, 장애 주입기가 중계하지 않는 절대 토픽이라 네임스페이스와 상관없이 항상 같은 기본값을 쓴다(`fleet_manager_node.py`) — 보통 바꿀 일이 없다 |
+| `safety_status_topic` | `safety/status` | `SafetyStatus` 상대 이름 ('SafetyStatus 연동' 절 참고) |
+| `safety_status_timeout_s` | `1.0` | 이 시간 동안 메시지를 못 받으면 끊김으로 보고 `speed_limit` 제한을 없앤다 |
+| `max_linear_velocity_mps` | `2.0` | `speed_limit`이 낮아질 때 램프의 "제한 없음" 기준(`geometry.ramp_cap_down`). `nav2_params.yaml` `FollowPath.max_vel_x`·URDF `max_linear_velocity`와 동일 |
 
 ## cmd_vel 체인
 
 안전 정지는 안전 노드(`amr_safety`, 연우)가 `cmd_vel`을 가로채는 방식으로 두고, 제어 쪽은
 `SafetyStatus.speed_limit`을 참고해 부드럽게 감속하는 부가 역할만 하기로 합의했다 (9/28 회의,
 [docs/project-spec.md](../../../docs/project-spec.md) '안전 정지 책임' 절, [docs/api.md](../../../docs/api.md)
-4-4절 "감속·정지를 누가 실행하나"). 구역 진입 제한도 같은 성격의 하드 제약이라, 이 노드가 최종 `cmd_vel`을
+4-4절 "감속·정지를 누가 실행하나"). 이 노드가 모든 컨트롤러 출력이 거치는 자리라 `speed_limit`
+반영도 여기서 한다 (아래 'SafetyStatus 연동' 절, [docs/algorithms/navigation.md](../../../docs/algorithms/navigation.md)
+'5-1. speed_limit 연동'). 구역 진입 제한도 같은 성격의 하드 제약이라, 이 노드가 최종 `cmd_vel`을
 직접 내보내면 안전 노드와 발행자가 둘이 된다.
 
 그래서 이 노드의 출력은 `cmd_vel`이 아니라 `cmd_vel_zone_limited`다. 의도한 체인은:
@@ -108,6 +114,21 @@ controller_server (Nav2) → cmd_vel_nav → [velocity_smoother, 아직 없음] 
 `amr_bringup`의 launch 조립과 `amr_safety` 구현이 둘 다 아직 없어서(스텁) 지금은 이 체인을 끝까지
 못 맞춰 본다. 그 전까지 시뮬레이션에서 단독으로 쓰려면 `amr_bringup`이 `cmd_vel_zone_limited`를
 로봇 `cmd_vel`로 임시 리맵하면 된다 — 다만 `amr_safety`가 들어오면 그 리맵은 지워야 한다.
+
+## SafetyStatus 연동
+
+구역 상한 외에도 `safety/status`(`amr_msgs/msg/SafetyStatus`)의 `speed_limit`을 받아 **구역
+상한과 `speed_limit` 중 더 작은 쪽**을 cmd_vel 선속도 상한으로 쓴다(#69·#70). 적용 위치를
+`amr_zone_client`로 둔 이유는 Nav2 컨트롤러가 무엇이든(DWA·Pure Pursuit 등) 결국 여기를
+거쳐 `cmd_vel_zone_limited`로 나가기 때문이다 — 컨트롤러마다 따로 `speed_limit`을 챙기지
+않아도 된다. 값 정의(`inf`/`0.6`/`0.0` 등)는 [docs/api.md](../../../docs/api.md)를 참고한다.
+
+- `speed_limit`이 **낮아질 때만** `decel_mps2`(구역 진입 감속과 같은 파라미터) 이내로 부드럽게
+  따라간다(`geometry.ramp_cap_down`). 높아지거나(완화) 끊김에서 복구될 때는 바로 반영한다 —
+  완화는 안전 쪽이라 부드럽게 할 필요가 없다.
+- `safety_status_timeout_s`(기본 1.0 s) 동안 메시지를 못 받으면(한 번도 못 받았을 때 포함)
+  **제한 없음**으로 본다. 최종 게이트가 `amr_safety`라서다 — 이 노드가 보수적으로 막지 않아도
+  안전 노드가 끝에서 한 번 더 막는다.
 
 ## 좌표계에 대해
 

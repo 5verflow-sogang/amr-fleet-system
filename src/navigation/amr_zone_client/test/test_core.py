@@ -1,5 +1,7 @@
 """로봇 측 구역 진입 처리 상태 기계 (core.py). ROS 비의존, rclpy 없이 돈다."""
 
+import math
+
 import pytest
 
 from amr_zone_client.core import (
@@ -274,3 +276,47 @@ def test_lookahead_defaults_to_trigger_distance_plus_margin():
 
     core_custom = make_core(trigger_distance_m=3.0, lookahead_m=10.0)
     assert core_custom.lookahead_m == pytest.approx(10.0)
+
+
+# --- SafetyStatus.speed_limit 연동 (#69·#70): 구역 상한과 min(), 낮아질 때만 부드럽게 ---
+
+
+def test_safety_speed_limit_inf_means_no_limit():
+    core = make_core(zones=[])
+    _, cap = core.update(0.0, [], (0.0, 0.0), safety_speed_limit_mps=math.inf)
+    assert cap is None
+
+
+def test_safety_speed_limit_warning_ramps_down_from_no_limit():
+    core = make_core(zones=[], decel_mps2=1.0, max_linear_velocity_mps=2.0)
+    core.update(0.0, [], (0.0, 0.0))  # 시드 틱 (dt=0, 아직 램프를 시작할 기준 시각이 없다)
+    _, cap = core.update(0.5, [], (0.0, 0.0), safety_speed_limit_mps=0.6)
+    # dt=0.5s, decel=1.0 -> 최고속 2.0에서 최대 0.5만큼만 내려간다(1.5) - 아직 목표(0.6) 위
+    assert cap == pytest.approx(1.5)
+
+
+def test_safety_speed_limit_critical_ramps_to_zero_over_multiple_ticks():
+    core = make_core(zones=[], decel_mps2=1.0, max_linear_velocity_mps=2.0)
+    core.update(0.0, [], (0.0, 0.0))
+    _, cap_1s = core.update(1.0, [], (0.0, 0.0), safety_speed_limit_mps=0.0)
+    assert cap_1s == pytest.approx(1.0)  # 2.0 - 1.0*1.0
+    _, cap_3s = core.update(3.0, [], (0.0, 0.0), safety_speed_limit_mps=0.0)
+    assert cap_3s == pytest.approx(0.0)  # 1.0 - 1.0*2.0 -> 0 아래로는 안 내려간다
+
+
+def test_safety_speed_limit_combines_with_zone_cap_as_smaller():
+    # 구역 상한(접근 중, sqrt(5)~=2.236)과 speed_limit(1.0) 중 더 작은 쪽을 쓴다
+    core = make_core()
+    core.update(0.0, straight_path(2.0, 10.0), (2.0, 0.0), safety_speed_limit_mps=1.0)
+    _, cap = core.update(1.0, straight_path(2.0, 10.0), (2.0, 0.0), safety_speed_limit_mps=1.0)
+    assert cap == pytest.approx(1.0)  # 1.0 < sqrt(5) ~= 2.236이라 speed_limit 쪽이 더 빡빡하다
+
+
+def test_safety_speed_limit_releases_immediately_after_disconnect():
+    core = make_core(zones=[], decel_mps2=1.0, max_linear_velocity_mps=2.0)
+    core.update(0.0, [], (0.0, 0.0), safety_speed_limit_mps=0.0)
+    _, capped = core.update(1.0, [], (0.0, 0.0), safety_speed_limit_mps=0.0)
+    assert capped == pytest.approx(1.0)
+    # 노드가 끊김(타임아웃)으로 보면 None을 넘긴다 - 완화라 바로 반영한다(제한 없음)
+    _, released = core.update(1.1, [], (0.0, 0.0), safety_speed_limit_mps=None)
+    assert released is None
