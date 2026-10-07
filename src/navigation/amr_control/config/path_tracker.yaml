@@ -1,0 +1,53 @@
+# 경로 추종 노드 (path_tracker_node) 파라미터. 식·근거는 docs/algorithms/navigation.md 5절
+/**:
+  ros__parameters:
+    # pure_pursuit | stanley (하네스 meta.json `controller`와 같은 이름)
+    controller: pure_pursuit
+    control_rate_hz: 20.0
+
+    # 선속도 프로파일 [m/s, m/s², rad/s]. 로봇 한계는 nav2_params.yaml FollowPath와 같은 값
+    desired_speed: 0.5
+    max_linear_speed: 2.0
+    max_angular_speed: 1.5
+    max_linear_accel: 1.0
+    # 경로 끝 감속 v <= sqrt(2·decel·남은 거리), 그 중 최저 속도
+    max_linear_decel: 1.0
+    min_approach_speed: 0.05
+    # 경로 끝점 이 거리 [m] 안이거나 지나치면 정지
+    goal_tolerance: 0.1
+
+    # 경로 방향과 이 각도 [rad] 넘게 어긋나면 서서 돈다. 0이면 끔
+    rotate_in_place_angle: 1.0
+    rotate_in_place_speed: 0.8
+
+    # 가장 가까운 점을 지난 위치 앞 이 호 길이 [m] 안에서만 찾는다
+    search_window: 2.0
+
+    pure_pursuit:
+      # true: lookahead = lookahead_time × |v|, [min, max]로 자름. false: lookahead_distance 고정
+      adaptive_lookahead: true
+      lookahead_distance: 0.6
+      lookahead_time: 1.0
+      min_lookahead: 0.3
+      max_lookahead: 1.5
+
+    stanley:
+      # δ = heading 오차 − atan(cte_gain·e / (softening_speed + v)), ω = v·tan(δ)/front_offset
+      cte_gain: 2.0
+      softening_speed: 0.2
+      # 기준점: 로봇 중심 앞 거리 [m] (차동구동이라 앞바퀴 대신). 풋프린트 앞 끝(0.3 m)
+      front_offset: 0.3
+      max_steer: 1.2
+
+    # odom이 이 시간 [s]보다 오래되면 정지
+    odom_timeout_s: 0.5
+    # 경로 프레임과 odom 프레임이 다를 때 TF로 찾을 로봇 프레임. 비우면 odom child_frame_id
+    base_frame: ""
+
+    # cte.csv (tools/harness/README.md 로그 포맷). 비우면 기록하지 않는다
+    cte_csv_path: ""
+    # 구간 분류: 경로 곡률이 이 값 [1/m] 이상이면 curve (반지름 10 m 이하)
+    curve_curvature_threshold: 0.1
+    curvature_half_span: 0.25
+    # 비우면 네임스페이스(/amr_01 → amr_01)를 쓴다
+    robot_id: ""
