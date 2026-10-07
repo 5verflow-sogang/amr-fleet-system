@@ -99,8 +99,8 @@ map
 | 로봇 | `/fleet/robot_states` | 토픽 | `amr_msgs/msg/RobotState` | 각 로봇 (`amr_bt`, 안) | `amr_fleet_manager`, `amr_fleet_decentralized`, 대시보드, `amr_metrics_exporter` | 1~5Hz |
 | 로봇 | `/fleet/task_status` | 토픽 | `amr_msgs/msg/TaskStatus` | `amr_bt` | `amr_fleet_manager`, 대시보드, 하네스 | 상태·단계가 바뀔 때 |
 | 로봇 | `/fleet/zone_requests` | 토픽 | `amr_msgs/msg/ZoneRequest` | `amr_zone_client` (이진, D6) | `amr_fleet_manager` | 경로 기준 구역 경계 3 m 앞, 대기·통과 중 1초마다 (연장), 나올 때 |
-| 분산 | `/fleet/task_auctions` | 토픽 | `amr_msgs/msg/TaskAuction` | `amr_fleet_decentralized` (경매인 로봇) | `amr_fleet_decentralized` | 서버 장애 중 미할당 작업이 있을 때 |
-| 분산 | `/fleet/task_bids` | 토픽 | `amr_msgs/msg/TaskBid` | `amr_fleet_decentralized` | `amr_fleet_decentralized` | 경매 진행 중 |
+| 분산 | `/fleet/task_auctions` | 토픽 | `amr_msgs/msg/TaskAuction` | `amr_fleet_decentralized` (경매인 로봇) | `amr_fleet_decentralized` (장애 주입 실험에서는 네임스페이스 안 `fleet/task_auctions` 중계본) | 서버 장애 중 미할당 작업이 있을 때 |
+| 분산 | `/fleet/task_bids` | 토픽 | `amr_msgs/msg/TaskBid` | `amr_fleet_decentralized` | `amr_fleet_decentralized` (장애 주입 실험에서는 네임스페이스 안 `fleet/task_bids` 중계본) | 경매 진행 중 |
 | 로봇 | `docking/dock` | 액션 | `amr_msgs/action/Dock` | `amr_docking` | `amr_bt` | BT가 요청할 때 |
 
 서버 → 로봇 토픽(`/fleet/task_assignments`, `/fleet/heartbeat`, `/fleet/zone_grants`, `/fleet/task_table`)은 장애 주입기(`amr_fault_injector`)가 중계하며 지연·손실을 건다.
@@ -159,7 +159,11 @@ map
 | 로봇 | `RobotState` 발행 주체와 가상 배터리 모델 담당 | 지수 | `amr_bt` |
 | 로봇 | 도킹 3회 재시도를 `Dock` 액션 안에서 할지 BT에서 할지 | 지수 | BT (에러 자동 복구 요구와 맞음) |
 | 공통 | `ErrorInfo` 코드 목록 확정 (지금은 대역별 예시만) | 전원 | 구현하면서 대역 안에 추가 |
-| Fleet | 로봇 → 서버 토픽(`zone_requests`, `task_assignment_acks`)에도 장애 주입을 걸지 | 하연, 민지 | **결정: 서버 → 로봇만** (D8). 양방향은 연구 1 After 실험 때 검토. 기록은 [하네스 로그 포맷](../tools/harness/README.md#합의-기록) |
+| Fleet | 로봇 → 서버 토픽(`zone_requests`, `task_assignment_acks`)에도 장애 주입을 걸지 | 하연, 민지 | **결정: 서버 → 로봇만** (D8). 양방향은 연구 1 After 실험 때 검토. 보완(10/7): 분산·하이브리드 비교군 실험에서는 경매 토픽(로봇 → 로봇)에도 같은 지연·손실을 건다(장애 주입기 `relay_auction`). 기록은 [하네스 로그 포맷](../tools/harness/README.md#합의-기록) |
+| Fleet | 분산 모드 배터리 하한 | 하연, 이진 | **결정: 중앙집중과 같은 20%** (10/7). 비교군 조건을 같게 둔다 |
+| Fleet | 낙찰 포기(`TYPE_WITHDRAW`) 범위 | 하연, 이진 | **결정: ACCEPT 전까지만** (10/7). 수락 뒤 못 하게 되면 `TaskStatus` FAILED로 보고하고 다시 경매한다 |
+| Fleet | 낙찰 통보(`TYPE_AWARD`) 재전송 | 하연, 이진 | **결정: 중앙 Ack 재전송과 같게 1초 간격 × 5회** (10/7), 그래도 ACCEPT가 없으면 다시 경매한다. 재전송 정책이 같아야 지연 내성 비교가 공정하다 |
+| Fleet | 분산 할당 규칙 (연구 1 공정성) | 하연, 이진 | 제안(#91 리뷰): 명세 3장 "가장 가까운 로봇 선점"에 맞춰 IDLE 로봇만 입찰, 비용은 시작점까지 거리(중앙 `nearest`와 같은 규칙). 입찰 마감은 경매인이 받은 시각으로 판정 |
 | 공통 | 응답 시간을 시뮬레이션 시간으로 잴지 실제 시간으로 잴지 | 민지, 하연 | **결정: 실제 시간** (하연, #5). 측정 방법은 [하네스 로그 포맷](../tools/harness/README.md#합의-기록) |
 
 ## 5. 패키지별 인터페이스
