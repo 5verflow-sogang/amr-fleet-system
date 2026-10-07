@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from amr_mapping.map_quality import (
-    Box, boundary_distance, evaluate, load_objects, occupied_world_points, read_pgm, write_png,
+    Box, apply_rigid, boundary_distance, evaluate, fit_rigid, load_objects, occupied_world_points, read_pgm,
+    write_png,
 )
 
 RES = 0.05
@@ -94,7 +95,9 @@ def test_start_offset_and_ghost_cells():
     shifted = Box('rack', 'warehouse_rack', 0.0, 2.5, 0.0, 2.5, 0.6)
     wx, wy = occupied_world_points(img, RES, origin, (0.0, 1.5, 0.0))
     r = evaluate(wx, wy, [shifted])
-    assert r['passed'] and r['ghost_cells'] == 1
+    assert r['ghost_cells'] == 1
+    assert r['shift_max'] <= RES     # 시작 자세를 넣으면 랙 위치는 맞는다
+    assert not r['passed']           # 유령 칸이 하나라도 있으면 불합격 (#81)
 
 
 def test_shifted_map_fails():
@@ -105,8 +108,51 @@ def test_shifted_map_fails():
     draw_box(img, origin, Box('rack', 'warehouse_rack', 0.0, 1.2, 0.0, 2.5, 0.6))
     wx, wy = occupied_world_points(img, RES, origin, (0.0, 0.0, 0.0))
     r = evaluate(wx, wy, [Box('rack', 'warehouse_rack', 0.0, 1.0, 0.0, 2.5, 0.6)])
-    assert r['max'] > 0.15
+    assert r['shift_max'] == pytest.approx(0.2, abs=RES)
     assert not r['passed']          # 20 cm 어긋남 > 15 cm
+
+
+SCENE = [Box('a', 'warehouse_rack', -2.0, 2.0, 0.0, 2.5, 0.6), Box('b', 'warehouse_rack', 3.0, -2.0, 0.0, 2.5, 0.6),
+         Box('c', 'warehouse_pillar', 3.0, 3.0, 0.0, 0.3, 0.3), Box('d', 'warehouse_pillar', -3.0, -3.0, 0.0, 0.3, 0.3),
+         Box('e', 'warehouse_rack', 0.0, 0.0, 0.0, 0.6, 2.5)]
+
+
+def scene_points(moved=None, dy=0.0):
+    origin = (-8.0, -8.0)
+    img = np.full((320, 320), 254, dtype=np.uint8)
+    for b in SCENE:
+        draw_box(img, origin, Box(b.name, b.kind, b.cx, b.cy + (dy if b.name == moved else 0.0), b.yaw, b.hx, b.hy))
+    return occupied_world_points(img, RES, origin, (0.0, 0.0, 0.0))
+
+
+def test_fit_rigid_recovers_map_offset():
+    # 지도 전체가 (+4, −3 cm)·0.2° 틀어져 그려졌다고 보고, 정합이 그 반대 보정을 찾는지
+    wx, wy = scene_points()
+    bad = (0.04, -0.03, math.radians(0.2))
+    mx, my = apply_rigid(wx, wy, bad, (0.0, 0.0))
+    fit = fit_rigid(mx, my, SCENE, (0.0, 0.0))
+    fx, fy = apply_rigid(mx, my, fit, (0.0, 0.0))
+    # 보정한 점이 원래 점 자리로 돌아온다 (칸 양자화만큼 남는다)
+    assert np.median(np.hypot(fx - wx, fy - wy)) < RES / 2
+    assert math.degrees(fit[2]) == pytest.approx(-0.2, abs=0.05)
+    assert evaluate(fx, fy, SCENE)['passed']
+
+
+def test_folded_map_fails_after_alignment():
+    # 물체 하나만 20 cm 옮겨진 지도(접힘): 정합은 나머지에 맞고, 그 물체 밀림으로 불합격
+    wx, wy = scene_points(moved='e', dy=0.2)
+    fit = fit_rigid(wx, wy, SCENE, (0.0, 0.0))
+    assert abs(fit[0]) < 0.02 and abs(fit[1]) < 0.02
+    r = evaluate(*apply_rigid(wx, wy, fit, (0.0, 0.0)), SCENE)
+    assert r['shift_worst'] == 'e' and r['shift_max'] > 0.15
+    assert not r['passed']
+
+
+def test_signed_median_misses_translation_but_shift_catches_it():
+    # 랙을 폭 방향으로 5 cm 옮기면 양쪽 긴 변이 +5·−5 cm로 상쇄돼 부호 있는 중앙값은 작다. 물체별 밀림은 5 cm를 잡는다
+    wx, wy = scene_points(moved='a', dy=0.05)
+    r = evaluate(wx, wy, SCENE)
+    assert r['shifts']['a'] == pytest.approx(0.05, abs=0.02)
 
 
 def test_load_objects_reads_includes_and_walls(tmp_path):
