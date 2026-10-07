@@ -54,7 +54,8 @@ def _server(context):
                 param: ParameterValue(arg(launch_arg), value_type=str) for param, launch_arg in SERVER_ARGS
             }, {
                 # 구역 lease는 로봇과 같은 시계로 잰다. Gazebo와 같이 돌리면 true (amr_bringup system.launch.py)
-                'use_sim_time': ParameterValue(arg('use_sim_time'), value_type=bool),
+                # arg()는 이미 문자열이라 ParameterValue(value_type=bool)로 넘기면 타입 검사에서 실패한다
+                'use_sim_time': arg('use_sim_time').lower() == 'true',
             }],
             output='screen',
         )
