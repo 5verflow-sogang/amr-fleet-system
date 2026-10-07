@@ -51,7 +51,7 @@ ros2 launch amr_bringup system.launch.py delay_ms:=200.0 loss_pct:=5.0 seed:=3 d
 | `payload_mass` | `0.0` | 모든 로봇의 적재물 질량 [kg] (연구 2 Gazebo 평가) |
 | `seed` | `0` | 실행 seed. 엔코더 노이즈(로봇마다 `seed × 100 + 번호`), 동적 장애물, 손실 난수. 하네스는 1부터 준다. 0이면 엔코더 노이즈는 매번 무작위 |
 | `localization` | `true` | 끄면 DiffDrive odom TF를 쓴다 |
-| `map` | `amr_mapping maps/warehouse_v0.yaml` | 지도 |
+| `map` | `amr_mapping maps/warehouse_v1.yaml` | 지도 v1 (0.05 m). 0.025 m는 위치 오차에 효과가 없어 쓰지 않는다 |
 | `map_origin_in_world` | `[0.0, 1.5, 0.0]` | world에서 본 map 원점. 지도가 바뀌면 그 지도의 매핑 시작 자세 |
 | `use_imu` | `true` | EKF에 IMU |
 | `bt` | `true` | `amr_bt` |
@@ -73,6 +73,5 @@ colcon test --packages-select amr_bringup
 | 쟁점 | 내용 |
 | --- | --- |
 | compose `robots` 서비스 | #73(compose `fleet`)과 같은 파일이라 그 뒤에 이 launch로 연결한다 |
-| 지도 기본값 | 지도 v1(#96)이 머지되면 `warehouse_v1`으로 바꾼다. 매핑 시작 자세가 같아 `map_origin_in_world`는 그대로 |
 | 7·10대 | `robots.yaml`에 자세를 더하면 된다. RTF가 1을 유지하는지 먼저 재야 한다(연구 1 대수 조건) |
 | 2·3단계 | 위 "단계" 표의 담당 작업 뒤 인자로 붙인다 |

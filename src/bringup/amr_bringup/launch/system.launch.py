@@ -109,7 +109,9 @@ def _system(context):
 
 def generate_launch_description():
     share = get_package_share_directory('amr_bringup')
-    default_map = os.path.join(get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v0.yaml')
+    # 지도 v1 (#96, 0.05 m). 0.025 m는 위치 오차에 효과가 없었다 (민지 하네스 측정, 10/8). 매핑 시작 자세가 v0과 같아
+    # map_origin_in_world [0, 1.5, 0]은 그대로다
+    default_map = os.path.join(get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v1.yaml')
 
     args = [
         # 로봇·시뮬레이터
