@@ -30,6 +30,9 @@ class DispatcherConfig:
     resend_interval_s: float = 1.0
     # 재전송 한도. 넘으면 작업을 큐로 되돌린다 (첫 발송은 세지 않는다)
     max_resends: int = 5
+    # FAILED로 보고된 작업을 큐로 되돌려 다시 할당하는 횟수. 넘으면 실패로 남긴다.
+    # 분산 경매의 재경매(최대 1회, api.md 4-4절)와 같게 둬야 중앙·분산 비교가 공정하다
+    failed_retries: int = 1
 
     def __post_init__(self):
         if self.algorithm not in ALGORITHMS:
@@ -38,6 +41,8 @@ class DispatcherConfig:
             raise ValueError(f'resend_interval_s는 0보다 커야 한다: {self.resend_interval_s}')
         if self.max_resends < 0:
             raise ValueError(f'max_resends는 0 이상이어야 한다: {self.max_resends}')
+        if self.failed_retries < 0:
+            raise ValueError(f'failed_retries는 0 이상이어야 한다: {self.failed_retries}')
 
 
 @dataclass
@@ -49,6 +54,8 @@ class TaskEntry:
     # 맡은 로봇. 큐에서 기다리는 중이면 빈 문자열
     assignee: str = ''
     assignment_id: int = 0
+    # FAILED 보고로 다시 할당한 횟수
+    failures: int = 0
 
 
 @dataclass
@@ -140,13 +147,22 @@ class Dispatcher:
         return True
 
     def on_status(self, task_id: str, robot_id: str, state: int) -> bool:
-        """TaskStatus 수신. 맡긴 로봇의 보고가 아니거나 이미 끝난 작업이면 무시하고 False."""
+        """TaskStatus 수신. 맡긴 로봇의 보고가 아니거나 이미 끝난 작업이면 무시하고 False.
+
+        FAILED는 failed_retries번까지 큐로 되돌려(state PENDING) 다시 할당받게 한다. 그 뒤에는 실패로 남긴다.
+        """
         task = self.tasks.get(task_id)
         if task is None or task.assignee != robot_id or task.state in FINISHED:
             return False
         # 상태 보고가 왔으면 명령을 받은 것이다
         self._confirm(robot_id, task_id)
-        task.state = state
+        if state == STATE_FAILED and task.failures < self.config.failed_retries:
+            task.failures += 1
+            task.state = STATE_PENDING
+            task.assignee = ''
+            task.assignment_id = 0
+        else:
+            task.state = state
         if state in FINISHED:
             robot = self.robots.get(robot_id)
             if robot is not None and robot.task_id == task_id:
