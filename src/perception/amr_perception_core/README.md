@@ -22,6 +22,14 @@ ROS 토픽을 직접 다루지 않는다. 공개 함수·클래스 목록을 여
 - 측정은 고정 좌표계(odom 또는 map) 기준 위치여야 한다.
 - 단위 테스트에 NEES(정규화 추정 오차 제곱) 일관성 검사가 있다: 필터와 같은 잡음 모델로 만든 궤적에서 평균 NEES ≈ 4(상태 차원).
 
+### 객체 인식 3D 변환 (`amr_detection` 노드가 사용)
+
+| 모듈 | 이름 | 설명 |
+| --- | --- | --- |
+| `projection` | `backproject_with_covariance(camera, u, v, z, sigma_px, sigma_z)` | 픽셀·깊이 → optical frame 위치와 3x3 공분산. Σ = J·diag(σ_px², σ_px², σ_z²)·Jᵀ. 옆 방향 σ ≈ σ_px·Z/f라 멀수록 커진다 |
+| `projection` | `quaternion_to_matrix(x, y, z, w)` | TF 회전 → 3x3 행렬 (정규화 포함) |
+| `projection` | `transform_with_covariance(R, t, p, Σ)` | p' = Rp + t, Σ' = RΣRᵀ (카메라 → map) |
+
 ## 파라미터
 
 ROS 비의존 라이브러리이므로 파라미터는 함수/생성자 인자로 받는다. YAML 로딩은 이 라이브러리를 쓰는 노드 패키지가 담당한다.
