@@ -10,8 +10,10 @@ from payload_nav import (OBS_DIM, EnvConfig, PayloadNavEnv, Popout, RobotState, 
                          braking_distance, env_config_for, load_experiment, max_linear_accel,
                          step)
 from payload_nav.scenarios import ScenarioConfig, min_trigger_x, sample_scenario
-from payload_nav.seeds import (EVAL_SEED_BASE, TRAIN_ENV_SEED_STRIDE, VAL_SEED_BASE,
-                               train_env_seed)
+from payload_nav.seeds import (EVAL_LIST_STRIDE, EVAL_SEED_BASE, MAX_EVAL_LISTS,
+                               TRAIN_ENV_SEED_BASE, TRAIN_ENV_SEED_STRIDE, VAL_SEED_BASE,
+                               eval_seed, train_env_seed)
+from payload_nav.training import make_model
 
 # 관측 뒤쪽 칸: ... 경로 옆 오차, 경로 방향 오차, 왼쪽 벽, 오른쪽 벽, 남은 시간, 질량 값, 질량 앎 여부
 LAT, HEAD, WALL_L, WALL_R, TIME_LEFT, MASS, KNOWN = range(OBS_DIM - 7, OBS_DIM)
@@ -377,9 +379,48 @@ def test_train_env_seeds_do_not_overlap():
         assert not seeds & used
         used |= seeds
     # 검증·평가 시나리오 범위와도 겹치지 않는다
-    assert min(used) > EVAL_SEED_BASE + 100_000 > VAL_SEED_BASE + 10_000
+    last_eval = eval_seed(MAX_EVAL_LISTS - 1, EVAL_LIST_STRIDE - 1)
+    assert min(used) >= TRAIN_ENV_SEED_BASE > last_eval
+    assert EVAL_SEED_BASE > VAL_SEED_BASE + EVAL_LIST_STRIDE
 
 
 def test_train_env_seed_rejects_too_many_envs():
     with pytest.raises(ValueError):
         train_env_seed(0, TRAIN_ENV_SEED_STRIDE + 1)
+
+
+def test_eval_lists_differ_per_seed():
+    # 학습 시드 k는 평가 목록 k를 푼다. 목록끼리 겹치지 않고, 목록 하나는 에피소드 200개를 담는다
+    used = set()
+    for k in range(200):
+        seeds = {eval_seed(k, e) for e in range(200)}
+        assert len(seeds) == 200 and not seeds & used
+        used |= seeds
+    assert eval_seed(0, 0) == EVAL_SEED_BASE
+    assert eval_seed(3, 5) == EVAL_SEED_BASE + 3 * EVAL_LIST_STRIDE + 5
+
+
+@pytest.mark.parametrize('eval_list, episode', [(-1, 0), (MAX_EVAL_LISTS, 0), (0, -1),
+                                                (0, EVAL_LIST_STRIDE)])
+def test_eval_seed_rejects_out_of_range(eval_list, episode):
+    with pytest.raises(ValueError):
+        eval_seed(eval_list, episode)
+
+
+# ---------------------------------------------------------------- 학습 환경 시드 (실제 PPO로 확인)
+def _first_training_scenarios(train_seed, n_envs=8):
+    """train_ppo.py와 같은 경로(make_model)로 만들고, 학습 첫 reset에서 각 병렬 환경이 뽑은 시나리오."""
+    model, venv, _ = make_model(EnvConfig(), n_envs, train_seed,
+                                {'n_steps': 64, 'batch_size': 64}, [8], verbose=0)
+    model.env.reset()   # learn()을 시작할 때와 같은 reset
+    return [(s.goal_distance, s.initial_speed, s.corridor_width)
+            for s in venv.venv.get_attr('scenario')]
+
+
+def test_training_envs_differ_between_seeds():
+    # PPO(seed=)가 환경 시드를 train_seed + i로 덮어쓰면 시드 0과 1이 8개 중 7개를 공유한다
+    assert not set(_first_training_scenarios(0)) & set(_first_training_scenarios(1))
+
+
+def test_training_envs_reproducible():
+    assert _first_training_scenarios(5) == _first_training_scenarios(5)

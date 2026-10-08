@@ -4,25 +4,36 @@
     uv run python scripts/evaluate.py raw/proposed_s0_* --mass-obs exact plus30 minus30 unknown
     uv run python scripts/evaluate.py raw/proposed_s0_* --scenarios mixed            # 학습과 같은 섞인 분포
 
-같은 시나리오 시드는 질량·비교군·정보 조건과 관계없이 같은 시나리오다. S1과 S2는 같은 시드 번호를
-쓰므로 시나리오는 (scenario, scenario_seed)로 구분한다.
+결과: raw/eval/<시각>/episodes.csv와 meta.json (실행마다 새 폴더라 앞 결과를 덮어쓰지 않는다).
+
+평가 시나리오는 학습 시드 k마다 다른 목록 k를 쓴다 (seeds.py). 같은 시나리오 시드는 질량·비교군·정보
+조건과 관계없이 같은 시나리오다. S1과 S2는 같은 시드 번호를 쓰므로 시나리오는 (scenario,
+scenario_seed)로 구분한다.
 """
 
 import argparse
 import csv
 from dataclasses import fields
+import datetime
+import hashlib
 import json
+import os
 from pathlib import Path
+import platform
+import subprocess
 import sys
 
 import numpy as np
+import stable_baselines3
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from payload_nav import (EVAL_SEED_BASE, EnvConfig, PayloadNavEnv, RobotParams,  # noqa: E402
-                         ScenarioConfig)
+from payload_nav import (EnvConfig, PayloadNavEnv, RobotParams, ScenarioConfig,  # noqa: E402
+                         eval_seed)
+from payload_nav.seeds import EVAL_LIST_STRIDE, EVAL_SEED_BASE  # noqa: E402
 from payload_nav.evaluation import run_episode  # noqa: E402
 
 
@@ -56,6 +67,20 @@ def mass_obs_for(label: str, payload: float):
     return None if scale is None else payload * scale
 
 
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def git_info() -> dict:
+    """평가에 쓴 코드 (하네스 meta.json의 git_sha와 같은 뜻). 커밋 안 된 변경이 있으면 dirty."""
+    def git(*cmd):
+        out = subprocess.run(['git', *cmd], cwd=ROOT, capture_output=True, text=True)
+        return out.stdout.strip() if out.returncode == 0 else None
+    status = git('status', '--porcelain', '--', '.')
+    dirty = bool(status) if status is not None else None
+    return {'git_sha': git('rev-parse', 'HEAD'), 'git_dirty': dirty}
+
+
 def rate(values):
     return f'{np.mean(values):5.2f}' if values else f'{"-":>5s}'
 
@@ -69,15 +94,24 @@ def main():
     parser.add_argument('runs', nargs='+', type=Path)
     parser.add_argument('--masses', type=float, nargs='+', default=[0, 2, 10, 25, 15, 30])
     parser.add_argument('--episodes', type=int, default=200, help='시나리오 종류마다 에피소드 수')
-    parser.add_argument('--seed-base', type=int, default=EVAL_SEED_BASE)  # 학습·검증 seed와 겹치지 않게
+    parser.add_argument('--eval-list', type=int, default=None,
+                        help='평가 목록 번호. 기본은 실행의 학습 시드 (시드 k ↔ 목록 k). DWA처럼 시드가 '
+                             '없는 비교군을 시드 k와 짝지을 때 쓴다')
     parser.add_argument('--scenarios', nargs='+', choices=list(SCENARIOS), default=['S1', 'S2'])
     parser.add_argument('--mass-obs', nargs='+', default=['exact'],
                         help='정보 조건: exact, plus30, minus30, unknown (예전 표기 true, none, '
                              'scale:1.3, scale:0.7도 받는다). 질량을 보지 않는 비교군은 exact로 한 번만 평가')
     parser.add_argument('--checkpoint', choices=['best', 'final'], default='best')
-    parser.add_argument('--out', type=Path, default=ROOT / 'raw' / 'eval' / 'episodes.csv')
+    parser.add_argument('--out-dir', type=Path, default=None,
+                        help='결과 폴더. 기본 raw/eval/<시각>. 이미 episodes.csv가 있으면 멈춘다')
     args = parser.parse_args()
     labels = list(dict.fromkeys(mass_obs_label(m) for m in args.mass_obs))
+    if not 0 < args.episodes <= EVAL_LIST_STRIDE:
+        sys.exit(f'--episodes는 1~{EVAL_LIST_STRIDE}여야 한다 (평가 목록 하나의 크기)')
+    stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    out_dir = args.out_dir or ROOT / 'raw' / 'eval' / stamp
+    if (out_dir / 'episodes.csv').exists():
+        sys.exit(f'이미 결과가 있다: {out_dir / "episodes.csv"} (다른 --out-dir을 쓴다)')
 
     rows = []
     runs = [r for r in args.runs if (r / f'{args.checkpoint}_model.zip').exists()]
@@ -85,8 +119,11 @@ def main():
         print(f'건너뜀: {skipped} ({args.checkpoint}_model.zip 없음, 학습이 끝나지 않은 실행)')
     if not runs:
         sys.exit('평가할 실행이 없다')
+    run_meta = []
     for run in runs:
         meta = json.loads((run / 'config.json').read_text())
+        train_seed = meta['args']['seed']
+        eval_list = train_seed if args.eval_list is None else args.eval_list
         env = PayloadNavEnv(load_env_config(meta['env']))
         model = PPO.load(run / f'{args.checkpoint}_model.zip', device='cpu')
         vecnorm = VecNormalize.load(str(run / f'{args.checkpoint}_vecnormalize.pkl'),
@@ -94,24 +131,50 @@ def main():
         vecnorm.training = False
         # 질량을 보지 않는 비교군(R1·R2)은 정보 조건이 결과를 바꾸지 않는다
         run_labels = labels if env.cfg.observe_mass else ['exact']
+        ckpt = run / f'{args.checkpoint}_model.zip'
+        run_meta.append({
+            'run': str(run), 'variant': meta['variant'], 'train_seed': train_seed,
+            'env_seed_base': meta.get('env_seed_base'), 'mass_obs': run_labels,
+            'eval_list': eval_list,
+            'scenario_seeds': [eval_seed(eval_list, 0), eval_seed(eval_list, args.episodes - 1)],
+            'checkpoint': str(ckpt), 'checkpoint_sha256': sha256(ckpt),
+            'vecnormalize_sha256': sha256(run / f'{args.checkpoint}_vecnormalize.pkl'),
+            'config_toml_sha256': sha256(run / 'config.toml'),
+        })
         for label in run_labels:
             for scenario in args.scenarios:
                 for mass in args.masses:
                     for ep in range(args.episodes):
-                        seed = args.seed_base + ep
+                        seed = eval_seed(eval_list, ep)
                         options = {'payload_kg': mass, 'mass_obs_kg': mass_obs_for(label, mass),
                                    'popout': SCENARIOS[scenario]}
                         result = run_episode(model, vecnorm, env, seed, options)
                         rows.append({'run': run.name, 'variant': meta['variant'],
-                                     'train_seed': meta['args']['seed'], 'scenario': scenario,
-                                     'scenario_seed': seed, 'mass_obs': label,
+                                     'train_seed': train_seed, 'eval_list': eval_list,
+                                     'scenario': scenario, 'scenario_seed': seed, 'mass_obs': label,
                                      'mass_obs_kg': options['mass_obs_kg'], 'episode': ep, **result})
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    with args.out.open('w', newline='') as f:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with (out_dir / 'episodes.csv').open('w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+    # 결과를 나중에 추적·재현하는 데 필요한 정보 (하네스 meta.json과 같은 방식)
+    (out_dir / 'meta.json').write_text(json.dumps({
+        'created': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+        **git_info(),
+        'command': sys.argv,
+        'eval': {'episodes': args.episodes, 'masses': args.masses, 'scenarios': args.scenarios,
+                 'mass_obs': labels, 'checkpoint': args.checkpoint,
+                 'eval_seed_base': EVAL_SEED_BASE, 'eval_list_stride': EVAL_LIST_STRIDE,
+                 'eval_list_override': args.eval_list},
+        'runs': run_meta,
+        'host': {'machine': platform.machine(), 'processor': platform.processor() or None,
+                 'cpu_count': os.cpu_count(), 'torch_threads': torch.get_num_threads()},
+        'versions': {'python': platform.python_version(), 'torch': torch.__version__,
+                     'stable_baselines3': stable_baselines3.__version__,
+                     'numpy': np.__version__},
+    }, indent=2, ensure_ascii=False))
 
     # 충돌 속도는 충돌한 에피소드, 제동 거리 여유는 장애물 앞에서 멈춘(stopped) 에피소드만 평균 낸다.
     # 돌발 장애물 충돌률의 분모는 장애물이 나타난 에피소드 전체다. 설 수 없던(stoppable 0) 에피소드도
@@ -138,7 +201,7 @@ def main():
                           f'{mean_or_dash(margins, 6)} {len(margins):4d} {mean_or_dash(ttcs, 7)} '
                           f'{len(appeared):4d} {rate([r["popout_result"] == "collision" for r in appeared])} '
                           f'{sum(not r["popout_stoppable"] for r in hits):4d}')
-    print(f'CSV: {args.out}')
+    print(f'결과: {out_dir / "episodes.csv"}, {out_dir / "meta.json"}')
 
 
 if __name__ == '__main__':

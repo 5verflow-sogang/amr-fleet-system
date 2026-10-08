@@ -43,6 +43,7 @@ uv run python scripts/train_ppo.py --variant r2 --seed 0
 uv run python scripts/evaluate.py raw/proposed_s0_* raw/r2_s0_* raw/r1_s0_*   # S1·S2 각 200개, 정확한 질량
 uv run python scripts/evaluate.py raw/proposed_s0_* --mass-obs exact plus30 minus30 unknown   # 정보 조건 4개
 uv run python scripts/evaluate.py raw/proposed_s0_* --scenarios mixed      # 학습과 같은 섞인 분포
+uv run python scripts/evaluate.py raw/r2_s3_* --eval-list 0                # 시드 3 실행을 목록 0으로 (짝짓기 확인용)
 uv run tensorboard --logdir raw
 ```
 
@@ -68,17 +69,28 @@ uv run tensorboard --logdir raw
 | --- | --- |
 | PPO 신경망 초기화 | 학습 시드 k (`--seed`) |
 | 학습 환경 | 1,000,000 + 100·k + i (i = 병렬 환경 번호). 학습 시드끼리 겹치지 않는다 |
-| 검증 시나리오 (체크포인트 선택) | 10,000 + 에피소드 번호 |
-| 평가 시나리오 | 100,000 + 에피소드 번호. S1·S2는 같은 번호를 쓰므로 (`scenario`, `scenario_seed`)로 구분한다 |
+| 검증 시나리오 (체크포인트 선택) | 10,000 + 에피소드 번호. 모든 학습 시드가 같은 목록 |
+| 평가 시나리오 (목록 k) | 100,000 + 1,000·k + 에피소드 번호. 학습 시드 k는 목록 k를 푼다(`--eval-list`로 바꿀 수 있다). S1·S2는 같은 번호를 쓰므로 (`scenario`, `scenario_seed`)로 구분한다 |
 
 - SB3 `make_vec_env(seed=s)`는 환경 i에 s + i를 준다. 학습 시드를 그대로 넘기면 시드 k와 k+1이 환경 7개(8개 중)를 공유해서 학습 환경 시드를 따로 둔다
+- `PPO(seed=k)`도 모델을 만들면서 환경 시드를 k + i로 다시 덮어쓴다. 그래서 `payload_nav/training.py`의 `make_model()`이 모델을 만든 뒤 학습 환경 시드를 다시 건다. 테스트(`test_training_envs_differ_between_seeds`)가 실제 학습 환경으로 확인한다
+- 평가 목록이 시드마다 다르다. 같은 시드 k의 R1·R2·제안은 같은 목록 k를 풀어 짝지어 비교하고, DWA는 `--eval-list k`로 목록 k를 풀어 시드 k와 짝짓는다
 - `--scenarios S1`·`S2`는 돌발 장애물 유무만 강제하고 나머지 난수 흐름은 그대로다. 같은 시드에서 저절로 S1이 나왔던 시나리오는 S1로 강제해도 같다
+
+**평가 결과 폴더** (`raw/eval/<시각>/`, `--out-dir`로 바꿀 수 있다)
+
+실행마다 새 폴더를 만들어 앞 결과를 덮어쓰지 않는다. 같은 폴더에 `episodes.csv`가 있으면 멈춘다.
+
+| 파일 | 내용 |
+| --- | --- |
+| `episodes.csv` | 에피소드 1개마다 1행 (아래 열) |
+| `meta.json` | `git_sha`·`git_dirty`(평가에 쓴 코드), `command`, `eval`(질량·정보 조건·시나리오·에피소드 수·시드 규칙), `runs`(실행마다 `train_seed`·`eval_list`·`scenario_seeds` 범위·`env_seed_base`·체크포인트·VecNormalize·`config.toml` sha256), `host`, `versions`. 하네스 `meta.json`과 같은 방식 |
 
 **평가 CSV 주요 열**
 
 | 열 | 뜻 |
 | --- | --- |
-| `variant`, `train_seed` | 비교군, 학습 시드 |
+| `variant`, `train_seed`, `eval_list` | 비교군, 학습 시드, 푼 평가 목록 번호 |
 | `scenario`, `scenario_seed` | S1 / S2 / mixed, 평가 시나리오 시드 |
 | `mass_obs`, `mass_obs_kg` | 정보 조건 exact / plus30 / minus30 / unknown과 관측에 넣은 질량(unknown이면 빈칸). 질량을 보지 않는 비교군(r1·r2)은 exact로 한 번만 평가한다 |
 | `payload_kg` | 실제 적재 질량 |

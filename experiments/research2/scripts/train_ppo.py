@@ -20,16 +20,13 @@ import sys
 
 import numpy as np
 import torch
-from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.common.vec_env import VecNormalize
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from payload_nav import (VAL_SEED_BASE, PayloadNavEnv, env_config_for, load_experiment,  # noqa: E402
-                         train_env_seed)
+from payload_nav import VAL_SEED_BASE, PayloadNavEnv, env_config_for, load_experiment  # noqa: E402
 from payload_nav.evaluation import run_episode  # noqa: E402
+from payload_nav.training import make_model  # noqa: E402
 
 
 class SuccessEvalCallback(BaseCallback):
@@ -79,25 +76,17 @@ def main():
     if args.n_envs:
         n_envs = args.n_envs
     net_arch = list(ppo.pop('net_arch', [64, 64]))
-    env_seed = train_env_seed(args.seed, n_envs)  # 시드끼리 환경 시드가 겹치지 않게 (seeds.py)
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     run_dir = ROOT / 'raw' / f'{args.variant}_s{args.seed}_{stamp}'
     run_dir.mkdir(parents=True)
     shutil.copyfile(args.config, run_dir / 'config.toml')
+    # 학습 환경 시드는 학습 시드끼리 겹치지 않게 따로 둔다 (seeds.py, training.py)
+    model, venv, env_seed = make_model(env_config, n_envs, args.seed, ppo, net_arch,
+                                       tensorboard_log=str(run_dir / 'tb'))
     (run_dir / 'config.json').write_text(json.dumps(
         {'variant': args.variant, 'args': {**vars(args), 'config': str(args.config)},
          'n_envs': n_envs, 'env_seed_base': env_seed, 'ppo': {**ppo, 'net_arch': net_arch},
          'env': asdict(env_config), 'torch': torch.__version__}, indent=2, ensure_ascii=False))
-
-    venv = make_vec_env(PayloadNavEnv, n_envs=n_envs, seed=env_seed,
-                        env_kwargs={'config': env_config})
-    venv = VecNormalize(venv, norm_obs=True, norm_reward=True, gamma=ppo.get('gamma', 0.99))
-
-    model = PPO(
-        'MlpPolicy', venv, seed=args.seed, device='cpu', verbose=1, **ppo,
-        policy_kwargs=dict(net_arch=dict(pi=net_arch, vf=net_arch)),
-        tensorboard_log=str(run_dir / 'tb'),
-    )
     callback = SuccessEvalCallback(env_config, venv, run_dir, args.eval_every, args.eval_episodes)
     model.learn(args.steps, callback=callback)
     model.save(run_dir / 'final_model.zip')
