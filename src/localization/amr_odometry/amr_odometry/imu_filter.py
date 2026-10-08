@@ -21,8 +21,10 @@ GRAVITY = 9.80665
 
 @dataclass(frozen=True)
 class ImuFilterConfig:
-    # 저역통과 차단 주파수 [Hz]. 0이면 끈다. 100 Hz 샘플링이라 50 Hz 미만으로 둔다
-    gyro_cutoff_hz: float = 20.0
+    # 저역통과 차단 주파수 [Hz]. 0이면 끈다. 100 Hz 샘플링이라 50 Hz 미만으로 둔다.
+    # 자이로는 끈다: 노이즈(σ 2e-4 rad/s)가 작아 거를 게 거의 없고, 20 Hz(τ≈8 ms) 지연이 회전 가속 때
+    # 노이즈보다 훨씬 큰 오차를 낸다 (#76·#81 IMU 분산비, 실측은 README)
+    gyro_cutoff_hz: float = 0.0
     accel_cutoff_hz: float = 5.0
     # 바이어스 보정
     calibration_duration: float = 2.0     # s
@@ -53,6 +55,18 @@ class ImuFilterConfig:
             raise ValueError('미보정 바이어스 σ는 0 이상이어야 한다')
         if self.stationary_gyro_mean_max < 0.0 or self.stationary_accel_mean_tolerance < 0.0:
             raise ValueError('정지 판정 기준은 0 이상이어야 한다')
+
+
+def calibrated_variance(noise_stddev: float, samples: int, floor: float = 0.0) -> float:
+    """보정이 끝난 뒤 한 축의 측정 분산.
+
+    센서 노이즈 σ² + 보정 평균의 표준오차²(σ²/N) + 하한(floor).
+    floor는 노이즈 모델에 없는 오차(가감속 순간의 시각 어긋남 등)를 실측에 맞춰 더하는 값이다.
+    """
+    if noise_stddev < 0.0 or floor < 0.0:
+        raise ValueError('노이즈 σ와 floor는 0 이상이어야 한다')
+    n = max(samples, 1)
+    return noise_stddev ** 2 * (1.0 + 1.0 / n) + floor
 
 
 class LowPass3:

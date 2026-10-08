@@ -18,8 +18,10 @@
 
 /**/imu_filter:
   ros__parameters:
-    # 저역통과 차단 주파수 [Hz] (IMU 100 Hz). 자이로는 EKF 회전 추정에 쓰여 지연이 작게 높게 둔다
-    gyro_cutoff_hz: 20.0
+    # 저역통과 차단 주파수 [Hz] (IMU 100 Hz). 0이면 끈다.
+    # 자이로는 끈다: 노이즈 σ 2e-4 rad/s라 거를 게 거의 없고, 20 Hz(τ≈8 ms) 지연이 회전 가속 때 큰 오차를 냈다.
+    # 완만한 주행 실측(GT 위치 미분 대비): 20 Hz 실제 σ 0.0033 (분산비 273) → 끔 σ 0.00035 (#76·#81)
+    gyro_cutoff_hz: 0.0
     accel_cutoff_hz: 5.0
     # 시작 후 이 시간 동안 정지 평균으로 바이어스를 잰다. 그동안 로봇을 움직이지 않는다
     calibration_duration: 2.0
@@ -39,3 +41,6 @@
     # 공분산에 쓰는 센서 노이즈 σ. amr_description/config/sensors.yaml의 IMU 값과 같게 둔다
     gyro_noise_stddev: 2.0e-4
     accel_noise_stddev: 1.7e-2
+    # 보정 후 각속도 분산 하한 [(rad/s)²]. 정속에선 오차가 노이즈 σ와 같지만 가감속 순간에 조금 커져서,
+    # 완만한 주행 실측 σ 0.00035에 맞춘다: 보고 σ ≈ √(2e-4² + 1e-7) ≈ 0.00037 (분산비 3.0 → 약 0.9, 인계 기준 0.5~2)
+    gyro_variance_floor: 1.0e-7
