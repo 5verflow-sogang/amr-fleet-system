@@ -1,5 +1,5 @@
 # 연구 2 RL 학습 환경 확인
-# Linux에서 uv.lock 그대로 설치되는지(CPU 전용 torch 포함)와 PPO 학습이 도는지 본다.
+# Linux에서 uv.lock 그대로 설치되는지(CPU 전용 torch 포함), 환경 테스트가 통과하는지, PPO 학습이 도는지 본다.
 name: RL Env
 
 on:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   smoke:
-    name: uv sync + PPO 스모크
+    name: uv sync + 테스트 + PPO 스모크
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -26,5 +26,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install from lock
         run: uv sync --locked
+      # pytest는 uv.lock을 바꾸지 않으려고 --with로만 쓴다 (README "v0 학습 환경")
+      - name: Tests
+        run: uv run --frozen --with pytest pytest tests
       - name: PPO smoke
         run: uv run python scripts/smoke_ppo.py --steps 5000
