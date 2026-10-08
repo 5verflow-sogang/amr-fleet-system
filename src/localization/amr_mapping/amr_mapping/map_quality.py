@@ -4,9 +4,12 @@
         $(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/worlds/warehouse.sdf --start 0 1.5 0
 
 1. 점유 칸(값 0)을 map → world로 옮긴다. 매핑 시작 자세(world)가 map 원점이다.
-2. 각 점유 칸을 가장 가까운 물체(랙·기둥·도크·충전기·외벽) 테두리에 붙이고 거리를 잰다 (0.5 m 안).
-3. 물체별 |거리| 중앙값 → 전체 중앙값·최대로 판정한다 (인계 계약 #81: 중앙값 ≤ 0.05 m, 최대 ≤ 0.15 m).
+2. 지도 정렬: 점유 칸 전체를 월드 물체 테두리에 강체 정합해 (dx, dy, dθ)를 구한다. 이 보정을 더한 시작 자세가
+   `map_origin_in_world` 보정값이다 (#96, 민지 하네스: 지도 정렬 오차와 위치추정 오차를 나눠 본다).
+3. 구조 정확도 (#81 판정): 정렬한 뒤 물체마다 평행이동을 맞춰 몇 cm 밀렸는지 잰다 (양쪽 면을 같이 보므로
+   벽 띠 두께와 무관). 물체별 밀림 중앙값 ≤ 0.05 m, 최대 ≤ 0.15 m, 유령·이중 벽 0칸이면 합격.
 4. 어느 물체와도 0.3 m 넘게 떨어진 점유 칸을 유령·이중 벽 후보로 센다 (벽 겹침 확인).
+5. 참고값: 테두리 |거리| 중앙값 (벽 띠 두께에 따라 바뀐다), 부호 있는 거리 중앙값.
 """
 
 import argparse
@@ -88,6 +91,68 @@ def boundary_distance(px: np.ndarray, py: np.ndarray, b: Box) -> np.ndarray:
     return np.abs(signed_boundary_distance(px, py, b))
 
 
+def boundary_normal(px: np.ndarray, py: np.ndarray, b: Box) -> Tuple[np.ndarray, np.ndarray]:
+    """점에 가장 가까운 테두리 변의 바깥 법선 (world)."""
+    c, s = math.cos(-b.yaw), math.sin(-b.yaw)
+    dx0, dy0 = px - b.cx, py - b.cy
+    lx, ly = c * dx0 - s * dy0, s * dx0 + c * dy0
+    use_x = (np.abs(lx) - b.hx) >= (np.abs(ly) - b.hy)
+    nlx, nly = np.where(use_x, np.sign(lx), 0.0), np.where(use_x, 0.0, np.sign(ly))
+    cw, sw = math.cos(b.yaw), math.sin(b.yaw)
+    return cw * nlx - sw * nly, sw * nlx + cw * nly
+
+
+def associate(px: np.ndarray, py: np.ndarray, objs: List[Box]):
+    """점마다 가장 가까운 물체 번호, 부호 거리(바깥 +), 바깥 법선."""
+    sd = np.stack([signed_boundary_distance(px, py, b) for b in objs])
+    k = np.abs(sd).argmin(axis=0)
+    d = sd[k, np.arange(px.size)]
+    nx, ny = np.zeros(px.size), np.zeros(px.size)
+    for i, b in enumerate(objs):
+        sel = k == i
+        if sel.any():
+            nx[sel], ny[sel] = boundary_normal(px[sel], py[sel], b)
+    return k, d, nx, ny
+
+
+def apply_rigid(px: np.ndarray, py: np.ndarray, fit: Tuple[float, float, float],
+                pivot: Tuple[float, float]) -> Tuple[np.ndarray, np.ndarray]:
+    """점을 pivot 기준으로 dθ 돌린 뒤 (dx, dy) 옮긴다."""
+    dx, dy, dth = fit
+    c, s = math.cos(dth), math.sin(dth)
+    rx, ry = px - pivot[0], py - pivot[1]
+    return pivot[0] + c * rx - s * ry + dx, pivot[1] + s * rx + c * ry + dy
+
+
+def fit_rigid(px: np.ndarray, py: np.ndarray, objs: List[Box], pivot: Tuple[float, float],
+              iterations: int = 10, huber: float = 0.05) -> Tuple[float, float, float]:
+    """점유 칸을 물체 테두리에 맞추는 강체 보정 (dx, dy, dθ), pivot 기준 회전.
+
+    점-변 거리 최소제곱에 Huber 가중을 줘서 한 물체가 크게 어긋나도 끌려가지 않는다. 0.3 m 안의 점만 쓴다.
+    """
+    fit = np.zeros(3)
+    for _ in range(iterations):
+        qx, qy = apply_rigid(px, py, tuple(fit), pivot)
+        _, d, nx, ny = associate(qx, qy, objs)
+        sel = np.abs(d) < GHOST_DISTANCE
+        d, nx, ny, qx, qy = d[sel], nx[sel], ny[sel], qx[sel], qy[sel]
+        rx, ry = qx - pivot[0], qy - pivot[1]
+        a = np.column_stack([nx, ny, nx * -ry + ny * rx])
+        w = np.sqrt(np.where(np.abs(d) <= huber, 1.0, huber / np.maximum(np.abs(d), 1e-9)))
+        step, *_ = np.linalg.lstsq(a * w[:, None], -d * w, rcond=None)
+        fit = fit + step
+        if np.abs(step[:2]).max() < 1e-4 and abs(step[2]) < 1e-6:
+            break
+    return float(fit[0]), float(fit[1]), float(fit[2])
+
+
+def object_shift(d: np.ndarray, nx: np.ndarray, ny: np.ndarray) -> float:
+    """한 물체에 붙은 점들로 그 물체가 몇 m 밀렸는지 (평행이동 크기). 한쪽 면만 보인 방향은 0으로 둔다."""
+    a = np.column_stack([nx, ny])
+    t = -np.linalg.solve(a.T @ a + 0.01 * len(d) * np.eye(2), a.T @ d)
+    return float(np.hypot(t[0], t[1]))
+
+
 def read_pgm(path: str) -> np.ndarray:
     """P5(바이너리) pgm → (행, 열) uint8. 첫 행이 지도 위쪽(+y)이다."""
     with open(path, 'rb') as f:
@@ -136,37 +201,46 @@ def occupied_world_points(img: np.ndarray, resolution: float, origin: Tuple[floa
 
 
 def evaluate(wx: np.ndarray, wy: np.ndarray, objs: List[Box]) -> Dict:
-    """물체별 테두리 오차 중앙값, 위치 어긋남, 유령 칸 수.
+    """물체별 밀림(#81 판정), 테두리 오차, 부호 있는 거리, 유령 칸 수. 점은 지도 정렬을 한 뒤의 world 좌표다.
 
-    - 테두리 오차 (#81 판정): 물체에 붙은 점유 칸의 |거리| 중앙값.
-      LiDAR 노이즈로 벽이 여러 칸 두께로 찍히면 칸이 작은 지도일수록 커진다.
-    - 위치 어긋남: 부호 있는 거리(바깥 +)의 중앙값의 크기. 띠 두께와 무관하게 벽 위치가
-      실제와 얼마나 어긋났는지 본다. 해상도가 다른 지도를 비교할 때 쓴다.
+    - 물체별 밀림 (#81 판정): 물체에 붙은 점으로 평행이동을 맞춘 크기. 양쪽 면을 같이 보므로 벽 띠 두께와
+      무관하고, 물체 하나가 옮겨진(지도가 접힌) 것을 잡는다.
+    - 테두리 오차 (참고): 물체에 붙은 점유 칸의 |거리| 중앙값. 벽이 여러 칸 두께로 찍히면 커진다.
+    - 부호 있는 거리 (참고): 부호 있는 거리(바깥 +) 중앙값의 크기. 물체를 통째로 옮기면 양쪽 면이 상쇄돼
+      작게 나오므로 밀림 판정에는 쓰지 않는다.
     """
     if len(wx) == 0:
         raise ValueError('점유 칸이 없다')
-    sd = np.stack([signed_boundary_distance(wx, wy, b) for b in objs])
-    d = np.abs(sd)
-    nearest, dmin = d.argmin(axis=0), d.min(axis=0)
-    per, offsets = {}, []
+    nearest, sd, nx, ny = associate(wx, wy, objs)
+    dmin = np.abs(sd)
+    per, offsets, shifts = {}, [], {}
     for k, b in enumerate(objs):
         sel = (nearest == k) & (dmin < MATCH_DISTANCE)
         if sel.any():
             per[b.name] = (b.kind, float(np.median(dmin[sel])), int(sel.sum()))
-            offsets.append(abs(float(np.median(sd[k, sel]))))
+            offsets.append(abs(float(np.median(sd[sel]))))
+            near = sel & (dmin < GHOST_DISTANCE)
+            if near.sum() >= 3:
+                shifts[b.name] = object_shift(sd[near], nx[near], ny[near])
         else:
             per[b.name] = (b.kind, float('nan'), 0)
     found = [v[1] for v in per.values() if v[2] > 0]
-    median, worst = float(np.median(found)), float(np.max(found))
+    ghost = int((dmin > GHOST_DISTANCE).sum())
+    shift_median = float(np.median(list(shifts.values())))
+    shift_max = float(np.max(list(shifts.values())))
     return {
         'per_object': per,
         'missing': [n for n, v in per.items() if v[2] == 0],
-        'median': median,
-        'max': worst,
-        'passed': median <= MEDIAN_LIMIT and worst <= MAX_LIMIT,
+        'shifts': shifts,
+        'shift_median': shift_median,
+        'shift_max': shift_max,
+        'shift_worst': max(shifts, key=shifts.get),
+        'passed': shift_median <= MEDIAN_LIMIT and shift_max <= MAX_LIMIT and ghost == 0,
+        'median': float(np.median(found)),
+        'max': float(np.max(found)),
         'offset_median': float(np.median(offsets)),
         'offset_max': float(np.max(offsets)),
-        'ghost_cells': int((dmin > GHOST_DISTANCE).sum()),
+        'ghost_cells': ghost,
         'occupied_cells': int(len(wx)),
     }
 
@@ -213,6 +287,8 @@ def main(argv=None) -> int:
     ap.add_argument('--start', nargs=3, type=float, required=True, metavar=('X', 'Y', 'YAW'),
                     help='매핑 시작 자세 (world)')
     ap.add_argument('--png', help='지도를 PNG로도 저장')
+    ap.add_argument('--region', nargs=4, type=float, metavar=('X0', 'X1', 'Y0', 'Y1'),
+                    help='이 world 구역의 점만으로 지도 정렬을 한 번 더 구해 같이 낸다 (하네스 측정 구역 비교용)')
     a = ap.parse_args(argv)
 
     with open(a.map_yaml) as f:
@@ -220,9 +296,27 @@ def main(argv=None) -> int:
     img = read_pgm(os.path.join(os.path.dirname(os.path.abspath(a.map_yaml)), meta['image']))
     wx, wy = occupied_world_points(img, meta['resolution'], meta['origin'][:2], tuple(a.start))
     objs = load_objects(a.sdf)
-    r = evaluate(wx, wy, objs)
+    start = tuple(a.start)
+    pivot = (start[0], start[1])
+    fit = fit_rigid(wx, wy, objs, pivot)
+    r = evaluate(*apply_rigid(wx, wy, fit, pivot), objs)
 
     print(f'지도 {img.shape[1]}×{img.shape[0]} 칸, 해상도 {meta["resolution"]} m, 점유 칸 {r["occupied_cells"]}')
+    print(f'지도 정렬 (지도 전체를 월드에 강체 정합, 시작점 기준 회전): dx {fit[0] * 100:+.1f} cm, '
+          f'dy {fit[1] * 100:+.1f} cm, dθ {math.degrees(fit[2]):+.3f}°')
+    print(f'  → map_origin_in_world 보정값: [{start[0] + fit[0]:.4f}, {start[1] + fit[1]:.4f}, '
+          f'{start[2] + fit[2]:.5f}] (시작 자세 [{start[0]}, {start[1]}, {start[2]}] 대신)')
+    if a.region:
+        x0, x1, y0, y1 = a.region
+        sel = (wx >= x0) & (wx <= x1) & (wy >= y0) & (wy <= y1)
+        rf = fit_rigid(wx[sel], wy[sel], objs, pivot)
+        print(f'  구역 x {x0}~{x1}, y {y0}~{y1}만 쓴 정렬: dx {rf[0] * 100:+.1f} cm, dy {rf[1] * 100:+.1f} cm, '
+              f'dθ {math.degrees(rf[2]):+.3f}° (점 {int(sel.sum())}개)')
+    print(f'구조 정확도 (정렬 후 물체별 밀림): 중앙값 {r["shift_median"] * 100:.1f} cm, '
+          f'최대 {r["shift_max"] * 100:.1f} cm ({r["shift_worst"]}), 유령·이중 벽 {r["ghost_cells"]}칸 '
+          f'→ #81 기준(≤{MEDIAN_LIMIT * 100:.0f} cm, ≤{MAX_LIMIT * 100:.0f} cm, 0칸) '
+          f'{"합격" if r["passed"] else "불합격"}')
+    print('참고값 (정렬 후):')
     groups = [('랙·기둥', ('warehouse_rack', 'warehouse_pillar')),
               ('도크·충전기', ('loading_dock', 'charging_station')), ('외벽', ('wall',))]
     for label, kinds in groups:
@@ -232,13 +326,10 @@ def main(argv=None) -> int:
             print(f'  {label}: 지도에 없음')
             continue
         worst = max(meds, key=meds.get)
-        print(f'  {label}: {len(meds)}/{len(g)}개, 물체별 중앙값의 중앙값 {np.median(list(meds.values())) * 100:.1f} cm, '
-              f'최대 {meds[worst] * 100:.1f} cm ({worst})')
-    print(f'전체: 중앙값 {r["median"] * 100:.1f} cm, 최대 {r["max"] * 100:.1f} cm → '
-          f'#81 기준(≤{MEDIAN_LIMIT * 100:.0f} cm, ≤{MAX_LIMIT * 100:.0f} cm) {"합격" if r["passed"] else "불합격"}')
-    print(f'위치 어긋남 (부호 있는 중앙값, 띠 두께 무관): 중앙값 {r["offset_median"] * 100:.1f} cm, '
-          f'최대 {r["offset_max"] * 100:.1f} cm')
-    print(f'유령·이중 벽 후보: {r["ghost_cells"]}칸 ({r["ghost_cells"] / r["occupied_cells"] * 100:.2f}%)')
+        print(f'  {label}: {len(meds)}/{len(g)}개, 테두리 |거리| 물체별 중앙값의 중앙값 '
+              f'{np.median(list(meds.values())) * 100:.1f} cm, 최대 {meds[worst] * 100:.1f} cm ({worst})')
+    print(f'  테두리 |거리| 전체: 중앙값 {r["median"] * 100:.1f} cm, 최대 {r["max"] * 100:.1f} cm (벽 띠 두께에 따라 바뀜)')
+    print(f'  부호 있는 거리: 중앙값 {r["offset_median"] * 100:.1f} cm, 최대 {r["offset_max"] * 100:.1f} cm')
     ratio = unknown_inside_ratio(img, meta['resolution'], meta['origin'][:2], tuple(a.start), objs)
     print(f'창고 안 빈 바닥 중 미관측(unknown) 칸: {ratio * 100:.2f}%')
     for name, xr, yr in NARROW_PASSAGES:
