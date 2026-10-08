@@ -36,6 +36,18 @@ struct TrajectoryPoint
   double yaw = 0.0;
 };
 
+// 동적 장애물 1개 (amr_msgs/TrackedObstacle의 pose·twist·radius). RobotState와 같은
+// 좌표계(odom 로컬)로 변환해서 넘긴다 — 변환은 amr_nav2_plugins가 맡는다(odom/map 변환과
+// 같은 패턴). vx, vy는 등속 예측(DwaConfig::predict_dynamic_obstacles)에 쓴다.
+struct DynamicObstacle
+{
+  double x = 0.0;
+  double y = 0.0;
+  double vx = 0.0;
+  double vy = 0.0;
+  double radius = 0.0;
+};
+
 // 1단계: 동적 윈도우(현재 속도 ± 가속 한계*dt를 로봇 한계로 자른 범위).
 struct DynamicWindow
 {
@@ -109,22 +121,55 @@ struct DwaConfig
   // 목표까지 이 거리(미터) 이내면 kGoalReached. 전역 경로의 다음 지점(웨이포인트)
   // 추종이 목적이라 각도 허용오차는 따로 두지 않는다(최종 도킹 정밀도는 범위 밖).
   double goal_tolerance = 0.15;
+
+  // --- 동적 장애물 (3주차, TrackedObstacleArray 기반) ---
+
+  // true면 장애물을 속도로 등속 예측해 미래 위치를 본다. false면 장애물이 관측된
+  // 위치에 멈춰 있다고 보고 평가한다(순간 스냅샷). computeVelocityCommand에 동적
+  // 장애물을 안 넘기면(빈 벡터) 이 플래그와 무관하게 전혀 영향이 없다 — 2주차
+  // 정적 장애물 전용 동작과 결과가 완전히 같다.
+  bool predict_dynamic_obstacles = true;
+
+  // 장애물 반경에 더하는 안전 여유(m). 풋프린트 표면이 이 여유 안으로 들어오면
+  // 충돌로 본다(정적 장애물의 lethal_cost_threshold와 같은 역할).
+  double dynamic_obstacle_safety_margin = 0.2;
+
+  // 장애물 표면에서 이 거리(m)보다 멀어지면 거리비용에 영향이 없다(소프트 코스트의
+  // 영향 반경). clearance_weight와 별개 항으로 둔 이유는 evaluateCost 구현 주석 참고.
+  double dynamic_obstacle_influence_radius = 1.0;
+
+  // 동적 장애물 거리비용 가중치. heading/clearance/velocity_weight와 같은 척도
+  // ([0,1] 정규화)라 더하는 값이며, 네 가중치의 합이 1이어야 하는 제약은 없다
+  // (비교 대상인 (v, w) 샘플끼리 상대적으로만 비교하므로 절대 스케일은 상관없다).
+  double dynamic_weight = 0.3;
 };
 
 // ROS 비의존 DWA 로컬 컨트롤러 코어. 2~3주차에 amr_nav2_plugins에서
 // nav2_core::Controller로 감쌀 때, 플러그인은 local costmap을 Grid로 감싸고
 // odom<->Grid 로컬 좌표 변환만 담당하며 탐색 로직은 이 클래스에 위임한다.
 //
-// 이번 주 범위: 정적 장애물(Grid)만 피한다. 3주차에 TrackedObstacleArray 기반
-// 동적 장애물을 cost 함수에 반영한다(docs/algorithms/navigation.md 4절 참고).
+// 정적 장애물(Grid)은 하드 필터(충돌하면 후보 제외)로만 다룬다. 동적 장애물
+// (TrackedObstacleArray 기반, 3주차)은 등속 예측 위치를 하드 필터(충돌 판정)와
+// 소프트 비용(거리비용, dynamic_weight) 둘 다에 반영한다 — docs/algorithms/navigation.md
+// 4절 참고.
 class DwaPlanner
 {
 public:
   explicit DwaPlanner(DwaConfig config = DwaConfig());
 
-  // 4단계를 모두 실행해 다음 제어 주기에 낼 (v, w)를 고른다.
+  // 4단계를 모두 실행해 다음 제어 주기에 낼 (v, w)를 고른다. dynamic_obstacles가
+  // 비어 있으면(기본값) 2주차 정적 장애물 전용 동작과 결과가 완전히 같다.
   DwaCommand computeVelocityCommand(
-    const RobotState & state, const Point2D & goal, const Grid & grid) const;
+    const RobotState & state, const Point2D & goal, const Grid & grid,
+    const std::vector<DynamicObstacle> & dynamic_obstacles = {}) const;
+
+  // 최종 접근: 위치는 이미 도착했다고 보고(xy 오차 확인은 호출 쪽 책임 - computeVelocityCommand의
+  // goal_tolerance는 웨이포인트 추종용이라 각도까지는 안 본다, DwaConfig::goal_tolerance 주석
+  // 참고) 제자리 회전만으로 goal_yaw를 맞춘다. |yaw 오차| <= yaw_tolerance면 v=0,w=0과
+  // kGoalReached. 아니면 등가감속(acc_w)으로 정확히 goal_yaw에 서는 각속도를 고르고
+  // (amr_zone_client/geometry.py의 speed_cap_for_stop과 같은 발상), 한 스텝의 변화는
+  // acc_w*dt로 제한한다(kOk) - 오버슈트해서 반대로 넘어갔다가 다시 도는 진동을 막는다.
+  DwaCommand rotateToGoalYaw(const RobotState & state, double goal_yaw, double yaw_tolerance) const;
 
   // 1단계: 동적 윈도우 계산. 단독으로도 테스트·검사할 수 있도록 공개한다.
   DynamicWindow computeDynamicWindow(const RobotState & state) const;
@@ -133,8 +178,15 @@ public:
   std::vector<TrajectoryPoint> simulateTrajectory(
     const RobotState & state, double v, double w) const;
 
-  // 사각 풋프린트가 (x, y, yaw) 자세에서 장애물과 충돌하는지 검사한다.
+  // 사각 풋프린트가 (x, y, yaw) 자세에서 정적 장애물(Grid)과 충돌하는지 검사한다.
   bool footprintCollides(const Grid & grid, double x, double y, double yaw) const;
+
+  // 사각 풋프린트가 (x, y, yaw) 자세에서, 시각 t(초, 궤적 시작 기준)에 동적 장애물과
+  // 충돌하는지 검사한다. config().predict_dynamic_obstacles가 false면 t를 0으로
+  // 본다(장애물이 관측 위치에 멈춰 있다고 취급).
+  bool dynamicObstacleCollides(
+    const std::vector<DynamicObstacle> & obstacles, double t, double x, double y,
+    double yaw) const;
 
   const DwaConfig & config() const noexcept {return config_;}
 
@@ -143,6 +195,16 @@ private:
   // 가장 높은 비용값을 clearance 비용 계산에 쓰도록 돌려준다.
   bool evaluateFootprint(
     const Grid & grid, double x, double y, double yaw, double * max_cell_cost) const;
+
+  // dynamicObstacleCollides의 내부 버전. 충돌 여부와 함께(비충돌 시) 가장 가까운
+  // 장애물의 표면까지 거리(음수 없음, 장애물이 없으면 +inf)를 돌려준다.
+  bool evaluateDynamicObstacles(
+    const std::vector<DynamicObstacle> & obstacles, double t, double x, double y, double yaw,
+    double * min_surface_distance) const;
+
+  // 동적 장애물 거리비용 [0,1]. 표면까지 거리가 안전 여유(safety_margin)에 가까울수록
+  // 1.0, dynamic_obstacle_influence_radius보다 멀면(장애물이 없을 때 포함) 0.0.
+  double dynamicObstacleCost(double min_surface_distance) const;
 
   // 3단계: 비용 함수(heading + clearance + velocity, 모두 [0,1] 정규화).
   // v가 거의 0인 궤적은 heading을 계산하지 않고 최댓값(1.0)을 준다 - 그렇지 않으면
