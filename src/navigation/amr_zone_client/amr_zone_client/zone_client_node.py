@@ -83,6 +83,9 @@ class ZoneClientNode(Node):
         self._safety_status_timeout_s = safety_status_timeout_s
         self._safety_speed_limit: Optional[float] = None
         self._safety_status_last_t: Optional[float] = None
+        # speed_limit 램프 시작점을 낮추는 데 쓴다 (core.update의 current_speed_mps,
+        # #93 연우 리뷰) - 마지막으로 내보낸(상한 적용 후) cmd_vel.linear.x.
+        self._last_cmd_vel_mps: float = 0.0
 
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -126,6 +129,7 @@ class ZoneClientNode(Node):
         out.linear.z = msg.linear.z
         out.angular = msg.angular
         self._cmd_vel_pub.publish(out)
+        self._last_cmd_vel_mps = out.linear.x
 
     def _lookup_robot_xy(self):
         try:
@@ -149,7 +153,8 @@ class ZoneClientNode(Node):
         if (self._safety_status_last_t is None
                 or now - self._safety_status_last_t > self._safety_status_timeout_s):
             safety_limit = None
-        outgoing, speed_cap = self._core.update(now, self._path_xy, robot_xy, safety_limit)
+        outgoing, speed_cap = self._core.update(
+            now, self._path_xy, robot_xy, safety_limit, self._last_cmd_vel_mps)
         self._speed_cap = speed_cap
         for item in outgoing:
             msg = ZoneRequest()

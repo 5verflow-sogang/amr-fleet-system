@@ -101,3 +101,26 @@ def test_ramp_cap_down_from_no_limit_ramps_from_max_velocity():
 
 def test_ramp_cap_down_reaching_no_limit_value_returns_none():
     assert ramp_cap_down(2.0, 1.9, dt=1.0, decel=1.0, no_limit_value=2.0) is None
+
+
+def test_ramp_cap_down_starts_from_current_speed_when_lower_than_prev():
+    # prev가 None(최고속 2.0으로 다룸)이어도, 로봇이 실제로는 0.5m/s로만 가고 있으면
+    # 그 0.5에서부터 내려간다 - 가짜로 높은 2.0에서부터 내려가면 감속이 실제 속도를
+    # 따라잡을 때까지 미뤄진다(#93 연우 리뷰).
+    result = ramp_cap_down(
+        0.0, None, dt=0.1, decel=1.0, no_limit_value=2.0, current_speed_mps=0.5)
+    assert result == pytest.approx(0.4)
+
+
+def test_ramp_cap_down_current_speed_never_raises_the_ramp():
+    # 현재 속도가 prev보다 빠르면(이미 더 낮은 상한으로 램프 중인데 명령 속도가 그보다
+    # 높은 경우) min()이라 영향이 없다 - 올리는 방향으로는 안 쓴다.
+    result = ramp_cap_down(
+        0.0, 0.3, dt=0.1, decel=1.0, no_limit_value=2.0, current_speed_mps=1.5)
+    assert result == pytest.approx(0.2)  # current_speed_mps 없을 때와 동일
+
+
+def test_ramp_cap_down_current_speed_none_keeps_old_behavior():
+    # 안 주면(기본값 None) 기존처럼 no_limit_value에서부터 내려간다
+    result = ramp_cap_down(0.0, None, dt=0.1, decel=1.0, no_limit_value=2.0)
+    assert result == pytest.approx(1.9)

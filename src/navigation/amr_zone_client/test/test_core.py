@@ -304,6 +304,22 @@ def test_safety_speed_limit_critical_ramps_to_zero_over_multiple_ticks():
     assert cap_3s == pytest.approx(0.0)  # 1.0 - 1.0*2.0 -> 0 아래로는 안 내려간다
 
 
+def test_safety_speed_limit_critical_decelerates_from_actual_current_speed():
+    # #93 연우 리뷰: 로봇이 실제로는 0.5m/s로만 가고 있는데(아직 제한이 없어서 prev가
+    # 최고속 2.0으로 잡혀 있다) CRITICAL(0.0)이 오면, 가짜로 높은 2.0에서부터 내려가지
+    # 않고 실제 속도 0.5에서 바로 decel_mps2(1.0)로 감속을 시작해 0.5초 안에 멈춘다.
+    # (current_speed_mps 없이 2.0에서부터였다면 t=0.25에서 아직 1.75로, 0.5보다 높아
+    # cmd_vel = min(명령, 상한)에 전혀 영향이 없었을 것.)
+    core = make_core(zones=[], decel_mps2=1.0, max_linear_velocity_mps=2.0)
+    core.update(0.0, [], (0.0, 0.0), current_speed_mps=0.5)  # 시드 틱 (dt=0)
+    _, cap_mid = core.update(
+        0.25, [], (0.0, 0.0), safety_speed_limit_mps=0.0, current_speed_mps=0.5)
+    assert cap_mid == pytest.approx(0.25)  # 0.5 - 1.0*0.25
+    _, cap_stop = core.update(
+        0.5, [], (0.0, 0.0), safety_speed_limit_mps=0.0, current_speed_mps=0.5)
+    assert cap_stop == pytest.approx(0.0)
+
+
 def test_safety_speed_limit_combines_with_zone_cap_as_smaller():
     # 구역 상한(접근 중, sqrt(5)~=2.236)과 speed_limit(1.0) 중 더 작은 쪽을 쓴다
     core = make_core()

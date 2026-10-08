@@ -131,13 +131,18 @@ class ZoneClientCore:
 
     def update(
         self, now: float, path_xy: Sequence[Point], robot_xy: Point,
-        safety_speed_limit_mps: Optional[float] = None,
+        safety_speed_limit_mps: Optional[float] = None, current_speed_mps: Optional[float] = None,
     ):
         """한 틱 처리.
 
         safety_speed_limit_mps: SafetyStatus.speed_limit의 이번 틱 값. 끊김(타임아웃)
-        판단은 노드가 하고(README 'SafetyStatus 연동' 참고), 끊겼으면 None을 넘긴다 - 메시지
+        판단은 노드가 하고(README 'SafetyStatus 연동' 절 참고), 끊겼으면 None을 넘긴다 - 메시지
         자체의 inf(LEVEL_NORMAL, "제한 없음")도 None과 같게 다룬다.
+
+        current_speed_mps: 로봇이 지금 실제로 받고 있는 명령 선속도(노드가 마지막으로
+        내보낸 cmd_vel.linear.x) - speed_limit이 낮아질 때 램프 시작점을 이 값과
+        min()으로 낮춰서, 상한이 실제 속도보다 높아 아직 전혀 효과가 없는 동안에도
+        감속이 곧바로 시작되게 한다(#93 연우 리뷰, geometry.ramp_cap_down 참고).
 
         반환: (보낼 ZoneRequest 목록, cmd_vel 선속도 상한 m/s (제한 없으면 None)). 상한은
         구역 상한과 (부드럽게 따라간) safety_speed_limit_mps 중 더 작은 쪽이다.
@@ -161,7 +166,7 @@ class ZoneClientCore:
         dt = 0.0 if self._safety_cap_last_t is None else max(0.0, now - self._safety_cap_last_t)
         safety_cap = ramp_cap_down(
             safety_speed_limit_mps, self._safety_cap_effective, dt, self._config.decel_mps2,
-            self._config.max_linear_velocity_mps)
+            self._config.max_linear_velocity_mps, current_speed_mps)
         self._safety_cap_effective = safety_cap
         self._safety_cap_last_t = now
 
