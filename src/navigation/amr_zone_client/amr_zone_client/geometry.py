@@ -92,3 +92,47 @@ def speed_cap_for_stop(remaining_to_boundary: float, stop_margin: float, decel: 
     if remaining_to_stopline <= 0.0:
         return 0.0
     return (2.0 * decel * remaining_to_stopline) ** 0.5
+
+
+def combine_caps(*caps: Optional[float]) -> Optional[float]:
+    """여러 선속도 상한 중 가장 작은 값(가장 빡빡한 제약). None(제한 없음)은 무시하고,
+    전부 None이면 None."""
+    finite = [c for c in caps if c is not None]
+    return min(finite) if finite else None
+
+
+def ramp_cap_down(
+    target: Optional[float], prev: Optional[float], dt: float, decel: float, no_limit_value: float,
+    current_speed_mps: Optional[float] = None,
+) -> Optional[float]:
+    """선속도 상한이 낮아질 때만 decel(m/s^2) 이내로 따라가게 한다 - 느닷없이 낮아지는
+    상한(예: SafetyStatus.speed_limit)을 구역 진입 감속(speed_cap_for_stop)과 같은 방식으로
+    부드럽게 반영하는 데 쓴다.
+
+    높아지거나 그대로면(완화) 바로 target을 쓴다 - 완화는 안전 쪽이라 부드럽게 할 필요가
+    없다. dt<=0이면(아직 시간이 안 지났으면) 낮아지는 쪽으로는 움직이지 않는다(prev 유지).
+
+    None(제한 없음)은 no_limit_value(로봇이 낼 수 있는 가장 빠른 속도)로 다룬다 - "제한
+    없음"과 "그 속도로 제한"은 로봇 입장에서 같은 뜻이고, 뺄셈이 가능한 값으로 바꿔야
+    램프가 된다(무한대는 아무리 빼도 무한대다). 결과가 no_limit_value 이상이면 다시
+    None으로 돌려준다.
+
+    current_speed_mps(로봇이 지금 실제로 받고 있는 명령 선속도)를 주면 램프 시작점을
+    min(prev, current_speed_mps)로 낮춘다(#93 연우 리뷰) - prev가 None이거나 아직 높은
+    값일 때, 로봇이 실제로는 더 느리게 가고 있으면(예: 제한이 없어서 prev가 최고속으로
+    잡혀 있지만 Nav2가 어차피 느리게 명령하는 중) 그 가짜로 높은 지점에서부터 내려가느라
+    감속이 실제 속도를 따라잡을 때까지 미뤄진다 - cmd_vel = min(명령, 상한)이라 상한이
+    실제 속도보다 높은 동안은 상한이 전혀 효과가 없기 때문이다. 안 주면(None) 기존과
+    같다(현재 속도를 모른다고 보고 안 낮춤).
+    """
+    target_v = no_limit_value if target is None else target
+    prev_v = no_limit_value if prev is None else prev
+    if current_speed_mps is not None:
+        prev_v = min(prev_v, current_speed_mps)
+    if target_v >= prev_v:
+        result = target_v
+    elif dt <= 0.0:
+        result = prev_v
+    else:
+        result = max(target_v, prev_v - decel * dt)
+    return None if result >= no_limit_value else result

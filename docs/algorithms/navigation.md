@@ -271,10 +271,15 @@ lookahead를 속도에 비례시키는 이유: 짧으면 저속에서 정확하�
 TODO: Gazebo에서 하네스 시나리오로 실측 CTE(직선 5 cm·곡선 10 cm KPI)를 재고, Pure Pursuit과
 Stanley를 비교한다(`meta.json` `controller`). PID 속도 제어와 S-curve 프로파일은 그 다음.
 
-### 5-6. speed_limit 연동 (예정)
+### 5-6. speed_limit 연동
 
-아직 `path_tracker_node`에 붙이지 않았다. 제어 쪽은 `safety/status`(`amr_msgs/msg/SafetyStatus`)의 `speed_limit`을 받아 명령
-선속도를 `min(명령, speed_limit)`으로 제한하고, 1.0 m/s² 이내로 감속한다. 값 정의
-(`inf`/0.0/WARNING 등)는 [docs/api.md](../api.md)를 참조한다.
+적용 위치는 `amr_control`(`path_tracker_node`)이 아니라 `amr_zone_client`다 — Pure
+Pursuit·Stanley·PID·DWA 등 어떤 컨트롤러를 쓰든 그 출력이 전부 이 노드를 거쳐 나가므로,
+컨트롤러마다 따로 챙기지 않고 한 곳에서만 반영하면 된다(#69·#70).
+
+`amr_zone_client`는 `safety/status`(`amr_msgs/msg/SafetyStatus`)의 `speed_limit`을 받아
+구역 진입 상한과 `min(구역 상한, speed_limit)`으로 합치고, 상한이 낮아질 때만 1.0 m/s²
+(구역 진입 감속과 같은 `decel_mps2`) 이내로 부드럽게 따라간다. 값 정의(`inf`/0.0/WARNING
+등)는 [docs/api.md](../api.md)를 참조한다.
 
 `safety/status`가 끊기면 제한 없음으로 본다. 최종 게이트가 `amr_safety`라서다.
