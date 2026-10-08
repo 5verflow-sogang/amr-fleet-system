@@ -102,7 +102,7 @@
 [docs/project-spec.md](../../../docs/project-spec.md) '안전 정지 책임' 절, [docs/api.md](../../../docs/api.md)
 4-4절 "감속·정지를 누가 실행하나"). 이 노드가 모든 컨트롤러 출력이 거치는 자리라 `speed_limit`
 반영도 여기서 한다 (아래 'SafetyStatus 연동' 절, [docs/algorithms/navigation.md](../../../docs/algorithms/navigation.md)
-'5-1. speed_limit 연동'). 구역 진입 제한도 같은 성격의 하드 제약이라, 이 노드가 최종 `cmd_vel`을
+'5-6. speed_limit 연동'). 구역 진입 제한도 같은 성격의 하드 제약이라, 이 노드가 최종 `cmd_vel`을
 직접 내보내면 안전 노드와 발행자가 둘이 된다.
 
 그래서 이 노드의 출력은 `cmd_vel`이 아니라 `cmd_vel_zone_limited`다. 의도한 체인은:
