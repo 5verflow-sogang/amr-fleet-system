@@ -23,7 +23,7 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            # 'node_name = amr_fleet_decentralized.node_module:main',
+            'task_auction_node = amr_fleet_decentralized.task_auction_node:main',
         ],
     },
 )

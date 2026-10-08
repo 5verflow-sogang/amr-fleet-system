@@ -1,22 +1,21 @@
 from amr_fleet_decentralized.auction import (
+    MODE_BUSY,
+    MODE_IDLE,
     AuctionParams,
     Bid,
     RobotInfo,
     TaskInfo,
+    award_exhausted,
+    can_withdraw,
     compute_bid_cost,
     decide_bid,
     decide_winner,
+    should_resend_award,
 )
 
 
-def robot(robot_id, xy=(0.0, 0.0), battery=100.0, task_remaining=0.0, task_dropoff=None):
-    return RobotInfo(
-        robot_id=robot_id,
-        xy=xy,
-        battery_percent=battery,
-        current_task_dropoff_xy=task_dropoff,
-        current_task_remaining_m=task_remaining,
-    )
+def robot(robot_id, xy=(0.0, 0.0), battery=100.0, mode=MODE_IDLE):
+    return RobotInfo(robot_id=robot_id, xy=xy, battery_percent=battery, mode=mode)
 
 
 def task(task_id='t1', pickup=(3.0, 4.0), dropoff=(3.0, 4.0), deadline=None):
@@ -27,24 +26,28 @@ def bid(robot_id, cost, bid_time=0.0, task_id='t1'):
     return Bid(robot_id=robot_id, task_id=task_id, cost=cost, estimated_finish_time=0.0, bid_time=bid_time)
 
 
-# --- 입찰가 계산 ---
+# --- 입찰가 계산: 현재 위치 -> 작업 시작점 직선 거리 (중앙 nearest와 같은 규칙, 10/7 결정) ---
 
 
-def test_compute_bid_cost_from_idle_position():
-    # 유휴 로봇: 현재 위치 -> pickup -> dropoff(픽업과 같은 지점이라 그 구간은 0)
+def test_compute_bid_cost_is_straight_line_to_pickup():
     r = robot('amr_01', xy=(0.0, 0.0))
-    t = task(pickup=(3.0, 4.0), dropoff=(3.0, 4.0))
+    t = task(pickup=(3.0, 4.0), dropoff=(30.0, 40.0))  # dropoff는 멀어도 비용에 안 들어간다
     assert compute_bid_cost(r, t) == 5.0
 
 
-def test_compute_bid_cost_includes_current_task_remaining_distance():
-    # 진행 중인 작업이 있으면 그걸 마칠 때까지 남은 거리부터 더한다.
-    r = robot('amr_01', xy=(0.0, 0.0), task_remaining=10.0, task_dropoff=(3.0, 4.0))
-    t = task(pickup=(3.0, 4.0), dropoff=(3.0, 4.0))  # 큐 끝(dropoff)이 곧 pickup
-    assert compute_bid_cost(r, t) == 10.0
+def test_compute_bid_cost_falls_back_to_dropoff_without_pickup():
+    r = robot('amr_01', xy=(0.0, 0.0))
+    t = TaskInfo(task_id='t1', dropoff_xy=(3.0, 4.0))  # pickup 없음 (CHARGE·RETURN류)
+    assert compute_bid_cost(r, t) == 5.0
 
 
 # --- 로봇 쪽 입찰 결정 ---
+
+
+def test_decide_bid_skips_when_not_idle():
+    # 10/7 결정: IDLE 로봇만 입찰한다 (명세 3장 "가장 가까운 로봇 선점")
+    r = robot('amr_01', mode=MODE_BUSY)
+    assert decide_bid(r, task(), now_s=0.0) is None
 
 
 def test_decide_bid_skips_when_battery_too_low():
@@ -71,6 +74,8 @@ def test_decide_bid_returns_bid_when_eligible():
 
 
 # --- 경매인 쪽 낙찰 결정: 최저가 낙찰 / 동점 / 마감 후 입찰 무시 ---
+# bid_time은 "경매인이 받은 시각"으로 본다(10/7 결정) - 아래 bid()는 그 수신 시각을 그대로
+# 받아 쓰는 테스트 헬퍼다(실제 노드에서는 보낸 로봇의 타임스탬프가 아니라 자기 수신 시각을 넣는다).
 
 
 def test_decide_winner_picks_lowest_cost():
@@ -87,7 +92,7 @@ def test_decide_winner_breaks_tie_by_robot_id_lexicographic():
 
 
 def test_decide_winner_ignores_late_bids():
-    # amr_01의 낮은 가격 입찰이 마감(2.0s)을 넘겨 도착 - 무효로 치고 뺀다.
+    # amr_01의 낮은 가격 입찰을 경매인이 마감(2.0s)을 넘겨서 받음 - 무효로 치고 뺀다.
     bids = [bid('amr_01', cost=1.0, bid_time=2.1), bid('amr_02', cost=5.0, bid_time=1.5)]
     result = decide_winner('t1', bids, announce_time_s=0.0, bid_window_s=2.0)
     assert result.winner_id == 'amr_02'
@@ -104,3 +109,31 @@ def test_decide_winner_no_valid_bids_when_all_late():
     bids = [bid('amr_01', cost=1.0, bid_time=5.0)]
     result = decide_winner('t1', bids, announce_time_s=0.0, bid_window_s=2.0)
     assert result.winner_id is None
+
+
+# --- 경매 뒷단계: AWARD 재전송 (1초 간격 x 5회) · WITHDRAW 범위 (ACCEPT 전까지만) ---
+
+
+def test_should_resend_award_waits_for_interval():
+    assert should_resend_award(
+        attempts_sent=1, last_sent_time=0.0, now_s=0.9, resend_interval_s=1.0, max_attempts=5,
+    ) is False
+    assert should_resend_award(
+        attempts_sent=1, last_sent_time=0.0, now_s=1.0, resend_interval_s=1.0, max_attempts=5,
+    ) is True
+
+
+def test_should_resend_award_stops_after_max_attempts():
+    assert should_resend_award(
+        attempts_sent=5, last_sent_time=0.0, now_s=100.0, resend_interval_s=1.0, max_attempts=5,
+    ) is False
+
+
+def test_award_exhausted_after_max_attempts():
+    assert award_exhausted(attempts_sent=4, max_attempts=5) is False
+    assert award_exhausted(attempts_sent=5, max_attempts=5) is True
+
+
+def test_can_withdraw_only_before_accept():
+    assert can_withdraw(accepted=False) is True
+    assert can_withdraw(accepted=True) is False
