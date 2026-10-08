@@ -4,7 +4,7 @@
 - 빌드 타입: ament_python
 - 책임: 통신 지연·패킷 손실·중앙 서버 강제종료 장애 주입기
 
-> 상태: 고정 지연·손실 중계 구현(2주차). 서버 강제종료는 `amr_fleet_manager` launch에 구현(3주차, 아래 미결 표). 지터, 로봇 → 서버 방향은 미구현.
+> 상태: 고정 지연·손실 중계 구현(2주차). 서버 강제종료는 `amr_fleet_manager` launch에 구현(3주차, 아래 미결 표). 분산 경매 토픽(로봇 → 로봇) 중계는 `relay_auction`으로 켠다(10/7). 지터, 로봇 → 서버 방향은 미구현(D8).
 
 ## 방식 결정: ROS 레이어 중계
 
@@ -30,7 +30,9 @@
 | Subscribe | `/fleet/heartbeat` | `amr_msgs/msg/FleetHeartbeat` | 서버 원본 |
 | Subscribe | `/fleet/zone_grants` | `amr_msgs/msg/ZoneGrant` | 서버 원본 |
 | Subscribe | `/fleet/task_table` | `amr_msgs/msg/FleetTaskTable` | 서버 원본 |
-| Publish | `/<robot_id>/fleet/<위 토픽>` | 위와 같음 | 로봇별 중계본. 지연·손실이 걸린 뒤 |
+| Subscribe | `/fleet/task_auctions` | `amr_msgs/msg/TaskAuction` | `relay_auction`일 때만. 경매인 로봇 원본 |
+| Subscribe | `/fleet/task_bids` | `amr_msgs/msg/TaskBid` | `relay_auction`일 때만. 입찰·낙찰·수락·포기 원본 |
+| Publish | `/<robot_id>/fleet/<위 토픽>` | 위와 같음 | 로봇별 중계본. 지연·손실이 걸린 뒤. 경매 토픽은 보낸 로봇에게도 가므로 받는 쪽이 자기 메시지를 거른다 |
 
 **로봇별 출력 (제안, 이진·지수와 합의 필요)**: 로봇 노드는 네임스페이스(`amr_0N`) 안에서 상대 이름 `fleet/task_assignments`를 구독하면 된다. 손실이 로봇마다 독립이라 "일부 로봇만 heartbeat를 놓치는" 상황을 만들 수 있다. 하네스는 지금처럼 `/fleet/*` 원본을 기록한다.
 
@@ -44,6 +46,7 @@
 | `delay_ms` | `100.0` | launch 인자 | 고정 지연 (명세 범위 0~500) |
 | `loss_pct` | `0.0` | launch 인자 | 손실률 (명세 범위 0~10) |
 | `seed` | `0` | launch 인자 | 손실 난수 seed. 하네스 반복 번호 |
+| `relay_auction` | `false` | launch 인자 | 분산 경매 토픽도 중계한다. 분산·하이브리드 비교군 실험에서 켠다. 중앙집중 실험은 끈다 |
 
 QoS는 4개 토픽 모두 Reliable, depth 10이다. [api.md 6절](../../../docs/api.md#6-qos-기본값)이 정해지면 토픽별로 맞춘다.
 
@@ -81,5 +84,6 @@ colcon test --packages-select amr_fault_injector
 | --- | --- |
 | 로봇별 출력 토픽 | 위 제안. 이진(`ZoneRequest`·heartbeat 폴백), 지수(`amr_bt`)와 합의 |
 | 서버 강제종료 | 구현. launch는 자기가 띄운 프로세스에만 신호를 보낼 수 있어 `fleet_manager.launch.py`의 `kill_at_s`·`restart_after_s` 인자로 건다 ([amr_fleet_manager README](../amr_fleet_manager/README.md) "서버 강제종료") |
-| 로봇 → 서버 방향 | [api.md 4-4절](../../../docs/api.md#4-4-미결-쟁점-928-회의) 미결. 필요하면 같은 노드에 역방향 링크 추가 |
+| 로봇 → 서버 방향 | D8 결정: 걸지 않는다. 연구 1 After 때 필요하면 역방향 링크 추가 |
+| 로봇 → 로봇 (분산 경매) | `relay_auction`으로 건다(10/7). 분산 모드에는 서버가 없어, 걸지 않으면 같은 지연 조건에서 분산만 지연을 겪지 않아 중앙집중과의 비교가 불공정해진다 |
 | 지터 | 고정 지연만. 지터를 넣으면 FIFO가 깨지므로 큐를 도착 시각 순 힙으로 바꾼다 |
