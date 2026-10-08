@@ -3,22 +3,19 @@ import math
 from typing import Optional
 
 from .params import AuctionParams
-from .types import Bid, RobotInfo, TaskInfo
+from .types import MODE_IDLE, Bid, RobotInfo, TaskInfo
 
 
 def compute_bid_cost(robot: RobotInfo, task: TaskInfo) -> float:
-    """이 작업을 맡으면 늘어나는 이동 거리(m) - TaskBid.cost(한계비용)와 같은 정의.
+    """로봇 → 작업 시작 지점 직선 거리(m).
 
-    "현재 큐 끝(진행 중인 작업을 마치는 지점, 없으면 현재 위치) -> pickup ->
-    dropoff" 증가분이다. 진행 중인 작업이 있으면 그걸 마칠 때까지 남은 거리
-    (`current_task_remaining_m`)도 더한다.
+    10/7 하연·이진 결정(#91 리뷰 제안): 명세 3장 "가장 가까운 로봇 선점"에 맞춰
+    중앙 할당(amr_fleet_core.assignment.cost.euclidean_cost, nearest 규칙)과 같은
+    식을 쓴다 - 분산·중앙 비교군의 비용 계산이 같아야 공정하다(연구 1). 픽업 →
+    목적지 구간은 어느 로봇이 맡아도 같으므로 안 넣는다. IDLE 로봇만 입찰하므로
+    "진행 중인 작업을 마치는 지점"(큐) 보정은 필요 없다.
     """
-    queue_end = robot.current_task_dropoff_xy if robot.current_task_dropoff_xy is not None else robot.xy
-    return (
-        robot.current_task_remaining_m
-        + math.dist(queue_end, task.pickup_xy)
-        + math.dist(task.pickup_xy, task.dropoff_xy)
-    )
+    return math.dist(robot.xy, task.start_xy)
 
 
 def estimate_finish_time(cost_m: float, now_s: float, params: AuctionParams) -> float:
@@ -35,10 +32,14 @@ def decide_bid(
     """이 로봇이 이 작업에 입찰할지 정한다. 입찰하지 않으면 None.
 
     입찰하지 않는 경우:
-    - 배터리가 `min_battery_percent` 미만 (낙찰돼도 못 끝낼 로봇은 처음부터 빼둔다).
+    - IDLE이 아님 (10/7 결정: 명세 3장 "가장 가까운 로봇 선점"에 맞춰 IDLE 로봇만 입찰).
+    - 배터리가 `min_battery_percent` 미만 (10/7 결정: 중앙집중(fleet_manager)과 같은
+      20% - 비교군 조건을 같게 둔다).
     - 예상 완료 시각이 `task.deadline`을 넘김 (TaskBid.msg 주석: "Task.deadline
       넘기면 무효" - 넘기는 입찰은 애초에 내지 않는다).
     """
+    if robot.mode != MODE_IDLE:
+        return None
     if robot.battery_percent < params.min_battery_percent:
         return None
 
