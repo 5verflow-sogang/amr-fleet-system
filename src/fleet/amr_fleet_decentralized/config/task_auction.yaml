@@ -1,7 +1,7 @@
 # 분산 경매(task_auction) 노드 파라미터. 로봇마다 하나씩 뜨므로 와일드카드
 # 네임스페이스를 쓴다(amr_zone_client/config/zone_client.yaml과 동일한 방식).
 # 로직 자체는 amr_fleet_decentralized/auction/params.py의 AuctionParams와 1:1로
-# 맞춘다. 값은 10/7 하연·이진 결정(docs/api.md 4-4절 "쟁점 정리") 그대로다.
+# 맞춘다. 값은 10/7, 10/9 하연·이진 결정(docs/api.md 4-4절 "쟁점 정리") 그대로다.
 /**/task_auction:
   ros__parameters:
     bid_window_s: 2.0
@@ -12,13 +12,12 @@
     # 결정: 중앙 Ack 재전송과 같게 1초 간격 x 5회, 그래도 ACCEPT가 없으면 재경매.
     award_resend_interval_s: 1.0
     award_max_attempts: 5
-    # TaskAuction·TaskBid 구독(상대 이름, 장애 주입기 relay_auction 중계본). relay_auction을
-    # 끈 실험(중앙집중 비교군)에서는 /fleet/task_auctions, /fleet/task_bids(절대 경로)로
-    # 바꾸면 중계 없이 원본을 직접 구독한다.
-    task_auctions_sub_topic: fleet/task_auctions
-    task_bids_sub_topic: fleet/task_bids
-    # 발행은 항상 절대 경로 원본이다 - 장애 주입기가 여기서 읽어 로봇별로 다시 보낸다.
-    task_auctions_pub_topic: /fleet/task_auctions
-    task_bids_pub_topic: /fleet/task_bids
+    # 10/9 결정(#107·#108): ACCEPT 뒤 TaskStatus FAILED를 받으면 최대 1회 재경매, 그래도
+    # 실패하면 실패로 남긴다. 중앙(fleet_manager.yaml assignment.failed_retries)과 같은 값.
+    failed_retries: 1
+    # TaskAuction·TaskBid 구독 접두어. 기본은 절대 경로 원본(/fleet, 중계 없이 직접 구독) -
+    # relayed:=true(launch 인자) 또는 이 값을 'fleet'로 주면 상대 이름(장애 주입기
+    # relay_auction 중계본)을 구독한다. amr_bt의 server_topic_prefix와 같은 방식.
+    auction_topic_prefix: /fleet
     robot_states_topic: /fleet/robot_states
     update_rate_hz: 10.0
