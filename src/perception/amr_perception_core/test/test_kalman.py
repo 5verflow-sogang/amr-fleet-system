@@ -162,3 +162,11 @@ def test_rejects_invalid_position(bad):
 def test_rejects_invalid_config(kwargs):
     with pytest.raises(ValueError):
         KalmanConfig(**kwargs)
+
+
+def test_mahalanobis_sq_many_matches_single():
+    kf = ConstantVelocityKF((1.0, 2.0), 0.0, KalmanConfig())
+    kf.predict(0.3)
+    zs = np.array([[1.0, 2.0], [1.4, 1.7], [3.0, -1.0]])
+    np.testing.assert_allclose(kf.mahalanobis_sq_many(zs), [kf.mahalanobis_sq(z) for z in zs])
+    assert kf.mahalanobis_sq_many(np.empty((0, 2))).shape == (0,)

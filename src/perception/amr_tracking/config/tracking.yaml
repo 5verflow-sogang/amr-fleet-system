@@ -1,6 +1,23 @@
 # 장애물 추적 노드 파라미터 (tracking_node, synthetic_obstacles_node)
 /**/tracking:
   ros__parameters:
+    # 입력: scan(필터된 LiDAR 스캔을 이 노드가 군집화, 기본) 또는 poses(perception/obstacle_measurements 시험용)
+    measurement_source: scan
+    # 추적 좌표계. 비우면 <네임스페이스>/odom (예: amr_01/odom). DWA 입력이라 odom (api.md 4-3절)
+    fixed_frame: ""
+    tf_timeout: 0.1          # s. 스캔 촬영 시각의 lidar_link → odom TF를 기다리는 시간
+
+    # 군집화 (amr_perception_core clustering, 근거는 docs/algorithms/perception.md 1-1절)
+    breakpoint_lambda_deg: 10.0
+    range_noise_std: 0.03    # m. amr_description/config/sensors.yaml LiDAR 잡음
+    max_gap_beams: 2
+    min_points: 3
+    max_obstacle_extent: 2.0   # m. R1: 이보다 큰 군집은 벽·랙 면
+    # 다리 묶기: LiDAR 높이(0.2 m)에서 사람은 다리 두 개로 보인다. 크기 leg_max_extent 이하 군집 두 개의
+    # 중심이 leg_merge_distance 안이면 한 사람으로 합친다 (0.6 m = 어깨너비 수준, Gazebo로 확인). 0이면 끔
+    leg_max_extent: 0.35
+    leg_merge_distance: 0.6
+
     # 가속도 잡음 σa [m/s²]. 사람 방향 전환·지게차 가감속 수준.
     # 0.5로 낮추면 정지 물체 속도 잡음은 줄지만 보행자 방향 전환을 못 따라가 ID가 자주 바뀌었다
     accel_noise_std: 1.0
@@ -12,14 +29,22 @@
     gate_mahalanobis_sq: 13.82
     # 이 횟수 관측되면 확정 트랙으로 발행
     confirm_hits: 3
-    # 마지막 관측 후 이 시간 [s]이 지나면 삭제 (LiDAR 10 Hz 5프레임)
-    max_coast_time: 0.5
-    # 속력이 dynamic_speed_threshold [m/s]를 넘는 프레임이 dynamic_confirm_frames번 연속되면 동적 (이후 유지).
-    # 동적 장애물 분류 작업 전까지의 임시 규칙
+    # 마지막 관측 후 이 시간 [s]이 지나면 삭제. 작업자가 랙 뒤에 가려지는 시간을 녹화로 쟀다(10/8):
+    # 중앙 0.4 s, 90% 1.9 s, 최대 5.3 s. 0.5 s면 짧게 가려질 때마다 트랙이 지워져 ID가 바뀌었다
+    # (작업자 1명, 시뮬레이션 약 1분에 4번). 2.0 s는 90%를 덮어 2번으로 줄었다. 길수록 사라진 사람이
+    # 예측 위치로 더 오래 남는다(1.5 m/s면 2 s에 3 m). 그동안 KF 공분산이 커져 소비자가 구분할 수 있다
+    max_coast_time: 2.0
+    # R3: 속력이 dynamic_speed_threshold [m/s]를 넘는 프레임이 dynamic_confirm_frames번 연속되면 동적 (이후 유지).
+    # 멈춰 선 사람도 동적으로 남는다. 정지 물체의 속도 추정 잡음으로 한두 프레임 넘는 것은 연속 조건이 거른다
     dynamic_speed_threshold: 0.25
     dynamic_confirm_frames: 5
-    # 임시 고정 반경 [m] (LiDAR 군집 반경으로 교체)
+    # 트랙 반경 = 군집 반경의 지수 평활 (새 값 반영 비율). 프레임마다 보이는 면이 달라 군집 반경이 흔들린다
+    radius_smoothing: 0.3
+    # poses 입력처럼 반경 측정이 없을 때 쓰는 고정 반경 [m]
     obstacle_radius: 0.3
+
+    publish_markers: true    # perception/obstacle_markers (RViz 확인용)
+    stats_period: 5.0        # s. 프레임당 후보·트랙 수, 처리 시간 로그 주기
 
 /**/synthetic_obstacles:
   ros__parameters:
