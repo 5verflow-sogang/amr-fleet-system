@@ -31,6 +31,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY docker/scripts/build_tracetools.sh /tmp/build_tracetools.sh
 RUN bash /tmp/build_tracetools.sh /opt/tracing_ws && rm /tmp/build_tracetools.sh
 
+# YOLO 추론용 ultralytics (amr_detection)
+# Humble의 cv_bridge는 NumPy 1.x로 컴파일돼 있어 numpy<2로 제한한다.
+# opencv-python은 4.12부터 numpy 2를 요구하므로 함께 제한한다.
+# ultralytics가 끌어오는 torch가 setuptools를 84.x로 올리면 colcon-core(<80 요구)와 맞지 않아
+# colcon build가 실패하므로, 설치 후 Humble 권장 버전(58.2.0)으로 되돌린다.
+RUN pip3 install --no-cache-dir ultralytics==8.4.164 "numpy<2" "opencv-python<4.12" \
+    && pip3 install --no-cache-dir setuptools==58.2.0
+# 기본 모델(yolov8n)을 빌드 시 받아 두어 실행할 때 인터넷 없이 같은 모델을 쓴다.
+ADD https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.pt /opt/models/yolov8n.pt
+
 # TEB 로컬 플래너 underlay (DWA 비교 대상). Humble 바이너리가 없어 소스로 빌드하고 SHA로 고정한다.
 # 체인: /opt/ros/humble → /opt/tracing_ws → /opt/teb_ws → /ros2_ws. 우리 src와 따로 빌드해 CI 경고 검사에서 빠진다.
 # costmap_converter: ros2 브랜치 최신은 cv_bridge/cv_bridge.hpp(Jazzy부터 있는 헤더)를 써서 Humble에서 빌드되지 않는다.
@@ -54,16 +64,6 @@ RUN mkdir -p /opt/teb_ws/src && cd /opt/teb_ws/src \
 # 베이스 이미지 entrypoint가 바뀌어 치환이 안 되면 빌드를 실패시킨다.
 RUN sed -i 's|/opt/ros/$ROS_DISTRO/setup.bash|/opt/teb_ws/install/setup.bash|' /ros_entrypoint.sh \
     && grep -q /opt/teb_ws/install/setup.bash /ros_entrypoint.sh
-
-# YOLO 추론용 ultralytics (amr_detection)
-# Humble의 cv_bridge는 NumPy 1.x로 컴파일돼 있어 numpy<2로 제한한다.
-# opencv-python은 4.12부터 numpy 2를 요구하므로 함께 제한한다.
-# ultralytics가 끌어오는 torch가 setuptools를 84.x로 올리면 colcon-core(<80 요구)와 맞지 않아
-# colcon build가 실패하므로, 설치 후 Humble 권장 버전(58.2.0)으로 되돌린다.
-RUN pip3 install --no-cache-dir ultralytics==8.4.164 "numpy<2" "opencv-python<4.12" \
-    && pip3 install --no-cache-dir setuptools==58.2.0
-# 기본 모델(yolov8n)을 빌드 시 받아 두어 실행할 때 인터넷 없이 같은 모델을 쓴다.
-ADD https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.pt /opt/models/yolov8n.pt
 
 
 WORKDIR /ros2_ws
