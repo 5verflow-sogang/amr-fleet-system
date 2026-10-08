@@ -1,0 +1,8 @@
+<library path="dwa_controller">
+  <class type="amr_nav2_plugins::DwaController" base_class_type="nav2_core::Controller">
+    <description>
+      amr_planning_core::DwaPlanner(DWA, 동적 장애물 등속 예측 포함)를 감싸는
+      Nav2 Controller 플러그인.
+    </description>
+  </class>
+</library>
