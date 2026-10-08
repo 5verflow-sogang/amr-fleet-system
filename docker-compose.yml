@@ -3,6 +3,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up   # perception에 GPU 사용
 #   docker compose run --rm dev                  # 개발 셸
 #   docker compose --profile gui up -d           # 브라우저 GUI: http://localhost:6080/vnc.html
+#   docker compose --profile fake up -d fake-robots   # 가짜 로봇 5대 (Gazebo 없이 Fleet만)
 # TODO: 각 서비스의 command를 해당 패키지 launch로 교체
 
 x-ros: &ros
@@ -35,9 +36,47 @@ services:
     <<: *ros
     command: ["bash", "-c", "echo 'TODO: ros2 launch amr_bringup robots.launch.py num_robots:=5' && sleep infinity"]
 
+  # Fleet 서버 + 장애 주입기. 이미지를 만든 뒤 호스트에서 바뀐 코드(./src 마운트)를 반영하려고 시작할 때 Fleet 패키지만 다시 빌드한다.
+  # 의존성(package.xml)이 바뀌었으면 먼저 docker compose build로 이미지를 다시 만든다 (예: ModuleNotFoundError: scipy).
+  # 둘 중 하나가 죽으면 컨테이너가 끝난다. 조건은 환경 변수로 바꾼다:
+  #   FAULT_DELAY_MS=200 FAULT_LOSS_PCT=5 FLEET_ALGORITHM=hungarian docker compose up -d fleet
   fleet:
     <<: *ros
-    command: ["bash", "-c", "echo 'TODO: ros2 launch amr_fleet_manager ...' && sleep infinity"]
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - FLEET_ALGORITHM=${FLEET_ALGORITHM:-nearest}
+      # 원 명세서 9장 "로봇 간 통신 지연(최대 100ms)을 시뮬레이션에 반영"
+      - FAULT_DELAY_MS=${FAULT_DELAY_MS:-100.0}
+      - FAULT_LOSS_PCT=${FAULT_LOSS_PCT:-0.0}
+      - FAULT_SEED=${FAULT_SEED:-0}
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        cd /ros2_ws
+        colcon build --packages-up-to amr_fleet_manager amr_fault_injector --event-handlers console_cohesion-
+        source install/setup.bash
+        ros2 launch amr_fleet_manager fleet_manager.launch.py algorithm:=$${FLEET_ALGORITHM} &
+        ros2 launch amr_fault_injector fault_injector.launch.py \
+          delay_ms:=$${FAULT_DELAY_MS} loss_pct:=$${FAULT_LOSS_PCT} seed:=$${FAULT_SEED} &
+        wait -n
+        exit 1
+
+  # 가짜 로봇 5대 (amr_01~05). Gazebo·Nav2 없이 Fleet 흐름만 볼 때 켠다. 실제 robots 서비스와 이름이 겹치므로 같이 띄우지 않는다.
+  #   docker compose up -d fleet && docker compose --profile fake up -d fake-robots
+  fake-robots:
+    <<: *ros
+    profiles: [fake]
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        cd /ros2_ws
+        colcon build --packages-up-to amr_fleet_manager --event-handlers console_cohesion-
+        source install/setup.bash
+        exec ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 relayed:=true
 
   perception:
     <<: *ros
