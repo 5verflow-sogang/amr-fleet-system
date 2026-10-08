@@ -121,6 +121,7 @@ uv run python scripts/analyze.py raw/eval/*.csv --out raw/eval/analysis
 uv run --frozen --with pytest pytest tests/test_analyze.py
 ```
 
-- 분석 단위는 학습 시드다. 비교군 간 차이를 시드 k끼리 짝지은 뒤 시드를 재표집하는 부트스트랩으로 95% CI를 낸다(하네스와 같은 방식). DWA는 시드 k의 평가 목록 k 결과를 시드 k로 짝짓고, 시드 없이 한 번만 평가했으면 그 값을 고정값으로 쓴다.
+- 분석 단위는 시드다. 비교군 간 차이를 평가 목록 k(`eval_list`)끼리 짝지은 뒤 재표집하는 부트스트랩으로 95% CI를 낸다(하네스와 같은 방식). DWA는 `--eval-list k`로 푼 목록 k를 시드 k와 짝짓는다. 목록 번호 없이 한 번만 평가한 결과는 고정값으로 쓰되 경고한다(시드 간 흔들림이 CI에서 빠진다).
+- 시나리오 짝짓기 키는 (`scenario`, `scenario_seed`)다. S1·S2가 같은 시드 번호를 쓴다.
 - 충돌률 분모는 돌발 장애물이 나타난 에피소드 전체(`popout_appeared`)다. `popout_stoppable`은 분모에서 빼지 않고 충돌 원인을 나누는 데만 쓴다(설 수 있었는데 충돌 / 너무 빨라 못 섬). 도착 시간은 두 비교군이 모두 성공한 같은 시나리오끼리 비교한다.
 - 결과: `hypotheses.md`(판정표), `hypotheses.json`, `per_seed.csv`(비교군·정보 조건·질량·시드별 충돌률·성공률·도착 시간)

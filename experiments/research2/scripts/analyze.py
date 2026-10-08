@@ -4,7 +4,11 @@
 
 표준 라이브러리만 쓴다. 분석 단위는 학습 시드다. 시드마다 지표를 먼저 내고(예: 그 시드의 충돌률),
 비교군 간 차이를 시드 k끼리 짝지은 뒤 시드를 복원 추출하는 부트스트랩으로 95% 신뢰구간을 낸다.
-DWA(B1·B2)는 시드 k의 평가 목록 k로 평가한 결과를 시드 k로 짝짓는다. 시드가 없으면 전체 값을 고정값으로 쓴다.
+짝짓기 키는 평가 목록 번호 `eval_list`다(experiment_design.md 5·6절). RL은 학습 시드 k가 목록 k를 풀고,
+DWA(B1·B2)는 학습 시드 없이 `--eval-list k`로 목록 k를 풀어 시드 k와 짝지어진다.
+`eval_list`가 없으면 `train_seed`, 그것도 없으면 run 이름(<variant>_s<seed>_<시각>)을 쓴다.
+목록 번호가 전혀 없는 결과(DWA를 한 번만 평가)는 고정값으로 쓰되 경고한다(시드 간 흔들림이 CI에서 빠진다).
+시나리오 짝짓기 키는 (`scenario`, `scenario_seed`)다. S1·S2가 같은 시드 번호를 쓰기 때문이다.
 
 열 이름은 scripts/evaluate.py(#74)를 따른다. 아직 확정되지 않은 열은 없어도 동작한다:
 - train_seed: 없으면 run 이름(<variant>_s<seed>_<시각>)에서 읽는다
@@ -45,7 +49,10 @@ def truthy(v) -> bool:
 def normalize(row: dict, warn: set) -> dict:
     """CSV 한 행 → 분석에 쓰는 값."""
     variant = row.get('variant', '').lower()
-    seed = row.get('train_seed', '')
+    # 짝짓기 키: eval_list → train_seed → run 이름
+    seed = row.get('eval_list', '')
+    if seed in ('', None):
+        seed = row.get('train_seed', '')
     if seed in ('', None):
         m = RUN_SEED.search(row.get('run', ''))
         seed = m.group(1) if m else ''
@@ -62,7 +69,8 @@ def normalize(row: dict, warn: set) -> dict:
         'seed': int(seed) if str(seed).strip() != '' else None,
         'mass': float(row['payload_kg']),
         'info': info or 'exact',
-        'scenario': row.get('scenario_seed') or row.get('episode'),
+        # S1·S2가 같은 scenario_seed를 쓰므로 시나리오 종류와 함께 키로 쓴다
+        'scenario': (row.get('scenario', ''), row.get('scenario_seed') or row.get('episode')),
         'collision': truthy(row.get('collision')),
         'success': truthy(row.get('success')),
         'time_s': float(row['time_s']) if row.get('time_s') not in ('', None) else math.nan,
@@ -109,9 +117,13 @@ def per_seed(g: dict, variant: str, info: str, mass: float, fn) -> dict:
     return out
 
 
+FIXED_WARNINGS: set = set()
+
+
 def paired(a: dict, b: dict) -> list[float]:
-    """시드 k끼리 a − b. b에 시드가 없으면(None) 그 값을 고정값으로 쓴다."""
+    """목록 k끼리 a − b. b에 목록 번호가 없으면(None) 그 값을 고정값으로 쓰고 경고한다."""
     if None in b and len(b) == 1:
+        FIXED_WARNINGS.add('목록 번호(eval_list) 없는 결과를 고정값으로 짝지었다. 시드 간 흔들림이 CI에서 빠진다')
         return [va - b[None] for k, va in a.items() if k is not None]
     return [a[k] - b[k] for k in a if k is not None and k in b]
 
@@ -259,7 +271,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     rows, warn = load(args.csv)
     results = judge(rows)
-    md = to_markdown(results, warn)
+    md = to_markdown(results, warn | FIXED_WARNINGS)
     print(md)
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
