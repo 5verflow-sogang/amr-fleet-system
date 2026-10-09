@@ -23,7 +23,7 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            # 'node_name = amr_safety.node_module:main',
+            'safety_node = amr_safety.safety_node:main',
         ],
     },
 )
