@@ -6,6 +6,9 @@
 #
 #   bash smoke_fleet.sh <결과 폴더> [시간(s)=120] [delay_ms=100]
 set -eo pipefail
+# 비대화형 bash는 &로 띄운 프로세스의 SIGINT를 무시하게 하고, Python(ros2)은 그 상태를 이어받는다.
+# 작업 제어를 켜야 아래 kill -INT로 bag 녹화와 노드가 끝난다 (안 켜면 wait에서 멈춘다)
+set -m
 
 out="$1"
 duration="${2:-120}"
@@ -23,6 +26,19 @@ run() {
   pids+=($!)
 }
 
+# SIGINT를 보내고, 20초 안에 안 끝나면 SIGTERM으로 끈다
+stop() {
+  kill -INT "$@" 2>/dev/null || true
+  for _ in $(seq 20); do
+    alive=0
+    for pid in "$@"; do kill -0 "$pid" 2>/dev/null && alive=1; done
+    [ "$alive" = 0 ] && return 0
+    sleep 1
+  done
+  echo "SIGINT로 안 끝나 SIGTERM: $*" >&2
+  kill -TERM "$@" 2>/dev/null || true
+}
+
 run ros2 launch amr_fleet_manager fleet_manager.launch.py assignments_csv:="$out/assignments.csv"
 run ros2 launch amr_fault_injector fault_injector.launch.py delay_ms:="$delay_ms"
 run ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 relayed:=true
@@ -35,9 +51,8 @@ run ros2 launch amr_fleet_manager task_generator.launch.py seed:=0 schedule_out:
 sleep "$duration"
 
 # 녹화를 먼저 닫고 나머지를 끈다 (SIGINT로 끝내야 bag이 정리된다)
-kill -INT "${pids[3]}" 2>/dev/null || true
-sleep 3
-for pid in "${pids[@]}"; do kill -INT "$pid" 2>/dev/null || true; done
+stop "${pids[3]}"
+stop "${pids[@]}"
 wait || true
 
 ros2 bag info "$out/rosbag" | tee "$out/rosbag_info.txt"
