@@ -38,10 +38,50 @@
     # 멈춰 선 사람도 동적으로 남는다. 정지 물체의 속도 추정 잡음으로 한두 프레임 넘는 것은 연속 조건이 거른다
     dynamic_speed_threshold: 0.25
     dynamic_confirm_frames: 5
+    # 빈 공간 침입 증거 (amr_perception_core free_space.py): 군집 점이 "최근 빔이 지나간(비어 있던) 칸"에
+    # free_evidence_min_points개 이상 들어오면 증거. 증거가 dynamic_evidence_frames 프레임 이상이어야 동적.
+    # 로봇이 움직이면 랙이 벽을 가리는 경계가 바뀌어 벽 조각이 미끄러지며 동적 트랙이 됐다 (회전 중 프레임당
+    # 13.7개, Gazebo 10/9). 벽 조각은 빔이 맞는 칸에만 있어 증거가 생기지 않는다
+    use_free_space: true
+    # 2 → 3: 가짜 동적 트랙 2.6 → 1.1개/프레임 (hit_quiet 3.0과 함께, 녹화 재생 10/10)
+    dynamic_evidence_frames: 3
+    free_evidence_min_points: 2
+    free_space_resolution: 0.1     # m. 칸 크기
+    free_space_size: 30.0          # m. 로봇 주변 격자 한 변
+    free_space_max_range: 12.0     # m. 이보다 먼 구간은 비어 있다고 적지 않는다 (빔 간격 > 칸)
+    free_space_endpoint_margin: 0.2  # m. 반사점 앞 이 거리는 비어 있다고 적지 않는다 (거리 잡음 3σ + 여유)
+    free_space_memory: 3.0         # s. 이만큼 지난 "비어 있음"은 잊는다
+    # s. 이 안에 반사점이 떨어진 칸은 증거로 보지 않는다 (벽 칸). 1.0이면 빔이 맞았다 놓쳤다 하는 얇은 랙 다리가
+    # 1초 넘게 안 맞다가 다시 맞을 때 증거가 됐다
+    free_space_hit_quiet: 3.0
+    # m. 이번 스캔 반사점에서 이 거리 안의 칸은 비어 있다고 적지 않는다. 물체 옆을 스치는 빔이 옆 칸을 비었다고
+    # 적어, 로봇이 움직여 다른 면이 보이면 랙 다리·기둥이 동적이 됐다 (녹화 재생 10/10)
+    free_space_hit_clearance: 0.2
     # 트랙 반경 = 군집 반경의 지수 평활 (새 값 반영 비율). 프레임마다 보이는 면이 달라 군집 반경이 흔들린다
     radius_smoothing: 0.3
     # poses 입력처럼 반경 측정이 없을 때 쓰는 고정 반경 [m]
     obstacle_radius: 0.3
+
+    # R2 정적 지도 대조: 지도의 막힌 칸(벽·랙·기둥) 위 스캔 점을 군집화 전에 뺀다. 지도·map TF가 없으면 안 뺀다.
+    # 기본 끔: 위치추정이 지도와 어긋나면(Gazebo 회전 뒤 0.3 m·6°) 벽 빔이 새어 효과가 없었다 (perception.md 1-2-1)
+    use_static_map: false
+    map_topic: /map
+    map_frame: map
+    # 막힌 칸 부풀림 [m]. 위치추정 오차 + 지도 해상도(0.05 m)만큼 벽 점이 칸 밖으로 나간다.
+    # 이보다 벽에 가까이 붙은 사람은 추적에서 빠진다 (안전 노드의 정지 판정은 원본 스캔이라 영향 없음)
+    map_inflation: 0.15
+    map_occupied_threshold: 65   # OccupancyGrid 값. map_server occupied_thresh 0.65
+    # 국소 정렬: 대조 전에 스캔을 ±map_align_max_shift [m] 안에서 밀어 지도와 가장 잘 맞는 위치를 쓴다.
+    # 위치추정이 지도와 0.25 m 어긋나 벽 점의 60%가 새어 나와 가짜 동적 트랙이 됐다 (Gazebo, 10/9). 0이면 끔
+    map_align_max_shift: 0.3
+    map_align_step: 0.05
+
+    # 충돌 위험(TTC) → perception/collision_risks. 로봇 = 실제 차체 사각형
+    base_frame: ""           # 비우면 <네임스페이스>/base_footprint
+    robot_length: 0.6        # m. amr_description properties.xacro
+    robot_width: 0.4
+    ttc_horizon: 5.0         # s. 이 안에 닿지 않으면 inf
+    odom_timeout: 0.5        # s. 이보다 오래된 odom 속도는 쓰지 않는다 (속도 0으로 계산)
 
     publish_markers: true    # perception/obstacle_markers (RViz 확인용)
     stats_period: 5.0        # s. 프레임당 후보·트랙 수, 처리 시간 로그 주기
