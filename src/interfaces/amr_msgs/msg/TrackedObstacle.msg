@@ -3,9 +3,9 @@
 # 이 로봇과의 충돌 예측(TTC)은 CollisionRisk로 분리했다 (장애물의 성질이 아니라 관계라서).
 
 uint8 SOURCE_UNKNOWN=0        # 출처를 모르거나 아직 구분하지 않음
-uint8 SOURCE_LIDAR=1          # LiDAR만 (카메라 시야 밖이거나 YOLO 미검출)
+uint8 SOURCE_LIDAR=1          # LiDAR만 (최근 카메라 검출과 짝지어지지 않음)
 uint8 SOURCE_CAMERA=2         # 카메라만
-uint8 SOURCE_LIDAR_CAMERA=3   # LiDAR + 카메라 검출
+uint8 SOURCE_LIDAR_CAMERA=3   # LiDAR + 최근(amr_tracking assoc_camera_recent_s, 기본 1 s) 카메라 검출
 
 # 트랙 ID. 같은 장애물이면 유지되고, 사라진 트랙의 ID는 다시 쓰지 않는다. 0 이상
 int32 track_id
@@ -13,7 +13,8 @@ int32 track_id
 # 측정 출처 (SOURCE_*)
 uint8 source
 
-# 짝지어진 카메라 검출의 클래스·confidence. 카메라 검출이 없으면 "unknown", 0.0
+# 짝지어진 카메라 검출로 쌓은 클래스와 그 클래스 검출들의 평균 confidence. 근거가 모자라면 "unknown", 0.0.
+# 카메라 시야를 벗어나도 근거가 줄어들 때까지 유지된다. 지금 카메라로 보이는지는 source로 구분한다
 string class_name
 float32 confidence
 

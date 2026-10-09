@@ -83,6 +83,23 @@
     ttc_horizon: 5.0         # s. 이 안에 닿지 않으면 inf
     odom_timeout: 0.5        # s. 이보다 오래된 odom 속도는 쓰지 않는다 (속도 0으로 계산)
 
+    # 카메라 연관: perception/objects(YOLO 3D 검출)를 트랙에 짝지어 class_name·confidence·source를 채운다
+    # (amr_perception_core association.py, perception.md 1-6절)
+    use_camera_association: true
+    detections_topic: perception/objects
+    assoc_gate_mahalanobis_sq: 9.21   # 2자유도 χ² 99% (트랙 예측 + 검출 공분산)
+    assoc_max_distance: 1.0           # m. 공분산이 커도 이보다 멀면 짝짓지 않는다
+    assoc_min_confidence: 0.5         # amr_detection confidence_threshold와 같게
+    assoc_evidence_tau: 5.0           # s. 클래스 근거가 줄어드는 시정수 (카메라 시야 밖에서도 이만큼 유지)
+    assoc_min_evidence: 1.0           # confidence 합. 0.5 검출 두 번이면 클래스를 붙인다 (한 번 오검출 방지)
+    # 붙은 클래스는 근거가 이 아래로 줄어야 뗀다 (히스테리시스, τ 5 s면 약 6 s 유지).
+    # Gazebo에서 YOLO가 CPU를 나눠 0.3 FPS일 때 검출 사이에 클래스가 깜빡였다
+    assoc_release_evidence: 0.3
+    assoc_camera_recent_s: 1.0        # s. 이 안에 짝지어졌으면 source = LIDAR_CAMERA
+    # 클래스별 최소 반경 [m]. 사람은 LiDAR 높이(0.38 m)에서 다리만 보여 반경이 0.12 m 정도로 작게 잡혔다
+    min_radius_classes: ["person"]
+    min_radius_values: [0.25]
+
     publish_markers: true    # perception/obstacle_markers (RViz 확인용)
     stats_period: 5.0        # s. 프레임당 후보·트랙 수, 처리 시간 로그 주기
 

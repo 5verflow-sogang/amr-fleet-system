@@ -168,7 +168,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | `sign` | 표지판 | 필수 |
 | `forklift` | 지게차 | 선택 (연우 확정) |
 | `robot` | 다른 AMR | 선택 (연우 확정) |
-| `unknown` | 카메라 검출이 없음 (`TrackedObstacle` 전용) | 고정 |
+| `unknown` | 짝지어진 카메라 검출 근거가 모자람 (`TrackedObstacle` 전용) | 고정 |
 
 ### 4-4. 쟁점 정리
 
@@ -248,6 +248,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | --- | --- | --- | --- |
 | Subscribe | `scan` | `sensor_msgs/msg/LaserScan` | 필터된 LiDAR 스캔 (`amr_odometry`). 노드 안에서 군집화한다 (`measurement_source: scan`, 기본) |
 | Subscribe | `perception/obstacle_measurements` | `geometry_msgs/msg/PoseArray` | 시험용 장애물 위치 측정, `odom` 좌표계 (`measurement_source: poses`) |
+| Subscribe | `perception/objects` | `amr_msgs/msg/DetectedObject3DArray` | YOLO 3D 검출 (`amr_detection`). 트랙에 짝지어 `class_name`·`confidence`·`source`를 채운다 ([perception.md 1-6절](algorithms/perception.md#1-6-카메라-연관-lidar-트랙--yolo-검출-1010)) |
 | Subscribe | `odom` | `nav_msgs/msg/Odometry` | 로봇 선속도 (TTC 계산) |
 | Subscribe | `/map` | `nav_msgs/msg/OccupancyGrid` | R2 정적 지도 대조 (`use_static_map`). 지도·`map` TF가 없으면 대조 없이 추적한다 |
 | Publish | `perception/obstacles` | `amr_msgs/msg/TrackedObstacleArray` | 확정 트랙의 위치·속도·공분산·반경, `odom` 좌표계 (DWA 입력). `header.stamp`는 스캔 촬영 시각. `is_dynamic`은 추적 속력 + 빈 공간 침입 증거로 정한다 ([perception.md 1-2절](algorithms/perception.md#1-2-정적동적-구분-규칙)) |

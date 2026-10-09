@@ -1,6 +1,7 @@
 """추적 결과(TrackedObstacleArray) → RViz2 마커. TrackedObstacleArray는 RViz가 직접 그리지 못한다.
 
-트랙마다 원기둥(반경 = 트랙 반경, 동적은 빨강·정적은 회색), 속도 화살표(1초 뒤 위치까지), 글자(ID·속력).
+트랙마다 원기둥(반경 = 트랙 반경, 동적은 빨강·정적은 회색), 속도 화살표(1초 뒤 위치까지),
+글자(ID·카메라 연관 클래스·속력).
 """
 
 import math
@@ -53,6 +54,7 @@ def track_markers(obstacles: TrackedObstacleArray, lifetime_s: float = 0.5) -> M
         text.pose.orientation.w = 1.0
         text.scale.z = 0.25
         _color(text, (1.0, 1.0, 1.0), 1.0)
-        text.text = f'#{obs.track_id} {math.hypot(v.x, v.y):.1f} m/s'
+        label = f' {obs.class_name}' if obs.class_name not in ('', 'unknown') else ''
+        text.text = f'#{obs.track_id}{label} {math.hypot(v.x, v.y):.1f} m/s'
         markers += [body, arrow, text]
     return MarkerArray(markers=markers)
