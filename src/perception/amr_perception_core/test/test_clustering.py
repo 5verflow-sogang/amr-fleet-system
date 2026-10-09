@@ -161,8 +161,50 @@ def test_partial_scan_does_not_wrap():
     ranges = np.full(100, 2.0)
     clusters = cluster_scan(ranges, 0.0, INC)
     assert len(clusters) == 1
-    ranges[50] = 10.0  # 가운데가 끊긴 두 덩어리
+    ranges[50:52] = 10.0  # 가운데가 끊긴 두 덩어리 (두 빔: 튄 점 하나 건너뛰기로 잇지 않는다)
     assert len(cluster_scan(ranges, 0.0, INC)) == 2
+
+
+def test_single_outlier_point_does_not_split():
+    ranges = np.full(100, 2.0)
+    ranges[50] = 2.5      # 잡음으로 한 점만 튐
+    assert len(cluster_scan(ranges, 0.0, INC)) == 1
+    # 끄면 둘로 끊긴다 (튄 점 하나는 min_points로 버려짐)
+    off = ClusteringConfig(bridge_single_outlier=False)
+    assert len(cluster_scan(ranges, 0.0, INC, off)) == 2
+
+
+def _noisy_wall_clusters(config, trials=200, distance=0.6):
+    rng = np.random.default_rng(1)
+    counts = []
+    for _ in range(trials):
+        ranges = add_segment(empty_scan(), (distance, -3.0), (distance, 3.0))
+        hit = np.isfinite(ranges)
+        ranges[hit] += rng.normal(0.0, 0.03, hit.sum())   # sensors.yaml σ
+        counts.append(len(clusters_of(ranges, config)))
+    return np.array(counts)
+
+
+def test_close_wall_with_lidar_noise_stays_one_cluster():
+    # Gazebo에서 벽 0.6 m 앞에 서 있으면 벽이 프레임마다 다른 곳에서 조각났다 (조각이 동적 트랙이 됨)
+    fragmented = _noisy_wall_clusters(ClusteringConfig(bridge_single_outlier=False))
+    assert fragmented.mean() > 1.5                    # 고치기 전: 실제로 조각난다
+    bridged = _noisy_wall_clusters(ClusteringConfig())
+    assert np.mean(bridged == 1) >= 0.99
+
+
+def test_person_close_to_wall_stays_separate_with_noise():
+    # 벽 0.2 m 앞 사람 (1.5 m 거리 한 칸 한계 약 0.17 m). 튄 점 건너뛰기가 사람을 벽에 붙이면 안 된다
+    rng = np.random.default_rng(2)
+    for _ in range(100):
+        ranges = add_segment(empty_scan(), (2.0, -1.5), (2.0, 1.5))
+        ranges = add_circle(ranges, (1.65, 0.0), 0.15)
+        hit = np.isfinite(ranges)
+        ranges[hit] += rng.normal(0.0, 0.03, hit.sum())
+        candidates = [c for c in clusters_of(ranges) if is_obstacle_candidate(c)]
+        people = [c for c in candidates if abs(c.centroid[0] - 1.5) < 0.15]
+        assert len(people) == 1
+        assert people[0].extent < 0.4
 
 
 def test_small_clusters_are_dropped_as_noise():

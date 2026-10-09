@@ -42,6 +42,8 @@ class ClusteringConfig:
     # leg_merge_distance를 0으로 두면 묶지 않는다
     leg_max_extent: float = 0.35
     leg_merge_distance: float = 0.6
+    # 튄 점 하나 건너뛰기: 한 점 건너 이웃이 이어지면 가운데 점과 양쪽도 잇는다 (cluster_scan 설명)
+    bridge_single_outlier: bool = True
 
     def __post_init__(self):
         if not 0.0 < self.breakpoint_lambda_deg < 90.0:
@@ -154,6 +156,20 @@ def cluster_scan(
     limit = np.where(shallow, r[prev] * np.sin(step) / denom + noise, noise)
     dist = np.linalg.norm(points[cur] - points[prev], axis=1)
     linked = (gap - 1 <= config.max_gap_beams) & (dist <= limit)
+    if config.bridge_single_outlier and indices.size >= 3:
+        # 튄 점 하나 건너뛰기. 한계의 3σ는 점 하나의 거리 잡음인데, 실제로 비교하는 것은 잡음 낀 거리 둘의
+        # 차이(σ√2)다. 그래서 가까운 벽(기하 항이 작다)에서는 이웃 점 쌍이 약 1% 확률로 끊겨, 벽이 프레임마다
+        # 다른 곳에서 조각났다 (Gazebo, 벽 0.6 m 앞 프레임당 1.4번). 조각 중심이 벽을 따라 뛰어 동적 트랙이
+        # 됐다. 한 점 건너 이웃 (a, c)가 이어지면 가운데 점 b의 양쪽 연결을 모두 잇는다. 한계값은 그대로라
+        # 물체 사이의 진짜 틈은 그대로 끊긴다 (두 점 이상 이어진 물체를 건너뛰지 않는다).
+        # (a, c) 한계는 두 칸 각도로 새로 구하지 않고 한 칸 한계 중 큰 쪽을 쓴다. 두 칸 각도면 기하 항이
+        # 두 배가 되어, 벽 0.2 m 앞에 선 사람(1.5 m 거리 한 칸 한계 0.17 m)이 벽에 붙어 버린다
+        a, c = indices[:-2], indices[2:]
+        limit2 = np.maximum(limit[:-1], limit[1:])
+        dist2 = np.linalg.norm(points[c] - points[a], axis=1)
+        bridged = (c - a - 2 <= config.max_gap_beams) & (dist2 <= limit2)
+        linked[:-1] |= bridged
+        linked[1:] |= bridged
     groups: List[List[int]] = [g.tolist() for g in np.split(indices, np.flatnonzero(~linked) + 1)]
 
     if len(groups) > 1 and _is_full_circle(r.size, angle_increment):
