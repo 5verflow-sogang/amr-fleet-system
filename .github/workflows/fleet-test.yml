@@ -68,11 +68,15 @@ jobs:
             -f name="$NAME" -F runner_group_id=1 \
             -f 'labels[]=self-hosted' -f 'labels[]=linux' -f "labels[]=$NAME" \
             -q .encoded_jit_config > jit-config.txt
+          # 생성 시 넘긴 메타데이터는 템플릿 메타데이터와 합쳐지지 않고 통째로 바꾼다.
+          # 템플릿의 startup-script를 같이 넘기지 않으면 러너가 설치되지 않아 작업이 대기열에 머문다
+          gcloud compute instance-templates describe "$TEMPLATE" --project "$PROJECT_ID" --format=json \
+            | jq -er '.properties.metadata.items[] | select(.key == "startup-script") | .value' > startup.sh
           gcloud compute instances create "$NAME" \
             --project "$PROJECT_ID" --zone "$ZONE" \
             --source-instance-template "$TEMPLATE" \
-            --metadata-from-file jit-config=jit-config.txt
-          rm jit-config.txt
+            --metadata-from-file jit-config=jit-config.txt,startup-script=startup.sh
+          rm jit-config.txt startup.sh
 
   fleet-test:
     needs: start-runner
