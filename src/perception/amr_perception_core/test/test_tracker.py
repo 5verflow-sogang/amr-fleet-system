@@ -121,6 +121,42 @@ def test_moving_obstacle_becomes_dynamic_and_stays_after_stopping():
     assert tracks[0].is_dynamic
 
 
+def _slide(tracker, evidence, frames=20):
+    """1.0 m/s로 미끄러지는 측정. evidence: 프레임마다 증거 여부 (함수)."""
+    tracks = []
+    for k in range(frames):
+        tracks = tracker.step(k * 0.1, [(0.1 * k, 0.0)], free_evidence=[evidence(k)])
+    return tracks
+
+
+def test_fast_track_without_free_space_evidence_stays_static():
+    # 벽을 따라 미끄러지는 조각: 속력은 빠르지만 빈 칸에 들어간 적이 없다
+    assert [t.is_dynamic for t in _slide(MultiTargetTracker(), lambda k: False)] == [False]
+
+
+def test_fast_track_with_evidence_becomes_dynamic():
+    assert [t.is_dynamic for t in _slide(MultiTargetTracker(), lambda k: True)] == [True]
+
+
+def test_single_evidence_frame_is_not_enough():
+    tracker = MultiTargetTracker(TrackerConfig(dynamic_evidence_frames=2))
+    assert [t.is_dynamic for t in _slide(tracker, lambda k: k == 3)] == [False]
+    tracker = MultiTargetTracker(TrackerConfig(dynamic_evidence_frames=2))
+    assert [t.is_dynamic for t in _slide(tracker, lambda k: k in (3, 9))] == [True]
+
+
+def test_evidence_without_speed_is_not_dynamic():
+    tracker = MultiTargetTracker()
+    for k in range(20):
+        tracks = tracker.step(k * 0.1, [(0.0, 0.0)], free_evidence=[True])
+    assert [t.is_dynamic for t in tracks] == [False]
+
+
+def test_free_evidence_length_must_match():
+    with pytest.raises(ValueError):
+        MultiTargetTracker().step(0.0, [(0.0, 0.0)], free_evidence=[True, False])
+
+
 def test_reset_clears_tracks_and_keeps_counting_ids():
     tracker = MultiTargetTracker()
     confirm_static(tracker, frames=3)
