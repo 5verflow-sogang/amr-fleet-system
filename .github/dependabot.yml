@@ -1,0 +1,13 @@
+# 워크플로가 쓰는 액션(actions/checkout 등) 버전을 한 달에 한 번 한 PR로 묶어 올린다
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(ci)"

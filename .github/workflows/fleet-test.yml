@@ -45,6 +45,7 @@ env:
 jobs:
   start-runner:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       name: ${{ steps.name.outputs.name }}
     steps:
@@ -126,6 +127,7 @@ jobs:
     needs: [start-runner, fleet-test]
     if: always() && needs.start-runner.result != 'skipped'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: google-github-actions/auth@v2
         with:
