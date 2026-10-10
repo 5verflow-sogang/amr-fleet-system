@@ -1,0 +1,5 @@
+# system.launch.py용 로봇 1대 목록. cte_baseline 위치추정 측정 전용 - amr_bringup/config/robots.yaml의
+# 대기 구역 스폰과 달리, cte_baseline의 고정 경로(path_def.py)가 가정하는 월드 (0, 1.5, 0)에 스폰한다
+# (sim.launch.py 기본값·localization.launch.py의 AMCL 기본 initial_pose와 같은 자세).
+robots:
+  amr_01: [0.0, 1.5, 0.0]
