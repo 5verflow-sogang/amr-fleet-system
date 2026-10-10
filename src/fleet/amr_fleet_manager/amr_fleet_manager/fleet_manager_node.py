@@ -13,7 +13,7 @@ import rclpy
 from builtin_interfaces.msg import Time
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
 from amr_fleet_core.traffic import Decision, ZoneManager
-from amr_msgs.msg import (FleetHeartbeat, FleetTaskTable, RobotState, Task, TaskAssignment,
+from amr_msgs.msg import (ErrorInfo, FleetHeartbeat, FleetTaskTable, RobotState, Task, TaskAssignment,
                           TaskAssignmentAck, TaskRecord, TaskStatus, ZoneGrant, ZoneRequest)
 from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
@@ -131,7 +131,7 @@ class FleetManager(Node):
             self._assign()
 
     def _on_status(self, msg: TaskStatus):
-        if not self._dispatcher.on_status(msg.task_id, msg.robot_id, msg.state):
+        if not self._dispatcher.on_status(msg.task_id, msg.robot_id, msg.state, msg.error.code):
             return
         if msg.state == TaskStatus.STATE_FAILED:
             task = self._dispatcher.tasks[msg.task_id]
@@ -139,6 +139,8 @@ class FleetManager(Node):
                 self.get_logger().warn(
                     f'{msg.robot_id}가 {msg.task_id} 실패 보고 (code={msg.error.code} {msg.error.message}), '
                     f'다시 할당 ({task.failures}/{self._dispatcher.config.failed_retries})')
+            elif msg.error.code == ErrorInfo.ASSIGN_CANCELED:
+                self.get_logger().info(f'{msg.robot_id}가 {msg.task_id} 취소 완료 보고, 다시 할당하지 않음')
             else:
                 self.get_logger().warn(f'{msg.task_id} 실패로 남김 (재할당 {task.failures}회 뒤)')
         if msg.state in (TaskStatus.STATE_COMPLETED, TaskStatus.STATE_FAILED):

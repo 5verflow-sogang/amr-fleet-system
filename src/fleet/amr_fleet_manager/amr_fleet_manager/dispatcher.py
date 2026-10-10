@@ -16,6 +16,8 @@ STATE_IN_PROGRESS = 1
 STATE_COMPLETED = 2
 STATE_FAILED = 3
 FINISHED = (STATE_COMPLETED, STATE_FAILED)
+# amr_msgs/msg/ErrorInfo.ASSIGN_CANCELED 와 같은 값. 서버가 취소한 작업의 FAILED는 다시 할당하지 않는다
+ERROR_CANCELED = 103
 
 COST_FN_NAME = 'euclidean'
 
@@ -146,17 +148,18 @@ class Dispatcher:
             self._release(pending.task_id, robot_id)
         return True
 
-    def on_status(self, task_id: str, robot_id: str, state: int) -> bool:
+    def on_status(self, task_id: str, robot_id: str, state: int, error_code: int = 0) -> bool:
         """TaskStatus 수신. 맡긴 로봇의 보고가 아니거나 이미 끝난 작업이면 무시하고 False.
 
         FAILED는 failed_retries번까지 큐로 되돌려(state PENDING) 다시 할당받게 한다. 그 뒤에는 실패로 남긴다.
+        취소(error_code ERROR_CANCELED)로 온 FAILED는 서버가 스스로 멈춘 것이므로 다시 할당하지 않는다.
         """
         task = self.tasks.get(task_id)
         if task is None or task.assignee != robot_id or task.state in FINISHED:
             return False
         # 상태 보고가 왔으면 명령을 받은 것이다
         self._confirm(robot_id, task_id)
-        if state == STATE_FAILED and task.failures < self.config.failed_retries:
+        if state == STATE_FAILED and error_code != ERROR_CANCELED and task.failures < self.config.failed_retries:
             task.failures += 1
             task.state = STATE_PENDING
             task.assignee = ''

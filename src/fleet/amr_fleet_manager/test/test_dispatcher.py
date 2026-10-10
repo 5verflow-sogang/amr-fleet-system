@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
 
-from amr_fleet_manager.dispatcher import (STATE_COMPLETED, STATE_FAILED, STATE_IN_PROGRESS, STATE_PENDING,
-                                          Dispatcher, DispatcherConfig)
+from amr_fleet_manager.dispatcher import (ERROR_CANCELED, STATE_COMPLETED, STATE_FAILED, STATE_IN_PROGRESS,
+                                          STATE_PENDING, Dispatcher, DispatcherConfig)
 from amr_fleet_manager.records import (ASSIGNMENTS_HEADER, AssignmentLog, append_fault_event, load_zones,
                                        next_epoch)
 
@@ -247,3 +247,15 @@ def test_failed_retries_zero_keeps_failed():
     assert d.tasks['t1'].state == STATE_FAILED
     with pytest.raises(ValueError):
         make(failed_retries=-1)
+
+
+def test_canceled_task_not_retried():
+    # 서버가 취소해 온 FAILED는 재시도 횟수가 남아도 다시 할당하지 않는다 (#107 리뷰)
+    d = make(failed_retries=1)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    d.assign(0.0)
+    assert d.on_status('t1', 'amr_01', STATE_FAILED, error_code=ERROR_CANCELED)
+    assert (d.tasks['t1'].state, d.tasks['t1'].failures) == (STATE_FAILED, 0)
+    assert d.robots['amr_01'].task_id == ''
+    assert d.assign(1.0) == ([], [])
