@@ -166,6 +166,7 @@
 | `task_table_period_s` | `1.0` | 작업표 방송 주기 (s) |
 | `traffic.lease_s` | `5.0` | 구역 허가 유효 시간 (노드 시계, s) |
 | `traffic.release_timeout_s` | `30.0` | 점유 로봇이 이 시간 동안 요청·반납이 없으면 구역을 푼다 (노드 시계, s) |
+| `traffic.deadlock_strategy` | `revoke` | 교착 해소 전략. `revoke`(순환이 생기면 우선순위 낮은 로봇 허가 회수) / `avoid`(순환을 닫는 대기 요청 거부). [amr_fleet_core README](../amr_fleet_core/README.md) '교착 탐지' |
 | `traffic.zones_file` | `''` | 구역 목록 파일. 비우면 모든 구역 요청을 거부. launch 인자 `zones_file` (기본 `config/zones.yaml`) |
 | `tick_s` | `0.05` | 재전송·구역 만료 확인 주기 (s) |
 | `epoch_file` | `''` | 서버 재시작 번호 파일. launch 인자 `epoch_file` (기본 `/tmp/amr_fleet_manager/epoch`) |
@@ -266,7 +267,7 @@ colcon test --packages-select amr_fleet_manager
 | 구역 목록 | 좁은 통로 2곳 확정. 교차로는 이진이 월드 좌표로 추가, 지도 v1(10/9) 뒤 map 좌표로 확정 |
 | 서버 재시작 직후 구역 | 새 서버는 구역 장부가 비어 있어, 통로 안에서 빠져나오는 로봇이 있어도 다른 로봇을 허가할 수 있다. 재시작 뒤 한동안 허가를 보류하거나 `ZoneRequest`에 "구역 안" 표시가 필요 |
 | 경로 충돌 예측 | 이진: Nav2 전역 경로 `/<ns>/plan` (`nav_msgs/Path`, map 프레임)을 그대로 구독 |
-| 교착 해소 | 1종(우선순위 낮은 로봇 허가 회수 `GRANT_REVOKED`)만 있다. 두 번째 전략은 이후. 로봇 쪽 물러나기는 `amr_zone_client` 몫 |
+| 교착 해소 | 2종(`traffic.deadlock_strategy`). 로봇 쪽 처리(REVOKED 후진, REJECTED 재계획)는 `amr_zone_client` 몫 |
 | 가짜 로봇의 구역 요청 | `fake_robot`은 구역을 요청하지 않는다 |
 | 작업 취소 | `ACTION_CANCEL` 발행 경로 없음 (가짜 로봇은 받으면 처리한다). 취소로 멈춘 작업은 FAILED + `ErrorInfo.ASSIGN_CANCELED`로 보고받고 다시 할당하지 않는다 |
 | FAILED 작업 | `assignment.failed_retries`(1)번까지 다시 할당한다(10/8, 분산 재경매와 같게). 취소(`ASSIGN_CANCELED`)는 빼고 센다. 다시 맡을 로봇은 고르지 않는다(같은 로봇이 다시 받을 수 있음). "다른 로봇 우선"은 분산과 같이 정한다(10/12 회의) |

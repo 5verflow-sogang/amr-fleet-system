@@ -2,7 +2,7 @@
 
 import pytest
 
-from amr_fleet_core.deadlock import choose_victim, find_deadlocks
+from amr_fleet_core.deadlock import choose_victim, find_deadlocks, would_deadlock
 
 
 def test_no_cycle():
@@ -39,3 +39,12 @@ def test_victim_lowest_priority_then_last_id():
     assert choose_victim(['amr_01', 'amr_02'], priority) == 'amr_02'
     with pytest.raises(ValueError):
         choose_victim([], priority)
+
+
+def test_would_deadlock():
+    # b가 a를 기다리는 중에 a가 b를 기다리려 하면 순환이 닫힌다
+    assert would_deadlock({'b': ['a']}, 'a', ['b'])
+    # c → b → a 사슬이 있으면 a가 c를 기다릴 때 3대 순환
+    assert would_deadlock({'c': ['b'], 'b': ['a']}, 'a', ['c'])
+    assert not would_deadlock({'c': ['b']}, 'a', ['c'])
+    assert not would_deadlock({}, 'a', ['a'])

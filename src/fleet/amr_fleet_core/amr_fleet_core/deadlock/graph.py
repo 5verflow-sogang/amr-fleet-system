@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from typing import Callable, Hashable, Iterable, Mapping
 
 
@@ -70,3 +71,21 @@ def choose_victim(robots: Iterable[str], priority: Callable[[str], Hashable]) ->
         raise ValueError('로봇이 없다')
     lowest = min(priority(r) for r in robots)
     return max(r for r in robots if priority(r) == lowest)
+
+
+def would_deadlock(edges: Mapping[str, Iterable[str]], waiter: str, holders: Iterable[str]) -> bool:
+    """waiter가 holders를 기다리게 되면(간선 waiter → holder 추가) 순환이 생기는지.
+
+    holder 중 하나라도 지금 그래프에서 waiter에 닿으면 순환이 닫힌다 (해소 2: 회피).
+    """
+    seen = set()
+    todo = deque(h for h in holders if h != waiter)
+    while todo:
+        node = todo.popleft()
+        if node == waiter:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        todo.extend(edges.get(node, ()))
+    return False

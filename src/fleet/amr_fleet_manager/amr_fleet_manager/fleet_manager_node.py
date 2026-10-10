@@ -70,7 +70,8 @@ class FleetManager(Node):
         self._zones = ZoneManager(
             load_zones(self.declare_parameter('traffic.zones_file', '').value),
             lease_s=self.declare_parameter('traffic.lease_s', 5.0).value,
-            release_timeout_s=self.declare_parameter('traffic.release_timeout_s', 30.0).value)
+            release_timeout_s=self.declare_parameter('traffic.release_timeout_s', 30.0).value,
+            deadlock_strategy=self.declare_parameter('traffic.deadlock_strategy', 'revoke').value)
         csv_path = self.declare_parameter('assignments_csv', '').value
         self._log = AssignmentLog(csv_path) if csv_path else None
 

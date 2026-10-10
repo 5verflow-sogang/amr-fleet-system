@@ -8,8 +8,11 @@
 - 정원이 차면 QUEUED로 답하고 대기열에 넣는다. 자리가 나면 작업 우선순위가 높은 로봇 → 먼저 기다린 로봇
   → robot_id 순으로 GRANTED를 보낸다 (교차로 우선순위).
 - 대기 중인 로봇도 주기적으로 다시 요청한다. lease_s 동안 요청이 없으면 대기열에서 뺀다.
-- 서로 상대가 점유한 구역을 기다리면(교착) 우선순위가 가장 낮은 로봇의 허가를 회수(REVOKED)한다.
-  회수당한 로봇은 아직 구역 안에 있을 수 있으므로, 물러나 반납할 때까지 구역을 다른 로봇에 주지 않는다.
+- 교착(서로 상대가 점유한 구역을 기다림) 해소 전략은 두 가지다 (deadlock_strategy).
+  revoke: 순환이 생기면 우선순위가 가장 낮은 로봇의 허가를 회수(REVOKED)한다. 회수당한 로봇은 아직 구역 안에
+          있을 수 있으므로, 물러나 반납할 때까지 구역을 다른 로봇에 주지 않는다.
+  avoid:  순환을 닫게 될 대기 요청을 받지 않고 REJECTED로 답한다. 그 로봇은 그 구역에 들어가지 않고 경로를 다시
+          계획한다. 대기열 승격으로 순환이 생기는 드문 경우를 위해 revoke 해소도 같이 돈다.
 
 시각(now)은 초 단위이며 로봇이 lease_expiry와 비교하는 시계(노드 시계)와 같아야 한다.
 """
@@ -20,7 +23,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-from ..deadlock import choose_victim, find_deadlocks
+from ..deadlock import choose_victim, find_deadlocks, would_deadlock
 
 # amr_msgs/msg/ZoneGrant.GRANT_* 와 같은 값
 GRANT_GRANTED = 0
@@ -33,6 +36,11 @@ REASON_NONE = 0
 REASON_OCCUPIED = 1
 REASON_PRIORITY_YIELD = 2
 REASON_DEADLOCK_RESOLUTION = 3
+
+# 교착 해소 전략 (모듈 설명)
+STRATEGY_REVOKE = 'revoke'
+STRATEGY_AVOID = 'avoid'
+STRATEGIES = (STRATEGY_REVOKE, STRATEGY_AVOID)
 
 
 @dataclass(frozen=True)
@@ -101,7 +109,11 @@ class _Zone:
 
 class ZoneManager:
 
-    def __init__(self, zones: Iterable[ZoneSpec], lease_s: float, release_timeout_s: float):
+    def __init__(self, zones: Iterable[ZoneSpec], lease_s: float, release_timeout_s: float,
+                 deadlock_strategy: str = STRATEGY_REVOKE):
+        if deadlock_strategy not in STRATEGIES:
+            raise ValueError(f'알 수 없는 교착 해소 전략: {deadlock_strategy} (가능: {list(STRATEGIES)})')
+        self._strategy = deadlock_strategy
         if lease_s <= 0:
             raise ValueError(f'lease_s는 0보다 커야 한다: {lease_s}')
         if release_timeout_s <= lease_s:
@@ -153,6 +165,18 @@ class ZoneManager:
             slot = _Slot(request_id, expiry, now, priority, since=now)
             zone.holders[robot_id] = slot
             return [self._granted(zone, robot_id, slot)]
+
+        if self._strategy == STRATEGY_AVOID:
+            holders = [r for r, s in zone.holders.items() if not s.revoked]
+            edges = self.wait_for()
+            # 이 로봇이 이미 이 구역을 기다리는 중이면 그 간선은 빼고 본다
+            for holder in holders:
+                if edges.get(robot_id, {}).get(holder) == zone_id:
+                    del edges[robot_id][holder]
+            if would_deadlock(edges, robot_id, holders):
+                zone.queue.pop(robot_id, None)
+                return [Decision(robot_id, zone_id, request_id, GRANT_REJECTED, REASON_DEADLOCK_RESOLUTION,
+                                 holder_robot_id=zone.first_holder())]
 
         if waiting is None:
             waiting = zone.queue[robot_id] = _Slot(request_id, expiry, now, priority, since=now)

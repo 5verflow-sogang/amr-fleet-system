@@ -29,5 +29,8 @@ fleet_manager:
       # lease가 지나도 반납 전까지는 구역을 다른 로봇에 주지 않는다 (통로 안에서 만료되면 로봇은 빠져나간 뒤 반납).
       # 로봇이 죽어 반납이 안 오는 경우를 위해, 마지막 요청 후 이 시간이 지나면 푼다 (노드 시계, s)
       release_timeout_s: 30.0
+      # 교착 해소 전략. revoke: 순환이 생기면 우선순위 낮은 로봇의 허가 회수(후진) /
+      # avoid: 순환을 닫게 될 대기 요청을 거부(REJECTED, 다른 경로로 재계획). amr_fleet_core README '교착 탐지'
+      deadlock_strategy: revoke
     # 재전송·구역 만료 확인 주기 (s)
     tick_s: 0.05

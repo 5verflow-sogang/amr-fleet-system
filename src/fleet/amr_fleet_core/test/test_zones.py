@@ -3,8 +3,8 @@
 import pytest
 
 from amr_fleet_core.traffic import (GRANT_GRANTED, GRANT_QUEUED, GRANT_REJECTED, GRANT_REVOKED,
-                                    REASON_DEADLOCK_RESOLUTION, REASON_OCCUPIED, REASON_PRIORITY_YIELD, ZoneManager,
-                                    ZoneSpec)
+                                    REASON_DEADLOCK_RESOLUTION, REASON_OCCUPIED, REASON_PRIORITY_YIELD, STRATEGY_AVOID,
+                                    ZoneManager, ZoneSpec)
 
 LEASE = 5.0
 RELEASE_TIMEOUT = 30.0
@@ -222,3 +222,50 @@ def test_revoked_holder_still_times_out():
         zm.request('amr_01', 'z2', 2, float(t))
     decisions = zm.expire(RELEASE_TIMEOUT)
     assert ('amr_01', 'z2', GRANT_GRANTED) in [(x.robot_id, x.zone_id, x.grant) for x in decisions]
+
+
+# ---- 해소 2: 회피 (순환을 닫는 요청 거부) ----
+
+def avoid_zones(*ids):
+    return ZoneManager([ZoneSpec(z) for z in ids], lease_s=LEASE, release_timeout_s=RELEASE_TIMEOUT,
+                       deadlock_strategy=STRATEGY_AVOID)
+
+
+def test_unknown_strategy_rejected():
+    with pytest.raises(ValueError):
+        ZoneManager([ZoneSpec('z')], lease_s=LEASE, release_timeout_s=RELEASE_TIMEOUT, deadlock_strategy='pray')
+
+
+def test_avoid_rejects_request_closing_two_robot_cycle():
+    zm = avoid_zones('narrow_01', 'narrow_02')
+    zm.request('amr_01', 'narrow_01', 1, 0.0)
+    zm.request('amr_02', 'narrow_02', 1, 0.0)
+    [d] = zm.request('amr_01', 'narrow_02', 2, 1.0)
+    assert d.grant == GRANT_QUEUED
+    # amr_02가 narrow_01을 기다리면 순환이 닫히므로 받지 않는다
+    [d] = zm.request('amr_02', 'narrow_01', 2, 1.0)
+    assert (d.grant, d.reason, d.holder_robot_id) == (GRANT_REJECTED, REASON_DEADLOCK_RESOLUTION, 'amr_01')
+    assert zm.queue('narrow_01') == []
+    assert zm.resolve_deadlocks(1.5) == []
+    # amr_02가 다른 길로 가며 narrow_02를 반납하면 amr_01이 들어간다
+    [d] = zm.release('amr_02', 'narrow_02', 2.0)
+    assert (d.robot_id, d.zone_id, d.grant) == ('amr_01', 'narrow_02', GRANT_GRANTED)
+
+
+def test_avoid_rejects_request_closing_three_robot_cycle():
+    zm = avoid_zones('z1', 'z2', 'z3')
+    for robot, held in (('amr_01', 'z1'), ('amr_02', 'z2'), ('amr_03', 'z3')):
+        zm.request(robot, held, 1, 0.0)
+    assert zm.request('amr_01', 'z2', 2, 1.0)[0].grant == GRANT_QUEUED
+    assert zm.request('amr_02', 'z3', 2, 1.0)[0].grant == GRANT_QUEUED
+    [d] = zm.request('amr_03', 'z1', 2, 1.0)
+    assert (d.grant, d.reason) == (GRANT_REJECTED, REASON_DEADLOCK_RESOLUTION)
+    assert zm.wait_for() == {'amr_01': {'amr_02': 'z2'}, 'amr_02': {'amr_03': 'z3'}}
+
+
+def test_avoid_keeps_plain_queue():
+    zm = avoid_zones('z1')
+    zm.request('amr_01', 'z1', 1, 0.0)
+    assert zm.request('amr_02', 'z1', 1, 0.0)[0].grant == GRANT_QUEUED
+    # 이미 기다리는 로봇의 재요청도 그대로 대기
+    assert zm.request('amr_02', 'z1', 1, 1.0)[0].grant == GRANT_QUEUED
