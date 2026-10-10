@@ -21,6 +21,7 @@ jobs:
     name: LTTng UST 이벤트 수집
     runs-on: ubuntu-22.04
     container: ros:humble
+    timeout-minutes: 20
     defaults:
       run:
         shell: bash

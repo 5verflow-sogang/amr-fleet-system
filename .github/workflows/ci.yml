@@ -22,6 +22,7 @@ jobs:
     name: colcon build & test
     runs-on: ubuntu-22.04
     container: ros:humble
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
