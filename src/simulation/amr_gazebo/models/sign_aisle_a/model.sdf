@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<!-- 통로 번호판 A열 (보라 판 0.5 x 0.4 m, 흰 7-세그먼트 글자)
+     모델 원점 = 판 중심, 앞면 법선 +x. 충돌체 없음(시각 전용): 표지판은 랙·벽에 붙어 바닥을 차지하지 않는다.
+     LiDAR(지면 0.38 m 수평면)에 걸리지 않도록 월드에서 아랫면을 0.55 m 이상에 둔다 (README "표지판"). -->
+<sdf version="1.8">
+  <model name="sign_aisle_a">
+    <static>true</static>
+    <link name="link">
+      <visual name="plate">
+        <pose>0.0000 0.0000 0.0000 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0200 0.5000 0.4000</size></box></geometry>
+        <material><ambient>0.45 0.10 0.60 1</ambient><diffuse>0.45 0.10 0.60 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="letter_a">
+        <pose>0.0120 0.0000 0.1200 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0040 0.1800 0.0400</size></box></geometry>
+        <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="letter_b">
+        <pose>0.0120 0.0700 0.0700 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0040 0.0400 0.1400</size></box></geometry>
+        <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="letter_c">
+        <pose>0.0120 0.0700 -0.0700 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0040 0.0400 0.1400</size></box></geometry>
+        <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="letter_e">
+        <pose>0.0120 -0.0700 -0.0700 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0040 0.0400 0.1400</size></box></geometry>
+        <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="letter_f">
+        <pose>0.0120 -0.0700 0.0700 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0040 0.0400 0.1400</size></box></geometry>
+        <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="letter_g">
+        <pose>0.0120 0.0000 0.0000 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0040 0.1800 0.0400</size></box></geometry>
+        <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

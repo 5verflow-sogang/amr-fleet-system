@@ -325,6 +325,27 @@
       동적 장애물 경로와도 겹치지 않는다(amr_gazebo/README.md 검증 절 참고).
     -->
     <include><uri>model://warehouse_rack</uri><name>rack_lane_divider</name><pose>-1.9 -0.2 0 0 0 0</pose></include>
+    <!-- ===================== 표지판 (YOLO 학습용, 연우 #99) ===================== -->
+    <!--
+      좌표는 GT 자동 라벨링에 쓰므로 고정이다. 표는 amr_gazebo/README.md "표지판" 절.
+      전부 랙 끝면·벽에 붙어 바닥을 차지하지 않고(스탠드 없음), 충돌체가 없다(시각 전용). 도크 플랫폼 위는 피한다.
+      LiDAR 스캔 평면은 지면 약 0.38 m(#92)이고, 표지판 아랫면은 0.7 m 이상(조건 0.5 m 이상)이라
+      스캔에 잡히지 않는다 — 지도(warehouse_v1, #96) 재생성이 필요 없다.
+      판 중심은 붙인 면에서 0.015 m 앞, yaw는 판 앞면이 향하는 방향.
+    -->
+    <include><uri>model://sign_aisle_a</uri><name>sign_aisle_a_1</name><pose>-4.985 5.3 1 0 0 0.0000000</pose></include>  <!-- rack_a3 동쪽 끝면 -->
+    <include><uri>model://sign_aisle_a</uri><name>sign_aisle_a_2</name><pose>12.485 4.7 1.2 0 0 3.1415927</pose></include>  <!-- rack_a6 서쪽 끝면 -->
+    <include><uri>model://sign_aisle_b</uri><name>sign_aisle_b_1</name><pose>-12.485 -1.7 0.9 0 0 0.0000000</pose></include>  <!-- rack_b2 동쪽 끝면 -->
+    <include><uri>model://sign_aisle_b</uri><name>sign_aisle_b_2</name><pose>12.485 -2.3 1.1 0 0 3.1415927</pose></include>  <!-- rack_b6 서쪽 끝면 -->
+    <include><uri>model://sign_aisle_c</uri><name>sign_aisle_c_1</name><pose>-4.985 -8.7 1 0 0 0.0000000</pose></include>  <!-- rack_c3 동쪽 끝면 -->
+    <include><uri>model://sign_aisle_c</uri><name>sign_aisle_c_2</name><pose>4.985 -9.3 1.3 0 0 3.1415927</pose></include>  <!-- rack_c5 서쪽 끝면 -->
+    <include><uri>model://sign_no_entry</uri><name>sign_no_entry_1</name><pose>0 -19.985 1.2 0 0 1.5707963</pose></include>  <!-- 남쪽 벽 -->
+    <include><uri>model://sign_no_entry</uri><name>sign_no_entry_2</name><pose>0 19.985 1.2 0 0 -1.5707963</pose></include>  <!-- 북쪽 벽 -->
+    <include><uri>model://sign_no_entry</uri><name>sign_no_entry_3</name><pose>25.015 -9 1 0 0 0.0000000</pose></include>  <!-- rack_c7 동쪽 끝면 -->
+    <include><uri>model://sign_speed_limit</uri><name>sign_speed_limit_1</name><pose>-17.515 4.65 1 0 0 3.1415927</pose></include>  <!-- rack_a2 서쪽 끝면 -->
+    <include><uri>model://sign_speed_limit</uri><name>sign_speed_limit_2</name><pose>29.985 7 1.2 0 0 3.1415927</pose></include>  <!-- 동쪽 벽 (A열과 메인 통로 사이, 도크 플랫폼 밖) -->
+    <include><uri>model://sign_speed_limit</uri><name>sign_speed_limit_3</name><pose>10.015 -2.3 0.9 0 0 0.0000000</pose></include>  <!-- rack_b5 동쪽 끝면 -->
+    <include><uri>model://sign_speed_limit</uri><name>sign_speed_limit_4</name><pose>-29.985 -4.3 1.1 0 0 0.0000000</pose></include>  <!-- 서쪽 벽 -->
 
     <!-- ===================== 동적 장애물 경로 표시 (2주차, 이진) ===================== -->
     <!--
