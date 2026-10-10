@@ -1,0 +1,51 @@
+# 워크플로가 실패하면 Discord 채널에 알린다.
+# 각 워크플로를 고치지 않고, 끝날 때마다(workflow_run) 결과를 보고 실패만 보낸다.
+# PR·dev·main push·수동 실행(fleet-test)·예약 실행 모두 실패하면 보낸다. 취소·성공은 보내지 않는다.
+# 웹훅 주소는 저장소 secret DISCORD_WEBHOOK_URL. 없으면 경고만 남기고 넘어간다.
+# 이 파일은 기본 브랜치(dev)에 있어야 동작한다.
+name: Notify Discord
+
+on:
+  workflow_run:
+    # 각 워크플로의 name: 과 같아야 한다. 새 워크플로를 만들면 여기에 더한다
+    workflows: [CI, Tracing Check, RL Env, Fleet Regression Test]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  failure:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # 브랜치 이름·커밋 메시지는 사용자 입력이므로 스크립트에 끼워 넣지 않고 JSON으로 넘긴다
+          RUN: ${{ toJSON(github.event.workflow_run) }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::DISCORD_WEBHOOK_URL secret이 없어 알림을 보내지 않음"
+            exit 0
+          fi
+          # 포크에서 온 PR은 pull_requests가 비어 있어 PR 제목(display_title)과 계정:브랜치로 보여 준다
+          jq -n --argjson r "$RUN" '
+            ($r.event == "pull_request") as $pr
+            | {
+            embeds: [{
+              title: "❌ \($r.name) 실패\(if $pr then " (PR)" else "" end)",
+              description: (if $pr then $r.display_title else null end),
+              url: $r.html_url,
+              color: 15158332,
+              fields: [
+                {name: "브랜치", value: (if $r.head_repository.full_name != $r.repository.full_name
+                  then "\($r.head_repository.owner.login):\($r.head_branch)" else $r.head_branch end), inline: true},
+                {name: "이벤트", value: $r.event, inline: true},
+                {name: "실행한 사람", value: $r.actor.login, inline: true},
+                {name: "커밋", value: "`\($r.head_sha[0:7])` \(($r.head_commit.message // "") | split("\n")[0] | .[0:100])"}
+              ]
+            }]
+          }
+          # push 등은 description이 없다. null 값은 보내지 않는다
+          | del(.embeds[0].description | select(. == null))' | curl -fsS -H 'Content-Type: application/json' -d @- "$WEBHOOK"

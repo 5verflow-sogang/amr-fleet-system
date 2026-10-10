@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from harness.notify import ENV, notify  # noqa: E402
 from harness.summary import summarize, to_markdown  # noqa: E402
 
 
@@ -21,9 +22,13 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description='하네스 실행 폴더 요약')
     ap.add_argument('runs', nargs='+', help='results/<run_id> 폴더들')
     ap.add_argument('--json', help='요약을 JSON으로도 저장')
+    ap.add_argument('--notify', action='store_true', help=f'환경 변수 {ENV}의 Discord 채널로 요약을 보낸다')
     args = ap.parse_args(argv)
-    summary = summarize(Path(r) for r in args.runs if Path(r).is_dir())
+    run_dirs = [Path(r) for r in args.runs if Path(r).is_dir()]
+    summary = summarize(run_dirs)
     print(to_markdown(summary))
+    if args.notify and not notify(summary, run_dirs):
+        print(f'Discord로 보내지 않음 ({ENV}가 없거나 보내기 실패)')
     if args.json:
         Path(args.json).write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return 0
