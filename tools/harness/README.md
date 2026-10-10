@@ -4,7 +4,7 @@
 
 - 같은 시나리오를 N회 반복해 KPI의 평균·신뢰구간을 산출한다.
 - 장애 조건(지연·손실)별 결과와 ros2_tracing 데이터를 수집한다.
-- `.github/workflows/fleet-test.yml`이 이 디렉토리의 진입 스크립트(`run.py`)를 호출한다.
+- `.github/workflows/fleet-test.yml`이 GCP 러너에서 `docker_run.sh`로 이 하네스를 돌린다 (입력: 시나리오, 반복 횟수, 지연·손실, 라벨, 시간).
 - 로그 포맷은 명세서 1-4절 "성능 지표 측정 절차" 표를 따른다.
 
 ## 실행 (하네스 v1)
