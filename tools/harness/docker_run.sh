@@ -7,11 +7,12 @@
 #
 # HARNESS_IMAGE: 이미지 (기본 amr-fleet-system:latest)
 # HARNESS_PREP:  빌드 전에 컨테이너에서 실행할 명령 (예: 이미지에 없는 apt 패키지 설치)
+# HARNESS_DISCORD_WEBHOOK: 있으면 끝나고 요약을 Discord로 보낸다. 값은 명령줄에 안 남게 이름만 넘긴다
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 IMAGE="${HARNESS_IMAGE:-amr-fleet-system:latest}"
 PACKAGES="amr_gazebo amr_odometry amr_localization amr_fleet_manager amr_fault_injector"
-exec docker run --rm -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-}" \
+exec docker run --rm -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-}" -e HARNESS_DISCORD_WEBHOOK \
   -v "$REPO:/repo" -w /repo "$IMAGE" bash -c "
     set -e
     source /opt/ros/\${ROS_DISTRO:-humble}/setup.bash

@@ -24,6 +24,7 @@
 - 웹훅 주소는 저장소 secret `DISCORD_WEBHOOK_URL`에 둔다 (Discord 채널 설정 → 연동 → 웹후크 → 새 웹후크 → URL 복사, `gh secret set DISCORD_WEBHOOK_URL`).
 - 새 워크플로를 만들면 `notify-discord.yml`의 `workflows:` 목록에 그 `name:`을 더한다.
 - 알림 워크플로는 `dev`에 있는 파일로 돈다. 고친 내용은 머지 뒤부터 적용된다.
+- 하네스 실험 결과 알림은 따로다: 환경 변수 `HARNESS_DISCORD_WEBHOOK` ([하네스 README](../../tools/harness/README.md)).
 
 ## 규칙
 

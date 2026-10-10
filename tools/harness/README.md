@@ -58,6 +58,19 @@ seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도
 - 위치 오차는 로봇이 **처음 움직인 뒤부터** 센다(`eval_node`의 `skip_initial_stationary`, 기본 켬). 초기 위치를 정답으로 주므로 그 전 구간은 오차가 0이라 정지 RMSE를 낮춘다(10/6 실측: 대기 60초가 5.5 → 2.4 cm로 낮춤).
 - 같은 설정·seed에서도 AMCL 파티클 무작위성 때문에 실행마다 RMSE가 최대 2 cm 다르다(10/6). 튜닝값 비교와 KPI 판정은 단일 실행이 아니라 이 요약의 CI로 한다.
 
+**Discord 알림**: 환경 변수 `HARNESS_DISCORD_WEBHOOK`(Discord 채널 웹후크 URL)이 있으면 `run.py`가 끝날 때 요약을 그 채널로 보낸다. 없으면 보내지 않는다.
+
+```bash
+export HARNESS_DISCORD_WEBHOOK='https://discord.com/api/webhooks/...'   # 셸 설정에만 두고 커밋하지 않는다
+tools/harness/docker_run.sh fleet_fake -n 10 --label d100      # 컨테이너에도 그대로 넘어간다
+python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --notify   # 지난 결과 다시 보내기
+```
+
+- 조건 묶음마다 embed 하나: ✅ KPI 모두 PASS, ⚠️ MARGINAL 또는 실패한 반복 있음, ❌ KPI FAIL 또는 완료 0회, ℹ️ KPI 없음. KPI 지표와 Fleet 주요 지표(지연·손실률·Ack)의 평균·95% CI를 싣고 `summary.md`를 첨부한다.
+- 첫 줄에 git SHA, 호스트, 장애 조건, seed 범위를 적는다.
+- 보내기가 실패해도 실험 결과에는 영향이 없다 (경고만 출력).
+- CI 실패 알림(`DISCORD_WEBHOOK_URL`, [workflows/README](../../.github/workflows/README.md))과 다른 채널을 쓰려고 이름을 따로 둔다.
+
 ## 로그 포맷
 
 > 상태: 형식은 합의됐다([합의 기록](#합의-기록)). 실측 후 확정할 숫자 기준값만 "초안"으로 표시한다. 컬럼 이름과 순서는 명세서 1-4절 표를 그대로 따르고, 이 문서는 단위·파일 배치·부가 컬럼·원자료 보관만 정한다.
