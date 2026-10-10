@@ -21,6 +21,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from harness.runner import ConfigOverrides, run_once  # noqa: E402
+from harness.notify import notify  # noqa: E402
 from harness.summary import summarize, to_markdown  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -87,11 +88,14 @@ def main(argv=None) -> int:
             print(f"[{i + 1}/{args.repeats}] {run_dir.name}: {meta['outcome']} "
                   f"(RTF {meta.get('real_time_factor')}, {meta['duration_wall_s']}s)", flush=True)
 
-    summary_md = to_markdown(summarize(run_dirs))
+    summary = summarize(run_dirs)
+    summary_md = to_markdown(summary)
     path = out / f"summary_{scenario['name']}{'-' + args.label if args.label else ''}_{stamp}.md"
     path.write_text(summary_md, encoding='utf-8')
     print(summary_md)
     print(f'요약: {path}')
+    # HARNESS_DISCORD_WEBHOOK이 있을 때만 보낸다 (README "Discord 알림")
+    notify(summary, run_dirs, path)
     return 0
 
 
