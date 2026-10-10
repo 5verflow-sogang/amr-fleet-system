@@ -6,6 +6,9 @@
 - 원본(/fleet/<topic>)과 중계본(/<robot>/fleet/<topic>)은 직렬화 바이트로 짝짓는다. 장애 주입기가 바이트를
   그대로 넘기므로 정확하고, request_id처럼 로봇마다 겹치는 번호에 헷갈리지 않는다. key 컬럼은 읽기용이다.
 - 관측 마감: 실행 끝 무렵에 보낸 메시지는 아직 오는 중일 수 있어 손실로 세지 않는다.
+- 관측 시작: rosbag은 토픽을 찾는 대로 구독하므로 녹화 초반에는 원본만 녹화되고 중계본은 아직 구독 전일 수 있다.
+  주기 토픽(heartbeat, task_table)의 모든 링크(토픽 × 로봇)에서 중계본이 한 번씩 녹화된 시각 − 주입 지연보다
+  먼저 보낸 메시지는 판정하지 않는다.
 """
 
 from __future__ import annotations
@@ -30,6 +33,9 @@ RELAYED_KEYS: dict[str, Callable[[Any], str]] = {
 }
 RELAY_TOPIC = re.compile(r'^/(?P<robot>[^/]+)/fleet/(?P<topic>' + '|'.join(RELAYED_KEYS) + r')$')
 ODOM_TOPIC = re.compile(r'^/(?P<robot>[^/]+)/odom$')
+# 서버가 일정한 주기로 내는 토픽. 관측 시작(녹화기가 중계본을 구독한 시각)은 이 토픽으로만 잰다.
+# 할당 명령처럼 드문 토픽은 첫 메시지가 늦게 나와, 그 시각이 구독 시각이 아니라 첫 메시지 시각이 된다
+PERIODIC_TOPICS = ('heartbeat', 'task_table')
 
 ASSIGNMENTS_TOPIC = '/fleet/task_assignments'
 ACKS_TOPIC = '/fleet/task_assignment_acks'
@@ -63,6 +69,8 @@ class Cutoff:
     delay_ms: float
     grace_s: float
     resend_grace_s: float
+    # 관측 시작. 이 시각 전에 보낸 메시지는 지연·손실을 판정하지 않는다 (녹화 초반 구독 지연). None이면 처음부터
+    start: Optional[float] = None
 
     @property
     def latency(self) -> float:
@@ -77,7 +85,22 @@ class Cutoff:
     def as_meta(self) -> dict:
         return {'end': round(self.end, 6), 'delay_ms': self.delay_ms, 'grace_s': self.grace_s,
                 'resend_grace_s': self.resend_grace_s,
-                'cutoff': round(self.latency, 6), 'ack_cutoff': round(self.ack, 6)}
+                'cutoff': round(self.latency, 6), 'ack_cutoff': round(self.ack, 6),
+                'start': None if self.start is None else round(self.start, 6)}
+
+
+def observation_start(records: Sequence[Record], delay_ms: float) -> Optional[float]:
+    """주기 토픽의 모든 링크(토픽 × 로봇)에서 중계본이 처음 녹화된 시각 중 가장 늦은 것 − 주입 지연.
+
+    그 뒤에 보낸 원본은 중계본이 녹화될 수 있었던 메시지다 (녹화기가 그 전에 구독을 마쳤다).
+    링크마다 따로 자르지 않고 실행 하나에 한 시각을 쓴다. 링크마다 자르면 링크마다 초반 손실이 빠져 손실률이 낮게 나온다.
+    """
+    first: dict[tuple[str, str], float] = {}
+    for r in records:
+        m = RELAY_TOPIC.match(r.topic)
+        if m and m['topic'] in PERIODIC_TOPICS:
+            first.setdefault((m['topic'], m['robot']), r.t)
+    return max(first.values()) - delay_ms / 1000.0 if first else None
 
 
 def _digest(data: bytes) -> bytes:
@@ -118,6 +141,8 @@ def fleet_latency(records: Sequence[Record], cutoff: Cutoff, robots: Optional[It
                 latency = None if recv is None else (recv - send) * 1000.0
                 if send > cutoff.latency:
                     delivered = ''  # 아직 오는 중일 수 있어 판정하지 않는다
+                elif cutoff.start is not None and send < cutoff.start:
+                    delivered = ''  # 녹화기가 중계본을 아직 구독하기 전일 수 있다
                 else:
                     delivered = '0' if recv is None else '1'
                 rows.append([topic, robot, key, _fmt(send), _fmt(recv), _fmt(latency, 3), delivered])
@@ -203,7 +228,8 @@ def convert(records: Sequence[Record], out_dir: Path, delay_ms: float, grace_s: 
     """기록 → out_dir/fleet_latency.csv, response_time.csv, meta.json observation_cutoff."""
     if not records:
         raise ValueError('기록이 비어 있다')
-    cutoff = Cutoff(max(r.t for r in records), delay_ms, grace_s, resend_grace_s)
+    cutoff = Cutoff(max(r.t for r in records), delay_ms, grace_s, resend_grace_s,
+                    start=observation_start(records, delay_ms))
     write_csv(out_dir / 'fleet_latency.csv', FLEET_LATENCY_HEADER, fleet_latency(records, cutoff, robots))
     write_csv(out_dir / 'response_time.csv', RESPONSE_TIME_HEADER, response_time(records, cutoff))
     update_meta(meta_path or out_dir / 'meta.json', cutoff)

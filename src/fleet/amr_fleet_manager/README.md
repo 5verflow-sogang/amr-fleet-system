@@ -237,12 +237,13 @@ ros2 run amr_fleet_manager fleet_metrics /tmp/run1/rosbag --out /tmp/run1 --dela
 | --- | --- |
 | `fleet_latency.csv` | 원본 메시지 1건 × 로봇 1대마다 1행 (`topic, robot, key, send_time, recv_time, latency_ms, delivered`) |
 | `response_time.csv` | 할당 명령 1건마다 1행 (명세서 컬럼 + `robot, task_id, latency_sim_ms, assignment_id, ack_time, ack_rtt_ms, resends`) |
-| `meta.json` | `observation_cutoff` (`end, delay_ms, grace_s, resend_grace_s, cutoff, ack_cutoff`). 다른 키는 그대로 둔다 |
+| `meta.json` | `observation_cutoff` (`end, delay_ms, grace_s, resend_grace_s, cutoff, ack_cutoff, start`). 다른 키는 그대로 둔다 |
 
 형식과 정의는 [하네스 README](../../../tools/harness/README.md#지표-csv)를 따르고, 아래는 구현에서 정한 것이다.
 
 - 원본과 중계본은 **직렬화 바이트**로 짝짓는다. 장애 주입기가 바이트를 그대로 넘기므로 정확하고, `zone_grants`의 `request_id`처럼 로봇마다 겹치는 번호에 헷갈리지 않는다. `key` 컬럼은 읽기용이다.
 - 할당 명령은 (`robot_id`, `assignment_id`, `header.stamp`)로 구분한다. 서버가 재시작하면 번호가 1부터 다시 시작하지만 stamp가 달라 섞이지 않는다. Ack는 `assignment_stamp`로 짝짓는다. 취소(`ACTION_CANCEL`)는 응답 시간 대상이 아니다.
+- 관측 시작: `start` = 주기 토픽(heartbeat, task_table)의 모든 로봇 중계본이 한 번씩 녹화된 시각 − `delay_ms`. 그 전에 보낸 메시지는 `delivered`를 비운다. rosbag이 원본을 중계본보다 먼저 구독해 녹화 초반 약 1초가 손실로 잡히던 문제 (10/10 GCP 첫 하네스 실행: 손실 0% 주입에 0.8%).
 - 관측 마감: `cutoff` = 끝 − `delay_ms` − `grace_s`(1초) 뒤에 보낸 메시지는 `delivered`를 비운다. `ack_cutoff` = `cutoff` − `resend_grace_s`(5초 = 서버 재전송 1초 × 5회) 뒤에 보낸 명령은 `response_time.csv`에 행을 만들지 않는다.
 - `response_time`은 `/<robot>/odom`이 bag에 있을 때만 채운다. 임계값: 선속도 0.01 m/s 또는 각속도 0.05 rad/s.
 - 로봇 → 서버 방향은 장애를 걸지 않는다(D8 제안). 걸게 되면 Ack 원본·중계본 짝짓기를 추가한다.
