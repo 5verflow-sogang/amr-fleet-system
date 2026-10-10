@@ -147,10 +147,8 @@ private:
     if (msg.action == TaskAssignment::ACTION_CANCEL) {
       // Ack보다 먼저 정리를 끝낸다 (FAILED 발행 → 작업 비움). 그래야 바로 뒤 새 할당을 ALREADY_BUSY로 거부하지 않는다.
       // 하던 작업이 아니면 이미 끝난 것이므로 그대로 수락한다. 가짜 로봇(fake_robot_node)과 같은 순서다.
-      // TODO(amr_msgs): ErrorInfo에 취소 코드가 생기면 code를 채운다. 지금은 가짜 로봇과 같이 NONE + "canceled"
-      ErrorInfo canceled;
-      canceled.message = "canceled";
-      if (cancel_task(tree_, *ctx_, msg.task.task_id, canceled)) {
+      // FAILED에 ASSIGN_CANCELED를 붙여 서버가 다시 할당하지 않게 한다 (#107, 가짜 로봇과 같음)
+      if (cancel_task(tree_, *ctx_, msg.task.task_id, canceled_error())) {
         RCLCPP_INFO(get_logger(), "작업 취소: %s", msg.task.task_id.c_str());
       }
       return reply;
