@@ -4,7 +4,7 @@ project(amr_gazebo)
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 
-# 동적 장애물 이동 패턴 (amr_gazebo/obstacle_motion.py)과 노드
+# 동적 장애물 이동 패턴 (amr_gazebo/obstacle_motion.py)과 노드, 화물 상자 배치 (amr_gazebo/cargo.py)
 ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS scripts/dynamic_obstacles_node.py
   DESTINATION lib/${PROJECT_NAME})
@@ -18,6 +18,7 @@ install(DIRECTORY launch config worlds models
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_obstacle_motion test/test_obstacle_motion.py)
+  ament_add_pytest_test(test_cargo test/test_cargo.py)
 endif()
 
 ament_package()

@@ -172,7 +172,7 @@ sim 확인 (로봇 (0, 10.5), seed 1, 150 s):
 
 - 측정 속도 최솟값이 범위보다 약간 낮은 것은 방향이 바뀌는 순간 `OdometryPublisher`가 위치 차분을 평균 내기 때문이다. 명령 속도가 범위 안인지는 단위 테스트로 확인한다
 - LiDAR: 로봇 12 m 안에 들어온 `worker_1`은 858회 중 856회 사람 폭(±0.45 m) 안 최근접 스캔이 GT 거리 ±0.3 m 안. `worker_2`는 A열 랙에 가려 틈으로 보일 때만 잡힌다
-- 작업자 겉모습은 사람 메시라 LiDAR 스캔 높이(0.2 m)에서는 원기둥이 아니라 **다리 두 개**로 보인다 (실제 사람과 같다)
+- 작업자 겉모습은 사람 메시라 LiDAR 스캔 높이(지면 0.38 m)에서는 원기둥이 아니라 **다리 두 개**로 보인다 (실제 사람과 같다)
 - 카메라(YOLO): 사전학습 `yolov8n`으로 정면 3.5 m에서 `person` 0.88, 옆모습 6 m에서 0.63. 지게차·다른 로봇은 단순 상자라 COCO 클래스로 잡히지 않는다
 
 ### 작업자 사람 메시
@@ -182,6 +182,31 @@ OpenRobotics "Male visitor" ([Gazebo Fuel](https://app.gazebosim.org/OpenRobotic
 
 - 걷기 애니메이션용 메시라 정지 메시로 쓰면 **T자 자세**(팔 폭 1.64 m)로 그려진다. 팔은 1.4 m 높이라 LiDAR·로봇 충돌에는 영향이 없다
 - 정면이 +x라 몸체가 진행 방향을 보면 사람도 앞을 보고 걷는다 (다리는 움직이지 않고 미끄러지듯 이동)
+
+### 화물 상자 (YOLO 인식용, 3주차 지수, #99 연우 요청)
+
+`sim.launch.py cargo:=true`(또는 `cargo_boxes.launch.py`)로 화물 상자 24개를 띄운다. **기본은 꺼져 있다.**
+원 명세 인식 3종(화물·사람·표지판) 중 화물을 시뮬 영상으로 학습·평가하려고 넣었다.
+
+| 크기 (명세 "가상 물품") | 길이 × 폭 × 높이 | 개수 | 놓인 곳 |
+| --- | --- | --- | --- |
+| `small` | 30 × 20 × 15 cm | 9 | 바닥 (랙 긴 면 옆) 7, 도크 플랫폼 2 |
+| `medium` | 50 × 40 × 30 cm | 11 | 바닥 7, 도크 플랫폼 4 |
+| `large` | 60 × 50 × 40 cm | 4 | 도크 플랫폼만 |
+
+- **위치는 `config/cargo_boxes.yaml` 고정 좌표다** (static). 상자 중심 = (x, y, z + 높이/2), world 기준이라 GT 라벨로 바로 쓴다
+- 겉모습: 진한 골판지색 몸체 + 윗면 테이프 + 양쪽 긴 면 흰 송장 라벨 (`amr_gazebo/cargo.py`). 밝은 골판지색은 조명에 하얗게 날아가 바닥과 구분이 안 돼서 진하게 했다
+- 모두 static 모델 하나(`cargo_boxes`)의 링크로 넣어 `create` 한 번으로 스폰한다. 충돌체가 있어 로봇과 부딪힌다
+
+**지도·위치추정에 영향을 주지 않게 놓았다.** 지도 v1에 없는 물체가 스캔에 찍히면 AMCL 일치율과 `map_quality`가 어긋나기 때문이다.
+
+- LiDAR 스캔 평면(지면 0.38 m) ± 5 cm에 걸리는 상자가 없다. 바닥에는 높이 15·30 cm인 small·medium만, large는 도크 플랫폼(높이 1.0 m, 이미 지도에 있음) 위에만 둔다
+- 같은 자세(0, 1.5)에서 상자 없음/있음 스캔(빔별 30회 평균)을 비교하면 평균 차이 0.6 cm(노이즈 수준), 10 cm 넘게 달라진 빔 0개
+- 단, LiDAR가 못 보는 높이라 **Nav2 costmap(LiDAR 기반)에도 안 잡힌다.** 그래서 바닥 상자는 랙 면에 2 cm 띄워 붙이고 랙 끝 쪽에 뒀다 (매핑·주행 경로는 랙에서 1 m 넘게 떨어짐)
+- 동적 장애물 경로(곡선·직선)에서 0.5 m 넘게, 좁은 통로 ①② 밖에 둔다
+
+카메라 확인 (지면 0.43 m = base_link 0.18 + camera 0.25, `cargo:=true`): 출발점 (0, 1.5)에서 A–B 통로 양쪽 상자, B–C 통로 (−1, −4)에서 B·C열 상자,
+도크 정차 구역 (−25, 13.5) 서쪽 방향에서 플랫폼 위 상자가 보인다. 바닥 상자는 통로 중앙에서 약 1.3~8 m, 도크 상자는 정차 구역에서 1.5~4.5 m다.
 
 센서 시스템(`Sensors`, `Imu`)은 월드에 있다. `Sensors`는 LiDAR·카메라를 렌더링(ogre2)으로 만든다.
 화면(DISPLAY)이 없는 dev 컨테이너에서도 ogre2가 headless 모드로 바꿔 동작한다
@@ -196,6 +221,7 @@ OpenRobotics "Male visitor" ([Gazebo Fuel](https://app.gazebosim.org/OpenRobotic
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
 
 - `config/dynamic_obstacles.yaml`: 동적 장애물 좌표·경로·패턴·속도 범위 (위 표 참고)
+- `config/cargo_boxes.yaml`: 화물 상자 id·크기·위치 (위 "화물 상자" 참고)
 
 launch 파일과 인자:
 
@@ -203,8 +229,9 @@ launch 파일과 인자:
 | --- | --- | --- |
 | `world.launch.py` | `world` (`warehouse.sdf`), `gui` (`true`), `verbosity` (`2`) | 월드만. `gui:=false`면 서버만 |
 | `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`), `enable_camera` (`true`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
-| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `dynamic_obstacles` (`false`), `obstacle_seed` (`0`) | 월드 + 로봇 1대 + RViz (+ 동적 장애물) |
+| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `dynamic_obstacles` (`false`), `obstacle_seed` (`0`), `cargo` (`false`) | 월드 + 로봇 1대 + RViz (+ 동적 장애물, 화물 상자) |
 | `dynamic_obstacles.launch.py` | `config` (`config/dynamic_obstacles.yaml`), `only` (전부, 쉼표로 id), `seed` (`0`), `use_sim_time` (`true`) | 실행 중인 Gazebo에 동적 장애물 스폰 + 브리지 + 이동 노드 |
+| `cargo_boxes.launch.py` | `config` (`config/cargo_boxes.yaml`) | 실행 중인 Gazebo에 화물 상자 스폰 (LiDAR 높이에 걸리면 실패) |
 
 ## 실행
 
@@ -216,6 +243,7 @@ ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false   # 서버만 (dev �
 ros2 launch amr_gazebo world.launch.py                        # 월드만
 ros2 launch amr_gazebo sim.launch.py dynamic_obstacles:=true  # + 동적 장애물 5개
 ros2 launch amr_gazebo dynamic_obstacles.launch.py only:=forklift_1 seed:=42  # 실행 중인 sim에 1개만
+ros2 launch amr_gazebo sim.launch.py cargo:=true             # + 화물 상자 24개 (YOLO 인식용)
 ```
 
 ## 테스트
@@ -226,3 +254,6 @@ colcon test --packages-select amr_gazebo
 
 `test/test_obstacle_motion.py`: 실제 `config/dynamic_obstacles.yaml`로 장애물을 굴려 명세(5개 이상, 0.3~1.5 m/s, 직선·곡선·무작위),
 속도 범위, 직선 왕복, 곡선이 경유점을 지나는지, 무작위가 영역 안에 머무는지, seed 재현을 확인한다.
+
+`test/test_cargo.py`: 실제 `config/cargo_boxes.yaml`과 월드 SDF로 상자가 LiDAR 스캔 높이에 안 걸리는지, 카메라 높이 범위(1.5 m 이하),
+바닥 상자가 랙·기둥과 겹치지 않고 랙 면에 붙어 있는지, 도크 상자가 플랫폼 위에 있는지, 좁은 통로·동적 장애물 경로를 피하는지, SDF 링크 위치를 확인한다.

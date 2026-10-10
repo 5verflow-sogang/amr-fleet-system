@@ -6,6 +6,7 @@
     ros2 launch amr_gazebo sim.launch.py payload_mass:=25.0      # 적재 질량 [kg]
     ros2 launch amr_gazebo sim.launch.py enable_camera:=false    # 카메라 끔 (CPU 렌더링 부담 줄이기)
     ros2 launch amr_gazebo sim.launch.py dynamic_obstacles:=true # 동적 장애물 5개 (config/dynamic_obstacles.yaml)
+    ros2 launch amr_gazebo sim.launch.py cargo:=true             # 화물 상자 (YOLO 인식용, config/cargo_boxes.yaml)
 """
 
 import os
@@ -42,6 +43,9 @@ def generate_launch_description():
             'dynamic_obstacles', default_value='false',
             description='동적 장애물을 띄울지. 지도 매핑 때는 끈다'),
         DeclareLaunchArgument(
+            'cargo', default_value='false',
+            description='화물 상자를 띄울지 (YOLO 인식 학습·평가용). LiDAR 높이를 피해 놓아 지도·위치추정에는 영향 없음'),
+        DeclareLaunchArgument(
             'obstacle_seed', default_value='0',
             description='동적 장애물 속도·무작위 경로 seed. 0이면 실행마다 무작위'),
         IncludeLaunchDescription(
@@ -64,6 +68,10 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(os.path.join(launch_dir, 'dynamic_obstacles.launch.py')),
             launch_arguments={'seed': LaunchConfiguration('obstacle_seed')}.items(),
             condition=IfCondition(LaunchConfiguration('dynamic_obstacles')),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(launch_dir, 'cargo_boxes.launch.py')),
+            condition=IfCondition(LaunchConfiguration('cargo')),
         ),
         Node(
             package='rviz2',
