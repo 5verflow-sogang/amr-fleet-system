@@ -7,6 +7,9 @@ fleet_manager:
       algorithm: nearest
       # 이보다 배터리가 낮은 로봇은 할당 후보에서 뺀다 (%)
       min_battery_percent: 20.0
+      # FAILED로 보고된 작업을 큐로 되돌려 다시 할당하는 횟수. 넘으면 실패로 남긴다.
+      # 분산 경매의 재경매(최대 1회)와 같게 둔다 (api.md 4-4절)
+      failed_retries: 1
     # 이 시간 동안 RobotState가 안 오면 할당 후보에서 뺀다 (실제 시간, s)
     robot_timeout_s: 3.0
     resend:

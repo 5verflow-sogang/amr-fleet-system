@@ -158,6 +158,7 @@
 | `server_id` | `fleet_manager` | heartbeat·작업표의 서버 이름 |
 | `assignment.algorithm` | `nearest` | `nearest` / `load_balance` / `hungarian`. launch 인자 `algorithm` |
 | `assignment.min_battery_percent` | `20.0` | 할당 후보 배터리 하한 (%) |
+| `assignment.failed_retries` | `1` | FAILED 보고된 작업을 큐로 되돌려 다시 할당하는 횟수. 넘으면 실패로 남긴다. 분산 재경매(최대 1회)와 같게 둔다 |
 | `robot_timeout_s` | `3.0` | 이 시간 동안 `RobotState`가 없으면 후보에서 뺀다 (s) |
 | `resend.interval_s` | `1.0` | Ack 없을 때 재전송 간격 (s) |
 | `resend.max_resends` | `5` | 재전송 한도. 첫 발송은 세지 않는다 |
@@ -267,8 +268,8 @@ colcon test --packages-select amr_fleet_manager
 | 경로 충돌 예측 | 이진: Nav2 전역 경로 `/<ns>/plan` (`nav_msgs/Path`, map 프레임)을 그대로 구독 |
 | 교착 해소 | 1종(우선순위 낮은 로봇 허가 회수 `GRANT_REVOKED`)만 있다. 두 번째 전략은 이후. 로봇 쪽 물러나기는 `amr_zone_client` 몫 |
 | 가짜 로봇의 구역 요청 | `fake_robot`은 구역을 요청하지 않는다 |
-| 작업 취소 | `ACTION_CANCEL` 발행 경로 없음 (가짜 로봇은 받으면 처리한다) |
-| FAILED 작업 | 실패로 남긴다. 재할당 정책은 `ErrorInfo.code`별로 정한다 |
+| 작업 취소 | `ACTION_CANCEL` 발행 경로 없음 (가짜 로봇은 받으면 처리한다). 취소로 멈춘 작업은 FAILED + `ErrorInfo.ASSIGN_CANCELED`로 보고받고 다시 할당하지 않는다 |
+| FAILED 작업 | `assignment.failed_retries`(1)번까지 다시 할당한다(10/8, 분산 재경매와 같게). 취소(`ASSIGN_CANCELED`)는 빼고 센다. 다시 맡을 로봇은 고르지 않는다(같은 로봇이 다시 받을 수 있음). "다른 로봇 우선"은 분산과 같이 정한다(10/12 회의) |
 | 로봇 끊김 | 작업 중인 로봇의 `RobotState`가 끊겨도 작업을 회수하지 않는다 |
 | 작업표 크기 | 끝난 작업도 계속 싣는다. 장시간 운용(4시간) 전에 정리 규칙을 정한다 |
 | 로봇 → 서버 토픽 장애 주입 | [api.md 4-4절](../../../docs/api.md#4-4-쟁점-정리) 미결 |
