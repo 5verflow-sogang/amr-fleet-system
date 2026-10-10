@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
 
-from amr_fleet_manager.dispatcher import (STATE_COMPLETED, STATE_FAILED, STATE_IN_PROGRESS, STATE_PENDING,
-                                          Dispatcher, DispatcherConfig)
+from amr_fleet_manager.dispatcher import (ERROR_CANCELED, STATE_COMPLETED, STATE_FAILED, STATE_IN_PROGRESS,
+                                          STATE_PENDING, Dispatcher, DispatcherConfig)
 from amr_fleet_manager.records import (ASSIGNMENTS_HEADER, AssignmentLog, append_fault_event, load_zones,
                                        next_epoch)
 
@@ -212,3 +212,50 @@ def test_append_fault_event(tmp_path):
     append_fault_event(str(path), 'restart', now=110.5)
     with path.open(newline='') as f:
         assert list(csv.reader(f)) == [['time', 'event'], ['100.250000', 'kill'], ['110.500000', 'restart']]
+
+
+def test_failed_task_retried_once():
+    d = make(failed_retries=1)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.update_robot(robot('amr_02', (5.0, 0.0)), '', 0.0)
+    d.add_task(task('t1'))
+    [first], _ = d.assign(0.0)
+
+    # 1회째 실패: 큐로 돌아가 다시 할당된다 (새 assignment_id)
+    assert d.on_status('t1', first.robot_id, STATE_FAILED)
+    assert (d.tasks['t1'].state, d.tasks['t1'].assignee, d.tasks['t1'].failures) == (STATE_PENDING, '', 1)
+    assert d.robots[first.robot_id].task_id == ''
+    [second], _ = d.assign(1.0)
+    assert second.assignment_id == first.assignment_id + 1
+
+    # 예전 로봇의 늦은 보고는 무시한다
+    if second.robot_id != first.robot_id:
+        assert not d.on_status('t1', first.robot_id, STATE_COMPLETED)
+
+    # 2회째 실패: 실패로 남는다
+    assert d.on_status('t1', second.robot_id, STATE_FAILED)
+    assert d.tasks['t1'].state == STATE_FAILED
+    assert d.assign(2.0) == ([], [])
+
+
+def test_failed_retries_zero_keeps_failed():
+    d = make(failed_retries=0)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    d.assign(0.0)
+    d.on_status('t1', 'amr_01', STATE_FAILED)
+    assert d.tasks['t1'].state == STATE_FAILED
+    with pytest.raises(ValueError):
+        make(failed_retries=-1)
+
+
+def test_canceled_task_not_retried():
+    # 서버가 취소해 온 FAILED는 재시도 횟수가 남아도 다시 할당하지 않는다 (#107 리뷰)
+    d = make(failed_retries=1)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    d.assign(0.0)
+    assert d.on_status('t1', 'amr_01', STATE_FAILED, error_code=ERROR_CANCELED)
+    assert (d.tasks['t1'].state, d.tasks['t1'].failures) == (STATE_FAILED, 0)
+    assert d.robots['amr_01'].task_id == ''
+    assert d.assign(1.0) == ([], [])

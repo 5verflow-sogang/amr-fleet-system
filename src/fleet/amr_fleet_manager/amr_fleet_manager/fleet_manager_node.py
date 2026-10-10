@@ -13,7 +13,7 @@ import rclpy
 from builtin_interfaces.msg import Time
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
 from amr_fleet_core.traffic import Decision, ZoneManager
-from amr_msgs.msg import (FleetHeartbeat, FleetTaskTable, RobotState, Task, TaskAssignment,
+from amr_msgs.msg import (ErrorInfo, FleetHeartbeat, FleetTaskTable, RobotState, Task, TaskAssignment,
                           TaskAssignmentAck, TaskRecord, TaskStatus, ZoneGrant, ZoneRequest)
 from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
@@ -61,6 +61,7 @@ class FleetManager(Node):
             robot_timeout_s=self.declare_parameter('robot_timeout_s', 3.0).value,
             resend_interval_s=self.declare_parameter('resend.interval_s', 1.0).value,
             max_resends=self.declare_parameter('resend.max_resends', 5).value,
+            failed_retries=self.declare_parameter('assignment.failed_retries', 1).value,
         ))
         heartbeat_period_s = self.declare_parameter('heartbeat_period_s', 0.2).value
         task_table_period_s = self.declare_parameter('task_table_period_s', 1.0).value
@@ -130,9 +131,19 @@ class FleetManager(Node):
             self._assign()
 
     def _on_status(self, msg: TaskStatus):
-        if self._dispatcher.on_status(msg.task_id, msg.robot_id, msg.state) and \
-                msg.state in (TaskStatus.STATE_COMPLETED, TaskStatus.STATE_FAILED):
-            # TODO(하연): FAILED 작업 재할당 정책. 지금은 실패로 남긴다
+        if not self._dispatcher.on_status(msg.task_id, msg.robot_id, msg.state, msg.error.code):
+            return
+        if msg.state == TaskStatus.STATE_FAILED:
+            task = self._dispatcher.tasks[msg.task_id]
+            if task.state == TaskStatus.STATE_PENDING:
+                self.get_logger().warn(
+                    f'{msg.robot_id}가 {msg.task_id} 실패 보고 (code={msg.error.code} {msg.error.message}), '
+                    f'다시 할당 ({task.failures}/{self._dispatcher.config.failed_retries})')
+            elif msg.error.code == ErrorInfo.ASSIGN_CANCELED:
+                self.get_logger().info(f'{msg.robot_id}가 {msg.task_id} 취소 완료 보고, 다시 할당하지 않음')
+            else:
+                self.get_logger().warn(f'{msg.task_id} 실패로 남김 (재할당 {task.failures}회 뒤)')
+        if msg.state in (TaskStatus.STATE_COMPLETED, TaskStatus.STATE_FAILED):
             self._assign()
 
     def _on_zone_request(self, msg: ZoneRequest):
