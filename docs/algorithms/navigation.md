@@ -345,3 +345,47 @@ GT 직선이 큰 이유를 경로 순서별로 나눠 보면 추종기가 아니
   GT 기준으로 재야 한다. `cte.csv`의 `actual_*`도 그때는 추종기가 쓴 추정 위치라, KPI 판정에는 GT 기준
   재계산(`analyze.py`)을 같이 본다.
 - 1회 측정이라 신뢰구간은 없다. 하네스 시나리오로 만들어 반복할 때 정한다.
+
+### 5-9. Gazebo CTE 측정 (위치추정 켬, 1회, 10/10)
+
+5-8절의 결론(위치추정을 켠 상태에서 GT 기준으로 재야 한다)에 따라 다시 측정했다.
+[experiments/cte_baseline](../../experiments/cte_baseline/README.md)의 `run_localized.sh`. 월드·지도는
+그대로(월드 `warehouse.sdf`, 지도 v1 `warehouse_v1`, #96), Pure Pursuit 기본값·PID 끔·0.5 m/s도 5-8절과
+같다. 추가된 조건:
+
+- **위치추정**: `amr_localization` EKF 둘 + AMCL (`amr_bringup system.launch.py`, D4 A안). 추종기 odom은 둘 중 하나:
+  - **local**: `odometry/local`(ekf_local, `<ns>/odom` 기준) - 경로도 `<ns>/odom` 프레임
+  - **filtered**: `odometry/filtered`(ekf_global, `map` 기준, AMCL 보정) - 경로도 `map` 프레임
+    (`path_tracker_node`는 경로 프레임이 odom 메시지 프레임과 다르면 TF로 돌아가 버려서, 두 프레임을
+    맞춰야 실제로 그 추정을 쓴다 - `robotPose()` 참고)
+- **GT 비교 보정**: #98 지도 정렬(`amr_mapping` README "지도 정렬"절)이 찾은 `map_origin_in_world` 보정값
+  `[-0.0571, 1.5167, 0.00013]`(v1 0.05 m)을 GT 재투영에 적용/미적용 둘 다 본다(시뮬레이션은 한 번만 돌리고
+  `analyze.py --correction`으로 같은 `gt.csv`에서 두 버전을 낸다)
+
+| odom 소스 | #98 보정 | 구간 | 평균 [cm] | 최대 [cm] | KPI(직선 5·곡선 10 cm) |
+| --- | --- | --- | --- | --- | --- |
+| local | 미적용 | 직선 | 0.64 | 3.11 | 충족 |
+| local | 미적용 | 곡선 | 2.02 | 2.89 | 충족 |
+| local | 적용 | 직선 | 1.33 | 1.72 | 충족 |
+| local | 적용 | 곡선 | 5.11 | 8.71 | 충족 |
+| filtered | 미적용 | 직선 | 2.22 | **8.60** | **미충족** |
+| filtered | 미적용 | 곡선 | 2.43 | 5.42 | 충족 |
+| filtered | 적용 | 직선 | 2.07 | 4.58 | 충족 |
+| filtered | 적용 | 곡선 | 2.85 | 4.18 | 충족 |
+
+- **5-8절(위치추정 없음, GT 직선 최대 31 cm) 대비**: 위치추정을 켜면 EKF가 odom 누적 오차(특히 반원을 돈
+  뒤 방향이 틀어지는 것)를 IMU·AMCL로 계속 보정해서, local 3.11 cm·filtered(#98 보정) 4.58 cm로 거의
+  10배 줄었다 - 둘 다 KPI(직선 5 cm) 안이다.
+- **filtered는 #98 보정이 KPI 충족을 가른다.** SLAM 지도가 월드보다 약 6 cm 밀려 그려진 만큼이 AMCL
+  추정(map 프레임)에 그대로 들어가, 보정 없이 GT와 비교하면 직선 최대 8.60 cm로 KPI를 넘긴다. 보정하면
+  4.58 cm로 충족한다. **AMCL 기반(map 프레임) CTE KPI 판정에는 #98 보정이 필요하다.**
+  local(odom 프레임, map과 무관)은 보정 여부와 무관하게 충족한다 - 보정은 지도-월드 정렬 문제라
+  odom 프레임 추정과는 원래 상관없다(참고로 같이 재 둔 것이다).
+- 경로 순서별로 보면 filtered·미보정에서도 직선 1(곡선 전) 최대 1.25 cm, 직선 2(곡선 후) 최대 8.60 cm로
+  5-8절과 같은 비대칭(곡선을 돈 뒤 더 틀어짐)이 남아 있다 - AMCL이 있어도 완전히는 못 지운다. #98 보정
+  적용 뒤에는 1(2.95)·2(4.58)로 격차가 줄어든다.
+- local 실행의 odom(ekf_local)–GT 거리가 직선 1에서 한때 최대 100 cm까지 튀었다(평균은 21.5 cm, 나머지
+  구간은 2~3 cm) - CTE 자체(odom·GT 둘 다 경로에 가깝게 투영됨, 최대 3 cm대)에는 영향이 없어 경로를
+  따라간 위치가 살짝 앞서거나 뒤처진 것으로 보인다. IMU 바이어스 보정(시작 2 s 정지) 직후 과도 상태로
+  추정 - filtered 실행에서는 재현되지 않았다(직선 1 최대 1.49 cm). 반복 측정 전까지는 참고로만 둔다.
+- 1회 측정이라 신뢰구간은 없다.
