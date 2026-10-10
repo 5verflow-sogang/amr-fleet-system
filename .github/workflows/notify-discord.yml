@@ -1,6 +1,6 @@
 # 워크플로가 실패하면 Discord 채널에 알린다.
 # 각 워크플로를 고치지 않고, 끝날 때마다(workflow_run) 결과를 보고 실패만 보낸다.
-# PR 실행 실패는 작성자가 PR 화면에서 보므로 보내지 않는다. dev·main push, 수동 실행(fleet-test), 예약 실행만 보낸다.
+# PR·dev·main push·수동 실행(fleet-test)·예약 실행 모두 실패하면 보낸다. 취소·성공은 보내지 않는다.
 # 웹훅 주소는 저장소 secret DISCORD_WEBHOOK_URL. 없으면 경고만 남기고 넘어간다.
 # 이 파일은 기본 브랜치(dev)에 있어야 동작한다.
 name: Notify Discord
@@ -15,9 +15,7 @@ permissions: {}
 
 jobs:
   failure:
-    if: >-
-      github.event.workflow_run.conclusion == 'failure'
-      && github.event.workflow_run.event != 'pull_request'
+    if: github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -31,16 +29,23 @@ jobs:
             echo "::warning::DISCORD_WEBHOOK_URL secret이 없어 알림을 보내지 않음"
             exit 0
           fi
-          jq -n --argjson r "$RUN" '{
+          # 포크에서 온 PR은 pull_requests가 비어 있어 PR 제목(display_title)과 계정:브랜치로 보여 준다
+          jq -n --argjson r "$RUN" '
+            ($r.event == "pull_request") as $pr
+            | {
             embeds: [{
-              title: "❌ \($r.name) 실패",
+              title: "❌ \($r.name) 실패\(if $pr then " (PR)" else "" end)",
+              description: (if $pr then $r.display_title else null end),
               url: $r.html_url,
               color: 15158332,
               fields: [
-                {name: "브랜치", value: $r.head_branch, inline: true},
+                {name: "브랜치", value: (if $r.head_repository.full_name != $r.repository.full_name
+                  then "\($r.head_repository.owner.login):\($r.head_branch)" else $r.head_branch end), inline: true},
                 {name: "이벤트", value: $r.event, inline: true},
                 {name: "실행한 사람", value: $r.actor.login, inline: true},
                 {name: "커밋", value: "`\($r.head_sha[0:7])` \(($r.head_commit.message // "") | split("\n")[0] | .[0:100])"}
               ]
             }]
-          }' | curl -fsS -H 'Content-Type: application/json' -d @- "$WEBHOOK"
+          }
+          # push 등은 description이 없다. null 값은 보내지 않는다
+          | del(.embeds[0].description | select(. == null))' | curl -fsS -H 'Content-Type: application/json' -d @- "$WEBHOOK"

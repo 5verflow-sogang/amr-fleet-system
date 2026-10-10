@@ -6,7 +6,7 @@
 | `tracing-check.yml` | Dockerfile·트레이싱 스크립트가 바뀐 PR, 수동 | LTTng 이벤트 수집 확인 | 20분 |
 | `rl-env.yml` | `experiments/research2/`가 바뀐 PR, 수동 | uv 설치, 환경 테스트, PPO 스모크 | 20분 |
 | `fleet-test.yml` | 수동만 | GCP Spot VM에 일회용 러너를 띄워 Fleet 시험 후 결과를 GCS에 올림 | 러너 10분, 시험 240분 |
-| `notify-discord.yml` | 위 워크플로가 끝날 때 | `dev`·`main` push, 수동·예약 실행이 실패하면 Discord에 알림 (PR 실패는 안 보냄) | 5분 |
+| `notify-discord.yml` | 위 워크플로가 끝날 때 | PR·push·수동·예약 실행이 실패하면 Discord에 알림 (취소·성공은 안 보냄) | 5분 |
 
 액션 버전은 Dependabot(`.github/dependabot.yml`)이 매달 한 PR로 올린다.
 
