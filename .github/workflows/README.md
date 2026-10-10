@@ -5,8 +5,9 @@
 | `ci.yml` | `dev`·`main` push, PR (문서만 바뀌면 건너뜀) | colcon 빌드·경고 검사·테스트, 하네스 단위 테스트 | 30분 |
 | `tracing-check.yml` | Dockerfile·트레이싱 스크립트가 바뀐 PR, 수동 | LTTng 이벤트 수집 확인 | 20분 |
 | `rl-env.yml` | `experiments/research2/`가 바뀐 PR, 수동 | uv 설치, 환경 테스트, PPO 스모크 | 20분 |
-| `fleet-test.yml` | 수동만 | GCP Spot VM에 일회용 러너를 띄워 Fleet 시험 후 결과를 GCS에 올림 | 러너 10분, 시험 240분 |
+| `fleet-test.yml` | 수동만 | GCP Spot VM에 일회용 러너를 띄워 하네스 시나리오를 N회 돌리고 결과·요약을 GCS에 올림. 반복이 전부 실패하면 실패 | 러너 10분, 시험 240분 |
 | `notify-discord.yml` | 위 워크플로가 끝날 때 | PR·push·수동·예약 실행이 실패하면 Discord에 알림 (취소·성공은 안 보냄) | 5분 |
+
 
 액션 버전은 Dependabot(`.github/dependabot.yml`)이 매달 한 PR로 올린다.
 
