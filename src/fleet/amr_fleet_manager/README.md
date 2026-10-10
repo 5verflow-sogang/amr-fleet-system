@@ -4,7 +4,7 @@
 - 빌드 타입: ament_python
 - 책임: 중앙집중 Fleet 서버: 작업 할당, Traffic Management, 교착 해소
 
-> 상태: 최소판(3주차). 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송, `assignments.csv` 기록, 구역 허가(정원·lease·대기열)까지 구현했다. 교차로 우선순위, 교착 해소, 작업 취소, 실패 작업 재할당은 아직 없다.
+> 상태: 최소판(3주차). 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송, `assignments.csv` 기록, 구역 허가(정원·lease·작업 우선순위 대기열, 교착 시 허가 회수)까지 구현했다. 작업 취소, 실패 작업 재할당은 아직 없다.
 
 노드 세 개와 지표 변환 도구를 제공한다.
 
@@ -265,8 +265,7 @@ colcon test --packages-select amr_fleet_manager
 | 구역 목록 | 좁은 통로 2곳 확정. 교차로는 이진이 월드 좌표로 추가, 지도 v1(10/9) 뒤 map 좌표로 확정 |
 | 서버 재시작 직후 구역 | 새 서버는 구역 장부가 비어 있어, 통로 안에서 빠져나오는 로봇이 있어도 다른 로봇을 허가할 수 있다. 재시작 뒤 한동안 허가를 보류하거나 `ZoneRequest`에 "구역 안" 표시가 필요 |
 | 경로 충돌 예측 | 이진: Nav2 전역 경로 `/<ns>/plan` (`nav_msgs/Path`, map 프레임)을 그대로 구독 |
-| 교차로 우선순위 | 대기열이 FIFO다. 급한 작업을 가진 로봇 먼저(`REASON_PRIORITY_YIELD`)는 이후 |
-| 교착 해소 | 구역 대기 그래프에서 순환 탐지 → `GRANT_REVOKED` 등 2가지 이상 |
+| 교착 해소 | 1종(우선순위 낮은 로봇 허가 회수 `GRANT_REVOKED`)만 있다. 두 번째 전략은 이후. 로봇 쪽 물러나기는 `amr_zone_client` 몫 |
 | 가짜 로봇의 구역 요청 | `fake_robot`은 구역을 요청하지 않는다 |
 | 작업 취소 | `ACTION_CANCEL` 발행 경로 없음 (가짜 로봇은 받으면 처리한다) |
 | FAILED 작업 | 실패로 남긴다. 재할당 정책은 `ErrorInfo.code`별로 정한다 |

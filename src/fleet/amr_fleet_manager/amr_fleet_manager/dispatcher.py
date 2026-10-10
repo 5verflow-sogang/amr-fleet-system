@@ -214,6 +214,12 @@ class Dispatcher:
             resend.append(Outgoing(assignment_id, pending.robot_id, pending.task_id, first=False))
         return resend, given_up
 
+    def robot_priority(self, robot_id: str) -> int:
+        """로봇이 맡은 작업의 우선순위. 맡은 작업이 없으면 0 (구역 허가 순서에 쓴다)."""
+        robot = self.robots.get(robot_id)
+        task = self.tasks.get(robot.task_id) if robot is not None and robot.task_id else None
+        return task.info.priority if task is not None else 0
+
     def pending_ids(self) -> set[int]:
         """Ack를 기다리는 assignment_id."""
         return set(self._pending)

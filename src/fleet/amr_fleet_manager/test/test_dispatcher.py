@@ -212,3 +212,15 @@ def test_append_fault_event(tmp_path):
     append_fault_event(str(path), 'restart', now=110.5)
     with path.open(newline='') as f:
         assert list(csv.reader(f)) == [['time', 'event'], ['100.250000', 'kill'], ['110.500000', 'restart']]
+
+
+def test_robot_priority_from_assigned_task():
+    d = make()
+    d.update_robot(robot('amr_01'), '', 0.0)
+    assert d.robot_priority('amr_01') == 0
+    assert d.robot_priority('unknown') == 0
+    d.add_task(task('t1', priority=7))
+    d.assign(0.0)
+    assert d.robot_priority('amr_01') == 7
+    d.on_status('t1', 'amr_01', STATE_COMPLETED)
+    assert d.robot_priority('amr_01') == 0

@@ -5,7 +5,8 @@
 uint8 GRANT_GRANTED=0    # 진입 가능 (lease_expiry까지)
 uint8 GRANT_QUEUED=1     # 구역 앞에서 대기. 차례가 오면 서버가 GRANTED를 보낸다
 uint8 GRANT_REJECTED=2   # 이 구역으로는 불가. 우회 경로를 다시 계획한다
-uint8 GRANT_REVOKED=3    # 이미 받은 허가를 회수. 교착 해소용
+uint8 GRANT_REVOKED=3    # 이미 받은 허가를 회수. 교착 해소용. 로봇은 구역에서 물러나 반납(TYPE_RELEASE)한다.
+                         # 서버는 반납 전까지 구역을 넘기지 않고, 다시 요청하면 같은 REVOKED로 답한다
 
 uint8 REASON_NONE=0                  # GRANTED
 uint8 REASON_OCCUPIED=1              # 다른 로봇이 지나가는 중
