@@ -16,6 +16,8 @@ exec docker run --rm -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-
   -v "$REPO:/repo" -w /repo "$IMAGE" bash -c "
     set -e
     source /opt/ros/\${ROS_DISTRO:-humble}/setup.bash
+    # 레포 주인(호스트 사용자)과 컨테이너 사용자(root)가 달라 git이 거부하면 meta.json git_sha가 unknown이 된다
+    git config --global --add safe.directory /repo 2>/dev/null || true
     if [ -n \"\$HARNESS_PREP\" ]; then bash -c \"\$HARNESS_PREP\"; fi
     colcon build --base-paths src --build-base /tmp/harness_ws/build --install-base /tmp/harness_ws/install \
       --packages-up-to $PACKAGES > /tmp/harness_build.log 2>&1 || { tail -30 /tmp/harness_build.log; exit 1; }

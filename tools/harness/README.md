@@ -162,7 +162,8 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
   - `send_time`: 기록기가 원본 `/fleet/<topic>`을 받은 시각. `recv_time`: 기록기가 중계본 `/<robot>/fleet/<topic>`을 받은 시각. 둘 다 실제 시간
   - **기록 방법**: rclpy 기록 노드를 쓰지 않고 rosbag2로 `/fleet/*`, `/<robot>/fleet/*`, `/fleet/task_assignment_acks`를 녹화한 뒤 CSV를 오프라인으로 만든다. 변환은 `ros2 run amr_fleet_manager fleet_metrics <bag> --out <실행 폴더> --delay-ms <지연>`이 한다([amr_fleet_manager README](../../src/fleet/amr_fleet_manager/README.md) "Fleet 지표 변환"). 수신 시각은 bag에 저장된 수신 시각을 쓴다. Python 노드는 부하가 걸리면 수신 시각을 수 ms 늦게 적는데, 재려는 값이 바로 그 ms 단위 지연이라 측정이 틀어진다(민지, #33). `response_time.csv`의 Ack 컬럼도 같은 bag에서 만든다
   - `latency_ms` = (`recv_time` − `send_time`) × 1000. 주입 지연 + 중계 1홉 + DDS. 주입 0ms 조건이 중계 오버헤드 기준선이다
-  - `delivered`: 중계본이 오면 `1`, 안 오면 `0`(`recv_time`, `latency_ms`는 비움). 관측 마감 뒤에 보낸 메시지는 비운다(판정 안 함). 손실률은 `0`/`1`인 행만으로 센다
+  - `delivered`: 중계본이 오면 `1`, 안 오면 `0`(`recv_time`, `latency_ms`는 비움). 관측 시작 전·관측 마감 뒤에 보낸 메시지는 비운다(판정 안 함). 손실률은 `0`/`1`인 행만으로 센다
+  - **관측 시작**: rosbag은 토픽을 찾는 대로 구독해서 녹화 초반에는 원본만 녹화되고 로봇별 중계본은 아직 구독 전일 수 있다. 주기 토픽(heartbeat, task_table)의 모든 로봇 중계본이 한 번씩 녹화된 시각 − `delay_ms`보다 먼저 보낸 메시지는 판정하지 않는다. 실행 하나에 한 시각을 쓴다(링크마다 자르면 링크마다 초반 손실이 빠져 손실률이 낮게 나온다). 10/10 GCP 첫 실행에서 손실 0% 주입에 0.8%로 나오던 것이 0%가 됐다(녹화 시작 후 1.2초, 45행 제외)
   - 같은 `key`가 여러 번 오면(재전송) 첫 도착만 쓴다
   - **관측 마감**: 실행 종료 시각에서 `delay_ms` + 여유 시간(`grace_s`, 기본 1초)을 뺀 시각 이후에 보낸 메시지는 지연·손실 계산에서 뺀다. 예를 들어 지연 0.5초 조건에서 실행이 10초에 끝나면, 9.8초에 보낸 메시지는 10.3초에 도착할 예정이라 아직 오는 중이다. 이걸 손실로 세면 지연이 클수록 손실이 많은 것처럼 나와 연구 1의 결론이 왜곡된다(민지, #33). Ack도 같은 규칙을 쓰되, 여유 시간에 서버 재전송 간격 × 최대 재전송 횟수를 더한다(`amr_fleet_manager`의 `resend.interval_s` × `resend.max_resends`, 기본 1초 × 5 = 5초). 쓴 마감 시각은 `meta.json`의 `observation_cutoff`에 남긴다
 - `hop_latency.csv`: 구독 노드가 메시지를 꺼낸 1건(`ros2:rmw_take`, `taken=1`)마다 1행. `trace/`에서 오프라인으로 변환한다
@@ -222,7 +223,7 @@ tools/harness/results/<run_id>/
 | `use_sim_time`, `real_time_factor` | `true`, `0.87` | 시뮬레이터가 실제보다 느리게 돌았는지 |
 | `rmw_implementation` | `rmw_cyclonedds_cpp` | 연구 1 After 측정의 DDS 벤더 비교 (하연, #33) |
 | `qos_profile` | `default` | 연구 1 After 측정의 QoS 튜닝 전후 구분. 값은 [api.md 6절](../../docs/api.md#6-qos-기본값) 프로파일 이름 (하연, #33) |
-| `observation_cutoff` | `{"end": 612.3, "grace_s": 1.0, "cutoff": 610.8}` | 연구 1 지연·손실·Ack에서 뺀 실행 끝 구간 (하연·민지, #33) |
+| `observation_cutoff` | `{"end": 612.3, "grace_s": 1.0, "cutoff": 610.8, "start": 12.4}` | 연구 1 지연·손실·Ack에서 뺀 실행 끝 구간(하연·민지, #33)과 녹화 초반 구간(`start`) |
 
 ### 요약 통계
 
