@@ -24,9 +24,14 @@ fleet/task_auctions, fleet/task_bids로 - 장애 주입기 relay_auction 중계�
 README '확인 필요' 절 참고. 재경매는 두 가지 - AWARD 재전송 다 썼는데 ACCEPT 없음,
 그리고 ACCEPT 뒤 TaskStatus FAILED(최대 failed_retries번, 그래도 실패하면 실패로 남김
 - 중앙 assignment.failed_retries와 같은 규칙).
+
+내 상태(RobotState)를 아직 모를 때 공고를 받으면(기동 직후 등) 입찰 여부 결정을 미룬다 -
+상태를 먼저 확인하기 전에 "결정 끝"으로 기록해 버리면 그 경매에 영원히 입찰을 못 한다
+(10/10 연우 리뷰, #109). RobotState를 처음 받으면 미뤄 둔 공고를 마감 전인 것만 다시 본다.
 """
 from __future__ import annotations
 
+import signal
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -142,6 +147,9 @@ class TaskAuctionNode(Node):
         self._auctions: Dict[AuctionKey, _AuctionState] = {}
         # 입찰 여부 판단을 한 번만 하려고(같은 공고를 중계·재구독 등으로 다시 받아도 중복 입찰 방지).
         self._bid_decided: set = set()
+        # 내 상태(RobotState)를 아직 몰라 입찰 여부를 못 정한 공고 - (msg, 받은 시각).
+        # RobotState를 처음 받으면 마감 전인 것만 다시 본다(10/10 연우 리뷰, #109).
+        self._pending_bids: Dict[AuctionKey, Tuple[TaskAuction, float]] = {}
         # 입찰할 때 본 작업 내용 - AWARD를 받았을 때 재확인(decide_bid)하려면 필요하다
         # (TaskBid AWARD에는 task_id만 있고 좌표·마감이 없다).
         self._tasks_seen: Dict[AuctionKey, TaskInfo] = {}
@@ -174,12 +182,22 @@ class TaskAuctionNode(Node):
     def _on_robot_state(self, msg: RobotState):
         if msg.robot_id != self._robot_id:
             return
+        had_info = self._robot_info is not None
         self._robot_info = RobotInfo(
             robot_id=msg.robot_id,
             xy=(msg.pose.position.x, msg.pose.position.y),
             battery_percent=msg.battery_percent,
             mode=msg.mode,
         )
+        if had_info or not self._pending_bids:
+            return
+        # 내 상태를 처음 알았다 - 그걸 몰라서 미뤄 둔 공고들을 지금 다시 본다. 마감
+        # (bid_window_s)이 지났으면 이제 입찰해도 소용없으니 버린다 (10/10 연우 리뷰, #109).
+        now = self._now()
+        for key, (auction_msg, received_time) in list(self._pending_bids.items()):
+            del self._pending_bids[key]
+            if now - received_time < _duration_to_s(auction_msg.bid_window):
+                self._maybe_bid(key, auction_msg)
 
     # --- 참여 로봇 쪽: 공고를 보고 입찰할지 정한다 ---
 
@@ -199,9 +217,14 @@ class TaskAuctionNode(Node):
     def _maybe_bid(self, key: AuctionKey, msg: TaskAuction):
         if key in self._bid_decided:
             return
-        self._bid_decided.add(key)
         if self._robot_info is None:
+            # 내 상태(RobotState)를 아직 모른다 - "결정 끝"으로 기록하지 않고 미룬다.
+            # 그대로 기록해 버리면 상태를 공고보다 늦게 받은 로봇은 이 경매에 영원히
+            # 입찰하지 못한다(10/10 연우 리뷰, #109) - _on_robot_state가 상태를 처음
+            # 받으면 마감 전인지 보고 다시 판단한다.
+            self._pending_bids.setdefault(key, (msg, self._now()))
             return
+        self._bid_decided.add(key)
         task = self._tasks_seen[key]
         now = self._now()
         bid = decide_bid(self._robot_info, task, now, self._params)
@@ -233,11 +256,11 @@ class TaskAuctionNode(Node):
         state.bids.append(bid)
 
     def _on_task_bid(self, msg: TaskBid):
-        if msg.robot_id == self._robot_id:
-            return  # 자기 메시지(중계 에코) - 보낼 때 이미 처리했다
         key: AuctionKey = (msg.auctioneer_id, msg.auction_id)
 
         if msg.type == TaskBid.TYPE_BID:
+            if msg.robot_id == self._robot_id:
+                return  # 자기 입찰 에코 - 보낼 때 이미 _register_bid로 처리했다
             if key not in self._auctions:
                 return  # 내가 경매인이 아닌 경매의 입찰은 안 본다
             # 10/7 결정: 입찰 마감은 경매인(나)이 "받은" 시각 기준 - 보낸 로봇의 자기 신고
@@ -250,9 +273,18 @@ class TaskAuctionNode(Node):
             )
             self._register_bid(key, bid, received_time)
         elif msg.type == TaskBid.TYPE_AWARD:
+            # robot_id(보낸 경매인)로 자기 메시지를 거르지 않는다 - 경매인이 자기 경매에
+            # 자기 입찰이 낙찰되면(제일 싸서) robot_id==winner_id==나인 메시지도 와야
+            # 하는데, BID·ACCEPT·WITHDRAW와 같은 자기 필터를 여기 적용하면 그 경매는
+            # 영원히 ACCEPT를 못 보내고 AWARD만 자기한테 계속 재전송한다(10/10 발견, #109).
+            # winner_id만으로 정확히 거른다.
             if msg.winner_id == self._robot_id:
                 self._on_awarded(key, msg)
         elif msg.type == TaskBid.TYPE_ACCEPT:
+            # 위 AWARD와 같은 이유로 자기 필터를 안 쓴다 - 경매인이 자기 경매에 자기가
+            # 낙찰된 경우, 자기가 보낸 ACCEPT 에코를 받아야 경매인 역할로 확정
+            # 처리(phase='done')할 수 있다. _on_accept는 winner_id와 비교해 걸러서
+            # 다른 로봇·다른 경매의 ACCEPT에는 영향이 없다.
             self._on_accept(key, msg.robot_id)
         elif msg.type == TaskBid.TYPE_WITHDRAW:
             self._on_withdraw(key, msg.robot_id)
@@ -414,5 +446,8 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        # Ctrl+C는 터미널과 launch에서 SIGINT가 두 번 온다. 정리 중에 끊기지 않게 이후 신호는 무시한다
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         node.destroy_node()
-        rclpy.try_shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
