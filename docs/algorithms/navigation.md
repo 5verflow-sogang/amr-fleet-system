@@ -163,13 +163,39 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
 `Grid`가 원점 정보를 들고 있지 않은 설계(`grid.hpp`, A*와 공유)와 같은 이유로,
 odom/map 프레임 ↔ 이 좌표계 변환은 core가 아니라 3주차 `amr_nav2_plugins`가 맡는다.
 
-### 4-5. 이번 주 범위와 3주차 범위
+### 4-5. 범위 변화 (2주차 → 3주차)
 
-| 구분 | 이번 주(2주차) | 3주차 |
+| 구분 | 2주차 | 3주차 |
 | --- | --- | --- |
-| 장애물 | 정적 장애물만(`Grid` 비용값) | `amr_msgs/TrackedObstacleArray` 기반 동적 장애물을 비용 함수에 반영(연구 2, 4장의 AKF·확률적 TTC와 연결) |
-| 연결 | ROS 비의존 core만(`amr_planning_core`) | `amr_nav2_plugins`에서 `nav2_core::Controller`로 감싸 `controller_server`에 꽂는다(1주차 DWB baseline을 교체) |
-| 비교 | — | DWB·TEB와 CTE·정지 횟수·경로 길이로 비교(원 명세 "DWA vs TEB") |
+| 장애물 | 정적 장애물만(`Grid` 비용값) | 동적 장애물(4-6절)도 비용 함수·충돌 판정에 반영 |
+| 연결 | ROS 비의존 core만(`amr_planning_core`) | `amr_nav2_plugins::DwaController`로 `nav2_core::Controller` 감싸 `controller_server`에 `DWA`로 추가(1주차 DWB baseline은 비교용으로 남겨 둔다) |
+| 비교 | — | DWB·TEB와 CTE·정지 횟수·경로 길이로 비교(원 명세 "DWA vs TEB") — 아직 TODO |
+
+### 4-6. 동적 장애물 (3주차)
+
+`perception/obstacles`(`TrackedObstacleArray`)의 pose·twist·radius를 `DynamicObstacle`
+(x, y, vx, vy, radius)로 바꿔 `computeVelocityCommand`에 추가 인자로 넘긴다
+(`DwaConfig.predict_dynamic_obstacles`). 궤적 롤아웃의 각 시각 t마다 장애물을
+`x+vx·t, y+vy·t`로 등속 예측해 사각 풋프린트와의 거리를 구하고, 안전 여유
+(`dynamic_obstacle_safety_margin`) 안이면 그 궤적을 충돌로 걸러내고, 그 밖이면
+거리에 따라 줄어드는 소프트 비용(`dynamic_weight`, 영향 반경
+`dynamic_obstacle_influence_radius`)을 더한다. 동적 장애물을 안 넘기면(빈 벡터,
+기본값) 2주차 정적 장애물 전용 결과와 완전히 같다 — `predict_dynamic_obstacles:
+false`면 장애물이 관측 위치에 멈춰 있다고 본다(순간 스냅샷).
+
+`amr_nav2_plugins::DwaController`가 이 장애물 목록을 만들어 넘기고, 전역 경로에서
+로봇 앞 `lookahead_distance`만큼의 지점을 "다음 목표"로 골라 DWA에 준다. Gazebo
+월드 v0 + Nav2 bringup으로 실제 주행을 확인했다(`amr_bringup/launch/
+nav2_dwa_demo.launch.py`, `use_static_map`은 없어졌다 - 바로 아래 참고).
+
+처음엔 목표가 수락되고 BT가 시작된 뒤 `cmd_vel`이 전혀 나오지 않아 "NavFn이 큰
+지도(60x40m)에서 멈춘다"고 보고 global costmap을 로봇 중심 rolling_window(지도
+없이)로 바꿔 돌아갔었다. 그런데 진짜 원인은 지도 크기가 아니라 `obstacle_layer`가
+구독하는 토픽 이름이 실제 Gazebo LiDAR 토픽(`scan_raw`)과 달라 costmap이 영영
+`isCurrent()`가 안 되고 `planner_server`·`controller_server`가 그걸 기다리며
+조용히 멈춰 있던 것이었다 - 토픽을 맞추고 나니(+ bt_navigator가 찾는 컨트롤러
+이름 불일치, 최종 접근 시 목표 각도까지 회전하지 않던 버그도 같이 고쳐서)
+static_layer(지도 v0) 그대로도 바로 된다. rolling_window는 그래서 다시 뺐다.
 
 ## 5. Pure Pursuit · Stanley · PID
 
