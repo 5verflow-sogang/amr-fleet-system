@@ -133,6 +133,8 @@ jobs:
           [[ "$DELAY_MS" =~ $num && "$LOSS_PCT" =~ $num ]] || { echo "::error::delay_ms·loss_pct는 숫자"; exit 1; }
           label="${LABEL:-d${DELAY_MS}_l${LOSS_PCT}}"
           [[ "$label" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "::error::label은 영문·숫자·_.-만: $label"; exit 1; }
+          # 업로드 경로(runs/<시나리오>-<라벨>/)에 쓴다
+          echo "RESULTS_PREFIX=runs/${SCENARIO}-${label}" >> "$GITHUB_ENV"
           args=("$SCENARIO" -n "$REPEATS" --label "$label" --out "results/$(basename "$RUN_DIR")"
                 --set "delay_ms=$DELAY_MS" --set "loss_pct=$LOSS_PCT")
           if [ -n "$DURATION_S" ]; then
@@ -152,12 +154,29 @@ jobs:
           sys.exit(0 if done else 1)
           EOF
 
+      # 결과: gs://<버킷>/runs/<시나리오>-<라벨>/<날짜>_<실행 번호>/ (조건이 경로에 보이게)
+      # 실행 목록: gs://<버킷>/index.csv 에 한 줄 (tools/harness/index_run.py)
       - name: Upload results
-        if: always()
+        if: always() && env.RESULTS_PREFIX != ''
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          if ! ls "$RUN_DIR"/*/meta.json >/dev/null 2>&1; then echo "올릴 결과 없음"; exit 0; fi
           cat "$RUN_DIR"/summary_*.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-          gcloud storage cp -r "$RUN_DIR" "gs://${RESULTS_BUCKET}/runs/"
-          echo "결과: gs://${RESULTS_BUCKET}/runs/$(basename "$RUN_DIR")" >> "$GITHUB_STEP_SUMMARY"
+          dest="gs://${RESULTS_BUCKET}/${RESULTS_PREFIX}/$(date -u +%Y%m%d)_${GITHUB_RUN_ID}/"
+          gcloud storage cp -r "$RUN_DIR"/* "$dest"
+          echo "결과: $dest" >> "$GITHUB_STEP_SUMMARY"
+
+          # 받아서 한 줄 더해 올린다. 그사이 다른 실행이 바꿨으면(generation 불일치) 다시 받는다
+          index="gs://${RESULTS_BUCKET}/index.csv"
+          for attempt in 1 2 3; do
+            gen=$(gcloud storage objects describe "$index" --format='value(generation)' 2>/dev/null || echo 0)
+            rm -f index.csv
+            if [ "$gen" != 0 ]; then gcloud storage cp "$index" index.csv; fi
+            python3 tools/harness/index_run.py "$RUN_DIR" --index index.csv --path "$dest" --url "$RUN_URL"
+            if gcloud storage cp index.csv "$index" --if-generation-match="$gen"; then break; fi
+            echo "index.csv가 그사이 바뀜, 다시 시도 ($attempt/3)"
+          done
 
   # 성공·실패·취소와 상관없이 러너 VM과 러너 등록을 지운다
   stop-runner:
