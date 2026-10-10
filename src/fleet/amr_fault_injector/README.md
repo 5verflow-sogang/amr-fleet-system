@@ -43,8 +43,8 @@
 | `robot_ids` | `[amr_01, ..., amr_05]` | `config/fault_injector.yaml` | 중계할 로봇 |
 | `topics` | 위 4개 | `config/fault_injector.yaml` | 중계할 토픽 (`/fleet/` 뒤 이름) |
 | `tick_ms` | `1.0` | `config/fault_injector.yaml` | 지연 큐 확인 주기. 주입 지연 오차가 최대 이만큼 |
-| `delay_ms` | `100.0` | launch 인자 | 고정 지연 (명세 범위 0~500) |
-| `loss_pct` | `0.0` | launch 인자 | 손실률 (명세 범위 0~10) |
+| `delay_ms` | `100.0` | launch 인자 | 고정 지연 (ms). 명세 범위 0~500 밖이면 노드가 시작하지 않는다 |
+| `loss_pct` | `0.0` | launch 인자 | 손실률 (%). 명세 범위 0~10 밖이면 노드가 시작하지 않는다 |
 | `seed` | `0` | launch 인자 | 손실 난수 seed. 하네스 반복 번호 |
 | `relay_auction` | `false` | launch 인자 | 분산 경매 토픽도 중계한다. 분산·하이브리드 비교군 실험에서 켠다. 중앙집중 실험은 끈다 |
 
