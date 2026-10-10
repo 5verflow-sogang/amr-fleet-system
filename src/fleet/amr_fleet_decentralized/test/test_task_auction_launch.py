@@ -15,7 +15,6 @@ ROS_DOMAIN_ID를 이 패키지 전용 값으로 고정한다 - CI에서 다른 �
 격리하고 다른 패키지 테스트는 그대로 둔다.
 """
 
-import os
 import time
 import unittest
 import zlib
@@ -31,9 +30,9 @@ from amr_msgs.msg import RobotState, TaskAuction, TaskBid, TaskStatus
 from launch.actions import SetEnvironmentVariable
 
 # 패키지 이름으로부터 고정된 도메인 ID를 끌어낸다(실행마다 같은 값, 다른 패키지가
-# 같은 방식을 써도 패키지 이름이 다르면 거의 항상 다른 값) - ROS_DOMAIN_ID 유효
-# 범위(0~232) 안으로 맞춘다.
-_TEST_ROS_DOMAIN_ID = str(zlib.crc32(b'amr_fleet_decentralized') % 200 + 1)
+# 같은 방식을 써도 패키지 이름이 다르면 거의 항상 다른 값) - 리눅스에서 안전한
+# 범위 0~101(포트 계산이 65535를 안 넘는 범위) 안으로 맞춘다.
+_TEST_ROS_DOMAIN_ID = str(zlib.crc32(b'amr_fleet_decentralized') % 102)
 
 
 @pytest.mark.launch_test
