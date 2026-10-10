@@ -30,7 +30,7 @@ jobs:
       # ament_python 빌드 시 setuptools가 내는 알려진 deprecation 경고는 제외
       PYTHONWARNINGS: "ignore:setup.py install is deprecated::setuptools.command.install,ignore:easy_install command is deprecated::setuptools.command.easy_install"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # CI는 빌드와 단위 테스트만 하므로 실행용 의존성(exec_depend)은 설치하지 않는다.
       # Gazebo 같은 무거운 런타임 의존성 때문에 CI가 느려지는 것을 막기 위해서다.
@@ -73,7 +73,7 @@ jobs:
 
       - name: Upload logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: colcon-logs
           path: log/
