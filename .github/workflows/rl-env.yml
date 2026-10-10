@@ -23,8 +23,8 @@ jobs:
       run:
         working-directory: experiments/research2
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - name: Install from lock
         run: uv sync --locked
       # pytest는 uv.lock을 바꾸지 않으려고 --with로만 쓴다 (README "v0 학습 환경")
