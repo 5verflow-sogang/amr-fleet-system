@@ -79,3 +79,27 @@ def test_render_and_fault_meta():
                  'kill_at_s': -1.0, 'restart_after_s': -1.0, 'kill_robot': 'none', 'kill_robot_at_s': -1.0}
     f = fault_meta({'delay_ms': '0', 'kill_robot': 'amr_03', 'kill_robot_at_s': '120'})
     assert (f['kill_robot'], f['kill_robot_at_s']) == ('amr_03', 120.0)
+
+
+def test_fleet_task_and_recovery_metrics(tmp_path):
+    run = tmp_path / 'r'
+    run.mkdir()
+    (run / 'task_outcomes.csv').write_text(
+        'task_id,request_time,first_assign_time,robots,final_state,end_time\n'
+        't1,0,1,amr_01,COMPLETED,8\nt2,10,11,amr_01 amr_02,COMPLETED,40\nt3,50,,,,\nt4,51,52,amr_03,,\n')
+    m = fleet_metrics(run)
+    assert (m['fleet.tasks_requested'], m['fleet.tasks_completed'], m['fleet.task_completion_rate']) == (4, 2, 0.5)
+    assert 'fleet.reclaimed_tasks' not in m      # 로봇 장애 없는 실행
+
+    (run / 'recovery.csv').write_text(
+        'robot,kill_time,task_id,reassign_time,reassigned_robot,recovery_s,completed\n'
+        'amr_01,15,t2,21,amr_02,6.000,1\namr_01,15,t9,,,,0\n')
+    m = fleet_metrics(run)
+    assert m['fleet.reclaimed_tasks'] == 2
+    assert (m['fleet.recovery_s.mean'], m['fleet.recovery_s.max']) == (6.0, 6.0)
+    assert m['fleet.reclaimed_completed_rate'] == 0.5
+
+    (run / 'recovery.csv').write_text('robot,kill_time,task_id,reassign_time,reassigned_robot,recovery_s,completed\n'
+                                      'amr_03,15,,,,,\n')       # 놀던 로봇이 죽음
+    m = fleet_metrics(run)
+    assert m['fleet.reclaimed_tasks'] == 0 and 'fleet.recovery_s.mean' not in m

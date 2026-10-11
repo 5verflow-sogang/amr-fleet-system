@@ -24,6 +24,7 @@ ICON = {'PASS': '✅', 'MARGINAL': '⚠️', 'FAIL': '❌', 'NONE': 'ℹ️'}
 HEADLINE = (
     'fleet.latency_ms.mean', 'fleet.latency_ms.p95', 'fleet.loss_rate',
     'fleet.ack_rtt_ms.mean', 'fleet.ack_rate', 'fleet.resends.mean',
+    'fleet.task_completion_rate', 'fleet.recovery_s.mean', 'fleet.reclaimed_completed_rate',
     'run.real_time_factor',
 )
 
