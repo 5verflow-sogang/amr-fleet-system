@@ -188,7 +188,10 @@ def fault_meta(params: dict) -> Optional[dict]:
         return None
     return {'delay_ms': float(params['delay_ms']), 'loss_pct': float(params.get('loss_pct', 0)),
             'direction': 'server_to_robot', 'kill_at_s': float(params.get('kill_at_s', -1)),
-            'restart_after_s': float(params.get('restart_after_s', -1))}
+            'restart_after_s': float(params.get('restart_after_s', -1)),
+            # 로봇 장애 (fake_robots.launch.py kill_robot). 없으면 none, -1
+            'kill_robot': str(params.get('kill_robot', 'none')),
+            'kill_robot_at_s': float(params.get('kill_robot_at_s', -1))}
 
 
 def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[ConfigOverrides] = None) -> dict:

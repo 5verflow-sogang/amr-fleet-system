@@ -14,13 +14,14 @@ find_package(rclcpp REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 
-# ROS 비의존 코어 (경로 기하, Pure Pursuit, Stanley, 추종기, cte.csv). ROS 의존성을 붙이지 않는다
+# ROS 비의존 코어 (경로 기하, Pure Pursuit, Stanley, 추종기, 선속도 PID, cte.csv). ROS 의존성을 붙이지 않는다
 add_library(amr_control_core
   src/core/path_geometry.cpp
   src/core/pure_pursuit.cpp
   src/core/stanley.cpp
   src/core/path_tracker.cpp
   src/core/cte_log.cpp
+  src/core/pid.cpp
 )
 target_include_directories(amr_control_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -49,6 +50,8 @@ if(BUILD_TESTING)
   target_link_libraries(test_path_geometry amr_control_core)
   ament_add_gtest(test_path_tracker test/test_path_tracker.cpp)
   target_link_libraries(test_path_tracker amr_control_core)
+  ament_add_gtest(test_pid test/test_pid.cpp)
+  target_link_libraries(test_pid amr_control_core)
   ament_add_gtest(test_cte_log test/test_cte_log.cpp)
   target_link_libraries(test_cte_log amr_control_core)
 endif()

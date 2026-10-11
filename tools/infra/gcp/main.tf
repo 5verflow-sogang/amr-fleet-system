@@ -1,6 +1,10 @@
 # 계속 두는 자원: API, 결과 버킷, Docker 이미지 캐시. 러너 VM은 fleet-test.yml이 만들고 지운다.
 
-data "google_project" "this" {}
+# 프로젝트 번호(예산 알림 필터용). Cloud Resource Manager API가 켜진 뒤에 읽어야 하므로 API 켜기 뒤로 미룬다.
+# 미루지 않으면 새 프로젝트에서 첫 plan이 403으로 실패한다
+data "google_project" "this" {
+  depends_on = [google_project_service.this]
+}
 
 locals {
   services = concat([

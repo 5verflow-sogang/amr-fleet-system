@@ -11,7 +11,7 @@ import launch_testing.actions
 import launch_testing.asserts
 import pytest
 import rclpy
-from amr_msgs.msg import FleetHeartbeat
+from amr_msgs.msg import FleetHeartbeat, TaskBid
 
 DELAY_MS = 200.0
 COUNT = 20
@@ -25,6 +25,8 @@ def generate_test_description():
         parameters=[{
             'robot_ids': ['amr_01', 'amr_02'],
             'topics': ['heartbeat'],
+            # 분산 경매 토픽도 같은 지연으로 중계되는지 본다 (test_auction_relay)
+            'relay_auction': True,
             'delay_ms': DELAY_MS,
             'loss_pct': 0.0,
         }],
@@ -86,6 +88,33 @@ class TestRelayDelay(unittest.TestCase):
         self.assertGreaterEqual(min(delays), DELAY_MS)
         # 중계 1홉 + 타이머 주기 + 이 테스트 노드의 spin 오차
         self.assertLess(statistics.median(delays), DELAY_MS + 50.0)
+
+    def test_auction_relay(self):
+        # 로봇 → 로봇 경매 메시지도 로봇마다 중계되고 같은 지연이 걸린다. 보낸 로봇(amr_01)에게도 간다
+        received = {}
+        publisher = self.node.create_publisher(TaskBid, '/fleet/task_bids', 10)
+        for robot_id in ('amr_01', 'amr_02'):
+            self.node.create_subscription(
+                TaskBid, f'/{robot_id}/fleet/task_bids',
+                lambda msg, r=robot_id: received.setdefault(r, time.monotonic())
+                if msg.task_id == 'auction_test' else None, 10)
+
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline and (
+                publisher.get_subscription_count() < 1
+                or self.node.count_publishers('/amr_02/fleet/task_bids') < 1):
+            self.spin_for(0.1)
+        self.spin_for(1.0)
+
+        sent = time.monotonic()
+        publisher.publish(TaskBid(task_id='auction_test', robot_id='amr_01', type=TaskBid.TYPE_BID, cost=5.0))
+        end = time.monotonic() + 5.0
+        while time.monotonic() < end and len(received) < 2:
+            self.spin_for(0.05)
+
+        self.assertEqual(sorted(received), ['amr_01', 'amr_02'])
+        for t in received.values():
+            self.assertGreaterEqual((t - sent) * 1000.0, DELAY_MS)
 
 
 @launch_testing.post_shutdown_test()

@@ -55,7 +55,7 @@ def _floats(rows: Iterable[dict], key: str) -> list[float]:
 
 
 def fleet_metrics(run_dir: Path) -> dict[str, float]:
-    """fleet_latency.csv, response_time.csv → 실행 하나의 요약 값."""
+    """fleet_latency.csv, response_time.csv, task_outcomes.csv, recovery.csv → 실행 하나의 요약 값."""
     out = {}
     lat_rows = _read_csv(run_dir / 'fleet_latency.csv')
     judged = [r for r in lat_rows if r.get('delivered') in ('0', '1')]
@@ -82,6 +82,23 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
             out['fleet.response_ms.mean'] = sum(resp) / len(resp)
             out['fleet.response_ms.max'] = resp[-1]
             out['fleet.response_ms.n'] = len(resp)
+    # 작업 결과. 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로, 완료율은 같은 seed(같은 작업 일정)끼리 비교한다
+    tasks = _read_csv(run_dir / 'task_outcomes.csv')
+    if tasks:
+        done = sum(r['final_state'] == 'COMPLETED' for r in tasks)
+        out['fleet.tasks_requested'] = len(tasks)
+        out['fleet.tasks_completed'] = done
+        out['fleet.task_completion_rate'] = done / len(tasks)
+    # 로봇 장애 회수 (fault_events.csv에 robot_kill이 있을 때만 파일이 있다)
+    reclaimed = [r for r in _read_csv(run_dir / 'recovery.csv') if r.get('task_id')]
+    if (run_dir / 'recovery.csv').exists():
+        out['fleet.reclaimed_tasks'] = len(reclaimed)
+        recov = _floats(reclaimed, 'recovery_s')
+        if recov:
+            out['fleet.recovery_s.mean'] = sum(recov) / len(recov)
+            out['fleet.recovery_s.max'] = max(recov)
+        if reclaimed:
+            out['fleet.reclaimed_completed_rate'] = sum(r['completed'] == '1' for r in reclaimed) / len(reclaimed)
     return out
 
 

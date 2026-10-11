@@ -64,7 +64,7 @@ def test_systematic_scale_spread_matches_config():
     scales = np.concatenate([
         EncoderModel(R, EncoderNoiseConfig(seed=s)).radius_scale for s in range(1, 2001)])
     assert scales.mean() == pytest.approx(1.0, abs=0.0005)
-    assert scales.std() == pytest.approx(0.005, rel=0.05)
+    assert scales.std() == pytest.approx(EncoderNoiseConfig().wheel_radius_scale_stddev, rel=0.05)
 
 
 @pytest.mark.parametrize('steps', [100, 1000])

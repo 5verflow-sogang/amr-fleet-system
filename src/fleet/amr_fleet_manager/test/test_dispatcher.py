@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
 
-from amr_fleet_manager.dispatcher import (STATE_COMPLETED, STATE_FAILED, STATE_IN_PROGRESS, STATE_PENDING,
-                                          Dispatcher, DispatcherConfig)
+from amr_fleet_manager.dispatcher import (ERROR_CANCELED, STATE_COMPLETED, STATE_FAILED, STATE_IN_PROGRESS,
+                                          STATE_PENDING, Dispatcher, DispatcherConfig)
 from amr_fleet_manager.records import (ASSIGNMENTS_HEADER, AssignmentLog, append_fault_event, load_zones,
                                        next_epoch)
 
@@ -212,3 +212,102 @@ def test_append_fault_event(tmp_path):
     append_fault_event(str(path), 'restart', now=110.5)
     with path.open(newline='') as f:
         assert list(csv.reader(f)) == [['time', 'event'], ['100.250000', 'kill'], ['110.500000', 'restart']]
+
+
+def test_failed_task_retried_once():
+    d = make(failed_retries=1)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.update_robot(robot('amr_02', (5.0, 0.0)), '', 0.0)
+    d.add_task(task('t1'))
+    [first], _ = d.assign(0.0)
+
+    # 1회째 실패: 큐로 돌아가 다시 할당된다 (새 assignment_id)
+    assert d.on_status('t1', first.robot_id, STATE_FAILED)
+    assert (d.tasks['t1'].state, d.tasks['t1'].assignee, d.tasks['t1'].failures) == (STATE_PENDING, '', 1)
+    assert d.robots[first.robot_id].task_id == ''
+    [second], _ = d.assign(1.0)
+    assert second.assignment_id == first.assignment_id + 1
+
+    # 예전 로봇의 늦은 보고는 무시한다
+    if second.robot_id != first.robot_id:
+        assert not d.on_status('t1', first.robot_id, STATE_COMPLETED)
+
+    # 2회째 실패: 실패로 남는다
+    assert d.on_status('t1', second.robot_id, STATE_FAILED)
+    assert d.tasks['t1'].state == STATE_FAILED
+    assert d.assign(2.0) == ([], [])
+
+
+def test_failed_retries_zero_keeps_failed():
+    d = make(failed_retries=0)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    d.assign(0.0)
+    d.on_status('t1', 'amr_01', STATE_FAILED)
+    assert d.tasks['t1'].state == STATE_FAILED
+    with pytest.raises(ValueError):
+        make(failed_retries=-1)
+
+
+def test_canceled_task_not_retried():
+    # 서버가 취소해 온 FAILED는 재시도 횟수가 남아도 다시 할당하지 않는다 (#107 리뷰)
+    d = make(failed_retries=1)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    d.assign(0.0)
+    assert d.on_status('t1', 'amr_01', STATE_FAILED, error_code=ERROR_CANCELED)
+    assert (d.tasks['t1'].state, d.tasks['t1'].failures) == (STATE_FAILED, 0)
+    assert d.robots['amr_01'].task_id == ''
+    assert d.assign(1.0) == ([], [])
+
+
+# ---- 로봇 장애: 작업 회수 ----
+
+def test_dead_robot_task_reclaimed_and_reassigned():
+    d = make(robot_timeout_s=3.0, reclaim_timeout_s=5.0)
+    d.update_robot(robot('amr_01', (0.0, 0.0)), '', 0.0)
+    d.update_robot(robot('amr_02', (10.0, 0.0)), '', 0.0)
+    d.add_task(task('t1', (1.0, 0.0)))
+    [first], _ = d.assign(0.0)
+    assert first.robot_id == 'amr_01'
+    d.on_status('t1', 'amr_01', STATE_IN_PROGRESS)
+
+    # amr_01은 1초 뒤 죽고(RobotState 끊김), amr_02는 계속 보낸다
+    d.update_robot(robot('amr_01', mode=BUSY), 't1', 1.0)
+    for t in (2.0, 4.0, 5.5):
+        d.update_robot(robot('amr_02', (10.0, 0.0)), '', t)
+    assert d.reclaim_lost(5.9) == []          # 마지막 RobotState(1.0) 후 5초 전
+    assert d.reclaim_lost(6.0) == [('t1', 'amr_01')]
+    assert (d.tasks['t1'].state, d.tasks['t1'].assignee, d.tasks['t1'].reclaims) == (STATE_PENDING, '', 1)
+    assert d.tasks['t1'].failures == 0        # FAILED 재시도 횟수와 따로 센다
+    assert d.reclaim_lost(7.0) == []          # 한 번만
+
+    [second], _ = d.assign(6.0)
+    assert (second.robot_id, second.task_id, second.assignment_id) == ('amr_02', 't1', first.assignment_id + 1)
+    # 죽은 로봇의 늦은 보고는 무시한다
+    assert not d.on_status('t1', 'amr_01', STATE_COMPLETED)
+    assert d.on_status('t1', 'amr_02', STATE_COMPLETED)
+
+
+def test_reclaim_drops_pending_ack_of_dead_robot():
+    d = make(reclaim_timeout_s=5.0)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    d.assign(0.0)
+    assert d.pending_ids() == {1}
+    assert d.reclaim_lost(5.0) == [('t1', 'amr_01')]
+    assert d.pending_ids() == set()
+    assert d.robots['amr_01'].load == 0
+
+
+def test_idle_or_disabled_robot_not_reclaimed():
+    d = make(reclaim_timeout_s=5.0)
+    d.update_robot(robot('amr_01'), '', 0.0)   # 맡은 작업 없음
+    assert d.reclaim_lost(100.0) == []
+    off = make(reclaim_timeout_s=0.0)
+    off.update_robot(robot('amr_01'), '', 0.0)
+    off.add_task(task('t1'))
+    off.assign(0.0)
+    assert off.reclaim_lost(100.0) == []
+    with pytest.raises(ValueError):
+        make(robot_timeout_s=3.0, reclaim_timeout_s=2.0)

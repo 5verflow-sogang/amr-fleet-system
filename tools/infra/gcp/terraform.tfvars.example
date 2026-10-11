@@ -4,3 +4,6 @@ project_id = "amr-fleet"
 billing_account_id = ""
 budget_amount      = 50000
 budget_currency    = "KRW"
+# 결과 버킷 팀원 권한 (Google 계정). 읽기 / 새 파일 올리기(읽기 포함, 덮어쓰기·삭제 불가)
+results_viewers = []
+results_writers = []

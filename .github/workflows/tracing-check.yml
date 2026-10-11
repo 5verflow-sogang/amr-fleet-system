@@ -21,11 +21,12 @@ jobs:
     name: LTTng UST 이벤트 수집
     runs-on: ubuntu-22.04
     container: ros:humble
+    timeout-minutes: 20
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install LTTng and ros2_tracing
         run: |
@@ -72,7 +73,7 @@ jobs:
 
       - name: Upload trace
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lttng-demo-trace
           path: /tmp/tracing/

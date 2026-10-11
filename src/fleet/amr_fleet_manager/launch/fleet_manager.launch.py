@@ -52,6 +52,10 @@ def _server(context):
             executable='fleet_manager',
             parameters=[config, {
                 param: ParameterValue(arg(launch_arg), value_type=str) for param, launch_arg in SERVER_ARGS
+            }, {
+                # 구역 lease는 로봇과 같은 시계로 잰다. Gazebo와 같이 돌리면 true (amr_bringup system.launch.py)
+                # arg()는 이미 문자열이라 ParameterValue(value_type=bool)로 넘기면 타입 검사에서 실패한다
+                'use_sim_time': arg('use_sim_time').lower() == 'true',
             }],
             output='screen',
         )
@@ -92,6 +96,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'epoch_file', default_value='/tmp/amr_fleet_manager/epoch',
             description='서버 재시작 번호 파일. 서버가 뜰 때마다 1씩 올린다'),
+        DeclareLaunchArgument(
+            'use_sim_time', default_value='false',
+            description='시뮬레이션 시간을 쓸지. 구역 lease를 로봇과 같은 시계로 재야 하므로 Gazebo와 같이 돌리면 true'),
         DeclareLaunchArgument(
             'kill_at_s', default_value='-1',
             description='launch 시작 후 이 시각(실제 시간, s)에 서버를 SIGKILL. 음수면 죽이지 않는다'),

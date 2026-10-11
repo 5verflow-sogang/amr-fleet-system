@@ -121,24 +121,18 @@ Task make_task_for_fail()
   return t;
 }
 
-ErrorInfo canceled_error()
-{
-  ErrorInfo e;
-  e.message = "canceled";
-  return e;
-}
-
 // 취소는 다음 tick을 기다리지 않고 그 자리에서 FAILED를 보내고 작업을 비운다
 TEST_F(TaskCycleTest, CancelFailsImmediately)
 {
   ctx->assign(make_task("task_2", Task::TYPE_DELIVERY));
   run(3.0);   // move_to_pickup 중
-  ASSERT_TRUE(amr_bt::cancel_task(tree, *ctx, "task_2", canceled_error()));
+  ASSERT_TRUE(amr_bt::cancel_task(tree, *ctx, "task_2", amr_bt::canceled_error()));
   ASSERT_GE(events.size(), 2u);
   EXPECT_EQ(events.back().task_id, "task_2");
   EXPECT_EQ(events.back().state, TaskStatus::STATE_FAILED);
   EXPECT_EQ(events.back().phase, "move_to_pickup");
   EXPECT_EQ(events.back().error, "canceled");
+  EXPECT_EQ(events.back().code, ErrorInfo::ASSIGN_CANCELED);   // 서버가 다시 할당하지 않는 코드 (#107)
   EXPECT_TRUE(events.back().end);
   EXPECT_FALSE(ctx->busy());
 
@@ -153,7 +147,7 @@ TEST_F(TaskCycleTest, NewTaskRightAfterCancel)
 {
   ctx->assign(make_task("old", Task::TYPE_DELIVERY));
   run(3.0);
-  ASSERT_TRUE(amr_bt::cancel_task(tree, *ctx, "old", canceled_error()));
+  ASSERT_TRUE(amr_bt::cancel_task(tree, *ctx, "old", amr_bt::canceled_error()));
   ASSERT_FALSE(ctx->busy());   // amr_bt_node는 busy()면 ALREADY_BUSY로 거부한다
   ctx->assign(make_task("new", Task::TYPE_CHARGE));
   run(30.0);
@@ -177,7 +171,7 @@ TEST_F(TaskCycleTest, CancelDuringLoading)
   ctx->assign(make_task("task_3", Task::TYPE_DELIVERY));
   run(6.0);   // 이동 5 s 뒤 loading 중
   ASSERT_EQ(ctx->phase, "loading");
-  ASSERT_TRUE(amr_bt::cancel_task(tree, *ctx, "task_3", canceled_error()));
+  ASSERT_TRUE(amr_bt::cancel_task(tree, *ctx, "task_3", amr_bt::canceled_error()));
   EXPECT_EQ(events.back().state, TaskStatus::STATE_FAILED);
   EXPECT_EQ(events.back().phase, "loading");
 }
@@ -187,7 +181,7 @@ TEST_F(TaskCycleTest, CancelOfOtherTaskIgnored)
 {
   ctx->assign(make_task("mine", Task::TYPE_RETURN));
   run(1.0);
-  EXPECT_FALSE(amr_bt::cancel_task(tree, *ctx, "someone_else", canceled_error()));
+  EXPECT_FALSE(amr_bt::cancel_task(tree, *ctx, "someone_else", amr_bt::canceled_error()));
   EXPECT_TRUE(ctx->busy());
   run(30.0);
   EXPECT_EQ(events.back().state, TaskStatus::STATE_COMPLETED);

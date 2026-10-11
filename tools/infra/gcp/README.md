@@ -16,8 +16,9 @@ GitHub Actions (fleet-test.yml, 수동 실행)
   fleet-test (그 VM)
     ├─ startup.sh: Docker·러너 설치 → 작업 하나만 받는 러너로 등록
     ├─ Docker 이미지 빌드 (Artifact Registry 빌드 캐시)
-    ├─ 시나리오 실행 (지금은 smoke_fleet.sh, 하네스가 나오면 교체)
-    └─ 결과를 gs://amr-fleet-results/runs/<VM 이름>/ 에 업로드 (fleet-runner-vm 계정)
+    ├─ 하네스 실행: tools/harness/docker_run.sh <시나리오> -n <반복> (기본 fleet_fake)
+    ├─ 반복이 전부 실패하면 job 실패
+    └─ 결과·요약을 gs://amr-fleet-results/runs/<VM 이름>/ 에 업로드 (fleet-runner-vm 계정), 요약은 실행 화면 Summary에도
   stop-runner (ubuntu-latest, 항상 실행)
     └─ VM 삭제, 남은 러너 등록 삭제
 ```
@@ -25,11 +26,10 @@ GitHub Actions (fleet-test.yml, 수동 실행)
 | 파일 | 내용 |
 | --- | --- |
 | `main.tf` | API, 결과 버킷 `amr-fleet-results`, Artifact Registry `amr` |
-| `iam.tf` | 서비스 계정 `fleet-gha`(VM 생성·삭제), `fleet-runner-vm`(버킷·이미지 캐시), GitHub OIDC 연동 |
+| `iam.tf` | 서비스 계정 `fleet-gha`(VM 생성·삭제), `fleet-runner-vm`(버킷·이미지 캐시), GitHub OIDC 연동, 팀원 결과 버킷 권한(`results_viewers`·`results_writers`) |
 | `runner.tf` | 인스턴스 템플릿 `fleet-runner` (Spot, 최대 실행 시간 후 자동 삭제) |
 | `budget.tf` | 월 예산 알림 50/90/100% (`billing_account_id`를 줄 때만) |
 | `startup.sh` | VM 시작 스크립트 |
-| `smoke_fleet.sh` | 스모크 시나리오: Fleet 서버 + 장애 주입기 + 가짜 로봇 5대 + 작업 생성기, `/fleet` 토픽 rosbag → `fleet_metrics`로 `fleet_latency.csv`·`response_time.csv` |
 
 ### 비용 안전장치
 
@@ -87,6 +87,20 @@ Actions → Fleet Regression Test → Run workflow. `ref`에 브랜치나 `refs/
 ```bash
 gcloud storage ls gs://amr-fleet-results/runs/
 gcloud storage cp -r gs://amr-fleet-results/runs/<VM 이름> .
+```
+
+## 결과 보기 (팀원)
+
+권한은 하연이 `terraform.tfvars`의 `results_viewers`(읽기)·`results_writers`(새 파일 올리기)에 Google 계정을 넣고 `terraform apply`로 준다.
+
+- 브라우저: <https://console.cloud.google.com/storage/browser/amr-fleet-results> (권한 받은 Google 계정으로 로그인)
+- 터미널 (`gcloud auth login` 후):
+
+```bash
+gcloud storage ls gs://amr-fleet-results/runs/
+gcloud storage cp -r gs://amr-fleet-results/runs/<폴더> .
+# 쓰기 권한이 있으면 로컬 하네스 결과 올리기 (같은 이름의 파일은 덮어쓸 수 없다)
+gcloud storage cp -r tools/harness/results/<실행 폴더> gs://amr-fleet-results/runs/<폴더>/
 ```
 
 ## 문제 해결

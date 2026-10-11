@@ -1,6 +1,8 @@
-"""서버 → 로봇 토픽을 로봇별로 중계하며 지연·손실을 거는 노드.
+"""Fleet 토픽을 로봇별로 중계하며 지연·손실을 거는 노드.
 
 /fleet/<topic> 을 구독해 /<robot_id>/fleet/<topic> 으로 다시 발행한다.
+기본은 서버 → 로봇 토픽이다(D8). relay_auction이면 분산 경매 토픽(로봇 → 로봇)도 중계한다.
+분산·하이브리드 비교군이 중앙집중과 같은 지연·손실을 겪어야 비교가 공정하기 때문이다.
 메시지를 직렬화된 바이트 그대로 넘기므로 header.stamp와 번호 필드가 바뀌지 않는다 (api.md 4-3절).
 """
 
@@ -10,7 +12,7 @@ import time
 from functools import partial
 
 import rclpy
-from amr_msgs.msg import FleetHeartbeat, FleetTaskTable, TaskAssignment, ZoneGrant
+from amr_msgs.msg import FleetHeartbeat, FleetTaskTable, TaskAssignment, TaskAuction, TaskBid, ZoneGrant
 from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -19,12 +21,18 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 from .fault_model import DelayLine, FaultConfig, link_rng
 
 # 중계 대상 (api.md 4-2절 서버 → 로봇 토픽)
-TOPIC_TYPES = {
+SERVER_TOPICS = {
     'task_assignments': TaskAssignment,
     'heartbeat': FleetHeartbeat,
     'zone_grants': ZoneGrant,
     'task_table': FleetTaskTable,
 }
+# 분산 경매 (로봇 → 로봇, api.md 4-2절). 보낸 로봇에게도 중계본이 가며, 받는 로봇이 자기 것을 거른다
+AUCTION_TOPICS = {
+    'task_auctions': TaskAuction,
+    'task_bids': TaskBid,
+}
+TOPIC_TYPES = {**SERVER_TOPICS, **AUCTION_TOPICS}
 
 
 class FaultInjector(Node):
@@ -33,7 +41,10 @@ class FaultInjector(Node):
         super().__init__('fault_injector')
         robot_ids = self.declare_parameter(
             'robot_ids', ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05']).value
-        topics = self.declare_parameter('topics', list(TOPIC_TYPES)).value
+        topics = list(self.declare_parameter('topics', list(SERVER_TOPICS)).value)
+        # 분산·하이브리드 비교군 실험에서 켠다. 중앙집중 실험은 끈다 (D8)
+        if self.declare_parameter('relay_auction', False).value:
+            topics += [t for t in AUCTION_TOPICS if t not in topics]
         config = FaultConfig(
             delay_ms=self.declare_parameter('delay_ms', 0.0).value,
             loss_pct=self.declare_parameter('loss_pct', 0.0).value,

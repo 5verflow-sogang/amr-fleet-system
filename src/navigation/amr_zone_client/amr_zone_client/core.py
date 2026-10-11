@@ -17,15 +17,23 @@
 - 남은 거리는 경로의 시작점이 아니라 로봇과 가장 가까운 경로 점부터 잰다(경로가 로봇 뒤쪽 점도
   담고 있을 수 있어서 - geometry.remaining_distance_to_rect).
 - ZoneGrant는 모든 로봇에 방송되므로 robot_id로 거른다 (on_grant).
+
+속도 상한 병합(#69·#70): 구역 상한과 SafetyStatus.speed_limit 중 더 작은 쪽을 쓴다(둘 다
+없으면 제한 없음). speed_limit이 낮아질 때는 decel_mps2 이내로 부드럽게 따라간다(구역
+진입 감속과 같은 방식) - update()의 safety_speed_limit_mps 인자, ramp_cap_down 참고.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Sequence
 
-from .geometry import Point, Rect, point_in_rect, remaining_distance_to_rect, speed_cap_for_stop
+from .geometry import (
+    Point, Rect, combine_caps, point_in_rect, ramp_cap_down, remaining_distance_to_rect,
+    speed_cap_for_stop,
+)
 
 # amr_msgs/msg/ZoneRequest.TYPE_* 와 같은 값
 TYPE_ACCESS = 0
@@ -84,6 +92,9 @@ class ZoneClientConfig:
     retry_period_s: float = 5.0
     # 구역 검사를 로봇 앞 이 거리(m)까지만 한다. None이면 trigger_distance_m + 여유로 정한다 (#66).
     lookahead_m: Optional[float] = None
+    # SafetyStatus.speed_limit 램프의 "제한 없음" 기준값(ramp_cap_down). nav2_params.yaml
+    # FollowPath.max_vel_x·URDF max_linear_velocity와 동일하게 둔다(#69·#70).
+    max_linear_velocity_mps: float = 2.0
 
 
 class ZoneClientCore:
@@ -96,6 +107,10 @@ class ZoneClientCore:
         self._lookahead_m = (
             config.lookahead_m if config.lookahead_m is not None
             else config.trigger_distance_m + _DEFAULT_LOOKAHEAD_MARGIN_M)
+        # SafetyStatus.speed_limit 램프 상태 (ramp_cap_down). 노드가 "끊김"을 판단해 None을
+        # 넘기면 그 틱은 제한 없음으로 다룬다 - update()의 safety_speed_limit_mps 참고.
+        self._safety_cap_effective: Optional[float] = None
+        self._safety_cap_last_t: Optional[float] = None
 
     @property
     def zone_ids(self) -> List[str]:
@@ -114,10 +129,23 @@ class ZoneClientCore:
     def request_id(self, zone_id: str) -> Optional[int]:
         return self._state[zone_id].request_id
 
-    def update(self, now: float, path_xy: Sequence[Point], robot_xy: Point):
+    def update(
+        self, now: float, path_xy: Sequence[Point], robot_xy: Point,
+        safety_speed_limit_mps: Optional[float] = None, current_speed_mps: Optional[float] = None,
+    ):
         """한 틱 처리.
 
-        반환: (보낼 ZoneRequest 목록, cmd_vel 선속도 상한 m/s (제한 없으면 None)).
+        safety_speed_limit_mps: SafetyStatus.speed_limit의 이번 틱 값. 끊김(타임아웃)
+        판단은 노드가 하고(README 'SafetyStatus 연동' 절 참고), 끊겼으면 None을 넘긴다 - 메시지
+        자체의 inf(LEVEL_NORMAL, "제한 없음")도 None과 같게 다룬다.
+
+        current_speed_mps: 로봇이 지금 실제로 받고 있는 명령 선속도(노드가 마지막으로
+        내보낸 cmd_vel.linear.x) - speed_limit이 낮아질 때 램프 시작점을 이 값과
+        min()으로 낮춰서, 상한이 실제 속도보다 높아 아직 전혀 효과가 없는 동안에도
+        감속이 곧바로 시작되게 한다(#93 연우 리뷰, geometry.ramp_cap_down 참고).
+
+        반환: (보낼 ZoneRequest 목록, cmd_vel 선속도 상한 m/s (제한 없으면 None)). 상한은
+        구역 상한과 (부드럽게 따라간) safety_speed_limit_mps 중 더 작은 쪽이다.
         """
         outgoing: List[OutgoingRequest] = []
         speed_cap: Optional[float] = None
@@ -132,7 +160,17 @@ class ZoneClientCore:
             outgoing.extend(zone_outgoing)
             if zone_cap is not None:
                 speed_cap = zone_cap if speed_cap is None else min(speed_cap, zone_cap)
-        return outgoing, speed_cap
+
+        if safety_speed_limit_mps is not None and math.isinf(safety_speed_limit_mps):
+            safety_speed_limit_mps = None  # LEVEL_NORMAL(inf) == 제한 없음
+        dt = 0.0 if self._safety_cap_last_t is None else max(0.0, now - self._safety_cap_last_t)
+        safety_cap = ramp_cap_down(
+            safety_speed_limit_mps, self._safety_cap_effective, dt, self._config.decel_mps2,
+            self._config.max_linear_velocity_mps, current_speed_mps)
+        self._safety_cap_effective = safety_cap
+        self._safety_cap_last_t = now
+
+        return outgoing, combine_caps(speed_cap, safety_cap)
 
     def _has_valid_grant(self, state: _ZoneState, now: float) -> bool:
         """GRANTED이고 lease_expiry가 아직 안 지났는지. INSIDE 전환·정지 상한 해제 둘 다 이 기준을 쓴다."""
