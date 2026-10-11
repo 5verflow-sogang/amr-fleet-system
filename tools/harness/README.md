@@ -18,6 +18,7 @@ python3 tools/harness/run.py fleet_fake -n 10 --set delay_ms=200 --set loss_pct=
 
 # 호스트에서 컨테이너로 (필요한 패키지만 빌드하고 run.py를 부른다)
 tools/harness/docker_run.sh loc_basic -n 10
+HARNESS_FRESH=1 tools/harness/docker_run.sh loc_basic -n 10   # 반복마다 새 컨테이너
 
 # 실행 목록(index.csv)에 한 줄 더하기 (fleet-test.yml이 버킷에 올리며 쓴다, ROS 불필요)
 python3 tools/harness/index_run.py tools/harness/results/<out 폴더> --index index.csv --path <결과 위치>
@@ -32,6 +33,22 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 | `--label` | 조건 이름. 요약에서 같은 시나리오·라벨끼리 묶는다 |
 | `--set 이름=값` | 시나리오 `params` 덮어쓰기 (지연·손실, 지도 경로 등) |
 | `--config <패키지>/<share 경로>=<파일>` | 설치된 설정 파일을 실행 동안만 바꿔 끼운다 (튜닝 후보 비교). 파일 해시를 `meta.json`의 `config_overrides`에 남기고 끝나면 되돌린다 |
+| `--max-attempts` | 기동 단계 실패(lifecycle 응답 유실 등) 때 같은 반복을 다시 시도하는 최대 횟수 (기본 3). 실패한 시도는 `_failN` 폴더로 남는다 |
+| `--no-dds-isolation` | 아래 DDS 격리를 끈다. 지금 셸의 `ROS_DOMAIN_ID`를 그대로 쓴다 |
+| `--repeat-offset`, `--stamp` | 반복을 나눠 부를 때 반복 번호·seed 시작과 결과 폴더 시각을 맞춘다. 같은 `--stamp`면 요약이 그동안의 반복을 모두 묶는다 (`HARNESS_FRESH`가 쓴다) |
+
+**반복 사이 격리**: 한 컨테이너에서 반복하면 앞 실행의 DDS 흔적(ros2 daemon의 노드·토픽 캐시, 공유 메모리 파일, 늦게 도착한 발견 메시지)이 다음 실행에 섞일 수 있다. 그래서 하네스는 기본으로
+
+1. 시도(재시도 포함)마다 `ROS_DOMAIN_ID`를 1~100 사이에서 바꾼다. 시뮬레이터·노드·`ros2` CLI·주행 프로세스가 모두 같은 값을 물려받고, Gazebo 통신도 `IGN_PARTITION`으로 나눈다. 0은 손으로 띄운 노드의 기본값이라 쓰지 않고, 101보다 크면 Fast DDS 포트가 리눅스 임시 포트와 겹친다.
+2. 시도가 끝나면 `ros2 daemon stop`과 `fastdds shm clean`(죽은 프로세스의 공유 메모리 파일만 지움)을 한다.
+3. 쓴 값은 `meta.json`의 `dds`(`ros_domain_id`, `reset`)에 남는다.
+
+격리가 되는지 보는 기록도 `meta.json`에 남긴다. 같은 조건을 5~10번 연달아 돌려 뒤 반복으로 갈수록 나빠지는지 본다.
+
+- `ready_s`: 실행 시작부터 프로세스마다 준비(`ready_topic`·`ready_cmds` 통과)될 때까지 걸린 시간(초). 뒤 반복에서 늘거나 기동 실패(`_failN`)가 늘면 격리 문제다.
+- `leftover_processes`: 정리(프로세스 그룹 종료·`cleanup`) 뒤에도 살아 있는 ROS·Gazebo 프로세스. 비어 있어야 한다. 남은 시뮬레이터가 `/clock`을 계속 내면 다음 실행의 시계가 튀고, 같은 이름의 발행자가 겹친다.
+
+그래도 뒤 반복으로 갈수록 결과가 달라지는지 의심되면 `HARNESS_FRESH=1`로 반복마다 컨테이너를 새로 띄워 비교한다. 빌드 결과는 이번 실행 동안만 쓰는 docker 볼륨에 두어 두 번째 컨테이너부터는 빌드가 거의 없고, 끝나면 볼륨을 지운다. Discord 요약은 마지막 반복에서 한 번만 보낸다.
 
 **시나리오** (`scenarios/*.yaml`)
 

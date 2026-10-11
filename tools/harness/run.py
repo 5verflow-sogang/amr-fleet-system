@@ -12,6 +12,7 @@ ROS 환경(워크스페이스를 source한 셸 또는 컨테이너) 안에서 �
 """
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -20,7 +21,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness.runner import ConfigOverrides, run_once  # noqa: E402
+from harness.runner import ConfigOverrides, dds_domain, dds_reset, run_once  # noqa: E402
 from harness.notify import notify  # noqa: E402
 from harness.summary import summarize, to_markdown  # noqa: E402
 
@@ -61,6 +62,12 @@ def main(argv=None) -> int:
     ap.add_argument('--out', default=str(HERE / 'results'))
     ap.add_argument('--max-attempts', type=int, default=3,
                     help='기동 단계에서 실패하면 같은 반복을 다시 시도하는 최대 횟수. 실패한 시도 폴더는 _failN으로 남긴다')
+    ap.add_argument('--no-dds-isolation', action='store_true',
+                    help='시도마다 ROS_DOMAIN_ID를 바꾸고 DDS 흔적을 지우는 것을 끈다 (지금 셸의 도메인을 그대로 씀)')
+    ap.add_argument('--repeat-offset', type=int, default=0,
+                    help='반복 번호·seed를 이만큼 밀어 시작한다. docker_run.sh 새 컨테이너 모드가 반복 하나씩 부를 때 쓴다')
+    ap.add_argument('--stamp', default=None,
+                    help='결과 폴더 이름의 시각. 같은 값으로 나눠 부르면 요약이 그동안의 반복을 모두 묶는다')
     args = ap.parse_args(argv)
 
     scenario = load_scenario(args.scenario)
@@ -69,28 +76,36 @@ def main(argv=None) -> int:
     if seed_base < 1:
         # 0은 패키지마다 뜻이 다르다(매번 무작위 / 고정값). 하네스는 0을 넘기지 않는다 (README "seed 규칙")
         ap.error('--seed-base는 1 이상이어야 한다 (튜닝 실험은 1001부터)')
-    stamp = time.strftime('%Y%m%d-%H%M%S')
+    stamp = args.stamp or time.strftime('%Y%m%d-%H%M%S')
     out = Path(args.out)
-    run_dirs = []
+    tag = f"{scenario['name']}{'-' + args.label if args.label else ''}"
+    isolate = not args.no_dds_isolation
+    if isolate:
+        dds_reset()  # 이전 작업이 남긴 흔적부터 지우고 시작한다
+    attempts = args.repeat_offset
     with ConfigOverrides(args.config) as overrides:
-        for i in range(args.repeats):
-            tag = f"{scenario['name']}{'-' + args.label if args.label else ''}"
+        for i in range(args.repeat_offset, args.repeat_offset + args.repeats):
             run_dir = out / f'{tag}_{stamp}_{i:02d}'
             run_params = {**params, 'repeat': i, 'seed': seed_base + i}
             for attempt in range(1, args.max_attempts + 1):
-                meta = run_once(scenario, run_params, run_dir, overrides)
+                # 재시도도 새 도메인에서 한다. 앞 시도의 늦은 메시지·발견 정보가 섞이지 않게
+                domain = dds_domain(attempts) if isolate else None
+                attempts += 1
+                meta = run_once(scenario, run_params, run_dir, overrides, domain_id=domain, reset_dds=isolate)
                 if not meta.get('startup_failure') or attempt == args.max_attempts:
                     break
                 # 기동 실패(예: lifecycle 전환 응답 유실)는 시도 폴더를 남기고 같은 seed로 다시 한다
                 print(f"  기동 실패, 다시 시도 ({attempt}/{args.max_attempts}): {meta.get('error')}", flush=True)
                 run_dir.rename(run_dir.with_name(f'{run_dir.name}_fail{attempt}'))
-            run_dirs.append(run_dir)
-            print(f"[{i + 1}/{args.repeats}] {run_dir.name}: {meta['outcome']} "
+            print(f"[{i + 1}/{args.repeat_offset + args.repeats}] {run_dir.name}: {meta['outcome']} "
                   f"(RTF {meta.get('real_time_factor')}, {meta['duration_wall_s']}s)", flush=True)
 
+    # 같은 stamp로 나눠 부른 반복(새 컨테이너 모드)까지 묶는다. _failN 시도 폴더는 뺀다
+    pattern = re.compile(rf'{re.escape(tag)}_{re.escape(stamp)}_\d+')
+    run_dirs = sorted(d for d in out.glob(f'{tag}_{stamp}_*') if d.is_dir() and pattern.fullmatch(d.name))
     summary = summarize(run_dirs)
     summary_md = to_markdown(summary)
-    path = out / f"summary_{scenario['name']}{'-' + args.label if args.label else ''}_{stamp}.md"
+    path = out / f'summary_{tag}_{stamp}.md'
     path.write_text(summary_md, encoding='utf-8')
     print(summary_md)
     print(f'요약: {path}')
