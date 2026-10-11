@@ -23,7 +23,7 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            # 'node_name = amr_docking.node_module:main',
+            'docking_server = amr_docking.docking_server_node:main',
         ],
     },
 )
