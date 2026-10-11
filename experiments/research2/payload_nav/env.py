@@ -55,7 +55,7 @@ class EnvConfig:
     w_near: float = 0.5                 # /m (안전거리 침범량). 장애물만, 벽은 제외
     d_safe: float = 0.3                 # m. 명세 긴급정지 거리
     w_smooth: float = 0.05              # 정규화된 명령 변화량(|Δv|/v_max + |Δω|/ω_max)당
-    r_collision: float = -10.0
+    r_collision: float = -40.0          # v0 튜닝 (README "v0 튜닝 기록")
     r_arrival: float = 10.0
     r_timeout: float = -10.0
     w_overshoot: float = 5.0            # /m
