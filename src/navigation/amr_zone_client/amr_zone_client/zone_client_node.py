@@ -8,6 +8,9 @@ ZoneRequest를 보내고, 허가 전까지는 cmd_vel을 감속·정지시킨다
 
 cmd_vel 체인에서의 위치는 README 'cmd_vel 체인' 절 참고 — 최종 cmd_vel 발행은 이 노드 몫이
 아니다 (안전 노드가 가로채는 게 팀 결정, project-spec.md '안전 정지 책임' 절).
+
+BACKING(교착 해소, 10/11 결정) 중에는 cmd_vel_nav를 무시하고 core가 낸 후진 속도를 직접
+cmd_vel_zone_limited로 낸다 - README '동작 규칙' 절, core.py 모듈 설명 참고.
 """
 
 from __future__ import annotations
@@ -22,12 +25,16 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
+from std_msgs.msg import String
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from .core import TYPE_RELEASE, ZoneClientConfig, ZoneClientCore
 from .zones_config import load_zone_configs
+
+_STATE_TOPIC = 'zone_client/state'
+_STATE_PUBLISH_PERIOD_S = 1.0
 
 
 class ZoneClientNode(Node):
@@ -76,6 +83,10 @@ class ZoneClientNode(Node):
             retry_period_s=p('retry_period_s', 5.0).value,
             lookahead_m=lookahead_m if lookahead_m > 0.0 else None,
             max_linear_velocity_mps=p('max_linear_velocity_mps', 2.0).value,
+            backing_speed_mps=p('backing_speed_mps', 0.15).value,
+            backing_margin_m=p('backing_margin_m', 0.3).value,
+            backing_max_distance_m=p('backing_max_distance_m', 5.0).value,
+            backing_timeout_s=p('backing_timeout_s', 40.0).value,
         ))
 
         self._path_xy: List[tuple] = []
@@ -86,6 +97,10 @@ class ZoneClientNode(Node):
         # speed_limit 램프 시작점을 낮추는 데 쓴다 (core.update의 current_speed_mps,
         # #93 연우 리뷰) - 마지막으로 내보낸(상한 적용 후) cmd_vel.linear.x.
         self._last_cmd_vel_mps: float = 0.0
+        # None이 아니면 BACKING 중 - cmd_vel_nav를 무시하고 이 값을 직접 낸다(10/11 결정).
+        self._backing_linear_x: Optional[float] = None
+        self._last_state_label: Optional[str] = None
+        self._last_state_pub_t: Optional[float] = None
 
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -93,6 +108,7 @@ class ZoneClientNode(Node):
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self._request_pub = self.create_publisher(ZoneRequest, zone_requests_topic, qos)
         self._cmd_vel_pub = self.create_publisher(Twist, cmd_vel_out_topic, 10)
+        self._state_pub = self.create_publisher(String, _STATE_TOPIC, 10)
         self.create_subscription(ZoneGrant, zone_grants_topic, self._on_grant, qos)
         self.create_subscription(Path, plan_topic, self._on_path, 10)
         self.create_subscription(Twist, cmd_vel_in_topic, self._on_cmd_vel, 10)
@@ -102,7 +118,7 @@ class ZoneClientNode(Node):
         self.get_logger().info(
             f'zone_client({self._robot_id}): 구역 {zones and [z.zone_id for z in zones] or "없음"}, '
             f'구독 {zone_grants_topic} (허가), {plan_topic} (경로), {safety_status_topic} '
-            f'(speed_limit) · 발행 {zone_requests_topic}')
+            f'(speed_limit) · 발행 {zone_requests_topic}, {_STATE_TOPIC} (상태)')
 
     def _on_path(self, msg: Path):
         self._path_xy = [(pose.pose.position.x, pose.pose.position.y) for pose in msg.poses]
@@ -123,6 +139,8 @@ class ZoneClientNode(Node):
         self._safety_status_last_t = self.get_clock().now().nanoseconds * 1e-9
 
     def _on_cmd_vel(self, msg: Twist):
+        if self._backing_linear_x is not None:
+            return  # BACKING 중에는 cmd_vel_nav를 무시한다(10/11 결정) - _update가 직접 낸다
         out = Twist()
         out.linear.x = min(msg.linear.x, self._speed_cap) if self._speed_cap is not None else msg.linear.x
         out.linear.y = msg.linear.y
@@ -130,6 +148,12 @@ class ZoneClientNode(Node):
         out.angular = msg.angular
         self._cmd_vel_pub.publish(out)
         self._last_cmd_vel_mps = out.linear.x
+
+    def _publish_cmd(self, linear_x: float):
+        out = Twist()
+        out.linear.x = linear_x
+        self._cmd_vel_pub.publish(out)
+        self._last_cmd_vel_mps = linear_x
 
     def _lookup_robot_xy(self):
         try:
@@ -143,8 +167,12 @@ class ZoneClientNode(Node):
         robot_xy = self._lookup_robot_xy()
         if robot_xy is None:
             # 위치를 모르면 fail-closed: 상한을 0으로 묶어 멈춰 세운다. 경고는 TF 조회 쪽에서
-            # 이미 throttle해서 남긴다 (#66)
+            # 이미 throttle해서 남긴다 (#66). BACKING 중이면(위치가 있어야 후진 거리를 재므로)
+            # 같은 규칙으로 바로 정지한다 - core 상태는 그대로 두고(이번 틱만 건너뜀) TF가
+            # 돌아오면 이어서 재개한다.
             self._speed_cap = 0.0
+            if self._backing_linear_x is not None:
+                self._publish_cmd(0.0)
             return
         now = self.get_clock().now().nanoseconds * 1e-9
         # 끊김(한 번도 못 받았거나 timeout 넘게 조용함) 판단은 노드 몫이다 - core는 ROS 비의존
@@ -153,9 +181,12 @@ class ZoneClientNode(Node):
         if (self._safety_status_last_t is None
                 or now - self._safety_status_last_t > self._safety_status_timeout_s):
             safety_limit = None
-        outgoing, speed_cap = self._core.update(
+        outgoing, speed_cap, backing_linear_x, errors = self._core.update(
             now, self._path_xy, robot_xy, safety_limit, self._last_cmd_vel_mps)
         self._speed_cap = speed_cap
+        self._backing_linear_x = backing_linear_x
+        for error in errors:
+            self.get_logger().error(error)
         for item in outgoing:
             msg = ZoneRequest()
             msg.header.stamp = self.get_clock().now().to_msg()
@@ -166,6 +197,20 @@ class ZoneClientNode(Node):
             self._request_pub.publish(msg)
             if item.type == TYPE_RELEASE:
                 self.get_logger().info(f'구역 {item.zone_id} 반납 (request_id={item.request_id})')
+        if backing_linear_x is not None:
+            # BACKING 중 - cmd_vel_nav와 무관하게 이 틱의 후진 속도를 바로 낸다
+            self._publish_cmd(backing_linear_x)
+        self._publish_state(now)
+
+    def _publish_state(self, now: float):
+        label = self._core.state_label(now)
+        changed = label != self._last_state_label
+        if not changed and self._last_state_pub_t is not None \
+                and now - self._last_state_pub_t < _STATE_PUBLISH_PERIOD_S:
+            return
+        self._state_pub.publish(String(data=label))
+        self._last_state_label = label
+        self._last_state_pub_t = now
 
 
 def main(args=None):

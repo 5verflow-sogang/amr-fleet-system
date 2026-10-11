@@ -34,3 +34,13 @@
     # speed_limit이 낮아질 때 램프의 "제한 없음" 기준(ramp_cap_down) - nav2_params.yaml
     # FollowPath.max_vel_x·URDF max_linear_velocity와 동일하게 둔다
     max_linear_velocity_mps: 2.0
+    # BACKING(교착 해소, 10/11 결정): INSIDE에서 GRANT_REVOKED를 받으면 cmd_vel_nav를 무시하고
+    # 이 속도로 직접 후진한다(decel_mps2 이내로 가감속)
+    backing_speed_mps: 0.15
+    # 구역 경계를 벗어난 뒤 이만큼 더 나가면 정지·반납한다(이 지점에서 속도가 decel_mps2로 0이 된다)
+    backing_margin_m: 0.3
+    # 안전장치(fail-closed): 후진 시작 위치에서 이 거리를 넘으면 멈추고 ERROR. zones.yaml 구역
+    # 크기에 맞춰 조정한다 - 기본값은 수 m 구역을 넉넉히 빠져나올 여유다
+    backing_max_distance_m: 5.0
+    # 안전장치(fail-closed): 후진을 시작한 뒤 이 시간을 넘으면 멈추고 ERROR
+    backing_timeout_s: 40.0
