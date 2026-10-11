@@ -1,3 +1,0 @@
-date,scenario,label,delay_ms,loss_pct,repeats,completed,git_sha,path,actions_url
-2026-10-10T14:43:57Z,fleet_fake,before,0,0,1,1,abc1,gs://b/runs/fleet_fake-before/20261010_1001/,https://x/runs/1001
-2026-10-10T14:43:57Z,fleet_fake,before,0,0,1,1,abc2,gs://b/runs/fleet_fake-before/20261010_1002/,https://x/runs/1002

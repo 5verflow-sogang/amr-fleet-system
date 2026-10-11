@@ -12,12 +12,16 @@ from typing import Iterable, Optional
 
 from .summary import load_meta
 
-INDEX_HEADER = ['date', 'scenario', 'label', 'delay_ms', 'loss_pct', 'repeats', 'completed',
-                'git_sha', 'path', 'actions_url']
+INDEX_HEADER = ['date', 'scenario', 'label', 'delay_ms', 'loss_pct', 'kill_robot', 'kill_robot_at_s',
+                'relay_auction', 'repeats', 'completed', 'git_sha', 'path', 'actions_url']
 
 
 def _num(value) -> str:
     return '' if value is None else f'{float(value):g}'
+
+
+def _flag(value) -> str:
+    return '' if value is None else str(bool(value)).lower()
 
 
 def index_row(run_dirs: Iterable[Path], path: str, actions_url: str = '',
@@ -34,6 +38,9 @@ def index_row(run_dirs: Iterable[Path], path: str, actions_url: str = '',
         first.get('label', ''),
         _num(fault.get('delay_ms')),
         _num(fault.get('loss_pct')),
+        fault.get('kill_robot', ''),
+        _num(fault.get('kill_robot_at_s')),
+        _flag(fault.get('relay_auction')),
         str(len(metas)),
         str(sum(m.get('outcome') == 'completed' for m in metas)),
         first.get('git_sha', ''),

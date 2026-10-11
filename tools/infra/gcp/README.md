@@ -84,14 +84,14 @@ terraform output                          # 2번에 넣을 값
 Actions → Fleet Regression Test → Run workflow. `ref`에 브랜치나 `refs/pull/<번호>/head`를 넣는다.
 
 - 포크 PR의 `pull_request` 이벤트는 GCP 로그인 토큰을 받지 못해 PR 라벨로 자동 실행하지 않는다.
-- 결과는 `gs://amr-fleet-results/runs/<VM 이름>/`: `rosbag/`, `fleet_latency.csv`, `response_time.csv`, `assignments.csv`, `tasks.json`, `meta.json`(`fault.direction`, `observation_cutoff` 포함), 각 노드 로그.
+- 결과는 `gs://amr-fleet-results/runs/<시나리오>-<라벨>/<날짜>_<실행 번호>/`: `rosbag/`, `fleet_latency.csv`, `response_time.csv`, `assignments.csv`, `tasks.json`, `meta.json`(`fault.direction`, `observation_cutoff` 포함), 각 노드 로그.
 
-`index.csv`(날짜, 시나리오, 라벨, 지연, 손실, 반복 수, 완료 수, git SHA, 경로, Actions 링크)에서 원하는 실행을 찾고 경로로 내려받는다.
+`index.csv`(날짜, 시나리오, 라벨, 지연, 손실, 강제종료 로봇·시각, 경매 중계 여부, 반복 수, 완료 수, git SHA, 경로, Actions 링크)에서 원하는 실행을 찾고 경로로 내려받는다.
 
 ```bash
 gcloud storage cat gs://amr-fleet-results/index.csv
 gcloud storage ls gs://amr-fleet-results/runs/
-gcloud storage cp -r gs://amr-fleet-results/runs/<VM 이름> .
+gcloud storage cp -r gs://amr-fleet-results/runs/<시나리오>-<라벨>/<날짜>_<실행 번호> .
 ```
 
 ## 결과 보기 (팀원)
