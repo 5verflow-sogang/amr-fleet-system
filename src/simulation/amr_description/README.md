@@ -22,7 +22,7 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF, 센서 `scan_raw`·`imu/data_raw`�
 
 | 파일 | 내용 |
 | --- | --- |
-| `amr.urdf.xacro` | 조립. 인자 `namespace`(TF 접두어·Gazebo 토픽), `payload_mass`(적재 질량 kg), `gt_rate`(GT 토픽 주기 Hz), `enable_camera`(카메라 센서 생성 여부) |
+| `amr.urdf.xacro` | 조립. 인자 `namespace`(TF 접두어·Gazebo 토픽), `payload_mass`(적재 질량 kg), `gt_rate`(GT 토픽 주기 Hz), `enable_camera`(카메라 센서 생성 여부), `max_linear_acceleration`(DiffDrive 선가속 상한, 기본 1.0. RL 평가 환경은 10으로 풀어 바퀴 토크 한계가 질량에 따라 가감속을 정하게 한다) |
 | `properties.xacro` | 치수·질량·동역학 제한, 관성 매크로. **값은 여기서만 바꾼다** |
 | `base.xacro` | `base_footprint`, `base_link` |
 | `wheels.xacro` | 좌우 구동 바퀴, 앞뒤 캐스터 |
@@ -185,7 +185,7 @@ amr_01/odom                         (발행: Gazebo DiffDrive 기본, EKF를 띄
 - Fortress `rgbd_camera`는 Depth 노이즈를 RGB에도 같이 넣는다. RGB 흔들림은 σ 약 0.5/255(1단계 미만)라 인식에 영향이 없다고 보고 그대로 둔다.
 - Gazebo 포인트클라우드(`camera/points`)는 점 좌표가 x 전방인데 frame_id가 광학 프레임이라 쓰지 않는다. 포인트클라우드는 Depth 영상과 `camera_info`로 만든다 (작업: Depth 포인트클라우드 변환·다운샘플링).
 
-launch 인자 (`description.launch.py`): `namespace`(기본 `amr_01`), `payload_mass`(기본 `0.0`), `gt_rate`(기본 `100`), `enable_camera`(기본 `true`), `use_sim_time`(기본 `true`)
+launch 인자 (`description.launch.py`): `namespace`(기본 `amr_01`), `payload_mass`(기본 `0.0`), `gt_rate`(기본 `100`), `enable_camera`(기본 `true`), `max_linear_acceleration`(기본 `1.0`), `use_sim_time`(기본 `true`)
 
 ## 실행
 

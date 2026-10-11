@@ -68,6 +68,7 @@ def _spawn(context):
                 'payload_mass': LaunchConfiguration('payload_mass'),
                 'gt_rate': LaunchConfiguration('gt_rate'),
                 'enable_camera': enable_camera,
+                'max_linear_acceleration': LaunchConfiguration('max_linear_acceleration'),
                 'use_sim_time': use_sim_time,
             }.items(),
         ),
@@ -105,6 +106,9 @@ def generate_launch_description():
         DeclareLaunchArgument('z', default_value='0.01', description='스폰 위치 z [m]'),
         DeclareLaunchArgument('yaw', default_value='0.0', description='스폰 방향 [rad]'),
         DeclareLaunchArgument('payload_mass', default_value='0.0', description='적재물 질량 [kg]'),
+        DeclareLaunchArgument(
+            'max_linear_acceleration', default_value='1.0',
+            description='DiffDrive 선가속 상한 [m/s²]. 크게 주면 바퀴 토크 한계가 질량에 따라 가감속을 정한다'),
         DeclareLaunchArgument('gt_rate', default_value='100', description='GT 토픽 발행 주기 [Hz]'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         DeclareLaunchArgument(
