@@ -2,6 +2,7 @@
 
 ROS 환경(워크스페이스 source 완료) 안에서 돈다. rclpy는 주행 프로세스(drive.py)만 쓰고 여기서는 쓰지 않는다.
 반복마다 시뮬레이터부터 전부 새로 띄워 실행끼리 상태가 섞이지 않게 한다.
+DDS도 반복마다 떼어 놓는다: 시도마다 ROS_DOMAIN_ID를 바꾸고, 끝나면 ros2 daemon과 Fast DDS 공유 메모리 찌꺼기를 지운다.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import subprocess
@@ -83,6 +85,55 @@ def stop(proc: Proc, grace_s: float = 10.0) -> None:
         os.killpg(proc.popen.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+
+
+# Fast DDS 포트는 7400 + 250 × 도메인이라 리눅스 임시 포트(32768~)와 겹치지 않는 0~101만 안전하다.
+# 0은 손으로 띄운 노드의 기본값이라 피하고 1~100을 돈다
+DOMAIN_MIN, DOMAIN_COUNT = 1, 100
+
+
+def dds_domain(attempt_index: int) -> int:
+    """시도 번호(재시도 포함 0부터)마다 다른 ROS_DOMAIN_ID. 100회마다 돌아온다."""
+    return DOMAIN_MIN + attempt_index % DOMAIN_COUNT
+
+
+def dds_reset() -> None:
+    """지난 시도의 DDS 흔적을 지운다: 현재 도메인의 ros2 daemon(토픽 목록 캐시)과 죽은 프로세스의 공유 메모리 파일.
+
+    `fastdds shm clean`은 아직 쓰는 파일은 남기므로 같은 컨테이너에 다른 노드가 떠 있어도 안전하다.
+    """
+    for cmd in (['ros2', 'daemon', 'stop'], ['fastdds', 'shm', 'clean']):
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+# 정리 뒤에도 남으면 다음 실행과 섞이는 프로세스 (시뮬레이터·브리지·ROS 노드).
+# ros2 daemon은 뺀다: dds_reset이 멈추라고 한 뒤 잠깐 남아 있고, 도메인별로 따로 떠서 다음 실행과 섞이지 않는다.
+# 좀비(<defunct>)도 뺀다: 이미 끝나 아무것도 안 하고, 거둘 부모가 없어 남은 것뿐이다 (docker_run.sh는 --init으로 거둔다)
+LEFTOVER_RE = re.compile(r'\b(ign|gz|gazebo|ruby|parameter_bridge|ros2)\b|/opt/ros/|/install/')
+LEFTOVER_IGNORE_RE = re.compile(r'ros2cli\.daemon|<defunct>')
+
+
+def leftover_processes() -> list[str]:
+    """정리가 끝난 뒤에도 살아 있는 ROS·Gazebo 프로세스의 명령줄. 하네스 자신과 조상은 뺀다."""
+    try:
+        out = subprocess.run(['ps', '-eo', 'pid=,ppid=,args='], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    rows = {}
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit():
+            rows[int(parts[0])] = (int(parts[1]), parts[2])
+    mine, pid = set(), os.getpid()
+    while pid in rows and pid not in mine:
+        mine.add(pid)
+        pid = rows[pid][0]
+    return [args[:200] for pid, (ppid, args) in sorted(rows.items())
+            if pid not in mine and not args.startswith('ps -eo') and LEFTOVER_RE.search(args)
+            and not LEFTOVER_IGNORE_RE.search(args)]
 
 
 def wait_topic(topic: str, timeout_s: float, proc: Optional[Proc] = None) -> float:
@@ -194,8 +245,17 @@ def fault_meta(params: dict) -> Optional[dict]:
             'kill_robot_at_s': float(params.get('kill_robot_at_s', -1))}
 
 
-def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[ConfigOverrides] = None) -> dict:
-    """1회 실행하고 meta를 돌려준다. 실패해도 meta.json은 남긴다."""
+def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[ConfigOverrides] = None,
+             domain_id: Optional[int] = None, reset_dds: bool = True) -> dict:
+    """1회 실행하고 meta를 돌려준다. 실패해도 meta.json은 남긴다.
+
+    domain_id가 있으면 이 실행의 모든 자식 프로세스(시뮬레이터·노드·ros2 CLI·drive.py)가 그 도메인을 쓴다.
+    reset_dds면 끝난 뒤 DDS 흔적을 지운다(dds_reset).
+    """
+    if domain_id is not None:
+        os.environ['ROS_DOMAIN_ID'] = str(domain_id)
+        # Gazebo(ign-transport)는 DDS와 따로 찾으므로 파티션도 나눈다
+        os.environ['IGN_PARTITION'] = os.environ['GZ_PARTITION'] = f'harness_{domain_id}'
     log_dir = run_dir / 'logs'
     log_dir.mkdir(parents=True, exist_ok=True)
     params = {**params, 'run_dir': str(run_dir)}
@@ -208,11 +268,14 @@ def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[Co
         'versions': {'ros_distro': os.environ.get('ROS_DISTRO', ''), 'image': os.environ.get('HARNESS_IMAGE', ''),
                      'rmw_implementation': os.environ.get('RMW_IMPLEMENTATION', 'rmw_fastrtps_cpp (기본)'),
                      'python': sys.version.split()[0]},
+        'dds': {'ros_domain_id': int(os.environ.get('ROS_DOMAIN_ID') or 0), 'reset': reset_dds},
         'config_overrides': overrides.meta() if overrides else {},
         'started_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
     }
     procs: list[Proc] = []
     t_start = time.monotonic()
+    # 실행 시작부터 각 프로세스가 준비(ready_topic·ready_cmds 통과)될 때까지 걸린 시간. 뒤 반복에서 늘어나면 격리 문제다
+    meta['ready_s'] = {}
     try:
         for p in render(scenario['processes'], params):
             procs.append(start(p['name'], p['cmd'], log_dir, stop_first=p.get('stop_first', False),
@@ -221,6 +284,7 @@ def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[Co
                 wait_topic(p['ready_topic'], float(p.get('ready_timeout_s', 180)), procs[-1])
             for cmd in p.get('ready_cmds', []):
                 wait_cmd(cmd, float(p.get('ready_timeout_s', 60)))
+            meta['ready_s'][p['name']] = round(time.monotonic() - t_start, 1)
             time.sleep(float(p.get('settle_s', 0)))
             if procs[-1].popen.poll() is not None:
                 raise RunError('error', f"{p['name']}이(가) 바로 끝남 (로그: {procs[-1].log})", startup=True)
@@ -252,6 +316,12 @@ def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[Co
             stop(p)
         for cmd in scenario.get('cleanup', []):
             subprocess.run(cmd, shell=True, executable='/bin/bash', capture_output=True)
+        if reset_dds:
+            dds_reset()
+        meta['leftover_processes'] = leftover_processes()
+        if meta['leftover_processes']:
+            print(f"  경고: 정리 뒤에도 남은 프로세스 {len(meta['leftover_processes'])}개 (meta.json leftover_processes)",
+                  flush=True)
 
     if meta['outcome'] == 'completed':
         for step in render(scenario.get('postprocess', []), params):
