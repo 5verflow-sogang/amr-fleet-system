@@ -34,7 +34,7 @@ QoS는 Fleet 서버와 같은 RELIABLE depth 10 (api.md 6절이 정해지면 맞
 | 처음 보는 `assignment_id` (마지막보다 큼) | 처리하고 Ack. 작업 중에 새 할당이 오면 `RESULT_REJECTED` + `ASSIGN_ALREADY_BUSY` |
 | 마지막으로 처리한 번호 (재전송) | 다시 처리하지 않고 같은 Ack만 |
 | 마지막보다 작은 번호 (뒤늦게 옴) | 무시 (Ack 없음) |
-| `ACTION_CANCEL` | 하던 작업이면 **Ack보다 먼저** BT를 멈추고(halt) FAILED(`canceled`)를 보내고 작업을 비운다 → 바로 뒤 새 할당을 거부하지 않는다. 아니면 수락만. 취소 코드는 `ErrorInfo`에 생기면 채운다 (지금 NONE, 가짜 로봇과 같음) |
+| `ACTION_CANCEL` | 하던 작업이면 **Ack보다 먼저** BT를 멈추고(halt) FAILED(`canceled`)를 보내고 작업을 비운다 → 바로 뒤 새 할당을 거부하지 않는다. 아니면 수락만. 오류 코드는 `ErrorInfo.ASSIGN_CANCELED`라 서버가 다시 할당하지 않는다 (#107, 가짜 로봇과 같음) |
 | heartbeat `epoch` 변경 (서버 재시작) | 번호 기준 초기화 |
 
 수락하면 바로 `TaskStatus(PENDING)`를 보내고 `RobotState.current_task_id`를 채운다. 서버는 Ack가 유실돼도 이 값으로 받은 것을 확인한다.

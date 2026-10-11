@@ -23,7 +23,7 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            # 'node_name = amr_detection.node_module:main',
+            'detection_node = amr_detection.detection_node:main',
         ],
     },
 )

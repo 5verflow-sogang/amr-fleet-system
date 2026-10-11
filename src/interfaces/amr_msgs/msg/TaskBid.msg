@@ -27,7 +27,8 @@ string robot_id
 # 메시지 종류 (TYPE_*)
 uint8 type
 
-# 한계비용 (m): 이 작업을 추가하면 늘어나는 이동 거리 (현재 큐 끝 → pickup → dropoff 증가분)
+# 입찰가 (m): 지금 위치 → 작업 시작점(pickup, 없으면 dropoff) 직선 거리. 작업이 없는(IDLE) 로봇만 입찰한다.
+# 중앙 할당 nearest(amr_fleet_core euclidean_cost)와 같은 규칙이라 지연·손실이 없으면 같은 로봇이 뽑힌다 (연구 1 비교 공정성, #91)
 float32 cost
 
 # 예상 완료 시각. Task.deadline을 넘기면 무효 입찰

@@ -7,6 +7,7 @@ uint16 NONE=0
 # 100번대: 할당
 uint16 ASSIGN_BATTERY_LOW=101        # 배터리 부족으로 거부
 uint16 ASSIGN_ALREADY_BUSY=102       # 이미 작업 수행 중
+uint16 ASSIGN_CANCELED=103          # 서버가 취소함 (TaskAssignment.ACTION_CANCEL). FAILED와 함께 보내며, 서버는 다시 할당하지 않는다
 
 # 200번대: 주행
 uint16 NAV_NO_PATH=201               # 경로 없음

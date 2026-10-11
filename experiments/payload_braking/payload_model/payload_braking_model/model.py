@@ -8,7 +8,9 @@
 - experiments/payload_braking (PR #42): 최소 모델로 V(DiffDrive)/T(JointController)
   두 구동방식·normal/emergency 두 정지방식을 적재 0/2/10/25kg × 5회 실측.
 - src/simulation/amr_description (PR #44, 지수): #42 권장값(바퀴 토크 3 N·m, 몸체
-  25 kg)을 실제 로봇 URDF에 반영하고 0/10/25kg로 재확인.
+  25 kg)을 실제 로봇 URDF에 반영.
+- PR #78(지수): 현재 URDF(28.9kg)로 급정지 거리를 0/2/10/25kg × 1회 다시 측정.
+  t_delay_s 기본값은 이 데이터로 맞췄다 - README "t_delay 보정" 절 참고.
 
 식 (전부 README "식" 절에 있는 그대로):
     a_max = min(2 * 토크 / (반경 * (전체 질량 + 적재)), mu * g)
@@ -36,10 +38,10 @@ class BrakingModelParams:
     robot_mass_kg: float = 28.9
     floor_friction_mu: float = 0.7
     gravity_mps2: float = 9.81
-    # #42 results.csv 급정지(emergency) 40회 실측 평균 오차로 맞췄다(README
-    # "t_delay 보정" 절 참고). v=1 m/s 기준이라 값 자체가 곧 보정 거리[m]다.
-    # step()에는 안 쓴다 - README "step()은 지연이 없다" 절 참고.
-    t_delay_s: float = 0.022
+    # #78 실측(28.9kg URDF, 0/2/10/25kg 급정지)과 지연 없는 이론값의 평균
+    # 차이로 맞췄다(README "t_delay 보정" 절 참고). v=1 m/s 기준이라 값 자체가
+    # 곧 보정 거리[m]다. step()에는 안 쓴다 - README "step()은 지연이 없다" 절 참고.
+    t_delay_s: float = 0.015
 
     # step() 전용 한계값. nav2_params.yaml(FollowPath)·#44 지수 URDF와 동일하다.
     linear_velocity_max_mps: float = 2.0

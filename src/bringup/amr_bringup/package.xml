@@ -7,9 +7,34 @@
   <maintainer email="TODO@example.com">공동</maintainer>
   <license>TODO: License declaration</license>
 
-  <!-- TODO: 구현 시 의존성 추가 (예: rclpy, amr_msgs) -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <!-- nav2_dwa_demo.launch.py: amr_nav2_plugins::DwaController Gazebo 증명용 -->
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_navfn_planner</exec_depend>
+  <exec_depend>nav2_controller</exec_depend>
+  <exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_behaviors</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>nav2_common</exec_depend>
+  <exec_depend>amr_nav2_plugins</exec_depend>
+  <!-- config/robots.yaml 읽기. 단위 테스트에서도 쓴다 -->
+  <depend>python3-yaml</depend>
+  <!-- system.launch.py가 include하는 패키지. test_system_launch.py가 설치된 launch 파일을 확인하므로 test에도 둔다 -->
+  <depend>amr_gazebo</depend>
+  <depend>amr_odometry</depend>
+  <depend>amr_localization</depend>
+  <depend>amr_mapping</depend>
+  <depend>amr_bt</depend>
+  <depend>amr_fleet_manager</depend>
+  <depend>amr_fault_injector</depend>
 
   <test_depend>python3-pytest</test_depend>
+  <test_depend>launch</test_depend>
+  <test_depend>launch_ros</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

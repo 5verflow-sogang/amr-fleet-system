@@ -76,3 +76,27 @@ resource "google_service_account_iam_member" "gha_wif" {
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
 }
+
+# 팀원 결과 열람. objectViewer는 객체만 읽어서, 콘솔에서 버킷을 열려면 버킷 정보 읽기(legacyBucketReader)도 준다
+locals {
+  results_readers = toset(concat(var.results_viewers, var.results_writers))
+  results_reader_bindings = {
+    for pair in setproduct(local.results_readers, ["roles/storage.objectViewer", "roles/storage.legacyBucketReader"]) :
+    "${pair[0]} ${pair[1]}" => { email = pair[0], role = pair[1] }
+  }
+}
+
+resource "google_storage_bucket_iam_member" "team_results_read" {
+  for_each = local.results_reader_bindings
+  bucket   = google_storage_bucket.results.name
+  role     = each.value.role
+  member   = "user:${each.value.email}"
+}
+
+# 팀원 결과 올리기 (로컬 하네스 결과). 새 파일만 만들 수 있고 덮어쓰기·삭제는 못 한다
+resource "google_storage_bucket_iam_member" "team_results_write" {
+  for_each = toset(var.results_writers)
+  bucket   = google_storage_bucket.results.name
+  role     = "roles/storage.objectCreator"
+  member   = "user:${each.value}"
+}
