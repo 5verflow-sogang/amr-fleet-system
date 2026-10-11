@@ -6,11 +6,17 @@ import numpy as np
 import pytest
 from visualization_msgs.msg import Marker
 
-from amr_msgs.msg import TrackedObstacle, TrackedObstacleArray
+from amr_msgs.msg import (
+    DetectedObject3D,
+    DetectedObject3DArray,
+    TrackedObstacle,
+    TrackedObstacleArray,
+)
 from amr_tracking.markers import DYNAMIC_COLOR, STATIC_COLOR, track_markers
 from amr_tracking.tracking_node import (
     collision_risks,
     covariance_6x6,
+    detections_in_fixed,
     robot_velocity_in_fixed,
     UNKNOWN_VARIANCE,
     yaw_from_quaternion,
@@ -84,3 +90,32 @@ def test_collision_risks_uses_body_axes():
 def test_collision_risks_empty_still_published():
     empty = collision_risks(TrackedObstacleArray(), (0.0, 0.0), 0.0, (0.0, 0.0), 0.6, 0.4, 5.0)
     assert empty.risks == []
+
+
+def _detections():
+    msg = DetectedObject3DArray()
+    msg.header.frame_id = 'map'
+    obj = DetectedObject3D(class_name='person', confidence=0.9)
+    obj.pose.pose.position.x, obj.pose.pose.position.y = 1.0, 0.0
+    cov = np.zeros((6, 6))
+    cov[:2, :2] = [[0.04, 0.0], [0.0, 0.01]]   # x 방향 σ 0.2, y 방향 σ 0.1
+    obj.pose.covariance = cov.ravel().tolist()
+    msg.objects.append(obj)
+    return msg
+
+
+def test_detections_in_fixed_rotates_position_and_covariance():
+    # map → odom: 90° 회전 후 (2, 3) 이동
+    det = detections_in_fixed(_detections(), math.pi / 2, (2.0, 3.0))[0]
+    assert (det.class_name, det.confidence) == ('person', pytest.approx(0.9))
+    np.testing.assert_allclose(det.xy, [2.0, 4.0], atol=1e-9)
+    # 회전하면 x·y 분산이 서로 바뀐다
+    np.testing.assert_allclose(det.cov, [[0.01, 0.0], [0.0, 0.04]], atol=1e-12)
+
+
+def test_track_marker_shows_class():
+    obstacles = _obstacles()
+    obstacles.obstacles[0].class_name = 'person'
+    texts = [m for m in track_markers(obstacles).markers if m.ns == 'labels']
+    assert texts[0].text == '#0 person 1.0 m/s'
+    assert texts[1].text == '#1 0.0 m/s'

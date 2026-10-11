@@ -18,6 +18,13 @@ R2 정적 지도 대조 (use_static_map): 군집화 전에 지도의 막힌 칸(
 충돌 위험(TTC): 트랙마다 이 로봇의 차체(사각형)에 닿기까지 남은 시간 (collision.footprint_time_to_collision).
 로봇 위치는 측정 시각의 TF(fixed_frame → base_frame), 로봇 속도는 odom 토픽의 선속도다.
 로봇 위치를 모르면 collision_risks를 내지 않는다 (amr_safety가 끊김으로 보고 감속한다).
+
+카메라 연관 (use_camera_association): perception/objects(YOLO 3D 검출, map)를 트랙(odom)에 짝지어
+class_name·confidence·source를 채운다 (amr_perception_core association.py). 검출은 검출 노드가 쓴 것과 같은
+촬영 시각의 map → odom으로 되돌리므로 위치추정 오차가 상쇄된다. 클래스는 근거가 쌓여야 붙고, 카메라 시야를
+벗어나도 근거가 줄어들 때까지 유지한다. source는 최근 camera_recent_s 안에 짝지어졌을 때만 LIDAR_CAMERA다.
+클래스별 최소 반경(min_radius_classes·min_radius_values)을 둔다. 사람은 LiDAR 높이에서 다리만 보여 반경이
+0.12 m 정도로 작게 잡혔다.
 """
 
 import math
@@ -37,7 +44,20 @@ from sensor_msgs.msg import LaserScan
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import MarkerArray
 
-from amr_msgs.msg import CollisionRisk, CollisionRiskArray, TrackedObstacle, TrackedObstacleArray
+from amr_msgs.msg import (
+    CollisionRisk,
+    CollisionRiskArray,
+    DetectedObject3DArray,
+    TrackedObstacle,
+    TrackedObstacleArray,
+)
+from amr_perception_core.association import (
+    associate,
+    AssociationConfig,
+    ClassLabeler,
+    FixedDetection,
+    TrackSnapshot,
+)
 from amr_perception_core.clustering import (
     ClusteringConfig,
     detect_obstacles,
@@ -69,6 +89,20 @@ def covariance_6x6(xy_block: np.ndarray) -> list:
 def yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
     """쿼터니언의 z축 회전(yaw) [rad]. LiDAR가 수평이라 2D 변환에는 yaw만 쓴다."""
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def detections_in_fixed(msg: DetectedObject3DArray, yaw: float, translation) -> list:
+    """검출(msg.header.frame_id, 보통 map) → 고정 좌표계. 위치는 회전 + 평행이동, xy 공분산은 R C Rᵀ."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    rot = np.array([[c, -s], [s, c]])
+    offset = np.asarray(translation, dtype=float)
+    out = []
+    for obj in msg.objects:
+        p = obj.pose.pose.position
+        cov = np.asarray(obj.pose.covariance, dtype=float).reshape(6, 6)[:2, :2]
+        out.append(FixedDetection(obj.class_name, float(obj.confidence),
+                                  rot @ np.array([p.x, p.y]) + offset, rot @ cov @ rot.T))
+    return out
 
 
 def robot_velocity_in_fixed(linear_x: float, linear_y: float, yaw: float):
@@ -162,6 +196,22 @@ class TrackingNode(Node):
                 hit_quiet=p('free_space_hit_quiet', 3.0).value,
                 hit_clearance=p('free_space_hit_clearance', 0.2).value)
         self.free_evidence_min_points = p('free_evidence_min_points', 2).value
+        # 카메라 연관
+        self.association = AssociationConfig(
+            gate_mahalanobis_sq=p('assoc_gate_mahalanobis_sq', 9.21).value,
+            max_distance=p('assoc_max_distance', 1.0).value,
+            min_confidence=p('assoc_min_confidence', 0.5).value,
+            evidence_tau=p('assoc_evidence_tau', 5.0).value,
+            min_evidence=p('assoc_min_evidence', 1.0).value,
+            release_evidence=p('assoc_release_evidence', 0.3).value,
+            camera_recent_s=p('assoc_camera_recent_s', 1.0).value)
+        self.labeler = ClassLabeler(self.association)
+        # 클래스별 최소 반경 [m] (ROS 파라미터에 dict가 없어 같은 길이의 목록 두 개)
+        classes = list(p('min_radius_classes', ['person']).value)
+        values = list(p('min_radius_values', [0.25]).value)
+        if len(classes) != len(values):
+            raise ValueError('min_radius_classes와 min_radius_values의 길이가 다르다')
+        self.class_min_radius = dict(zip(classes, values))
         self.last_odom = None          # (수신 시각 [s], 몸체 기준 vx, vy)
         self._reset_stats()
 
@@ -171,6 +221,10 @@ class TrackingNode(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.create_subscription(Odometry, 'odom', self.on_odom, 10)
+        if p('use_camera_association', True).value:
+            self.create_subscription(DetectedObject3DArray,
+                                     p('detections_topic', 'perception/objects').value,
+                                     self.on_detections, 10)
         if p('use_static_map', False).value:
             self.create_subscription(OccupancyGrid, p('map_topic', '/map').value, self.on_map,
                                      MAP_QOS)
@@ -231,6 +285,39 @@ class TrackingNode(Node):
         ranges = np.asarray(scan.ranges, dtype=float)
         ranges[static] = np.nan
         return ranges
+
+    def on_detections(self, msg: DetectedObject3DArray):
+        """카메라 검출을 확정 트랙에 짝지어 클래스 근거를 쌓는다."""
+        tracks = self.tracker.confirmed_tracks
+        if not msg.objects or not tracks or self.tracker.last_time is None:
+            return
+        # 검출 노드가 map으로 옮길 때 쓴 촬영 시각의 map → odom을 그대로 되돌린다 (위치추정 오차 상쇄).
+        # 그 시각 값이 없으면 최근 값을 쓴다 (map → odom은 천천히 바뀐다)
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.fixed_frame, msg.header.frame_id, Time.from_msg(msg.header.stamp))
+        except TransformException:
+            try:
+                tf = self.tf_buffer.lookup_transform(self.fixed_frame, msg.header.frame_id,
+                                                     Time())
+            except TransformException as e:
+                self.stats['assoc_tf_fail'] += 1
+                self.get_logger().warn(f'검출 TF 없음, 카메라 연관 건너뜀: {e}',
+                                       throttle_duration_sec=5.0)
+                return
+        q, t = tf.transform.rotation, tf.transform.translation
+        detections = detections_in_fixed(msg, yaw_from_quaternion(q.x, q.y, q.z, q.w),
+                                         (t.x, t.y))
+        t_detection = Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
+        snapshots = [TrackSnapshot(track.track_id, track.kf.position, track.kf.velocity,
+                                   track.kf.position_covariance, track.kf.velocity_covariance,
+                                   self.tracker.last_time) for track in tracks]
+        pairs = associate(snapshots, detections, t_detection, self.association)
+        for ti, di in pairs:
+            self.labeler.update(snapshots[ti].track_id, detections[di].class_name,
+                                detections[di].confidence, t_detection)
+        self.stats['detections'] += len(detections)
+        self.stats['assoc'] += len(pairs)
 
     def on_odom(self, msg: Odometry):
         v = msg.twist.twist.linear
@@ -309,9 +396,10 @@ class TrackingNode(Node):
         except ValueError as e:
             self.get_logger().warn(f'측정 프레임 무시: {e}', throttle_duration_sec=5.0)
             return
+        self.labeler.prune(track.track_id for track in self.tracker.tracks)
         out = TrackedObstacleArray()
         out.header = header
-        out.obstacles = [self.to_msg(track) for track in tracks]
+        out.obstacles = [self.to_msg(track, t) for track in tracks]
         self.pub.publish(out)      # 장애물이 없어도 빈 배열로 발행 (api.md 4-3절)
         self.publish_risks(out)
         if self.publish_markers:
@@ -345,13 +433,15 @@ class TrackingNode(Node):
                                               self.robot_length, self.robot_width,
                                               self.ttc_horizon))
 
-    def to_msg(self, track: Track) -> TrackedObstacle:
+    def to_msg(self, track: Track, t: float) -> TrackedObstacle:
         kf = track.kf
         obstacle = TrackedObstacle()
         obstacle.track_id = track.track_id
-        obstacle.source = TrackedObstacle.SOURCE_LIDAR
-        obstacle.class_name = 'unknown'   # 카메라 연관 전
-        obstacle.confidence = 0.0
+        label = self.labeler.label(track.track_id, t)
+        obstacle.source = (TrackedObstacle.SOURCE_LIDAR_CAMERA if label.camera_recent
+                           else TrackedObstacle.SOURCE_LIDAR)
+        obstacle.class_name = label.class_name
+        obstacle.confidence = float(label.confidence)
         obstacle.is_dynamic = track.is_dynamic
         pose = obstacle.pose.pose
         pose.position.x, pose.position.y = kf.position.tolist()
@@ -360,14 +450,16 @@ class TrackingNode(Node):
         twist = obstacle.twist.twist
         twist.linear.x, twist.linear.y = kf.velocity.tolist()
         obstacle.twist.covariance = covariance_6x6(kf.velocity_covariance)
-        obstacle.radius = float(track.radius if track.radius is not None else self.radius)
+        radius = track.radius if track.radius is not None else self.radius
+        obstacle.radius = float(max(radius, self.class_min_radius.get(label.class_name, 0.0)))
         return obstacle
 
     # ------------------------------------------------------------------ 기록
     def _reset_stats(self):
         self.stats = {'frames': 0, 'candidates': 0, 'tracks': 0, 'dynamic': 0, 'tf_fail': 0,
                       'risk_skip': 0, 'map_tf_fail': 0, 'beams': 0, 'static_beams': 0,
-                      'align_shift': 0.0, 'evidence': 0, 'proc_s': 0.0, 'tf_s': 0.0,
+                      'align_shift': 0.0, 'evidence': 0, 'detections': 0, 'assoc': 0,
+                      'assoc_tf_fail': 0, 'proc_s': 0.0, 'tf_s': 0.0,
                       'map_s': 0.0, 'cluster_s': 0.0, 'free_s': 0.0, 'track_s': 0.0}
         self.stats_start = time.monotonic()
 
@@ -387,7 +479,8 @@ class TrackingNode(Node):
             f'TF 실패 {s["tf_fail"]}, '
             f'TTC 건너뜀 {s["risk_skip"]}, '
             f'지도 위 빔 {100 * s["static_beams"] / max(s["beams"], 1):.0f}% '
-            f'(보정 평균 {s["align_shift"] / n:.2f} m, map TF 실패 {s["map_tf_fail"]})')
+            f'(보정 평균 {s["align_shift"] / n:.2f} m, map TF 실패 {s["map_tf_fail"]}), '
+            f'카메라 검출 {s["detections"]}개 중 연관 {s["assoc"]} (TF 실패 {s["assoc_tf_fail"]})')
         self._reset_stats()
 
 
