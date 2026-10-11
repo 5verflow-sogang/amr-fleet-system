@@ -426,6 +426,46 @@ def test_inside_revoked_backs_out_decelerates_then_releases_and_returns_idle():
     assert outgoing[0].request_id == rid + 1
 
 
+# --- BACKING 중 safety/status CRITICAL(speed_limit 0) (#137 지수 리뷰) ---
+
+
+def test_backing_critical_speed_limit_holds_zero_until_timeout_then_failed():
+    # safety/status가 CRITICAL(speed_limit 0)로 막혀 있으면 후진 속도는 0을 유지한다(실제로 못
+    # 나가므로) - 그래도 backing_timeout_s가 지나면 (총 이동 거리는 0이어도) 경과 시간만으로
+    # failed가 된다 - 영원히 멈춰 있지 않고 결국 수동 확인을 요청한다.
+    core = make_core(backing_speed_mps=0.15, backing_timeout_s=10.0, backing_max_distance_m=100.0,
+                      decel_mps2=1.0)
+    path = straight_path(2.0, 10.0)
+    _enter_zone_and_revoke(core)
+
+    core.update(7.0, path, (5.0, 0.0), safety_speed_limit_mps=0.0)  # 시드 틱 - backing_since=7.0
+    outgoing, cap, backing, errors = core.update(8.0, path, (5.0, 0.0), safety_speed_limit_mps=0.0)
+    assert backing == pytest.approx(0.0)
+    assert core.phase('z1') is Phase.BACKING  # 아직 시간 한도(10s)는 안 넘었다
+
+    outgoing, cap, backing, errors = core.update(17.1, path, (5.0, 0.0), safety_speed_limit_mps=0.0)
+    assert backing == pytest.approx(0.0)
+    assert core.phase('z1') is Phase.FAILED  # 경과 10.1s > backing_timeout_s(10.0), 이동 거리는 0
+    assert core.state_label(17.1) == 'failed'
+
+
+def test_backing_critical_speed_limit_resumes_gradually_when_cleared():
+    # CRITICAL이 중간에 풀리면(제한 없음) 후진을 다시 시작한다 - target 자체를 safety_cap으로
+    # 묶어 둬서 ramp 상태가 CRITICAL 동안 0에 머물렀으므로, 풀렸을 때 바로 backing_speed_mps로
+    # 급발진하지 않고 decel_mps2 이내로만 올라간다(0.05s 뒤엔 아직 0.05 m/s).
+    core = make_core(backing_speed_mps=0.15, backing_margin_m=0.3, decel_mps2=1.0)
+    path = straight_path(2.0, 10.0)
+    _enter_zone_and_revoke(core)
+
+    core.update(7.0, path, (5.0, 0.0), safety_speed_limit_mps=0.0)  # 시드 틱, CRITICAL
+    outgoing, cap, backing, errors = core.update(8.0, path, (5.0, 0.0), safety_speed_limit_mps=0.0)
+    assert backing == pytest.approx(0.0)  # CRITICAL 동안 0 유지
+
+    outgoing, cap, backing, errors = core.update(8.05, path, (5.0, 0.0))  # CRITICAL 해제
+    assert backing == pytest.approx(-0.05, abs=1e-6)  # 급발진(-0.15) 아니라 decel_mps2만큼만
+    assert core.phase('z1') is Phase.BACKING
+
+
 def test_backing_timeout_stops_with_error_and_becomes_failed():
     # #137 지수 리뷰: 안전 한도 초과 뒤에는 BACKING에 계속 머무는 대신 FAILED로 바뀐다 - 상태
     # 토픽에서 "아직 정상 후진 중"과 "한도를 넘어 멈춰 섰다"를 구분할 수 있게.

@@ -33,6 +33,11 @@ REASON_DEADLOCK_RESOLUTION)하면 그 구역에서 후진해 나온다.
   backing_margin_m 남았을 때부터 같은 decel_mps2로 감속해 margin에서 정확히 0이 된다
   (speed_cap_for_stop을 "남은 후진 거리"에 그대로 재사용).
 - margin까지 나가면 정지 → RELEASE → IDLE (그 뒤로는 평소처럼 다시 접근하면 새 request_id로 요청).
+- safety/status가 CRITICAL(speed_limit 0)이면 후진 목표 속도도 0으로 묶인다(#137 지수 리뷰, 크기
+  |v| 기준) - 뒤가 막혀 안전 노드가 멈추라고 하면 후진도 멈춰야 한다. decel_mps2로 부드럽게
+  멈추고, 그 상태로 backing_timeout_s를 넘으면 FAILED로 간다(계속 CRITICAL이면 영원히 멈춰
+  있지 않고 결국 수동 확인을 요청하게 된다). CRITICAL이 풀리면 같은 decel_mps2로 다시
+  backing_speed_mps까지 올라간다(급발진하지 않는다 - target 자체를 낮춰 ramp해서다).
 - 안전장치: backing_max_distance_m(총 후진 거리) 또는 backing_timeout_s(경과 시간)를 넘으면
   그 순간 속도를 0으로 묶고 ERROR를 한 번 남긴 뒤 FAILED로 바뀐다(#137 지수 리뷰, 10/11 결정은
   BACKING에 계속 머무는 것이었으나 상태 토픽에 안전 한도 초과가 안 드러나 바꿨다) - fail-closed로,
@@ -227,8 +232,24 @@ class ZoneClientCore:
         반환: (보낼 ZoneRequest 목록, cmd_vel 선속도 상한 m/s (제한 없으면 None), BACKING 중이면
         직접 낼 선속도(음수, 후진) 아니면 None, 로그로 남길 ERROR 메시지 목록(보통 빈 목록)).
         상한은 구역 상한과 (부드럽게 따라간) safety_speed_limit_mps 중 더 작은 쪽이다. BACKING
-        중인 구역이 있으면 cmd_vel_nav는 무시하고 이 선속도를 그대로 내야 한다(노드 몫).
+        중인 구역이 있으면 cmd_vel_nav는 무시하고 이 선속도를 그대로 내야 한다(노드 몫) - 이 후진
+        속도도 safety_speed_limit_mps에 걸린다(크기 |v| 기준, #137 지수 리뷰 - 뒤가 막혀 안전
+        노드가 멈추라고 하면 후진도 멈춰야 하는데, 원래는 safety_cap이 전진 쪽에만 걸리고
+        backing_linear_x는 전혀 안 거쳤다).
+
+        safety_cap을 구역 루프보다 먼저 구하는 건 _update_backing이 그 틱의 값을 바로 써야
+        해서다(루프 뒤에 구하면 한 틱 늦은 값을 쓰게 된다) - 이 값 자체는 구역 상태와 무관하므로
+        순서를 바꿔도 안전하다.
         """
+        if safety_speed_limit_mps is not None and math.isinf(safety_speed_limit_mps):
+            safety_speed_limit_mps = None  # LEVEL_NORMAL(inf) == 제한 없음
+        dt = 0.0 if self._safety_cap_last_t is None else max(0.0, now - self._safety_cap_last_t)
+        safety_cap = ramp_cap_down(
+            safety_speed_limit_mps, self._safety_cap_effective, dt, self._config.decel_mps2,
+            self._config.max_linear_velocity_mps, current_speed_mps)
+        self._safety_cap_effective = safety_cap
+        self._safety_cap_last_t = now
+
         outgoing: List[OutgoingRequest] = []
         speed_cap: Optional[float] = None
         backing_linear_x: Optional[float] = None
@@ -241,22 +262,13 @@ class ZoneClientCore:
             max_distance = self._lookahead_m if state.phase is Phase.IDLE else None
             remaining = remaining_distance_to_rect(path_xy, robot_xy, spec.area, max_distance)
             zone_outgoing, zone_cap, zone_backing, zone_errors = self._update_zone(
-                zone_id, spec, state, now, remaining, robot_xy)
+                zone_id, spec, state, now, remaining, robot_xy, safety_cap)
             outgoing.extend(zone_outgoing)
             errors.extend(zone_errors)
             if zone_cap is not None:
                 speed_cap = zone_cap if speed_cap is None else min(speed_cap, zone_cap)
             if zone_backing is not None:
                 backing_linear_x = zone_backing  # 동시에 여러 구역이 BACKING일 일은 실제로 없다
-
-        if safety_speed_limit_mps is not None and math.isinf(safety_speed_limit_mps):
-            safety_speed_limit_mps = None  # LEVEL_NORMAL(inf) == 제한 없음
-        dt = 0.0 if self._safety_cap_last_t is None else max(0.0, now - self._safety_cap_last_t)
-        safety_cap = ramp_cap_down(
-            safety_speed_limit_mps, self._safety_cap_effective, dt, self._config.decel_mps2,
-            self._config.max_linear_velocity_mps, current_speed_mps)
-        self._safety_cap_effective = safety_cap
-        self._safety_cap_last_t = now
 
         return outgoing, combine_caps(speed_cap, safety_cap), backing_linear_x, errors
 
@@ -266,7 +278,7 @@ class ZoneClientCore:
                 and now < state.lease_expiry)
 
     def _update_zone(self, zone_id: str, spec: ZoneConfig, state: _ZoneState, now: float,
-                      remaining: Optional[float], robot_xy: Point):
+                      remaining: Optional[float], robot_xy: Point, safety_cap: Optional[float]):
         outgoing: List[OutgoingRequest] = []
         state.last_remaining = remaining  # state_label의 waiting 판정용 (#137 지수 리뷰)
         inside = point_in_rect(robot_xy, spec.area)
@@ -326,7 +338,7 @@ class ZoneClientCore:
                 state.last_sent = now
 
         elif state.phase is Phase.BACKING:
-            return self._update_backing(zone_id, state, now, inside, robot_xy)
+            return self._update_backing(zone_id, state, now, inside, robot_xy, safety_cap)
 
         elif state.phase is Phase.FAILED:
             # 안전 한도를 넘어 멈춰 세운 뒤 - 반납·재시도 없이 계속 0만 낸다 (fail-closed, 수동 확인 필요)
@@ -339,9 +351,15 @@ class ZoneClientCore:
         return outgoing, speed_cap, None, []
 
     def _update_backing(self, zone_id: str, state: _ZoneState, now: float, inside: bool,
-                         robot_xy: Point):
+                         robot_xy: Point, safety_cap: Optional[float]):
         """INSIDE에서 REVOKED를 받아 후진하는 중(10/11 결정) - cmd_vel_nav 대신 이 선속도(음수)를
-        직접 낸다. 반환은 _update_zone과 같은 (outgoing, speed_cap=None, backing_linear_x, errors)."""
+        직접 낸다. 반환은 _update_zone과 같은 (outgoing, speed_cap=None, backing_linear_x, errors).
+
+        safety_cap(SafetyStatus.speed_limit이 부드럽게 따라간 값, 크기 기준)이 있으면 목표 후진
+        속도도 그 안으로 묶는다(#137 지수 리뷰) - ramp_speed의 목표 자체를 낮춰서, backing_speed_effective가
+        "실제로 낸 적 없는" 더 높은 값으로 남지 않게 한다(그래야 CRITICAL이 풀렸을 때 거기서부터
+        급발진하지 않고 다시 부드럽게 올라간다).
+        """
         if state.backing_start_xy is None:
             # on_grant는 위치를 몰라 phase만 바꿔 둔다 - 여기서 첫 틱에 채운다.
             state.backing_start_xy = robot_xy
@@ -373,6 +391,8 @@ class ZoneClientCore:
                 speed_cap_for_stop(self._config.backing_margin_m - past, 0.0, self._config.decel_mps2))
         else:
             target = self._config.backing_speed_mps
+        if safety_cap is not None:
+            target = min(target, safety_cap)
 
         dt = max(0.0, now - state.backing_last_t)
         state.backing_speed_effective = ramp_speed(

@@ -120,6 +120,12 @@ failed > backing > blocked > waiting > inside > approaching > idle
 TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BACKING` 중에도 그 순간 0을 낸다(`core`
 상태는 그대로 두고 그 틱만 건너뛴다 — TF가 돌아오면 이어서 재개한다).
 
+`safety/status`와의 관계(#137 지수 리뷰): 후진 속도도 `speed_limit`에 걸린다(크기 `|v|` 기준) —
+뒤가 막혀 안전 노드가 멈추라고 하면(`CRITICAL`, `speed_limit` 0) 후진도 `decel_mps2`로 부드럽게
+멈춘다. **뒤가 막혀 안전 노드가 멈추면 `backing_timeout_s`까지 기다렸다가 `FAILED`가 된다** — 계속
+막혀 있으면 영원히 멈춰 있지 않고 결국 `failed`로 드러나 수동 확인을 요청한다. 제한이 풀리면 같은
+`decel_mps2`로 다시 `backing_speed_mps`까지 올라간다(급발진하지 않는다).
+
 현재 서버(`amr_fleet_core.traffic.zones.ZoneManager`)는 아직 교착을 **감지**하지 않는다(대기 그래프
 순환 탐지는 미구현, `amr_fleet_core/README.md`) — `GRANT_REVOKED`를 실제로 보내는 경로가 생기기 전까지는
 이 로직을 켤 상황 자체가 안 생긴다. 서버 쪽이 구현되면 이 클라이언트 처리는 바로 맞물린다.
