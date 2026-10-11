@@ -415,3 +415,40 @@ GT 직선이 큰 이유를 경로 순서별로 나눠 보면 추종기가 아니
   따라간 위치가 살짝 앞서거나 뒤처진 것으로 보인다. IMU 바이어스 보정(시작 2 s 정지) 직후 과도 상태로
   추정 - filtered 실행에서는 재현되지 않았다(직선 1 최대 1.49 cm). 반복 측정 전까지는 참고로만 둔다.
 - 1회 측정이라 신뢰구간은 없다.
+
+## 6. 구역 진입 처리 (Zone Client)
+
+`amr_zone_client`(이진)가 `ZoneRequest`/`ZoneGrant`로 `amr_fleet_manager`의 구역 허가 서버(#57)와
+주고받는다. 평소 상태 기계(`IDLE`→`APPROACHING`→`INSIDE`/`BLOCKED`, 재시도·반납 규칙)는
+[amr_zone_client README '동작 규칙' 절](../../src/navigation/amr_zone_client/README.md#동작-규칙-상태-흐름)에
+있다. 여기서는 교착 해소만 다룬다.
+
+### 6-1. 교착 해소 (`GRANT_REVOKED`, 10/11 결정)
+
+원 명세 7장·`amr_fleet_core.traffic.zones`의 교착 해소(대기 그래프 순환 탐지 → 우선순위 낮은 로봇의
+허가 회수)에서, 회수당한 로봇이 실제로 "풀리는" 쪽 - 클라이언트 처리다. 서버가 `GRANT_REVOKED`
+(`REASON_DEADLOCK_RESOLUTION`)를 보내면:
+
+- **`APPROACHING`(아직 구역 밖)**: 들어가지 않고 `BLOCKED`로 간다. `REJECTED`와 다른 점은 이미 허가를
+  쥐고 있었다는 것 - 다음 틱에 `TYPE_RELEASE`를 한 번 보낸 뒤 `BLOCKED`의 재시도 규칙(`retry_period_s`
+  뒤 새 `request_id`)을 그대로 따른다.
+- **`INSIDE`(이미 구역 안)**: 새 상태 `BACKING`으로 가서 **`cmd_vel_nav`를 완전히 무시**하고 직접
+  후진 속도를 낸다(`backing_speed_mps`, 기본 0.15 m/s). `decel_mps2`로 가속하고, 구역 경계를 벗어난
+  뒤 `backing_margin_m`(기본 0.3 m) 남았을 때부터 같은 감속으로 줄여 정확히 그 지점에서 0이 된다 -
+  `path_tracker`의 정지 속도 프로파일(`speed_cap_for_stop`)을 "남은 후진 거리"에 그대로 재사용한
+  것이다(5-0절과 같은 식). 닿으면 정지 → `TYPE_RELEASE` → `IDLE`.
+- **안전장치(fail-closed)**: 후진이 `backing_max_distance_m`(기본 5 m)나 `backing_timeout_s`(기본
+  40 s)를 넘으면 그 순간 속도를 0으로 묶고 ERROR를 한 번 남긴 뒤, 반납·재시도 없이 그대로 멈춰 선다.
+  계속 후진하다 다른 사고로 이어지는 것보다, 서버가 자리를 계속 쥐고 있더라도 멈춰서 수동 확인을
+  받는 쪽이 안전하다고 봤다.
+- TF 조회 실패는 평소 규칙(fail-closed, 속도 0)과 같다 - `BACKING` 중에도 그 틱만 0을 내고, 코어
+  상태(후진 거리·경과 시간)는 그대로 둬 TF가 돌아오면 이어서 재개한다.
+
+상태 토픽 `zone_client/state`(`std_msgs/String`, 바뀌면 즉시 + 1 Hz)로 `idle`/`approaching`/
+`waiting`/`blocked`/`inside`/`backing`을 낸다. `waiting`은 `APPROACHING`이지만 아직 유효한 허가가
+없어(응답 전·`QUEUED` 포함) 정지점에 멈춰 기다리는 경우다 - 이동 중인 `approaching`과 구분해 BT·모니터링
+쪽에서 "지금 왜 안 가는지"를 바로 알 수 있게 했다.
+
+**현재 한계**: 서버(`amr_fleet_core.traffic.zones.ZoneManager`)가 아직 교착을 감지하지 않아(순환 탐지
+미구현) 실제로 `GRANT_REVOKED`를 보내는 경로가 없다 - 이 처리는 `test_core.py` 단위 테스트(합성
+`on_grant` 호출)로만 확인했고, 서버가 실제로 보내는 end-to-end 확인은 서버 쪽 구현이 생긴 뒤에 한다.

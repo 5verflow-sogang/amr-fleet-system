@@ -14,7 +14,8 @@
 | Subscribe | `plan` (파라미터 `plan_topic`) | `nav_msgs/msg/Path` | Nav2 전역 계획 경로. 로봇 현재 위치 기준으로 다시 계산된 것을 그대로 쓴다 |
 | Subscribe | `cmd_vel_nav` (파라미터 `cmd_vel_in_topic`) | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 (Nav2 controller_server, 향후 velocity_smoother의 출력) |
 | Subscribe | `safety/status` (파라미터 `safety_status_topic`) | `amr_msgs/msg/SafetyStatus` | `speed_limit`을 구역 상한과 함께 선속도 상한에 반영 ('SafetyStatus 연동' 절 참고) |
-| Publish | `cmd_vel_zone_limited` (파라미터 `cmd_vel_out_topic`) | `geometry_msgs/msg/Twist` | 게이팅 후 속도 명령. 허가 전엔 선속도만 깎는다, 각속도는 그대로. **로봇의 최종 `cmd_vel`이 아니다** — 'cmd_vel 체인' 절 참고 |
+| Publish | `cmd_vel_zone_limited` (파라미터 `cmd_vel_out_topic`) | `geometry_msgs/msg/Twist` | 게이팅 후 속도 명령. 허가 전엔 선속도만 깎는다, 각속도는 그대로. `BACKING` 중에는 `cmd_vel_nav`를 무시하고 직접 낸 후진 속도다. **로봇의 최종 `cmd_vel`이 아니다** — 'cmd_vel 체인' 절 참고 |
+| Publish | `zone_client/state` | `std_msgs/msg/String` | 요약 상태(`idle`/`approaching`/`waiting`/`blocked`/`inside`/`backing`). 바뀌면 즉시, 그 외 1 Hz |
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
@@ -37,6 +38,9 @@
 | `BLOCKED` | `retry_period_s` 경과, 경로에 구역이 남아 있음 | `APPROACHING` | `TYPE_ACCESS` (새 `request_id`) |
 | `BLOCKED` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 | `IDLE` | (반납 없음 — 서버가 쥔 적이 없다) |
 | `INSIDE` | 위치가 구역 밖으로 나감 | `IDLE` | `TYPE_RELEASE` |
+| `APPROACHING` | `GRANT_REVOKED` 응답(교착 해소) | `BLOCKED` | `TYPE_RELEASE` (다음 틱) |
+| `INSIDE` | `GRANT_REVOKED` 응답(교착 해소) | `BACKING` | — |
+| `BACKING` | 구역 밖 + `backing_margin_m` 이상 후진 | `IDLE` | `TYPE_RELEASE` |
 
 표에 없는 조합(예: `APPROACHING`에서 유효한 허가 없이 경계를 넘었거나, 구역 밖에서 lease가 지난
 경우)은 상태를 그대로 유지하면서 같은 `request_id`로 계속 요청하고 정지 상한을 다시 건다 — 아래
@@ -64,11 +68,38 @@
   빠지고 로봇도 그 구역 밖이면, 서버가 자리를 계속 쥐고 있지 않도록 `TYPE_RELEASE`를 보내고 `IDLE`로
   돌아간다.
 - **INSIDE → IDLE**: 위치가 구역을 벗어나면 그 즉시 `TYPE_RELEASE`를 보내고 상태를 초기화한다.
+- **`GRANT_REVOKED`(교착 해소, 10/11 결정)**: 서버가 교착을 풀려고 우선순위 낮은 로봇의 허가를
+  회수할 때 쓴다(`REASON_DEADLOCK_RESOLUTION`).
+  - `APPROACHING`(아직 구역 밖)이면 들어가지 않고 `BLOCKED`로 간다 — `REJECTED`와 달리 이미 허가를
+    쥐고 있었으므로 다음 틱에 `TYPE_RELEASE`를 한 번 보낸 뒤, `BLOCKED`와 같은 규칙(`retry_period_s`
+    뒤 새 `request_id`로 재시도)을 따른다.
+  - `INSIDE`(이미 구역 안)면 `BACKING`으로 가서 **`cmd_vel_nav`를 완전히 무시**하고 `cmd_vel_zone_limited`로
+    직접 후진 명령을 낸다 — 아래 'BACKING(교착 해소)' 절 참고.
 - `ZoneGrant`는 전체 로봇에 방송되므로 `robot_id`가 다르면 무시한다. 추가로, 지금 기다리는
   `request_id`와 다른 응답(늦게 온 지난 요청의 응답 등)도 무시한다 — 메시지 규약에는 없는, 장애 주입기의
   지연·재배열을 견디기 위한 구현 선택이다.
 - TF(`map_frame`→`base_frame`) 조회에 실패하면 fail-closed로 속도 상한을 0으로 묶는다(경고 로그는
-  5초 throttle).
+  5초 throttle). `BACKING` 중에도 같은 규칙이다 — 아래 'BACKING(교착 해소)' 절 참고.
+
+### BACKING(교착 해소)
+
+`INSIDE`에서 `GRANT_REVOKED`를 받으면 `cmd_vel_nav`를 무시하고 `backing_speed_mps`(기본 0.15 m/s)로
+후진해 구역을 벗어난다. `decel_mps2`로 가속·감속한다(`geometry.ramp_speed`) — 구역 경계를 벗어난 뒤
+`backing_margin_m`(기본 0.3 m)만큼 남았을 때부터 같은 `decel_mps2`로 감속해 정확히 그 지점에서 0이
+된다(`speed_cap_for_stop`을 "남은 후진 거리"에 재사용). 그 지점에 닿으면 정지 → `TYPE_RELEASE` →
+`IDLE`로 돌아가고, 그 뒤로는 평소처럼(새 `request_id`로) 다시 접근한다.
+
+안전장치(fail-closed): `backing_max_distance_m`(총 후진 거리, 기본 5 m) 또는 `backing_timeout_s`
+(경과 시간, 기본 40 s)를 넘으면 그 순간 속도를 0으로 묶고 ERROR 로그를 한 번 남긴다. 그 뒤로는
+반납·재시도 없이 그대로 멈춰 선다 — 계속 후진하다 더 큰 사고로 이어지는 것보다, 서버가 자리를 계속
+쥐고 있더라도 멈춰서 수동 확인을 받는 쪽이 안전하다.
+
+TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BACKING` 중에도 그 순간 0을 낸다(`core`
+상태는 그대로 두고 그 틱만 건너뛴다 — TF가 돌아오면 이어서 재개한다).
+
+현재 서버(`amr_fleet_core.traffic.zones.ZoneManager`)는 아직 교착을 **감지**하지 않는다(대기 그래프
+순환 탐지는 미구현, `amr_fleet_core/README.md`) — `GRANT_REVOKED`를 실제로 보내는 경로가 생기기 전까지는
+이 로직을 켤 상황 자체가 안 생긴다. 서버 쪽이 구현되면 이 클라이언트 처리는 바로 맞물린다.
 
 ## 파라미터
 
@@ -88,7 +119,11 @@
 | `stop_margin_m` | `0.5` | 허가 전 정지 여유 (이진, 10/5) |
 | `decel_mps2` | `1.0` | 정지 속도 프로파일 기준 감속 |
 | `resend_period_s` | `1.0` | 재전송(연장) 주기 |
-| `retry_period_s` | `5.0` | `BLOCKED`(REJECTED) 뒤 재시도까지 기다리는 시간 |
+| `retry_period_s` | `5.0` | `BLOCKED`(REJECTED·REVOKED) 뒤 재시도까지 기다리는 시간 |
+| `backing_speed_mps` | `0.15` | `BACKING` 후진 속도 (10/11 결정) |
+| `backing_margin_m` | `0.3` | 구역 경계를 벗어난 뒤 이만큼 더 나가면 정지·반납 |
+| `backing_max_distance_m` | `5.0` | `BACKING` 안전장치: 총 후진 거리 한도(fail-closed) |
+| `backing_timeout_s` | `40.0` | `BACKING` 안전장치: 경과 시간 한도(fail-closed) |
 | `lookahead_m` | `0.0` (= `trigger_distance_m + 2.0`) | 아직 안 건드린 구역을 로봇 앞 이 거리까지만 찾는다. `0.0`이면 `trigger_distance_m`에 여유를 더해 자동으로 정한다 |
 | `zone_requests_topic` | `/fleet/zone_requests` | 로봇 → 서버 토픽. 다른 파라미터처럼 `declare_parameter`로 선언돼 있지만, 장애 주입기가 중계하지 않는 절대 토픽이라 네임스페이스와 상관없이 항상 같은 기본값을 쓴다(`fleet_manager_node.py`) — 보통 바꿀 일이 없다 |
 | `safety_status_topic` | `safety/status` | `SafetyStatus` 상대 이름 ('SafetyStatus 연동' 절 참고) |
@@ -156,6 +191,10 @@ colcon test --packages-select amr_zone_client
 
 ## 알려진 한계
 
-- `GRANT_REVOKED`(교착 해소용)는 메시지에는 있지만 서버(`amr_fleet_core.traffic.zones.ZoneManager`)가 아직
-  만들어 보내지 않는다. 이 노드도 별도 처리를 하지 않는다 (들어오면 `grant` 상태만 갱신, 구역 안에서 받아도
-  대피 로직 없음) — 서버 쪽 구현이 생기면 다시 본다.
+- `GRANT_REVOKED`(교착 해소) 처리는 이 노드에 구현돼 있다(10/11 결정, 'BACKING(교착 해소)' 절) - 하지만
+  서버(`amr_fleet_core.traffic.zones.ZoneManager`)는 아직 교착을 **감지**하지 않아(대기 그래프 순환
+  탐지 미구현, `amr_fleet_core/README.md`) 실제로 `GRANT_REVOKED`를 보내는 경로가 없다. `test_core.py`의
+  단위 테스트로만 확인했고, 서버가 실제로 보내는 launch 통합 테스트는 서버 쪽 구현이 생긴 뒤에 추가한다.
+- BT(`amr_bt`, 지수)가 `BACKING` 중 자기 상태(이동 중 등)를 어떻게 다룰지는 아직 정해지지 않았다 -
+  `zone_client/state`가 `backing`이면 로봇이 자기 의지와 무관하게 후진 중이라는 뜻이라, BT 쪽에서도
+  참고할 수 있다.
