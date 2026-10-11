@@ -70,6 +70,8 @@
   (`fleet_manager.yaml` `assignment.failed_retries`)과 같은 규칙·기본값이어야
   두 비교군의 재시도 조건이 같다. 재시도 횟수는 `task_id`로 세어(`auction_id`가
   재경매로 바뀌어도 이어서 센다) 중앙의 `TaskEntry.failures`와 같은 역할을 한다.
+  단 취소(`ErrorInfo.ASSIGN_CANCELED`)로 온 FAILED는 재경매하지 않고 실패로 남기며 횟수에도
+  세지 않는다 - 중앙 #107(취소된 작업은 다시 할당하지 않음)과 같은 규칙.
 - **구독 토픽 접두어**: 기본은 절대 경로 원본(`/fleet/task_auctions`,
   `/fleet/task_bids`)을 직접 구독한다. `relayed:=true`(launch 인자, 또는 파라미터
   `auction_topic_prefix:=fleet`)면 상대 이름(장애 주입기 `relay_auction` 중계본)을

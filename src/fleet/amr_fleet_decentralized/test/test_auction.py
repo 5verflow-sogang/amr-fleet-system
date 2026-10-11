@@ -1,4 +1,5 @@
 from amr_fleet_decentralized.auction import (
+    ERROR_CANCELED,
     MODE_BUSY,
     MODE_IDLE,
     AuctionParams,
@@ -153,3 +154,12 @@ def test_can_retry_failed_task_allows_up_to_limit():
 
 def test_can_retry_failed_task_stops_after_limit():
     assert can_retry_failed_task(failures=1, failed_retries=1) is False
+
+
+def test_can_retry_failed_task_skips_canceled():
+    # 취소(ASSIGN_CANCELED)로 온 FAILED는 재경매하지 않는다 (중앙 #107과 같음). 일반 FAILED는 1회 그대로
+    from amr_msgs.msg import ErrorInfo
+    assert ERROR_CANCELED == ErrorInfo.ASSIGN_CANCELED
+    assert can_retry_failed_task(failures=0, failed_retries=1, error_code=ErrorInfo.ASSIGN_CANCELED) is False
+    assert can_retry_failed_task(failures=0, failed_retries=1, error_code=ErrorInfo.NONE) is True
+    assert can_retry_failed_task(failures=1, failed_retries=1, error_code=ErrorInfo.NONE) is False

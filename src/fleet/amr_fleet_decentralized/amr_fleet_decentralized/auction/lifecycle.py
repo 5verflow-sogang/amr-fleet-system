@@ -37,12 +37,22 @@ def can_withdraw(accepted: bool) -> bool:
     return not accepted
 
 
-def can_retry_failed_task(failures: int, failed_retries: int) -> bool:
+# amr_msgs/msg/ErrorInfo.ASSIGN_CANCELED 와 같은 값 (amr_fleet_manager dispatcher.ERROR_CANCELED와 같음)
+ERROR_CANCELED = 103
+
+
+def can_retry_failed_task(failures: int, failed_retries: int, error_code: int = 0) -> bool:
     """ACCEPT 뒤 TaskStatus FAILED를 받았을 때 재경매해도 되는지.
 
     10/9 하연·이진 결정(#107·#108): 최대 failed_retries번까지만 재경매하고,
     그래도 또 실패하면 실패로 남긴다 - 중앙(assignment.failed_retries)과 같은
     규칙이어야 비교군 조건이 같다. failures는 이 작업이 지금까지 FAILED로
     보고된 횟수(재경매 전 값)다.
+
+    취소(error_code ERROR_CANCELED)로 온 FAILED는 재경매하지 않는다 - 일부러 멈춘
+    작업이라 다시 맡기면 안 된다. 중앙 #107(dispatcher.on_status)과 같은 규칙이고,
+    호출 쪽은 이 실패를 failures에 세지 않는다.
     """
+    if error_code == ERROR_CANCELED:
+        return False
     return failures < failed_retries
