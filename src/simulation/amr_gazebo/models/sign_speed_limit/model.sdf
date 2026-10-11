@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<!-- 속도 제한 (빨간 테 지름 0.4 m, 흰 원판, 검은 숫자 5)
+     모델 원점 = 판 중심, 앞면 법선 +x. 충돌체 없음(시각 전용): 표지판은 랙·벽에 붙어 바닥을 차지하지 않는다.
+     LiDAR(지면 0.38 m 수평면)에 걸리지 않도록 월드에서 아랫면을 0.55 m 이상에 둔다 (README "표지판"). -->
+<sdf version="1.8">
+  <model name="sign_speed_limit">
+    <static>true</static>
+    <link name="link">
+      <visual name="ring">
+        <pose>0.0000 0 0 0 1.5707963 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><cylinder><radius>0.2000</radius><length>0.0200</length></cylinder></geometry>
+        <material><ambient>0.85 0.05 0.05 1</ambient><diffuse>0.85 0.05 0.05 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="face">
+        <pose>0.0020 0 0 0 1.5707963 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><cylinder><radius>0.1600</radius><length>0.0200</length></cylinder></geometry>
+        <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="digit_a">
+        <pose>0.0140 0.0000 0.0850 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0040 0.1200 0.0300</size></box></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="digit_f">
+        <pose>0.0140 -0.0450 0.0500 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0040 0.0300 0.1000</size></box></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="digit_g">
+        <pose>0.0140 0.0000 0.0000 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0040 0.1200 0.0300</size></box></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="digit_c">
+        <pose>0.0140 0.0450 -0.0500 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0040 0.0300 0.1000</size></box></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+      <visual name="digit_d">
+        <pose>0.0140 0.0000 -0.0850 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><box><size>0.0040 0.1200 0.0300</size></box></geometry>
+        <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.05 0.05 0.05 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
+      </visual>
+    </link>
+  </model>
+</sdf>
