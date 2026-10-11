@@ -128,3 +128,30 @@ def test_reset_clears_tracks_and_keeps_counting_ids():
     assert tracker.tracks == [] and tracker.last_time is None
     tracker.step(0.0, [(1.0, 1.0)])                   # 시각이 처음으로 돌아가도 처리된다
     assert [track.track_id for track in tracker.tracks] == [1]
+
+
+# --- 반경 ---
+def test_radius_is_smoothed_from_measurements():
+    tracker = MultiTargetTracker(TrackerConfig(radius_smoothing=0.5))
+    tracker.step(0.0, [(0.0, 0.0)], [0.2])
+    tracker.step(0.1, [(0.0, 0.0)], [0.4])
+    tracks = tracker.step(0.2, [(0.0, 0.0)], [0.4])
+    assert tracks[0].radius == pytest.approx(0.35)   # 0.2 → 0.3 → 0.35
+
+
+def test_radius_is_none_without_radii():
+    tracker = MultiTargetTracker(TrackerConfig())
+    confirm_static(tracker)
+    assert tracker.confirmed_tracks[0].radius is None
+
+
+@pytest.mark.parametrize('radii', [[0.2, 0.3], [0.0], [float('nan')], [-0.1]])
+def test_rejects_bad_radii(radii):
+    with pytest.raises(ValueError):
+        MultiTargetTracker(TrackerConfig()).step(0.0, [(0.0, 0.0)], radii)
+
+
+@pytest.mark.parametrize('value', [0.0, 1.5])
+def test_rejects_bad_radius_smoothing(value):
+    with pytest.raises(ValueError):
+        TrackerConfig(radius_smoothing=value)

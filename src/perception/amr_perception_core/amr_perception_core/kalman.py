@@ -108,6 +108,18 @@ class ConstantVelocityKF:
         y, s = self.innovation(z, r)
         return float(y @ np.linalg.solve(s, y))
 
+    def mahalanobis_sq_many(self, zs: np.ndarray) -> np.ndarray:
+        """여러 관측 (M, 2)의 마할라노비스 거리²를 한 번에 계산한다 (S⁻¹은 한 번만). R은 기본값.
+
+        연관 단계에서 트랙마다 측정 전부와 비교하므로, 쌍마다 S를 다시 푸는 mahalanobis_sq보다 빠르다.
+        """
+        zs = np.asarray(zs, dtype=float).reshape(-1, 2)
+        if not np.all(np.isfinite(zs)):
+            raise ValueError('관측은 유한한 (x, y)여야 한다')
+        s = _H @ self.P @ _H.T + self.measurement_covariance()
+        y = zs - self.x[:2]
+        return np.einsum('ij,jk,ik->i', y, np.linalg.inv(s), y)
+
     def update(self, z: Sequence[float], r: Optional[np.ndarray] = None) -> None:
         """위치 관측 z를 반영한다. r을 주지 않으면 measurement_noise_std로 만든 R을 쓴다."""
         r = self.measurement_covariance() if r is None else np.asarray(r, dtype=float)
