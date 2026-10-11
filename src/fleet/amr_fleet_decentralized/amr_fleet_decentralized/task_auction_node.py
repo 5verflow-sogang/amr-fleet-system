@@ -23,7 +23,8 @@ fleet/task_auctions, fleet/task_bids로 - 장애 주입기 relay_auction 중계�
 이 노드는 "경매를 언제 새로 시작할지"(서버 장애·미할당 작업 감지)는 아직 안 다룬다 -
 README '확인 필요' 절 참고. 재경매는 두 가지 - AWARD 재전송 다 썼는데 ACCEPT 없음,
 그리고 ACCEPT 뒤 TaskStatus FAILED(최대 failed_retries번, 그래도 실패하면 실패로 남김
-- 중앙 assignment.failed_retries와 같은 규칙).
+- 중앙 assignment.failed_retries와 같은 규칙). 취소(ErrorInfo.ASSIGN_CANCELED)로 온 FAILED는
+재경매하지 않는다(중앙 #107과 같음).
 
 내 상태(RobotState)를 아직 모를 때 공고를 받으면(기동 직후 등) 입찰 여부 결정을 미룬다 -
 상태를 먼저 확인하기 전에 "결정 끝"으로 기록해 버리면 그 경매에 영원히 입찰을 못 한다
@@ -43,6 +44,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 from .auction import (
+    ERROR_CANCELED,
     AuctionParams,
     AuctionResult,
     Bid,
@@ -344,18 +346,22 @@ class TaskAuctionNode(Node):
                 state.phase == 'done' and state.task.task_id == msg.task_id
                 and state.winner_id == msg.robot_id
             ):
-                self._on_task_failed(key, state)
+                self._on_task_failed(key, state, msg.error.code)
                 return
 
-    def _on_task_failed(self, key: AuctionKey, state: _AuctionState):
+    def _on_task_failed(self, key: AuctionKey, state: _AuctionState, error_code: int = 0):
         task_id = state.task.task_id
         failures = self._task_failures.get(task_id, 0)
-        if can_retry_failed_task(failures, self._params.failed_retries):
+        if can_retry_failed_task(failures, self._params.failed_retries, error_code):
             self._task_failures[task_id] = failures + 1
             self.get_logger().warn(
                 f'경매 {key}: 작업 {task_id} 실패 보고({failures + 1}/'
                 f'{self._params.failed_retries}) - 재경매')
             self._reauction(key, state)
+        elif error_code == ERROR_CANCELED:
+            # 취소로 멈춘 작업: 재경매하지 않고 재시도 횟수에도 세지 않는다 (중앙 #107과 같음)
+            state.phase = 'failed'
+            self.get_logger().info(f'경매 {key}: 작업 {task_id} 취소(ASSIGN_CANCELED) - 재경매 안 함')
         else:
             state.phase = 'failed'
             self.get_logger().error(
@@ -449,5 +455,6 @@ def main(args=None):
         # Ctrl+C는 터미널과 launch에서 SIGINT가 두 번 온다. 정리 중에 끊기지 않게 이후 신호는 무시한다
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        # ok() 확인과 shutdown() 사이에 SIGINT 처리기가 먼저 종료하면 "already called" 예외로
+        # 종료 코드 1이 난다 - try_shutdown은 이미 종료됐으면 그냥 넘어간다 (amr_fleet_manager와 같음)
+        rclpy.try_shutdown()

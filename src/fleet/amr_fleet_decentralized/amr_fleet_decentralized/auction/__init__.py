@@ -2,7 +2,9 @@
 
 from .bidding import compute_bid_cost, decide_bid, estimate_finish_time
 from .decision import decide_winner
-from .lifecycle import award_exhausted, can_retry_failed_task, can_withdraw, should_resend_award
+from .lifecycle import (
+    ERROR_CANCELED, award_exhausted, can_retry_failed_task, can_withdraw, should_resend_award,
+)
 from .params import AuctionParams
 from .types import (
     MODE_BUSY, MODE_CHARGING, MODE_ERROR, MODE_ESTOP, MODE_IDLE, AuctionResult, Bid, RobotInfo,
@@ -10,6 +12,7 @@ from .types import (
 )
 
 __all__ = [
+    'ERROR_CANCELED',
     'MODE_BUSY',
     'MODE_CHARGING',
     'MODE_ERROR',
