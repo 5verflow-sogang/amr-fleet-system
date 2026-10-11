@@ -26,7 +26,7 @@ GitHub Actions (fleet-test.yml, 수동 실행)
 | 파일 | 내용 |
 | --- | --- |
 | `main.tf` | API, 결과 버킷 `amr-fleet-results`, Artifact Registry `amr` |
-| `iam.tf` | 서비스 계정 `fleet-gha`(VM 생성·삭제), `fleet-runner-vm`(버킷·이미지 캐시), GitHub OIDC 연동 |
+| `iam.tf` | 서비스 계정 `fleet-gha`(VM 생성·삭제), `fleet-runner-vm`(버킷·이미지 캐시), GitHub OIDC 연동, 팀원 결과 버킷 권한(`results_viewers`·`results_writers`) |
 | `runner.tf` | 인스턴스 템플릿 `fleet-runner` (Spot, 최대 실행 시간 후 자동 삭제) |
 | `budget.tf` | 월 예산 알림 50/90/100% (`billing_account_id`를 줄 때만) |
 | `startup.sh` | VM 시작 스크립트 |
@@ -87,6 +87,20 @@ Actions → Fleet Regression Test → Run workflow. `ref`에 브랜치나 `refs/
 ```bash
 gcloud storage ls gs://amr-fleet-results/runs/
 gcloud storage cp -r gs://amr-fleet-results/runs/<VM 이름> .
+```
+
+## 결과 보기 (팀원)
+
+권한은 하연이 `terraform.tfvars`의 `results_viewers`(읽기)·`results_writers`(새 파일 올리기)에 Google 계정을 넣고 `terraform apply`로 준다.
+
+- 브라우저: <https://console.cloud.google.com/storage/browser/amr-fleet-results> (권한 받은 Google 계정으로 로그인)
+- 터미널 (`gcloud auth login` 후):
+
+```bash
+gcloud storage ls gs://amr-fleet-results/runs/
+gcloud storage cp -r gs://amr-fleet-results/runs/<폴더> .
+# 쓰기 권한이 있으면 로컬 하네스 결과 올리기 (같은 이름의 파일은 덮어쓸 수 없다)
+gcloud storage cp -r tools/harness/results/<실행 폴더> gs://amr-fleet-results/runs/<폴더>/
 ```
 
 ## 문제 해결
