@@ -1,6 +1,6 @@
 """zone_client_node를 실제 amr_fleet_manager 서버·amr_fault_injector 중계와 함께 띄워 확인한다 (launch_testing).
 
-요청(경계 3 m 앞) → 허가(대기 로봇 없음 → 바로 GRANTED) → 진입 → 반납까지.
+요청(경계 3 m 앞) → 허가(대기 로봇 없음 → 바로 GRANTED) → 진입 → 연장(같은 request_id 재요청, lease 연장) → 반납까지.
 위치는 TF(map → base_footprint)를, 경로는 nav_msgs/Path를 이 테스트가 직접 발행해서 흉내 낸다.
 """
 
@@ -110,11 +110,22 @@ class TestZoneClientLive(unittest.TestCase):
             return any(g.grant == ZoneGrant.GRANT_GRANTED for g in grants)
         self.assertTrue(self.spin_until(granted, 10.0), f'GRANTED를 못 받음: {[g.grant for g in grants]}')
 
-        # 구역 안으로 진입
+        # 구역 안으로 진입. 머무는 동안 같은 request_id로 다시 요청하고(resend_period_s 1초), 서버는 lease를 늘린다
+        del requests[:]
+        del grants[:]
         end = time.monotonic() + 3.0
         while time.monotonic() < end:
             self.publish_robot_x(5.5)
             rclpy.spin_once(self.node, timeout_sec=0.1)
+
+        # colcon test는 패키지를 병렬로 돌려 다른 테스트의 구역 메시지가 섞일 수 있어 amr_01 것만 센다
+        renewals = [r for r in requests if r.type == ZoneRequest.TYPE_ACCESS and r.robot_id == 'amr_01']
+        self.assertGreaterEqual(len(renewals), 2, f'연장 요청이 부족함: {[(r.type, r.request_id) for r in requests]}')
+        self.assertTrue(all(r.request_id == request_id for r in renewals), '연장은 같은 request_id여야 함')
+        expiries = [g.lease_expiry.sec + g.lease_expiry.nanosec * 1e-9 for g in grants
+                    if g.robot_id == 'amr_01' and g.grant == ZoneGrant.GRANT_GRANTED and g.request_id == request_id]
+        self.assertGreaterEqual(len(expiries), 2, f'연장 허가가 부족함: {[g.grant for g in grants]}')
+        self.assertGreater(expiries[-1], expiries[0], 'lease_expiry가 늘지 않음')
 
         # 반대편으로 빠져나온다
         del requests[:]
