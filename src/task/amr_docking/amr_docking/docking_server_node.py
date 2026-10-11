@@ -65,7 +65,7 @@ class DockingServer(Node):
             w_max=p('w_max', 0.4).value,
             position_tol=p('position_tol', 0.02).value,
             yaw_tol=math.radians(p('yaw_tol_deg', 1.0).value),
-            timeout_s=p('timeout_s', 60.0).value,
+            timeout_s=p('timeout_s', 90.0).value,
             verify_samples=p('verify_samples', 15).value,
         )
 
@@ -77,7 +77,8 @@ class DockingServer(Node):
         self.dist: Optional[np.ndarray] = None
         self.active = None          # (station, controller) 진행 중인 목표
         self.measurement: Optional[DockError] = None
-        self.measured_at = 0.0
+        self.measured_at = 0.0      # 측정한 영상의 시각 (header.stamp) — 처리 지연까지 나이에 들어간다
+        self.reserved = False       # 목표 하나를 받았다 (수락 순간 잡아 동시에 온 두 번째 목표를 거부)
 
         group = ReentrantCallbackGroup()
         self.cmd_pub = self.create_publisher(Twist, p('cmd_vel_topic', 'cmd_vel_nav').value, 10)
@@ -127,14 +128,18 @@ class DockingServer(Node):
             return float(v[0]), float(v[1])
 
         error = dock_error(base_xy(pair[0]), base_xy(pair[1]), station.standoff)
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         with self.lock:
             self.measurement = error
-            self.measured_at = self.now_s()
+            self.measured_at = stamp   # 처리 끝난 시각이 아니라 영상 시각 (#142 하연 리뷰)
 
     def on_goal(self, goal_request):
+        # 확인과 잡기를 한 잠금 안에서 한다. 따로 하면 동시에 온 목표 두 개를 둘 다 받는다 (#142 하연 리뷰)
         with self.lock:
-            busy = self.active is not None
-        return GoalResponse.REJECT if busy else GoalResponse.ACCEPT
+            if self.reserved:
+                return GoalResponse.REJECT
+            self.reserved = True
+        return GoalResponse.ACCEPT
 
     def now_s(self) -> float:
         """노드 시계 [s]. use_sim_time이면 시뮬레이션 시간이라 RTF가 1보다 작아도 제어 주기·시간 초과가 맞다."""
@@ -149,6 +154,8 @@ class DockingServer(Node):
         result.attempts = 1
         station = self.stations.get(station_id)
         if station is None:
+            with self.lock:
+                self.reserved = False
             result.success = False
             result.error_code = DOCK_NOT_IN_DB
             result.message = f'unknown station {station_id}'
@@ -200,6 +207,7 @@ class DockingServer(Node):
             self.stop()
             with self.lock:
                 self.active = None
+                self.reserved = False
 
         if outcome is None:   # 종료 중
             goal_handle.abort()

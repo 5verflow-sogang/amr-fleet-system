@@ -82,10 +82,41 @@ def test_rotation_overshoot_is_corrected():
 
 
 def test_not_found_after_sweep():
+    # 돌고, 뒤로 빠지고, 다시 돌아도 없으면 실패
     out, _, ctl = simulate(0.1, 0.0, 0.0, visible=lambda t, e: False)
     assert not out.success
     assert out.error_code == FAILED_TO_DETECT_DOCK
-    assert ctl.elapsed < 15.0
+    assert ctl.elapsed < 30.0
+
+
+def test_too_close_backs_off_to_find():
+    # 목표를 20 cm 지나쳐 판이 카메라 최소 거리 안이라 안 보인다 → 돌아도 없음 → 뒤로 빠지면 보임 (#142 허용치 끝)
+    out, true, _ = simulate(-0.22, -0.1, math.radians(14), visible=lambda t, e: e.along > -0.05)
+    assert out.success, out.message
+    assert true.position < 0.01
+
+
+def test_noisy_lateral_while_moving_does_not_loop():
+    # 도크처럼 움직이는 동안 옆 오차 측정이 ±2 cm 흔들려도, 멈춘 채 평균으로 판단해 되풀이하지 않는다
+    rng = random.Random(3)
+    ctl = DockingController()
+    x, y, th = -0.3, 0.05, math.radians(5)
+    backoffs, prev = 0, None
+    for _ in range(4000):
+        true = DockError(-x, y, th)
+        moving = ctl.stage in ('APPROACH', 'BACKOFF')
+        noise = 0.02 if moving else 0.0005
+        v, w, out = ctl.step(DockError(true.along, true.lateral + rng.gauss(0, noise), true.heading), DT)
+        if ctl.stage == 'BACKOFF' and prev != 'BACKOFF':
+            backoffs += 1
+        prev = ctl.stage
+        if out is not None:
+            break
+        x += v * math.cos(th) * DT
+        y += v * math.sin(th) * DT
+        th += w * DT
+    assert out.success, out.message
+    assert backoffs <= 2
 
 
 def test_found_during_sweep():

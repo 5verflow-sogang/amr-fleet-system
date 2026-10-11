@@ -1,10 +1,15 @@
 """도킹 접근 제어 (ROS 비의존). 차동 구동이라 옆으로 못 움직이므로 단계를 나눈다.
 
-    SEARCH   마커판이 보일 때까지 기다리고, 안 보이면 제자리에서 좌우로 돌며 찾는다
+    SEARCH   마커판이 보일 때까지 기다리고, 안 보이면 제자리에서 좌우로 돌며 찾는다. 그래도 없으면 천천히
+             뒤로 search_backoff_m 빠져 한 번 더 돈다 (목표를 지나쳐 판이 카메라 최소 거리·시야 밖인 경우)
     BACKOFF  목표에 너무 가깝거나 지나쳤는데 옆 오차가 크면, 뒤로 빠져 접근 거리를 번다
     APPROACH 목표 진행선을 따라 들어간다 (옆 오차를 진행 방향으로 바로잡음). 남은 거리 ≈ 0이면 멈춤
     ROTATE   제자리에서 목표 방향으로 돈다
-    VERIFY   멈춘 채 여러 번 재서 평균 오차를 보고, 허용치 안이면 성공. 아니면 BACKOFF부터 다시
+    VERIFY   멈춘 채 여러 번 재서 평균 오차를 본다. 옆 오차가 lateral_finish보다 크면 BACKOFF부터 다시 접근,
+             방향만 남았으면 ROTATE, 허용치 안이면 성공
+
+움직이며 잰 값 하나로는 다시 할지 정하지 않는다. 1.5 m 거리(도크)에서는 움직이는 동안 옆 오차가 ±2~3 cm
+흔들려서(방향 측정 흔들림 × standoff) 한 번 값으로 정하면 필요 없이 뒤로 빠지기를 되풀이한다 (#142 허용치 끝 실험).
 
 step(error, dt)는 매 주기 부른다. error는 이번 주기에 잰 도킹 오차(geometry.DockError)이고 마커판이
 안 보이면 None이다. 반환은 (v, w) 명령과 끝났으면 결과(Outcome).
@@ -36,7 +41,9 @@ class ControllerConfig:
     along_tol: float = 0.003        # m. 접근 멈춤
     heading_tol: float = math.radians(0.25)   # 제자리 회전 멈춤
     min_run: float = 0.25           # m. 옆 오차를 잡으려면 이만큼 앞에서 접근을 시작해야 한다
-    backoff_to: float = 0.4         # m. BACKOFF는 남은 거리가 이만큼 될 때까지 뒤로
+    backoff_to: float = 0.4         # m. BACKOFF는 남은 거리가 이만큼 + 옆 오차 × backoff_per_lateral 될 때까지 뒤로
+    backoff_per_lateral: float = 2.0   # 옆 오차가 크면 더 뒤로 빠져 한 번에 바로잡는다 (한 번 0.4 m로 약 10 cm)
+    backoff_max: float = 0.8        # m
     lateral_ok: float = 0.008       # m. 이보다 작으면 BACKOFF 없이 바로 접근
     lateral_finish: float = 0.005   # m. 접근 끝에서 옆 오차가 이보다 크면 다시 뒤로 빠져 접근한다
     max_approaches: int = 3         # 한 번 시도 안에서 접근을 다시 하는 횟수
@@ -49,8 +56,11 @@ class ControllerConfig:
     search_wait_s: float = 2.0      # 처음 안 보이면 이만큼 기다린 뒤 돌며 찾는다
     search_sweep: float = 0.6       # rad. 좌우로 찾는 각도
     search_w: float = 0.25          # rad/s
+    search_backoff_m: float = 0.3   # 돌아도 없으면 이만큼 뒤로 빠져 다시 찾는다 (뒤는 Nav2가 온 길이라 비어 있다)
+    search_backoff_v: float = 0.06  # m/s
+    end_soften_m: float = 0.05      # 남은 거리가 이보다 짧으면 옆 보정 조향을 줄인다 (끝에서 크게 꺾지 않게)
     lost_timeout_s: float = 3.0     # 접근 중 이만큼 안 보이면 실패
-    timeout_s: float = 60.0         # 한 번 시도의 전체 시간
+    timeout_s: float = 90.0         # 한 번 시도의 전체 시간 (허용치 끝 출발은 BACKOFF 두세 번에 60 s를 넘었다)
     max_retries: int = 2            # VERIFY에서 허용치 밖이면 BACKOFF부터 다시 하는 횟수
 
 
@@ -72,6 +82,8 @@ class DockingController:
     _seen_once: bool = False
     _sweep_angle: float = 0.0       # SEARCH 중 제자리에서 돈 누적 각도 (명령 적분)
     _sweep_index: int = 0
+    _search_backed: float = 0.0     # SEARCH 중 뒤로 빠진 거리
+    _search_round: int = 0          # 0: 첫 회전, 1: 뒤로 빠짐, 2: 두 번째 회전
     _samples: List[DockError] = field(default_factory=list)
     _retries: int = 0
     _approaches: int = 0
@@ -114,7 +126,16 @@ class DockingController:
                     break
                 self._sweep_index += 1
             if self._sweep_index >= len(targets):
-                return 0.0, 0.0, Outcome(False, FAILED_TO_DETECT_DOCK, 'marker board not found')
+                if self._search_round == 0:
+                    self._search_round = 1       # 뒤로 빠지기
+                elif self._search_round == 2:
+                    return 0.0, 0.0, Outcome(False, FAILED_TO_DETECT_DOCK, 'marker board not found')
+            if self._search_round == 1:
+                if self._search_backed >= cfg.search_backoff_m:
+                    self._search_round, self._sweep_index, self._sweep_angle = 2, 0, 0.0
+                    return 0.0, 0.0, None
+                self._search_backed += cfg.search_backoff_v * dt
+                return -cfg.search_backoff_v, 0.0, None
             step = math.copysign(min(cfg.search_w * dt, abs(remaining)), remaining)
             self._sweep_angle += step
             return 0.0, step / dt if dt > 0 else 0.0, None
@@ -127,26 +148,22 @@ class DockingController:
             return 0.0, 0.0, None   # 잠깐 안 보이면 멈춰 기다린다
 
         if self.stage == 'BACKOFF':
-            if error.along >= cfg.backoff_to:
+            target = min(cfg.backoff_max, cfg.backoff_to + cfg.backoff_per_lateral * abs(error.lateral))
+            if error.along >= target:
                 self._go('APPROACH')
                 return 0.0, 0.0, None
             return -cfg.v_max * 0.7, self._clamp(-cfg.k_heading * error.heading, cfg.w_max), None
 
         if self.stage == 'APPROACH':
             if abs(error.along) <= cfg.along_tol:
-                # 옆 오차가 남았으면 차동 구동은 옆으로 못 가니 뒤로 빠져 다시 들어간다
-                if abs(error.lateral) > cfg.lateral_finish and self._approaches < cfg.max_approaches:
-                    self._approaches += 1
-                    self._go('BACKOFF')
-                else:
-                    self._go('ROTATE')
+                # 다 들어왔다: 멈추고 돌린 뒤 VERIFY가 멈춘 채 잰 평균으로 다시 할지 정한다
+                self._go('ROTATE')
                 return 0.0, 0.0, None
-            if error.along < -cfg.along_tol and abs(error.lateral) > cfg.lateral_ok:
-                self._go('BACKOFF')   # 옆 오차가 남은 채 지나쳤다
-                return 0.0, 0.0, None
-            # 진행선 쪽으로 기운 방향을 목표로 (Stanley 방식). 뒤로 갈 때는 보정 방향이 반대
+            # 진행선 쪽으로 기운 방향을 목표로 (Stanley 방식). 지나쳤으면 뒤로 가며 보정 방향이 반대.
+            # 끝에서는 보정을 줄여 크게 꺾지 않는다
             direction = 1.0 if error.along > 0 else -1.0
-            correction = self._clamp(math.atan(cfg.k_lateral * error.lateral), cfg.max_correction)
+            soften = min(1.0, abs(error.along) / cfg.end_soften_m)
+            correction = soften * self._clamp(math.atan(cfg.k_lateral * error.lateral), cfg.max_correction)
             heading_target = -direction * correction
             w = self._clamp(cfg.k_heading * (heading_target - error.heading), cfg.w_max)
             speed = max(cfg.v_min, min(cfg.v_max, cfg.k_along * abs(error.along)))
@@ -168,6 +185,11 @@ class DockingController:
                 return 0.0, 0.0, None
             mean = average(self._samples)
             self.last_error = mean
+            # 옆 오차가 남았으면 차동 구동은 옆으로 못 가니 뒤로 빠져 다시 들어간다
+            if abs(mean.lateral) > cfg.lateral_finish and self._approaches < cfg.max_approaches:
+                self._approaches += 1
+                self._go('BACKOFF')
+                return 0.0, 0.0, None
             # 돌다 멈출 때 관성·영상 지연으로 방향이 조금 더 가 있으면 제자리 회전만 다시 한다
             if (mean.position <= cfg.position_tol and abs(mean.heading) > cfg.verify_heading
                     and self._rotations < cfg.max_rotations):

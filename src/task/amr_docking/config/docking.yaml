@@ -19,4 +19,4 @@
     yaw_tol_deg: 1.0
     verify_samples: 15
     # 한 번 시도의 전체 시간 [s]. 넘으면 FAILED_TO_CONTROL
-    timeout_s: 60.0
+    timeout_s: 90.0

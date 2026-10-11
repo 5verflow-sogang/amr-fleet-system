@@ -55,6 +55,8 @@ def main():
     ap.add_argument('--along', nargs=2, type=float, default=[-0.15, 0.25])
     ap.add_argument('--lateral', type=float, default=0.15)
     ap.add_argument('--heading-deg', type=float, default=10.0)
+    ap.add_argument('--edge', type=float, default=0.0,
+                    help='0보다 크면 Nav2 허용치 끝: 위치는 이 반경 원 위(방향 무작위), 방향은 정확히 ±heading-deg')
     ap.add_argument('--csv', default='')
     a = ap.parse_args()
 
@@ -72,9 +74,14 @@ def main():
     for name in a.stations:
         s = stations[name]
         for i in range(a.per_station):
-            along = rng.uniform(*a.along)
-            lateral = rng.uniform(-a.lateral, a.lateral)
-            heading = math.radians(rng.uniform(-a.heading_deg, a.heading_deg))
+            if a.edge > 0.0:
+                phi = rng.uniform(0.0, 2.0 * math.pi)
+                along, lateral = a.edge * math.cos(phi), a.edge * math.sin(phi)
+                heading = math.radians(rng.choice((-1.0, 1.0)) * a.heading_deg)
+            else:
+                along = rng.uniform(*a.along)
+                lateral = rng.uniform(-a.lateral, a.lateral)
+                heading = math.radians(rng.uniform(-a.heading_deg, a.heading_deg))
             c, sn = math.cos(s.yaw), math.sin(s.yaw)
             x = s.x - c * along - sn * lateral
             y = s.y - sn * along + c * lateral
