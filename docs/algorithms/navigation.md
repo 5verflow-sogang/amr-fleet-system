@@ -1,7 +1,7 @@
 # 경로 계획 · 모션 제어 (A* · DWA · Costmap)
 
 > 상태: 진행 중 (2주차). 담당: 이진. Costmap(1절)·DWA(4절) 설정·구현 근거를 정리한다.
-> A* 알고리즘 설명(3절), PID(5절)는 아직 TODO. Pure Pursuit/Stanley는 5절.
+> A* 알고리즘 설명(3절)은 아직 TODO. Pure Pursuit/Stanley/PID와 Gazebo CTE 측정은 5절.
 > 파라미터 파일은 [amr_bringup/config/nav2_params.yaml](../../src/bringup/amr_bringup/config/nav2_params.yaml)이다.
 
 ## 1. Costmap
@@ -163,19 +163,45 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
 `Grid`가 원점 정보를 들고 있지 않은 설계(`grid.hpp`, A*와 공유)와 같은 이유로,
 odom/map 프레임 ↔ 이 좌표계 변환은 core가 아니라 3주차 `amr_nav2_plugins`가 맡는다.
 
-### 4-5. 이번 주 범위와 3주차 범위
+### 4-5. 범위 변화 (2주차 → 3주차)
 
-| 구분 | 이번 주(2주차) | 3주차 |
+| 구분 | 2주차 | 3주차 |
 | --- | --- | --- |
-| 장애물 | 정적 장애물만(`Grid` 비용값) | `amr_msgs/TrackedObstacleArray` 기반 동적 장애물을 비용 함수에 반영(연구 2, 4장의 AKF·확률적 TTC와 연결) |
-| 연결 | ROS 비의존 core만(`amr_planning_core`) | `amr_nav2_plugins`에서 `nav2_core::Controller`로 감싸 `controller_server`에 꽂는다(1주차 DWB baseline을 교체) |
-| 비교 | — | DWB·TEB와 CTE·정지 횟수·경로 길이로 비교(원 명세 "DWA vs TEB") |
+| 장애물 | 정적 장애물만(`Grid` 비용값) | 동적 장애물(4-6절)도 비용 함수·충돌 판정에 반영 |
+| 연결 | ROS 비의존 core만(`amr_planning_core`) | `amr_nav2_plugins::DwaController`로 `nav2_core::Controller` 감싸 `controller_server`에 `DWA`로 추가(1주차 DWB baseline은 비교용으로 남겨 둔다) |
+| 비교 | — | DWB·TEB와 CTE·정지 횟수·경로 길이로 비교(원 명세 "DWA vs TEB") — 아직 TODO |
+
+### 4-6. 동적 장애물 (3주차)
+
+`perception/obstacles`(`TrackedObstacleArray`)의 pose·twist·radius를 `DynamicObstacle`
+(x, y, vx, vy, radius)로 바꿔 `computeVelocityCommand`에 추가 인자로 넘긴다
+(`DwaConfig.predict_dynamic_obstacles`). 궤적 롤아웃의 각 시각 t마다 장애물을
+`x+vx·t, y+vy·t`로 등속 예측해 사각 풋프린트와의 거리를 구하고, 안전 여유
+(`dynamic_obstacle_safety_margin`) 안이면 그 궤적을 충돌로 걸러내고, 그 밖이면
+거리에 따라 줄어드는 소프트 비용(`dynamic_weight`, 영향 반경
+`dynamic_obstacle_influence_radius`)을 더한다. 동적 장애물을 안 넘기면(빈 벡터,
+기본값) 2주차 정적 장애물 전용 결과와 완전히 같다 — `predict_dynamic_obstacles:
+false`면 장애물이 관측 위치에 멈춰 있다고 본다(순간 스냅샷).
+
+`amr_nav2_plugins::DwaController`가 이 장애물 목록을 만들어 넘기고, 전역 경로에서
+로봇 앞 `lookahead_distance`만큼의 지점을 "다음 목표"로 골라 DWA에 준다. Gazebo
+월드 v0 + Nav2 bringup으로 실제 주행을 확인했다(`amr_bringup/launch/
+nav2_dwa_demo.launch.py`, `use_static_map`은 없어졌다 - 바로 아래 참고).
+
+처음엔 목표가 수락되고 BT가 시작된 뒤 `cmd_vel`이 전혀 나오지 않아 "NavFn이 큰
+지도(60x40m)에서 멈춘다"고 보고 global costmap을 로봇 중심 rolling_window(지도
+없이)로 바꿔 돌아갔었다. 그런데 진짜 원인은 지도 크기가 아니라 `obstacle_layer`가
+구독하는 토픽 이름이 실제 Gazebo LiDAR 토픽(`scan_raw`)과 달라 costmap이 영영
+`isCurrent()`가 안 되고 `planner_server`·`controller_server`가 그걸 기다리며
+조용히 멈춰 있던 것이었다 - 토픽을 맞추고 나니(+ bt_navigator가 찾는 컨트롤러
+이름 불일치, 최종 접근 시 목표 각도까지 회전하지 않던 버그도 같이 고쳐서)
+static_layer(지도 v0) 그대로도 바로 된다. rolling_window는 그래서 다시 뺐다.
 
 ## 5. Pure Pursuit · Stanley · PID
 
 > 담당: 이진. ROS 비의존 코어 `amr_control/include/amr_control/core/`, 노드 `path_tracker_node`
 > (`plan` + `odom` → `cmd_vel_nav`). 파라미터는 [amr_control/config/path_tracker.yaml](../../src/navigation/amr_control/config/path_tracker.yaml).
-> Nav2 `controller_server` 플러그인화와 PID는 아직 안 했다.
+> Nav2 `controller_server` 플러그인화는 아직 안 했다.
 
 ### 5-0. 공통: 가장 가까운 점과 CTE
 
@@ -268,8 +294,8 @@ lookahead를 속도에 비례시키는 이유: 짧으면 저속에서 정확하�
 | 3 m 직선 끝 | 끝점 0.13 m 안 정지, 끝점을 3 cm 넘게 지나치지 않음, 이후 계속 (0, 0) |
 | 반대 방향 출발 / R = 0.25 m 급커브 / 재계획 | 제자리 회전 후 추종 / \|ω\| ≤ 1.5 rad/s / 속도 유지 |
 
-TODO: Gazebo에서 하네스 시나리오로 실측 CTE(직선 5 cm·곡선 10 cm KPI)를 재고, Pure Pursuit과
-Stanley를 비교한다(`meta.json` `controller`). PID 속도 제어와 S-curve 프로파일은 그 다음.
+Gazebo 1회 측정은 5-8절. 남은 것: 위치추정(EKF/AMCL)을 켠 하네스 시나리오로 반복 측정하고 Pure Pursuit과
+Stanley를 비교한다(`meta.json` `controller`). S-curve 프로파일은 그 다음.
 
 ### 5-6. speed_limit 연동
 
@@ -283,3 +309,109 @@ Pursuit·Stanley·PID·DWA 등 어떤 컨트롤러를 쓰든 그 출력이 전�
 등)는 [docs/api.md](../api.md)를 참조한다.
 
 `safety/status`가 끊기면 제한 없음으로 본다. 최종 게이트가 `amr_safety`라서다.
+
+### 5-7. 선속도 PID
+
+추종기가 낸 선속도(목표)를 odom 선속도가 따라가도록 명령을 보정한다. 코어 `Pid`(`pid.hpp`),
+노드에서 `velocity_pid.enabled`로 켠다(**기본 끔** — 끄면 추종기 출력을 그대로 낸다).
+
+```
+u = v_ref + kp·e + ki·∫e dt − kd·d(v_meas)/dt,   e = v_ref − v_meas,   u ∈ [0, max_linear_speed]
+```
+
+- **앞먹임(v_ref)**: Gazebo DiffDrive나 실제 모터 드라이버가 이미 바퀴 속도를 맞추므로 PID는 그
+  바깥에서 남는 오차(적재 질량·바닥 마찰로 덜 나가는 몫)만 메운다. 게인이 모두 0이면 u = v_ref다.
+- **측정값 미분**: 목표가 계단으로 바뀔 때 미분항이 튀지 않게(derivative kick) 측정값을 미분하고,
+  odom 잡음 때문에 1차 저역통과(`derivative_filter_tau`)를 거친다.
+- **anti-windup**: 출력이 상·하한에 걸린 채 오차가 그 방향으로 더 미는 동안은 적분하지 않는다
+  (conditional integration). 적분항은 `integral_limit`으로도 자른다.
+- 제자리 회전·정지·odom 끊김이면 PID 상태를 비운다(멈춘 동안 적분이 쌓이지 않게).
+- ω는 보정하지 않는다. PID가 맞추려는 것은 실제 선속도가 v_ref가 되는 것이라, 그때 실제 곡률이 ω/v_ref로 추종기 의도와 같다.
+
+| 파라미터 | 값 | 근거 |
+| --- | --- | --- |
+| `kp` | 0.5 | 1차 플랜트(시정수 0.2 s, 정상상태 이득 0.8) 계단 응답에서 넘침 없이 2% 정착 1.9 s (`test_pid`) |
+| `ki` | 1.0 [1/s] | 이득 0.8 플랜트의 정상상태 오차(앞먹임만이면 20%)를 없앤다 |
+| `kd` | 0.0 | 플랜트가 1차라 필요 없고, odom 미분 잡음만 더한다 |
+| `integral_limit` | 0.3 m/s | 순항 0.5 m/s에서 플랜트 이득 0.63까지 메울 수 있는 크기 (0.5·(1/0.63 − 1) ≈ 0.3) |
+| `derivative_filter_tau` | 0.05 s | 제어 주기(0.05 s)와 같게. `kd`를 켤 때만 의미 있다 |
+
+게인은 단위 테스트 플랜트로 정한 초기값이다. Gazebo DiffDrive는 바퀴 속도를 이미 맞추고 있어서
+(5-8절 측정은 PID 끔) 적재 질량을 바꾼 실측 비교로 다시 정한다.
+
+### 5-8. Gazebo CTE 측정 (1회, 10/7)
+
+[experiments/cte_baseline](../../experiments/cte_baseline/README.md). 월드 v0, 로봇 1대, Nav2 없이
+고정 경로를 퍼블리셔로 줬다. Pure Pursuit 기본 파라미터, PID 끔, 0.5 m/s.
+
+- 경로(odom 프레임, 출발 (0, 1.5) 월드): 직선 3 m → 왼쪽 반원 R = 1 m → 돌아오는 직선 3 m (점 간격 5 cm)
+- 추종기 입력은 DiffDrive의 이상적 odom(`diff_drive/odom`), EKF·AMCL 없음. `cmd_vel_nav`를 `cmd_vel`에 바로 이었다
+- CTE 두 가지: `cte.csv`(추종기가 본 odom 위치 기준)와 GT(`ground_truth/odom`을 경로에 다시 투영)
+
+| 기준 | 구간 | 샘플 | 평균 [cm] | RMSE [cm] | 최대 [cm] |
+| --- | --- | --- | --- | --- | --- |
+| `cte.csv` (odom) | 직선 | 230 | 0.28 | 0.69 | 2.40 |
+| `cte.csv` (odom) | 곡선 | 137 | 0.69 | 1.06 | 2.39 |
+| GT | 직선 | 1233 | 9.68 | 14.55 | 31.04 |
+| GT | 곡선 | 647 | 3.60 | 4.12 | 8.00 |
+
+GT 직선이 큰 이유를 경로 순서별로 나눠 보면 추종기가 아니라 **odom 누적 오차**다.
+
+| 구간 | CTE odom 평균 / 최대 [cm] | CTE GT 평균 / 최대 [cm] | odom–GT 거리 평균 / 최대 [cm] |
+| --- | --- | --- | --- |
+| 직선 1 (곡선 전) | 0.05 / 1.26 | 0.04 / 1.22 | 0.00 / 0.05 |
+| 곡선 | 0.62 / 2.39 | 3.60 / 8.00 | 4.81 / 11.68 |
+| 직선 2 (곡선 후) | 0.64 / 2.40 | 19.53 / 31.04 | 21.09 / 31.96 |
+
+- 추종기 자체(odom 기준)는 직선·곡선 모두 최대 2.4 cm로 KPI(직선 5 cm·곡선 10 cm) 안이다. odom과 GT가
+  같은 직선 1에서는 GT CTE도 1.2 cm다.
+- 반원을 도는 동안 DiffDrive odom의 방향이 GT보다 약 5° 틀어지고(바퀴 미끄러짐), 그 뒤 직선 2에서 위치
+  차이가 32 cm까지 벌어진다. 추종기는 틀린 odom 위의 경로를 정확히 따라가므로 GT CTE가 그만큼 커진다.
+- 그래서 **명세 CTE KPI는 odom만으로는 판정할 수 없다.** 위치추정(EKF + AMCL, map 프레임 경로)을 켠 상태에서
+  GT 기준으로 재야 한다. `cte.csv`의 `actual_*`도 그때는 추종기가 쓴 추정 위치라, KPI 판정에는 GT 기준
+  재계산(`analyze.py`)을 같이 본다.
+- 1회 측정이라 신뢰구간은 없다. 하네스 시나리오로 만들어 반복할 때 정한다.
+
+### 5-9. Gazebo CTE 측정 (위치추정 켬, 1회, 10/10)
+
+5-8절의 결론(위치추정을 켠 상태에서 GT 기준으로 재야 한다)에 따라 다시 측정했다.
+[experiments/cte_baseline](../../experiments/cte_baseline/README.md)의 `run_localized.sh`. 월드·지도는
+그대로(월드 `warehouse.sdf`, 지도 v1 `warehouse_v1`, #96), Pure Pursuit 기본값·PID 끔·0.5 m/s도 5-8절과
+같다. 추가된 조건:
+
+- **위치추정**: `amr_localization` EKF 둘 + AMCL (`amr_bringup system.launch.py`, D4 A안). 추종기 odom은 둘 중 하나:
+  - **local**: `odometry/local`(ekf_local, `<ns>/odom` 기준) - 경로도 `<ns>/odom` 프레임
+  - **filtered**: `odometry/filtered`(ekf_global, `map` 기준, AMCL 보정) - 경로도 `map` 프레임
+    (`path_tracker_node`는 경로 프레임이 odom 메시지 프레임과 다르면 TF로 돌아가 버려서, 두 프레임을
+    맞춰야 실제로 그 추정을 쓴다 - `robotPose()` 참고)
+- **GT 비교 보정**: #98 지도 정렬(`amr_mapping` README "지도 정렬"절)이 찾은 `map_origin_in_world` 보정값
+  `[-0.0571, 1.5167, 0.00013]`(v1 0.05 m)을 GT 재투영에 적용/미적용 둘 다 본다(시뮬레이션은 한 번만 돌리고
+  `analyze.py --correction`으로 같은 `gt.csv`에서 두 버전을 낸다)
+
+| odom 소스 | #98 보정 | 구간 | 평균 [cm] | 최대 [cm] | KPI(직선 5·곡선 10 cm) |
+| --- | --- | --- | --- | --- | --- |
+| local | 미적용 | 직선 | 0.64 | 3.11 | 충족 |
+| local | 미적용 | 곡선 | 2.02 | 2.89 | 충족 |
+| filtered | 미적용 | 직선 | 2.22 | **8.60** | **미충족** |
+| filtered | 미적용 | 곡선 | 2.43 | 5.42 | 충족 |
+| filtered | 적용 | 직선 | 2.07 | 4.58 | 충족 |
+| filtered | 적용 | 곡선 | 2.85 | 4.18 | 충족 |
+
+#98 보정은 map→world 보정이라 map 기준(filtered)에만 적용한다.
+
+- **5-8절(위치추정 없음, GT 직선 최대 31 cm) 대비**: 위치추정을 켜면 EKF가 odom 누적 오차(특히 반원을 돈
+  뒤 방향이 틀어지는 것)를 IMU·AMCL로 계속 보정해서, local 3.11 cm·filtered(#98 보정) 4.58 cm로 거의
+  10배 줄었다 - 둘 다 KPI(직선 5 cm) 안이다.
+- **filtered는 #98 보정이 KPI 충족을 가른다.** SLAM 지도가 월드보다 약 6 cm 밀려 그려진 만큼이 AMCL
+  추정(map 프레임)에 그대로 들어가, 보정 없이 GT와 비교하면 직선 최대 8.60 cm로 KPI를 넘긴다. 보정하면
+  4.58 cm로 충족한다. **AMCL 기반(map 프레임) CTE KPI 판정에는 #98 보정이 필요하다.**
+  local(odom 프레임, map과 무관)은 보정 여부와 무관하게 충족한다 - 보정은 지도-월드 정렬 문제라
+  odom 프레임 추정과는 원래 상관없다(참고로 같이 재 둔 것이다).
+- 경로 순서별로 보면 filtered·미보정에서도 직선 1(곡선 전) 최대 1.25 cm, 직선 2(곡선 후) 최대 8.60 cm로
+  5-8절과 같은 비대칭(곡선을 돈 뒤 더 틀어짐)이 남아 있다 - AMCL이 있어도 완전히는 못 지운다. #98 보정
+  적용 뒤에는 1(2.95)·2(4.58)로 격차가 줄어든다.
+- local 실행의 odom(ekf_local)–GT 거리가 직선 1에서 한때 최대 100 cm까지 튀었다(평균은 21.5 cm, 나머지
+  구간은 2~3 cm) - CTE 자체(odom·GT 둘 다 경로에 가깝게 투영됨, 최대 3 cm대)에는 영향이 없어 경로를
+  따라간 위치가 살짝 앞서거나 뒤처진 것으로 보인다. IMU 바이어스 보정(시작 2 s 정지) 직후 과도 상태로
+  추정 - filtered 실행에서는 재현되지 않았다(직선 1 최대 1.49 cm). 반복 측정 전까지는 참고로만 둔다.
+- 1회 측정이라 신뢰구간은 없다.

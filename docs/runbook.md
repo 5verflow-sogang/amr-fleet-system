@@ -90,15 +90,16 @@ docker compose --profile gui down
 연구 1의 지연 분해에 쓴다. LTTng와 ros2_tracing은 이미지(`base`)에 들어 있다. 설치 검증은 [tracing-check.yml](../.github/workflows/tracing-check.yml) 워크플로가 한다.
 
 - Humble 바이너리의 `tracetools`는 LTTng 없이 빌드돼 있어 `ros2 run tracetools status`가 `Tracing disabled`를 낸다. 이미지는 같은 버전을 LTTng와 함께 빌드해 `/opt/tracing_ws`에 오버레이한다 ([build_tracetools.sh](../docker/scripts/build_tracetools.sh)).
-- 그래서 `/opt/ros/humble/setup.bash` 대신 **`/opt/tracing_ws/install/setup.bash`를 source**한다. 이미지의 entrypoint(`/ros_entrypoint.sh`)와 `.bashrc`가 이미 그렇게 되어 있어, compose 서비스(`bash -c`)와 대화형 셸 모두 트레이싱이 켜진다.
-- 직접 `source /opt/ros/humble/setup.bash`를 다시 하면 오버레이가 가려져 `Tracing disabled`가 된다. 그럴 땐 `/opt/tracing_ws/install/setup.bash`나 `/ros2_ws/install/setup.bash`를 source한다.
+- 그래서 `/opt/ros/humble/setup.bash` 대신 그 위에 얹힌 underlay를 source한다. 체인은 `/opt/ros/humble` → `/opt/tracing_ws` → `/opt/teb_ws`(TEB) → `/ros2_ws`이고, 이미지의 entrypoint(`/ros_entrypoint.sh`)와 `.bashrc`는 **`/opt/teb_ws/install/setup.bash`를 source**한다. compose 서비스(`bash -c`)와 대화형 셸 모두 트레이싱이 켜지고 TEB가 보인다.
+- 직접 `source /opt/ros/humble/setup.bash`를 다시 하면 오버레이가 가려져 `Tracing disabled`가 되고 TEB도 안 보인다. 그럴 땐 `/opt/teb_ws/install/setup.bash`나 `/ros2_ws/install/setup.bash`를 source한다.
+- TEB(`teb_local_planner`)는 Humble 바이너리가 없어 이미지가 `/opt/teb_ws`에 소스로 빌드한다. `costmap_converter`는 `ros2` 브랜치 최신이 `cv_bridge/cv_bridge.hpp`(Jazzy부터 있는 헤더)를 써서 Humble에서 빌드되지 않으므로, 0.1.2(9565858)에 로거 수정(b8a8179)만 얹어 SHA로 고정했다.
 - 컨테이너에서는 **사용자 공간(UST) 이벤트만** 수집한다. 커널 이벤트는 호스트 커널에 lttng-modules가 있어야 해서 쓰지 않는다.
 - 트레이스하는 노드와 같은 컨테이너에서 세션을 연다. 세션 데몬과 노드가 공유 메모리로 통신한다.
 - 세션을 먼저 시작하고 노드를 띄운다.
 
 ```bash
 docker compose run --rm dev
-source /opt/tracing_ws/install/setup.bash
+source /opt/teb_ws/install/setup.bash
 ros2 run tracetools status    # Tracing enabled
 
 lttng-sessiond --daemonize

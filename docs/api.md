@@ -168,7 +168,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | `sign` | 표지판 | 필수 |
 | `forklift` | 지게차 | 선택 (연우 확정) |
 | `robot` | 다른 AMR | 선택 (연우 확정) |
-| `unknown` | 카메라 검출이 없음 (`TrackedObstacle` 전용) | 고정 |
+| `unknown` | 짝지어진 카메라 검출 근거가 모자람 (`TrackedObstacle` 전용) | 고정 |
 
 ### 4-4. 쟁점 정리
 
@@ -246,8 +246,30 @@ dot -Tpng frames_*.gv -o tf_tree.png
 
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
-| Subscribe | `perception/obstacle_measurements` | `geometry_msgs/msg/PoseArray` | 장애물 위치 측정, `odom` 좌표계. 인지 도메인 내부 |
-| Publish | `perception/obstacles` | `amr_msgs/msg/TrackedObstacleArray` | 확정 트랙의 위치·속도·공분산, `odom` 좌표계 (DWA 입력). `header`는 측정을 그대로 따른다 |
+| Subscribe | `scan` | `sensor_msgs/msg/LaserScan` | 필터된 LiDAR 스캔 (`amr_odometry`). 노드 안에서 군집화한다 (`measurement_source: scan`, 기본) |
+| Subscribe | `perception/obstacle_measurements` | `geometry_msgs/msg/PoseArray` | 시험용 장애물 위치 측정, `odom` 좌표계 (`measurement_source: poses`) |
+| Subscribe | `perception/objects` | `amr_msgs/msg/DetectedObject3DArray` | YOLO 3D 검출 (`amr_detection`). 트랙에 짝지어 `class_name`·`confidence`·`source`를 채운다 ([perception.md 1-6절](algorithms/perception.md#1-6-카메라-연관-lidar-트랙--yolo-검출-1010)) |
+| Subscribe | `odom` | `nav_msgs/msg/Odometry` | 로봇 선속도 (TTC 계산) |
+| Subscribe | `/map` | `nav_msgs/msg/OccupancyGrid` | R2 정적 지도 대조 (`use_static_map`). 지도·`map` TF가 없으면 대조 없이 추적한다 |
+| Publish | `perception/obstacles` | `amr_msgs/msg/TrackedObstacleArray` | 확정 트랙의 위치·속도·공분산·반경, `odom` 좌표계 (DWA 입력). `header.stamp`는 스캔 촬영 시각. `is_dynamic`은 추적 속력 + 빈 공간 침입 증거로 정한다 ([perception.md 1-2절](algorithms/perception.md#1-2-정적동적-구분-규칙)) |
+| Publish | `perception/collision_risks` | `amr_msgs/msg/CollisionRiskArray` | 트랙마다 이 로봇 차체(0.6 × 0.4 m 사각형)에 닿기까지 TTC. 로봇 위치는 스캔 촬영 시각 TF, 속도는 `odom`. 5 s 안에 닿지 않거나 멀어지면 `inf`. 로봇 위치를 모르면 내지 않는다 |
+| Publish | `perception/obstacle_markers` | `visualization_msgs/msg/MarkerArray` | 트랙 원기둥(동적 빨강·정적 회색)·속도 화살표·ID (RViz 확인용) |
+
+### amr_safety (로봇별)
+
+로봇의 **최종 `cmd_vel`** 을 낸다(4-4절). 판정 규칙은 [perception.md 2절](algorithms/perception.md#2-안전-노드), 파라미터는 [amr_safety README](../src/perception/amr_safety/README.md).
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `scan` | `sensor_msgs/msg/LaserScan` | 진행 경로 긴급정지 판정 (원본 점) |
+| Subscribe | `perception/obstacles` | `amr_msgs/msg/TrackedObstacleArray` | 움직이는 장애물 근접 |
+| Subscribe | `perception/collision_risks` | `amr_msgs/msg/CollisionRiskArray` | TTC (움직이는 트랙만 쓴다) |
+| Subscribe | `odom` | `nav_msgs/msg/Odometry` | 끊김 감시 |
+| Subscribe | `cmd_vel_zone_limited` | `geometry_msgs/msg/Twist` | 게이트 입력 (`amr_zone_client`). 파라미터 `cmd_vel_in_topic` |
+| Publish | `cmd_vel` | `geometry_msgs/msg/Twist` | 최종 속도 명령. 정지 중에는 입력이 없어도 10 Hz로 0 |
+| Publish | `safety/status` | `amr_msgs/msg/SafetyStatus` | 바뀌면 즉시, 그 외 10 Hz |
+| Publish | `safety/markers` | `visualization_msgs/msg/MarkerArray` | 차체·0.3 m 경계(단계 색)·1.5 m 경계·상태 글자 (RViz 확인용) |
+| Service | `safety/estop` | `std_srvs/srv/SetBool` | `true` 걸기, `false` 해제 요청 (해제 뒤 0.5 s 지나 단계 재판정) |
 ### amr_fleet_manager
 
 | 종류 | 이름 | 타입 | 설명 |

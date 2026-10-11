@@ -114,6 +114,14 @@ bool cancel_task(
   return true;
 }
 
+ErrorInfo canceled_error()
+{
+  ErrorInfo error;
+  error.code = ErrorInfo::ASSIGN_CANCELED;
+  error.message = "canceled";
+  return error;
+}
+
 namespace
 {
 

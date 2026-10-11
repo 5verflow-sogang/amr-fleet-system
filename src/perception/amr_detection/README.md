@@ -22,8 +22,14 @@
 ## 실행
 
 ```bash
-# TODO
+ros2 launch amr_detection detection.launch.py                          # 네임스페이스 amr_01, 출력 map
+ros2 launch amr_detection detection.launch.py namespace:=amr_02
+ros2 launch amr_detection detection.launch.py target_frame:=amr_01/odom # 위치 추정 없이 시험할 때
+ros2 launch amr_detection detection.launch.py device:=cuda:0            # GPU 컨테이너
 ```
+
+- 로봇 네임스페이스 안에서 띄워야 로봇 카메라(`/<ns>/camera/...`)를 받는다. `amr_bringup`은 `namespace:=<이름>`을 넘긴다.
+- 이미지에 `cv_bridge`가 없으면 `apt install ros-humble-cv-bridge`가 필요하다.
 
 ## 테스트
 

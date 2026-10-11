@@ -62,6 +62,7 @@ class FleetManager(Node):
             resend_interval_s=self.declare_parameter('resend.interval_s', 1.0).value,
             max_resends=self.declare_parameter('resend.max_resends', 5).value,
             failed_retries=self.declare_parameter('assignment.failed_retries', 1).value,
+            reclaim_timeout_s=self.declare_parameter('assignment.reclaim_timeout_s', 5.0).value,
         ))
         heartbeat_period_s = self.declare_parameter('heartbeat_period_s', 0.2).value
         task_table_period_s = self.declare_parameter('task_table_period_s', 1.0).value
@@ -193,7 +194,13 @@ class FleetManager(Node):
         self._send(commands)
 
     def _resend(self):
-        commands, given_up = self._dispatcher.due_resends(time.monotonic())
+        now = time.monotonic()
+        reclaimed = self._dispatcher.reclaim_lost(now)
+        for task_id, robot_id in reclaimed:
+            self.get_logger().warn(
+                f'{robot_id}의 RobotState가 {self._dispatcher.config.reclaim_timeout_s:g}초 끊김, '
+                f'작업 회수해 다시 할당: {task_id}')
+        commands, given_up = self._dispatcher.due_resends(now)
         for task_id in given_up:
             self.get_logger().warn(f'Ack 재전송 한도 초과, 작업을 큐로 되돌림: {task_id}')
         self._send(commands)
@@ -201,7 +208,7 @@ class FleetManager(Node):
         for assignment_id in list(self._sent):
             if assignment_id not in pending:
                 del self._sent[assignment_id]
-        if given_up:
+        if given_up or reclaimed:
             self._assign()
 
     def _send(self, commands: list[Outgoing]):

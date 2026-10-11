@@ -35,6 +35,9 @@ class DispatcherConfig:
     # FAILED로 보고된 작업을 큐로 되돌려 다시 할당하는 횟수. 넘으면 실패로 남긴다.
     # 분산 경매의 재경매(최대 1회, api.md 4-4절)와 같게 둬야 중앙·분산 비교가 공정하다
     failed_retries: int = 1
+    # 작업을 맡은 로봇의 RobotState가 이 시간 동안 안 오면 로봇이 죽은 것으로 보고 작업을 회수해 다시 할당한다.
+    # 0 이하면 회수하지 않는다. robot_timeout_s(후보 제외)보다 길게 둬 잠깐 끊긴 로봇의 작업을 뺏지 않는다
+    reclaim_timeout_s: float = 5.0
 
     def __post_init__(self):
         if self.algorithm not in ALGORITHMS:
@@ -45,6 +48,9 @@ class DispatcherConfig:
             raise ValueError(f'max_resends는 0 이상이어야 한다: {self.max_resends}')
         if self.failed_retries < 0:
             raise ValueError(f'failed_retries는 0 이상이어야 한다: {self.failed_retries}')
+        if 0 < self.reclaim_timeout_s < self.robot_timeout_s:
+            raise ValueError(f'reclaim_timeout_s({self.reclaim_timeout_s})는 robot_timeout_s'
+                             f'({self.robot_timeout_s}) 이상이어야 한다 (0 이하면 끈다)')
 
 
 @dataclass
@@ -58,6 +64,8 @@ class TaskEntry:
     assignment_id: int = 0
     # FAILED 보고로 다시 할당한 횟수
     failures: int = 0
+    # 맡은 로봇이 죽어 회수한 횟수 (failures와 따로 센다. 작업이 아니라 로봇의 문제다)
+    reclaims: int = 0
 
 
 @dataclass
@@ -238,6 +246,30 @@ class Dispatcher:
         robot = self.robots.get(robot_id)
         task = self.tasks.get(robot.task_id) if robot is not None and robot.task_id else None
         return task.info.priority if task is not None else 0
+
+    def reclaim_lost(self, now: float) -> list[tuple[str, str]]:
+        """맡은 로봇의 RobotState가 reclaim_timeout_s 동안 없으면 작업을 큐로 되돌린다. (task_id, 죽은 robot_id) 목록.
+
+        되돌린 작업은 다음 assign()에서 살아 있는 로봇에게 새 assignment_id로 간다. 죽은 로봇의 늦은 보고는
+        맡은 로봇이 아니라서 무시된다(on_status). 로봇이 살아 돌아와 옛 작업을 계속하면 두 로봇이 같은 작업을 하게
+        되는데, 그 로봇에 취소를 보내는 일은 아직 없다 (README 미결).
+        """
+        if self.config.reclaim_timeout_s <= 0:
+            return []
+        reclaimed = []
+        for robot_id, robot in self.robots.items():
+            if not robot.task_id or now - robot.last_seen < self.config.reclaim_timeout_s:
+                continue
+            task_id = robot.task_id
+            task = self.tasks.get(task_id)
+            for assignment_id, pending in list(self._pending.items()):
+                if pending.robot_id == robot_id:
+                    del self._pending[assignment_id]
+            self._release(task_id, robot_id)
+            if task is not None:
+                task.reclaims += 1
+            reclaimed.append((task_id, robot_id))
+        return reclaimed
 
     def pending_ids(self) -> set[int]:
         """Ack를 기다리는 assignment_id."""

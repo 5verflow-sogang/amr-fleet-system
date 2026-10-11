@@ -31,11 +31,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY docker/scripts/build_tracetools.sh /tmp/build_tracetools.sh
 RUN bash /tmp/build_tracetools.sh /opt/tracing_ws && rm /tmp/build_tracetools.sh
 
-# compose 서비스처럼 .bashrc를 거치지 않는 실행(bash -c)에서도 트레이싱이 켜지도록 entrypoint도 오버레이를 source한다.
-# 베이스 이미지 entrypoint가 바뀌어 치환이 안 되면 빌드를 실패시킨다.
-RUN sed -i 's|/opt/ros/$ROS_DISTRO/setup.bash|/opt/tracing_ws/install/setup.bash|' /ros_entrypoint.sh \
-    && grep -q /opt/tracing_ws/install/setup.bash /ros_entrypoint.sh
-
 # YOLO 추론용 ultralytics (amr_detection)
 # Humble의 cv_bridge는 NumPy 1.x로 컴파일돼 있어 numpy<2로 제한한다.
 # opencv-python은 4.12부터 numpy 2를 요구하므로 함께 제한한다.
@@ -46,6 +41,30 @@ RUN pip3 install --no-cache-dir ultralytics==8.4.164 "numpy<2" "opencv-python<4.
 # 기본 모델(yolov8n)을 빌드 시 받아 두어 실행할 때 인터넷 없이 같은 모델을 쓴다.
 ADD https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.pt /opt/models/yolov8n.pt
 
+# TEB 로컬 플래너 underlay (DWA 비교 대상). Humble 바이너리가 없어 소스로 빌드하고 SHA로 고정한다.
+# 체인: /opt/ros/humble → /opt/tracing_ws → /opt/teb_ws → /ros2_ws. 우리 src와 따로 빌드해 CI 경고 검사에서 빠진다.
+# costmap_converter: ros2 브랜치 최신은 cv_bridge/cv_bridge.hpp(Jazzy부터 있는 헤더)를 써서 Humble에서 빌드되지 않는다.
+#   Humble에서 되는 마지막 판 0.1.2(9565858)에 로거 형식 인자 UB 수정(b8a8179)만 얹는다.
+# rosdep이 nav2_bringup·libg2o·dwb_critics(→ dwb_core)·cv_bridge를 설치한다.
+RUN mkdir -p /opt/teb_ws/src && cd /opt/teb_ws/src \
+    && git clone -b humble-devel https://github.com/rst-tu-dortmund/teb_local_planner.git \
+    && git -C teb_local_planner checkout 630a22e \
+    && git clone -b ros2 https://github.com/rst-tu-dortmund/costmap_converter.git \
+    && git -C costmap_converter checkout 9565858 \
+    && git -C costmap_converter -c user.name=build -c user.email=build@local cherry-pick b8a8179 \
+    && apt-get update \
+    && rosdep update --rosdistro humble \
+    && rosdep install --from-paths /opt/teb_ws/src --ignore-src -y --rosdistro humble \
+    && rm -rf /var/lib/apt/lists/* \
+    && source /opt/tracing_ws/install/setup.bash \
+    && cd /opt/teb_ws && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    && rm -rf build log
+
+# compose 서비스처럼 .bashrc를 거치지 않는 실행(bash -c)에서도 트레이싱·TEB가 보이도록 entrypoint도 underlay를 source한다.
+# 베이스 이미지 entrypoint가 바뀌어 치환이 안 되면 빌드를 실패시킨다.
+RUN sed -i 's|/opt/ros/$ROS_DISTRO/setup.bash|/opt/teb_ws/install/setup.bash|' /ros_entrypoint.sh \
+    && grep -q /opt/teb_ws/install/setup.bash /ros_entrypoint.sh
+
 
 WORKDIR /ros2_ws
 COPY src ./src
@@ -55,10 +74,10 @@ RUN apt-get update \
     && rosdep install --from-paths src --ignore-src -y --rosdistro humble \
     && rm -rf /var/lib/apt/lists/*
 
-RUN source /opt/tracing_ws/install/setup.bash && colcon build
+RUN source /opt/teb_ws/install/setup.bash && colcon build
 
-# tracing_ws가 /opt/ros/humble 위에 얹혀 있으므로 그것만 source해도 된다
-RUN echo "source /opt/tracing_ws/install/setup.bash" >> ~/.bashrc \
+# teb_ws가 tracing_ws(→ /opt/ros/humble) 위에 얹혀 있으므로 그것만 source해도 된다
+RUN echo "source /opt/teb_ws/install/setup.bash" >> ~/.bashrc \
     && echo "[ -f /ros2_ws/install/setup.bash ] && source /ros2_ws/install/setup.bash" >> ~/.bashrc
 
 CMD ["bash"]
