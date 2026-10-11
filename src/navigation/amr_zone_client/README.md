@@ -15,7 +15,7 @@
 | Subscribe | `cmd_vel_nav` (파라미터 `cmd_vel_in_topic`) | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 (Nav2 controller_server, 향후 velocity_smoother의 출력) |
 | Subscribe | `safety/status` (파라미터 `safety_status_topic`) | `amr_msgs/msg/SafetyStatus` | `speed_limit`을 구역 상한과 함께 선속도 상한에 반영 ('SafetyStatus 연동' 절 참고) |
 | Publish | `cmd_vel_zone_limited` (파라미터 `cmd_vel_out_topic`) | `geometry_msgs/msg/Twist` | 게이팅 후 속도 명령. 허가 전엔 선속도만 깎는다, 각속도는 그대로. `BACKING` 중에는 `cmd_vel_nav`를 무시하고 직접 낸 후진 속도다. **로봇의 최종 `cmd_vel`이 아니다** — 'cmd_vel 체인' 절 참고 |
-| Publish | `zone_client/state` | `std_msgs/msg/String` | 요약 상태(`idle`/`approaching`/`waiting`/`blocked`/`inside`/`backing`). 바뀌면 즉시, 그 외 1 Hz |
+| Publish | `zone_client/state` | `std_msgs/msg/String` | 요약 상태(`idle`/`approaching`/`waiting`/`blocked`/`inside`/`backing`/`failed`). 바뀌면 즉시, 그 외 1 Hz. 우선순위·`waiting` 판정은 '상태 토픽(zone_client/state)' 절 참고 |
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
@@ -41,6 +41,7 @@
 | `APPROACHING` | `GRANT_REVOKED` 응답(교착 해소) | `BLOCKED` | `TYPE_RELEASE` (다음 틱) |
 | `INSIDE` | `GRANT_REVOKED` 응답(교착 해소) | `BACKING` | — |
 | `BACKING` | 구역 밖 + `backing_margin_m` 이상 후진 | `IDLE` | `TYPE_RELEASE` |
+| `BACKING` | `backing_max_distance_m`·`backing_timeout_s` 중 하나라도 초과 | `FAILED` | (없음 — 반납하지 않는다) |
 
 표에 없는 조합(예: `APPROACHING`에서 유효한 허가 없이 경계를 넘었거나, 구역 밖에서 lease가 지난
 경우)은 상태를 그대로 유지하면서 같은 `request_id`로 계속 요청하고 정지 상한을 다시 건다 — 아래
@@ -81,6 +82,25 @@
 - TF(`map_frame`→`base_frame`) 조회에 실패하면 fail-closed로 속도 상한을 0으로 묶는다(경고 로그는
   5초 throttle). `BACKING` 중에도 같은 규칙이다 — 아래 'BACKING(교착 해소)' 절 참고.
 
+### 상태 토픽(zone_client/state)
+
+`zone_client/state`는 구역마다 따로 도는 상태 기계를 로봇 하나의 요약 문자열 하나로 합친 것이다.
+`waiting`은 `Phase`가 아니라 `APPROACHING` 중 일부만 가리키는 라벨이다 — **허가가 없고 경계까지
+남은 거리가 `stop_margin_m + waiting_margin_m`(기본 0.5 + 0.5 = 1.0 m) 이하**일 때만 `waiting`이고,
+그보다 멀면 (속도 상한만 걸린) `approaching`이다(#137 지수 리뷰 — 원래는 `trigger_distance_m`(3 m)
+요청을 보내는 순간부터 바로 `waiting`으로 보였는데, 실제로는 아직 멀어서 속도만 깎이는 중이라
+"멈춰 기다리는 중"이라는 라벨이 너무 일찍 뜬 것이었다).
+
+구역이 여러 개면(두 구역이 겹치는 구간 등) 가장 "급한"(멈추거나 멈춰 있는) 것 하나로 요약하고,
+우선순위는 다음과 같다(`core.ZoneClientCore._STATE_PRIORITY`):
+
+```
+failed > backing > blocked > waiting > inside > approaching > idle
+```
+
+예: 구역 A에서 `inside`이고 동시에 구역 B에서 `waiting`이면 전체 상태는 `waiting`이다 — 로봇이
+실제로 멈춰서 기다리는 쪽을 먼저 보여준다.
+
 ### BACKING(교착 해소)
 
 `INSIDE`에서 `GRANT_REVOKED`를 받으면 `cmd_vel_nav`를 무시하고 `backing_speed_mps`(기본 0.15 m/s)로
@@ -90,11 +110,12 @@
 `IDLE`로 돌아가고, 그 뒤로는 평소처럼(새 `request_id`로) 다시 접근한다.
 
 안전장치(fail-closed): `backing_max_distance_m`(총 후진 거리, 기본 5 m) 또는 `backing_timeout_s`
-(경과 시간, 기본 25 s)를 넘으면 그 순간 속도를 0으로 묶고 ERROR 로그를 한 번 남긴다. 그 뒤로는
-반납·재시도 없이 그대로 멈춰 선다 — 계속 후진하다 더 큰 사고로 이어지는 것보다, 서버가 자리를 계속
-쥐고 있더라도 멈춰서 수동 확인을 받는 쪽이 안전하다. `backing_timeout_s`는 서버
-`release_timeout_s`(`amr_fleet_manager.yaml` 기본 30 s)보다 작게 둔다 — 서버가 "반납이 안
-온다"고 보고 구역을 다른 로봇에게 넘기기 전에, 이 로봇의 ERROR가 먼저 뜨게 하려고다.
+(경과 시간, 기본 25 s)를 넘으면 그 순간 속도를 0으로 묶고 ERROR 로그를 한 번 남긴 뒤 `FAILED`로
+바뀐다(`zone_client/state`에 `failed`로 드러난다, #137 지수 리뷰). 그 뒤로는 반납·재시도 없이 그대로
+멈춰 선다 — 계속 후진하다 더 큰 사고로 이어지는 것보다, 서버가 자리를 계속 쥐고 있더라도 멈춰서
+수동 확인을 받는 쪽이 안전하다. `backing_timeout_s`는 서버 `release_timeout_s`(`amr_fleet_manager.yaml`
+기본 30 s)보다 작게 둔다 — 서버가 "반납이 안 온다"고 보고 구역을 다른 로봇에게 넘기기 전에, 이
+로봇의 ERROR가 먼저 뜨게 하려고다.
 
 TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BACKING` 중에도 그 순간 0을 낸다(`core`
 상태는 그대로 두고 그 틱만 건너뛴다 — TF가 돌아오면 이어서 재개한다).
@@ -119,6 +140,7 @@ TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BAC
 | `update_rate_hz` | `10.0` | TF 조회·구역 판단 주기 |
 | `trigger_distance_m` | `3.0` | 경계 앞 요청 거리 (이진, 10/5) |
 | `stop_margin_m` | `0.5` | 허가 전 정지 여유 (이진, 10/5) |
+| `waiting_margin_m` | `0.5` | `zone_client/state`의 `waiting` 판정 여유. 경계까지 `stop_margin_m + waiting_margin_m` 이내일 때만 `waiting`, 그 전엔 `approaching` (#137 지수 리뷰) |
 | `decel_mps2` | `1.0` | 정지 속도 프로파일 기준 감속 |
 | `resend_period_s` | `1.0` | 재전송(연장) 주기 |
 | `retry_period_s` | `5.0` | `BLOCKED`(REJECTED·REVOKED) 뒤 재시도까지 기다리는 시간 |
@@ -197,6 +219,7 @@ colcon test --packages-select amr_zone_client
   서버(`amr_fleet_core.traffic.zones.ZoneManager`)는 아직 교착을 **감지**하지 않아(대기 그래프 순환
   탐지 미구현, `amr_fleet_core/README.md`) 실제로 `GRANT_REVOKED`를 보내는 경로가 없다. `test_core.py`의
   단위 테스트로만 확인했고, 서버가 실제로 보내는 launch 통합 테스트는 서버 쪽 구현이 생긴 뒤에 추가한다.
-- BT(`amr_bt`, 지수)가 `BACKING` 중 자기 상태(이동 중 등)를 어떻게 다룰지는 아직 정해지지 않았다 -
-  `zone_client/state`가 `backing`이면 로봇이 자기 의지와 무관하게 후진 중이라는 뜻이라, BT 쪽에서도
-  참고할 수 있다.
+- BT(`amr_bt`, 지수)가 `BACKING`·`FAILED` 중 자기 상태(이동 중 등)를 어떻게 다룰지는 아직 정해지지
+  않았다 - `zone_client/state`가 `backing`이면 로봇이 자기 의지와 무관하게 후진 중이라는 뜻이고,
+  `failed`면 안전 한도를 넘어 멈춰 선 채 수동 확인을 기다리는 중(반납·재시도 없음)이라는 뜻이라,
+  BT 쪽에서도 참고할 수 있다.

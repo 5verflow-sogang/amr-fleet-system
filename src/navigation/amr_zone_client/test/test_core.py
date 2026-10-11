@@ -426,7 +426,9 @@ def test_inside_revoked_backs_out_decelerates_then_releases_and_returns_idle():
     assert outgoing[0].request_id == rid + 1
 
 
-def test_backing_timeout_stops_with_error_and_stays_stuck():
+def test_backing_timeout_stops_with_error_and_becomes_failed():
+    # #137 지수 리뷰: 안전 한도 초과 뒤에는 BACKING에 계속 머무는 대신 FAILED로 바뀐다 - 상태
+    # 토픽에서 "아직 정상 후진 중"과 "한도를 넘어 멈춰 섰다"를 구분할 수 있게.
     core = make_core(backing_timeout_s=10.0, backing_max_distance_m=100.0)
     path = straight_path(2.0, 10.0)
     _enter_zone_and_revoke(core)
@@ -436,14 +438,16 @@ def test_backing_timeout_stops_with_error_and_stays_stuck():
     assert outgoing == []  # fail-closed: 반납하지 않고 멈춰 세운다
     assert backing == pytest.approx(0.0)
     assert len(errors) == 1 and 'z1' in errors[0]
-    assert core.phase('z1') is Phase.BACKING  # 멈춰 선 채 그대로 - 수동 확인 필요
+    assert core.phase('z1') is Phase.FAILED  # 멈춰 선 채 그대로 - 수동 확인 필요
+    assert core.state_label(17.1) == 'failed'
 
     # 계속 0만 내고, ERROR는 한 번만 남긴다
     outgoing2, _, backing2, errors2 = core.update(18.0, path, (4.9, 0.0))
     assert outgoing2 == [] and backing2 == pytest.approx(0.0) and errors2 == []
+    assert core.phase('z1') is Phase.FAILED
 
 
-def test_backing_max_distance_stops_with_error():
+def test_backing_max_distance_stops_with_error_and_becomes_failed():
     core = make_core(backing_max_distance_m=1.0, backing_timeout_s=1000.0)
     path = straight_path(2.0, 10.0)
     _enter_zone_and_revoke(core)
@@ -453,7 +457,60 @@ def test_backing_max_distance_stops_with_error():
     assert outgoing == []
     assert backing == pytest.approx(0.0)
     assert len(errors) == 1 and 'z1' in errors[0]
-    assert core.phase('z1') is Phase.BACKING
+    assert core.phase('z1') is Phase.FAILED
+    assert core.state_label(8.0) == 'failed'
+
+
+def test_failed_outranks_inside_in_state_label():
+    # #137 지수 리뷰: 우선순위 failed > backing > blocked > waiting > inside > approaching > idle -
+    # 구역 z2가 failed면 z1이 inside여도 전체 상태는 failed다. z1·z2를 같은 위치에 둬 로봇 위치를
+    # 한 번도 안 바꾸고 "z1 inside 유지 + z2만 별도로 전개"를 볼 수 있게 했다 - state_label
+    # 우선순위만 보는 순수 상태 기계 테스트라 실제로 두 구역이 겹칠 필요는 없다.
+    core = make_core(zones=[ZoneConfig('z1', RECT), ZoneConfig('z2', RECT)],
+                      backing_timeout_s=10.0, backing_max_distance_m=1000.0)
+    path = straight_path(2.0, 10.0)
+
+    outgoing, _, _, _ = core.update(0.0, path, (2.0, 0.0))
+    assert {o.zone_id for o in outgoing} == {'z1', 'z2'}
+    rid1 = next(o.request_id for o in outgoing if o.zone_id == 'z1')
+    rid2 = next(o.request_id for o in outgoing if o.zone_id == 'z2')
+    core.on_grant(0.0, 'amr_01', 'z1', rid1, GRANT_GRANTED, 100.0, 0, 'amr_01')
+    core.on_grant(0.0, 'amr_01', 'z2', rid2, GRANT_GRANTED, 100.0, 0, 'amr_01')
+
+    core.update(5.0, path, (5.0, 0.0))
+    assert core.phase('z1') is Phase.INSIDE
+    assert core.phase('z2') is Phase.INSIDE
+
+    core.on_grant(5.0, 'amr_01', 'z2', rid2, GRANT_REVOKED, None, 3, '')
+    assert core.phase('z2') is Phase.BACKING
+
+    # z2만 BACKING → FAILED로 가는 동안 로봇 위치는 그대로다(z1은 계속 안에 있다)
+    core.update(6.0, path, (5.0, 0.0))  # 첫 BACKING 틱(z2) - backing_since=6.0
+    core.update(17.0, path, (5.0, 0.0))  # 경과 11.0 s > backing_timeout_s(10.0)
+    assert core.phase('z2') is Phase.FAILED
+    assert core.phase('z1') is Phase.INSIDE  # z1은 그대로 inside
+
+    assert core.state_label(17.0) == 'failed'
+
+
+def test_waiting_outranks_inside_in_state_label():
+    # #137 지수 리뷰: 우선순위에서 waiting이 inside보다 먼저다 - 구역 A가 inside여도 구역 B가
+    # waiting이면 전체 상태는 waiting이다. (A·B를 같은 위치에 둬 로봇을 한 번만 옮기면 둘 다 동시에
+    # "안"에 있게 했다 - A는 허가를 받아 inside로, B는 허가 없이 둬 remaining=0 ≤ 임계값이라
+    # waiting이 된다.)
+    core = make_core(zones=[ZoneConfig('A', RECT), ZoneConfig('B', RECT)])
+    path = straight_path(2.0, 10.0)
+
+    outgoing, _, _, _ = core.update(0.0, path, (2.0, 0.0))
+    rid_a = next(o.request_id for o in outgoing if o.zone_id == 'A')
+    core.on_grant(0.0, 'amr_01', 'A', rid_a, GRANT_GRANTED, 100.0, 0, 'amr_01')
+    # B는 허가를 안 줘서 APPROACHING에 그대로 남는다
+
+    core.update(5.0, path, (5.0, 0.0))
+    assert core.phase('A') is Phase.INSIDE
+    assert core.phase('B') is Phase.APPROACHING
+
+    assert core.state_label(5.0) == 'waiting'
 
 
 # --- state_label (zone_client/state 토픽, 10/11 결정) ---
@@ -464,10 +521,21 @@ def test_state_label_idle_initially():
     assert core.state_label(0.0) == 'idle'
 
 
-def test_state_label_waiting_when_approaching_without_valid_grant():
+def test_state_label_approaching_right_after_trigger_far_from_stop_line():
+    # #137 지수 리뷰: 3m 앞 요청 순간은 아직 멀어서(stop_margin_m + waiting_margin_m = 1.0 m보다
+    # 먼 3.0 m) waiting이 아니라 approaching이다 - 속도 상한만 걸릴 뿐 아직 멈춰 기다리는 중이 아니다.
     core = make_core()
     core.update(0.0, straight_path(2.0, 10.0), (2.0, 0.0))
-    assert core.state_label(0.0) == 'waiting'  # 아직 응답 없음 - 정지점에서 기다리는 중
+    assert core.state_label(0.0) == 'approaching'
+
+
+def test_state_label_waiting_near_stop_line_without_valid_grant():
+    # 경계(x=5.0)까지 0.9 m(= stop_margin_m 0.5 + waiting_margin_m 0.5 = 1.0 m 이내) 남았고
+    # 아직 응답이 없다 - 이제서야 waiting이다.
+    core = make_core()
+    core.update(0.0, straight_path(2.0, 10.0), (2.0, 0.0))
+    core.update(1.0, straight_path(4.1, 10.0), (4.1, 0.0))
+    assert core.state_label(1.0) == 'waiting'
 
 
 def test_state_label_approaching_once_granted_but_not_yet_inside():

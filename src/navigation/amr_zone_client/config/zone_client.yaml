@@ -19,6 +19,10 @@
     # 구역 규칙 (이진, 10/5, zones.yaml 주석과 같다)
     trigger_distance_m: 3.0
     stop_margin_m: 0.5
+    # zone_client/state의 'waiting' 판정 여유(#137 지수 리뷰): 허가 없이 APPROACHING이어도 경계까지
+    # stop_margin_m + waiting_margin_m보다 멀면 아직 'approaching'이다 - trigger_distance_m 요청
+    # 순간부터 바로 waiting으로 보이던 것을 정지점 근처로 좁혔다
+    waiting_margin_m: 0.5
     decel_mps2: 1.0
     resend_period_s: 1.0
     # REJECTED 뒤 경로에 구역이 남아 있으면 이 시간 뒤 새 request_id로 재시도한다 (#66 하연 리뷰)

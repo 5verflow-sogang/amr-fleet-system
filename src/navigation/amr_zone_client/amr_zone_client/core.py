@@ -34,8 +34,18 @@ REASON_DEADLOCK_RESOLUTION)하면 그 구역에서 후진해 나온다.
   (speed_cap_for_stop을 "남은 후진 거리"에 그대로 재사용).
 - margin까지 나가면 정지 → RELEASE → IDLE (그 뒤로는 평소처럼 다시 접근하면 새 request_id로 요청).
 - 안전장치: backing_max_distance_m(총 후진 거리) 또는 backing_timeout_s(경과 시간)를 넘으면
-  그 순간 속도를 0으로 묶고 ERROR를 한 번 남긴다 - fail-closed로, 그 뒤로는 반납·재시도 없이
-  그대로 멈춰 서서 수동 확인을 기다린다(계속 후진하다 더 큰 사고로 이어지는 것보다 안전하다).
+  그 순간 속도를 0으로 묶고 ERROR를 한 번 남긴 뒤 FAILED로 바뀐다(#137 지수 리뷰, 10/11 결정은
+  BACKING에 계속 머무는 것이었으나 상태 토픽에 안전 한도 초과가 안 드러나 바꿨다) - fail-closed로,
+  그 뒤로는 반납·재시도 없이 그대로 멈춰 서서 수동 확인을 기다린다(계속 후진하다 더 큰 사고로
+  이어지는 것보다 안전하다).
+
+상태 토픽(zone_client/state, #137 지수 리뷰): idle / approaching / waiting / blocked / inside /
+backing / failed 7가지. waiting은 phase가 아니라 APPROACHING 중 "허가 없음 + 경계까지
+stop_margin_m + waiting_margin_m 이내"일 때만의 라벨이다(trigger_distance_m 요청 순간부터
+waiting으로 보이면 아직 속도 상한만 걸린 상태인데도 "멈춰 기다리는 중"처럼 보여서 좁혔다) -
+그 전에는 approaching으로 보인다. 구역이 여러 개면 가장 "급한" 것 하나로 요약하는데, 우선순위는
+failed > backing > blocked > waiting > inside > approaching > idle이다(state_label 참고) -
+예를 들어 구역 A에 inside, 구역 B에서 waiting이면 전체 상태는 waiting이다.
 """
 
 from __future__ import annotations
@@ -67,6 +77,7 @@ class Phase(Enum):
     INSIDE = 'inside'              # 구역 안, 반납 전
     BLOCKED = 'blocked'            # REJECTED·REVOKED(APPROACHING). 재시도만 한다
     BACKING = 'backing'            # REVOKED(INSIDE). 직접 후진해 구역을 벗어나는 중
+    FAILED = 'failed'              # BACKING 중 안전 한도(거리·시간) 초과. 멈춰 선 채 수동 확인 대기
 
 
 @dataclass(frozen=True)
@@ -89,6 +100,9 @@ class _ZoneState:
     grant: Optional[int] = None
     lease_expiry: Optional[float] = None
     last_sent: Optional[float] = None
+    # 가장 최근 update() 틱에서 구한 경계까지 남은 거리 (state_label의 waiting 판정용, #137 지수 리뷰) -
+    # remaining_distance_to_rect가 매 틱 _update_zone에 넘겨주는 값을 그대로 적어 둔다.
+    last_remaining: Optional[float] = None
     # BLOCKED 전환 뒤 아직 못 보낸 RELEASE가 있는지 (REVOKED면 REJECTED와 달리 반납해야 한다) - 다음
     # update() 틱에 한 번 보내고 지운다.
     pending_release: bool = False
@@ -99,7 +113,6 @@ class _ZoneState:
     backing_exit_xy: Optional[Point] = None      # 구역을 막 벗어난 위치 (margin 거리 기준)
     backing_speed_effective: float = 0.0        # 지금 내는 후진 속도 크기 (ramp_speed로 가감속)
     backing_last_t: Optional[float] = None      # ramp_speed dt 계산용
-    backing_error: bool = False                 # 안전 한도 초과로 멈춘 뒤 (ERROR는 한 번만)
 
 
 # lookahead_m을 안 주면(None) trigger_distance_m + 이 여유만큼만 경로를 훑는다 (#66).
@@ -113,6 +126,11 @@ class ZoneClientConfig:
     zones: Sequence[ZoneConfig] = field(default_factory=list)
     trigger_distance_m: float = 3.0
     stop_margin_m: float = 0.5
+    # state_label의 'waiting' 판정 여유(#137 지수 리뷰): 허가 없이 APPROACHING이어도 경계까지
+    # stop_margin_m + waiting_margin_m보다 멀면 아직 'approaching'이다(속도 상한만 걸림, 실제로
+    # 멈춰 기다리는 중이 아니다) - 요청을 보낸 trigger_distance_m 순간부터 바로 waiting으로 보이던
+    # 것을 정지점 근처로 좁힌다.
+    waiting_margin_m: float = 0.5
     decel_mps2: float = 1.0
     resend_period_s: float = 1.0
     # REJECTED 뒤, 경로에 구역이 남아 있으면 이 시간 뒤 새 request_id로 재시도한다 (#66).
@@ -167,22 +185,29 @@ class ZoneClientCore:
     def request_id(self, zone_id: str) -> Optional[int]:
         return self._state[zone_id].request_id
 
-    # 상태 토픽(zone_client/state)용 - 가장 "급한" 것 하나로 요약한다(한 로봇이 동시에 여러 구역을
-    # 다루는 중이면, 실제로 cmd_vel에 영향을 주는 쪽을 우선한다). WAITING은 APPROACHING 중 아직
-    # 유효한 허가가 없어서(QUEUED 포함, 응답 전도 포함) 정지점에 멈춰 기다리는 경우다.
-    _STATE_PRIORITY = (Phase.BACKING, Phase.INSIDE, Phase.BLOCKED, Phase.APPROACHING, Phase.IDLE)
+    # 상태 토픽(zone_client/state)용 - 가장 "급한"(멈추거나 멈춰 있는) 것 하나로 요약한다(한 로봇이
+    # 동시에 여러 구역을 다루는 중이면, 실제로 cmd_vel에 영향을 주는 쪽을 우선한다). waiting은 phase가
+    # 아니라 APPROACHING 중 일부만 가리키는 라벨이라(_zone_label), 문자열로 우선순위를 둔다
+    # (#137 지수 리뷰 - blocked·waiting이 inside보다 먼저: 구역 하나에 멈춰 있으면 다른 구역에
+    # 들어가 있어도 전체 상태는 "멈춰 있음"으로 보여야 한다. 예: A inside + B waiting → waiting).
+    _STATE_PRIORITY = ('failed', 'backing', 'blocked', 'waiting', 'inside', 'approaching', 'idle')
+
+    def _zone_label(self, state: _ZoneState, now: float) -> str:
+        """구역 하나의 상태 라벨. waiting은 APPROACHING 중 허가가 없고 정지점 근처(stop_margin_m +
+        waiting_margin_m 안)일 때만이다 - 그 전에는 속도 상한만 걸릴 뿐 아직 'approaching'이다."""
+        if state.phase is Phase.APPROACHING and not self._has_valid_grant(state, now) \
+                and state.last_remaining is not None \
+                and state.last_remaining <= self._config.stop_margin_m + self._config.waiting_margin_m:
+            return 'waiting'
+        return state.phase.value
 
     def state_label(self, now: float) -> str:
-        best = Phase.IDLE
+        best = 'idle'
         for state in self._state.values():
-            if self._STATE_PRIORITY.index(state.phase) < self._STATE_PRIORITY.index(best):
-                best = state.phase
-        if best is Phase.APPROACHING and any(
-            state.phase is Phase.APPROACHING and not self._has_valid_grant(state, now)
-            for state in self._state.values()
-        ):
-            return 'waiting'
-        return best.value
+            label = self._zone_label(state, now)
+            if self._STATE_PRIORITY.index(label) < self._STATE_PRIORITY.index(best):
+                best = label
+        return best
 
     def update(
         self, now: float, path_xy: Sequence[Point], robot_xy: Point,
@@ -243,6 +268,7 @@ class ZoneClientCore:
     def _update_zone(self, zone_id: str, spec: ZoneConfig, state: _ZoneState, now: float,
                       remaining: Optional[float], robot_xy: Point):
         outgoing: List[OutgoingRequest] = []
+        state.last_remaining = remaining  # state_label의 waiting 판정용 (#137 지수 리뷰)
         inside = point_in_rect(robot_xy, spec.area)
         dropped_from_path = remaining is None and not inside
 
@@ -302,6 +328,10 @@ class ZoneClientCore:
         elif state.phase is Phase.BACKING:
             return self._update_backing(zone_id, state, now, inside, robot_xy)
 
+        elif state.phase is Phase.FAILED:
+            # 안전 한도를 넘어 멈춰 세운 뒤 - 반납·재시도 없이 계속 0만 낸다 (fail-closed, 수동 확인 필요)
+            return [], None, 0.0, []
+
         speed_cap = None
         if state.phase in (Phase.APPROACHING, Phase.BLOCKED) and not self._has_valid_grant(state, now) \
                 and remaining is not None:
@@ -317,15 +347,15 @@ class ZoneClientCore:
             state.backing_start_xy = robot_xy
             state.backing_since = now
             state.backing_last_t = now
-        if state.backing_error:
-            return [], None, 0.0, []  # 안전 한도를 이미 넘었다 - 그대로 멈춰 선다 (아래 참고)
 
         total_backed = distance(robot_xy, state.backing_start_xy)
         elapsed = now - state.backing_since
         if total_backed > self._config.backing_max_distance_m or elapsed > self._config.backing_timeout_s:
-            state.backing_error = True
             # fail-closed: 반납·재시도 없이 멈춰 세운 채로 둔다 - 계속 후진하다 더 큰 사고로
             # 이어지는 것보다는, 서버가 자리를 계속 쥐고 있더라도 멈춰서 수동 확인을 받는 게 낫다.
+            # FAILED로 바뀌면 다음 틱부터 _update_zone의 FAILED 분기가 돌아 이 메시지는 한 번만 난다
+            # (#137 지수 리뷰 - state_label에도 'failed'로 드러난다).
+            state.phase = Phase.FAILED
             return [], None, 0.0, [
                 f'구역 {zone_id} 후진 안전 한도 초과(이동 {total_backed:.2f} m, 경과 {elapsed:.1f} s) '
                 '- 정지 (fail-closed, 수동 확인 필요)']

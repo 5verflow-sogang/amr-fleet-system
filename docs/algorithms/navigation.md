@@ -438,18 +438,25 @@ GT 직선이 큰 이유를 경로 순서별로 나눠 보면 추종기가 아니
   `path_tracker`의 정지 속도 프로파일(`speed_cap_for_stop`)을 "남은 후진 거리"에 그대로 재사용한
   것이다(5-0절과 같은 식). 닿으면 정지 → `TYPE_RELEASE` → `IDLE`.
 - **안전장치(fail-closed)**: 후진이 `backing_max_distance_m`(기본 5 m)나 `backing_timeout_s`(기본
-  25 s)를 넘으면 그 순간 속도를 0으로 묶고 ERROR를 한 번 남긴 뒤, 반납·재시도 없이 그대로 멈춰 선다.
-  계속 후진하다 다른 사고로 이어지는 것보다, 서버가 자리를 계속 쥐고 있더라도 멈춰서 수동 확인을
-  받는 쪽이 안전하다고 봤다. `backing_timeout_s`는 서버 `release_timeout_s`(#124
-  `fleet_manager.yaml` 기본 30 s)보다 작게 둔다 - 그래야 서버가 "반납이 안 온다"고 보고 구역을
-  다른 로봇에게 넘기기 전에 이 로봇의 ERROR가 먼저 뜬다.
+  25 s)를 넘으면 그 순간 속도를 0으로 묶고 ERROR를 한 번 남긴 뒤 새 상태 `FAILED`로 바뀐다(#137
+  지수 리뷰 - 10/11 결정은 `BACKING`에 계속 머무는 것이었는데, 그러면 상태 토픽만 보고는 "아직
+  정상적으로 후진 중"인지 "한도를 넘어 멈춰 섰는지" 구분이 안 됐다). `FAILED`가 되면 반납·재시도
+  없이 그대로 멈춰 선다 - 계속 후진하다 다른 사고로 이어지는 것보다, 서버가 자리를 계속 쥐고
+  있더라도 멈춰서 수동 확인을 받는 쪽이 안전하다고 봤다. `backing_timeout_s`는 서버
+  `release_timeout_s`(#124 `fleet_manager.yaml` 기본 30 s)보다 작게 둔다 - 그래야 서버가 "반납이
+  안 온다"고 보고 구역을 다른 로봇에게 넘기기 전에 이 로봇의 ERROR가 먼저 뜬다.
 - TF 조회 실패는 평소 규칙(fail-closed, 속도 0)과 같다 - `BACKING` 중에도 그 틱만 0을 내고, 코어
   상태(후진 거리·경과 시간)는 그대로 둬 TF가 돌아오면 이어서 재개한다.
 
 상태 토픽 `zone_client/state`(`std_msgs/String`, 바뀌면 즉시 + 1 Hz)로 `idle`/`approaching`/
-`waiting`/`blocked`/`inside`/`backing`을 낸다. `waiting`은 `APPROACHING`이지만 아직 유효한 허가가
-없어(응답 전·`QUEUED` 포함) 정지점에 멈춰 기다리는 경우다 - 이동 중인 `approaching`과 구분해 BT·모니터링
-쪽에서 "지금 왜 안 가는지"를 바로 알 수 있게 했다.
+`waiting`/`blocked`/`inside`/`backing`/`failed` 7가지를 낸다. `waiting`은 `Phase`가 아니라
+`APPROACHING` 중 일부만의 라벨이다 - **허가가 없고 경계까지 남은 거리가
+`stop_margin_m + waiting_margin_m`(기본 0.5 + 0.5 = 1.0 m) 이하일 때만** `waiting`이고, 그보다
+멀면 (속도 상한만 걸린) `approaching`이다(#137 지수 리뷰 - 원래는 요청을 보내는
+`trigger_distance_m`(3 m) 순간부터 바로 `waiting`이어서, 아직 속도만 깎이는 중인데도 "멈춰
+기다리는 중"처럼 보였다). 구역이 여러 개면 가장 "급한" 것 하나로 요약하고, 우선순위는
+`failed > backing > blocked > waiting > inside > approaching > idle`이다 - 예를 들어 구역 A에서
+`inside`, 구역 B에서 `waiting`이면 전체 상태는 `waiting`이다.
 
 **현재 한계**: 서버(`amr_fleet_core.traffic.zones.ZoneManager`)가 아직 교착을 감지하지 않아(순환 탐지
 미구현) 실제로 `GRANT_REVOKED`를 보내는 경로가 없다 - 이 처리는 `test_core.py` 단위 테스트(합성

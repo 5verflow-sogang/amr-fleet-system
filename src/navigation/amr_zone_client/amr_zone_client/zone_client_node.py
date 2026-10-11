@@ -78,6 +78,7 @@ class ZoneClientNode(Node):
             zones=zones,
             trigger_distance_m=p('trigger_distance_m', 3.0).value,
             stop_margin_m=p('stop_margin_m', 0.5).value,
+            waiting_margin_m=p('waiting_margin_m', 0.5).value,
             decel_mps2=p('decel_mps2', 1.0).value,
             resend_period_s=p('resend_period_s', 1.0).value,
             retry_period_s=p('retry_period_s', 5.0).value,
