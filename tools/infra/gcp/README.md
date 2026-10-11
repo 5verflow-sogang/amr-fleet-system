@@ -18,7 +18,9 @@ GitHub Actions (fleet-test.yml, 수동 실행)
     ├─ Docker 이미지 빌드 (Artifact Registry 빌드 캐시)
     ├─ 하네스 실행: tools/harness/docker_run.sh <시나리오> -n <반복> (기본 fleet_fake)
     ├─ 반복이 전부 실패하면 job 실패
-    └─ 결과·요약을 gs://amr-fleet-results/runs/<VM 이름>/ 에 업로드 (fleet-runner-vm 계정), 요약은 실행 화면 Summary에도
+    ├─ 결과·요약을 gs://amr-fleet-results/runs/<시나리오>-<라벨>/<날짜>_<실행 번호>/ 에 업로드 (fleet-runner-vm 계정),
+    │  요약은 실행 화면 Summary에도
+    └─ 실행 목록 gs://amr-fleet-results/index.csv 에 한 줄 (tools/harness/index_run.py)
   stop-runner (ubuntu-latest, 항상 실행)
     └─ VM 삭제, 남은 러너 등록 삭제
 ```
@@ -82,11 +84,14 @@ terraform output                          # 2번에 넣을 값
 Actions → Fleet Regression Test → Run workflow. `ref`에 브랜치나 `refs/pull/<번호>/head`를 넣는다.
 
 - 포크 PR의 `pull_request` 이벤트는 GCP 로그인 토큰을 받지 못해 PR 라벨로 자동 실행하지 않는다.
-- 결과는 `gs://amr-fleet-results/runs/<VM 이름>/`: `rosbag/`, `fleet_latency.csv`, `response_time.csv`, `assignments.csv`, `tasks.json`, `meta.json`(`fault.direction`, `observation_cutoff` 포함), 각 노드 로그.
+- 결과는 `gs://amr-fleet-results/runs/<시나리오>-<라벨>/<날짜>_<실행 번호>/`: `rosbag/`, `fleet_latency.csv`, `response_time.csv`, `assignments.csv`, `tasks.json`, `meta.json`(`fault.direction`, `observation_cutoff` 포함), 각 노드 로그.
+
+`index.csv`(날짜, 시나리오, 라벨, 지연, 손실, 강제종료 로봇·시각, 경매 중계 여부, 반복 수, 완료 수, git SHA, 경로, Actions 링크)에서 원하는 실행을 찾고 경로로 내려받는다.
 
 ```bash
+gcloud storage cat gs://amr-fleet-results/index.csv
 gcloud storage ls gs://amr-fleet-results/runs/
-gcloud storage cp -r gs://amr-fleet-results/runs/<VM 이름> .
+gcloud storage cp -r gs://amr-fleet-results/runs/<시나리오>-<라벨>/<날짜>_<실행 번호> .
 ```
 
 ## 결과 보기 (팀원)

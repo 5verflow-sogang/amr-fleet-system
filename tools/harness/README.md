@@ -19,6 +19,9 @@ python3 tools/harness/run.py fleet_fake -n 10 --set delay_ms=200 --set loss_pct=
 # 호스트에서 컨테이너로 (필요한 패키지만 빌드하고 run.py를 부른다)
 tools/harness/docker_run.sh loc_basic -n 10
 
+# 실행 목록(index.csv)에 한 줄 더하기 (fleet-test.yml이 버킷에 올리며 쓴다, ROS 불필요)
+python3 tools/harness/index_run.py tools/harness/results/<out 폴더> --index index.csv --path <결과 위치>
+
 # 이미 있는 결과 폴더를 다시 요약 (ROS 불필요)
 python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 ```

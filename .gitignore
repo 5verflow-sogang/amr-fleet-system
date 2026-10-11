@@ -20,6 +20,8 @@ htmlcov/
 *.mcap
 experiments/**/raw/
 tools/harness/results/
+# 실행 목록 작업본 (실제 목록은 결과 버킷에만)
+/index.csv
 
 # ros2_tracing 출력
 tracing/
