@@ -1,0 +1,46 @@
+# 화물 상자 배치 (YOLO 인식 학습·평가용, #99 연우 요청). sim.launch.py cargo:=true일 때만 뜬다.
+#
+# size: small 30×20×15 / medium 50×40×30 / large 60×50×40 cm (원 명세 "가상 물품" 표, amr_gazebo/cargo.py)
+# x, y: 상자 중심 (world), z: 상자 바닥 높이 (바닥 0, 도크 플랫폼 위 1.0), yaw: 긴 변이 x축이면 0
+# 상자 중심 높이 = z + 높이/2. 위치가 고정이라 GT 라벨로 바로 쓴다
+#
+# 배치 규칙
+# - LiDAR 스캔 높이(0.38 m ± 0.05)에 걸리지 않게: 바닥에는 small·medium(높이 15·30 cm)만,
+#   large는 도크 플랫폼(높이 1.0 m) 위에만 둔다. 지도 v1·위치추정에 영향을 주지 않는다 (test_cargo.py가 확인)
+# - 바닥 상자는 랙 긴 면에 2 cm 띄워 붙이고, 랙 끝 쪽에 둔다 (매핑·주행 경로는 랙에서 1 m 넘게 떨어짐)
+# - 동적 장애물 경로(config/dynamic_obstacles.yaml)와 좁은 통로 ①②(x −5~0.6, y −2.6~0.4)는 피한다
+# - 카메라(지면 0.43 m)에서 보이도록 모두 바닥~1.4 m, 통로 중앙에서 1~8 m
+# - 표지판(#118, 랙 끝면·벽, 중심 0.9~1.3 m)과 겹치지 않는다 (test_cargo.py)
+
+boxes:
+  # A열 남쪽 면 (y 4.4, A–B 통로 쪽)
+  - {id: cargo_01, size: small,  x: -12.9, y: 4.28}
+  - {id: cargo_02, size: medium, x: 2.0,   y: 4.18}
+  - {id: cargo_03, size: small,  x: 5.6,   y: 4.28}
+  - {id: cargo_04, size: medium, x: 12.9,  y: 4.18}
+  # A열 북쪽 면 (y 5.6, 메인 통로 쪽)
+  - {id: cargo_05, size: small,  x: -2.0,  y: 5.72}
+  - {id: cargo_06, size: medium, x: 9.6,   y: 5.82}
+  - {id: cargo_07, size: medium, x: -13.0, y: 5.82}
+  # B열 북쪽 면 (y −1.4, 좁은 통로 동쪽)
+  - {id: cargo_08, size: medium, x: 5.6,   y: -1.18}
+  # B열 남쪽 면 (y −2.6, B–C 통로 쪽)
+  - {id: cargo_09, size: small,  x: 5.6,   y: -2.72}
+  - {id: cargo_10, size: medium, x: 9.6,   y: -2.82}
+  - {id: cargo_11, size: small,  x: -9.6,  y: -2.72}
+  # C열 북쪽 면 (y −8.4, B–C 통로 쪽)
+  - {id: cargo_12, size: small,  x: 2.0,   y: -8.28}
+  - {id: cargo_13, size: medium, x: -2.0,  y: -8.18}
+  # C열 남쪽 면 (y −9.6)
+  - {id: cargo_14, size: small,  x: 9.6,   y: -9.72}
+  # 도크 플랫폼 위 (x ±28.5~30, 높이 1.0 m). 정차 구역(bay)에서 1.5~4.5 m
+  - {id: cargo_15, size: large,  x: -29.3, y: 15.0,  z: 1.0}
+  - {id: cargo_16, size: medium, x: -29.3, y: 16.2,  z: 1.0}
+  - {id: cargo_17, size: small,  x: -29.0, y: 17.1,  z: 1.0}
+  - {id: cargo_18, size: medium, x: -29.3, y: 10.2,  z: 1.0}
+  - {id: cargo_19, size: large,  x: -29.3, y: 11.6,  z: 1.0}
+  - {id: cargo_20, size: large,  x: 29.3,  y: 15.4,  z: 1.0}
+  - {id: cargo_21, size: small,  x: 29.0,  y: 16.6,  z: 1.0}
+  - {id: cargo_22, size: medium, x: 29.3,  y: 17.2,  z: 1.0}
+  - {id: cargo_23, size: medium, x: 29.3,  y: 10.4,  z: 1.0}
+  - {id: cargo_24, size: large,  x: 29.3,  y: 11.8,  z: 1.0}
