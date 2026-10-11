@@ -1,0 +1,41 @@
+# 안전 노드 파라미터. 단계 규칙과 근거는 amr_perception_core/safety.py, docs/algorithms/perception.md 2절
+/**/safety:
+  ros__parameters:
+    # cmd_vel 체인: (Nav2 · path_tracker) cmd_vel_nav → amr_zone_client → cmd_vel_zone_limited → 이 노드 → cmd_vel
+    cmd_vel_in_topic: cmd_vel_zone_limited
+    cmd_vel_out_topic: cmd_vel
+    base_frame: ""            # 비우면 <네임스페이스>/base_footprint
+    robot_length: 0.6         # m. amr_description properties.xacro
+    robot_width: 0.4
+
+    # 원 명세 긴급정지 거리 [m]. 지금 명령의 진행 방향 차체 앞(후진이면 뒤) 이 띠 안에 LiDAR 점이 들어오면
+    # CRITICAL(정지). 진행 방향이 아닌 점이 이 안이면 WARNING(저속). 멀어지는 명령은 막지 않는다
+    critical_distance: 0.3
+    # 진행 경로 판정: 옆·모서리 스침 여유 [m] (0.6 m 통로의 옆 여유 0.1 m보다 작게), 내다보는 시간
+    # = 반응 reaction_time [s] + |v| / decel [m/s²] (최소 path_horizon_min [s], 제자리 회전용)
+    side_margin: 0.05
+    reaction_time: 0.2
+    decel: 1.0               # amr_description DiffDrive 감속 제한
+    path_horizon_min: 0.5
+    # TTC 임계 [s]. CRITICAL: 0.6 m/s에서 반응 0.2 s + 1.0 m/s² 정지 0.6 s ≈ 0.8 s에 여유.
+    # WARNING: 2.0 m/s에서 0.6 m/s까지 줄이는 시간(반응 0.2 s + 1.4 s ≈ 1.6 s)에 여유
+    ttc_critical: 1.0
+    ttc_warning: 3.0
+    # TTC 규칙과 아래 근접 규칙은 움직이는 트랙에만 건다 (정적 장애물은 진행 경로 판정이 맡는다)
+    # 움직이는 트랙이 차체에서 이 거리 [m] 안이면 WARNING
+    dynamic_warning_distance: 1.5
+    # WARNING 선속도 상한 [m/s] (SafetyStatus.msg: 반응 0.2 s + 1.0 m/s²로 0.3 m 안에 서는 최대 속도)
+    warning_speed_limit: 0.6
+    # 단계를 내릴 때 조건이 풀린 채 유지돼야 하는 시간 [s] (깜빡임 방지). 올릴 때는 바로
+    release_hold_s: 0.5
+
+    # 센서 끊김 [s]. 스캔(10 Hz) 끊김 → CRITICAL, 추적·충돌 위험·odom 끊김 → WARNING
+    scan_timeout: 0.5
+    tracks_timeout: 1.0
+    odom_timeout: 1.0
+    # 입력 명령이 이 시간 [s] 동안 없으면 0을 한 번 낸다 (Gazebo DiffDrive는 마지막 명령을 계속 따른다)
+    cmd_timeout: 0.5
+
+    rate: 20.0                # Hz. 판정 타이머 (스캔이 오면 그때도 판정)
+    status_period: 0.1        # s. safety/status 주기 (바뀌면 즉시). 정지 중 0 명령도 이 주기
+    publish_markers: true     # safety/markers (RViz 확인용)

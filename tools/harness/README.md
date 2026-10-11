@@ -38,7 +38,7 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 | 이름 | 내용 | 주요 결과 |
 | --- | --- | --- |
 | `loc_basic` | 로봇 1대, 지도 v0. 정지 → 직진 3 m → 한 바퀴 → 반 바퀴 → 복귀 직진 → 정지. 약 1분 | `eval_ekf/`·`eval_amcl/`의 `localization.csv`·궤적 |
-| `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분 | `fleet_latency.csv`, `response_time.csv`(Ack), `tasks.json`, `assignments.csv`, `fault_events.csv` |
+| `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분. `kill_robot`으로 로봇 장애 | `fleet_latency.csv`, `response_time.csv`(Ack), `task_outcomes.csv`, `recovery.csv`(로봇 장애 시), `tasks.json`, `assignments.csv`, `fault_events.csv` |
 
 `fleet_fake`는 Fleet 계층(지연·손실·Ack)만 잰다. 가짜 로봇은 `odom`을 내지 않아 응답 시간 KPI(200 ms)는 비어 있으므로, 그 Before 데이터는 실제 로봇 스택 시나리오가 따로 필요하다. 서버 강제종료 `kill_at_s`는 서버 launch 시작 기준이라 작업 시작보다 약 10초 빠르다.
 
@@ -53,6 +53,8 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 5. `meta.json`의 `seed`에 실제로 넘긴 값을 남긴다.
 
 seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도 위치 오차 RMSE가 최대 2 cm 달랐다(10/6, AMCL 파티클 필터·Gazebo 센서 노이즈·메시지 도착 순서 등). 그래서 같은 seed가 "같은 조건"은 보장하지만 "같은 결과"는 보장하지 않고, 판정은 N회 반복의 신뢰구간으로 한다.
+
+**작업·로봇 장애 지표** (`fleet_fake`): `fleet.tasks_requested`·`tasks_completed`·`task_completion_rate`(`task_outcomes.csv`), 로봇 장애 실행이면 `fleet.reclaimed_tasks`·`recovery_s.mean`·`recovery_s.max`·`reclaimed_completed_rate`(`recovery.csv`). 실행 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로 완료율은 같은 seed(같은 작업 일정)의 장애 있음·없음끼리 비교한다.
 
 **요약** (`summary_<시나리오>-<라벨>_<시각>.md`): 지표마다 실행별 값의 평균·표준편차·범위와 95% 신뢰구간. KPI가 있는 지표는 CI 상한까지 기준 안이면 PASS, 평균만 기준 안이면 MARGINAL, 아니면 FAIL이다.
 
@@ -121,6 +123,8 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
 | `hop_latency.csv` | — (연구 1, 아래) | — | 구독 수신 1건마다 1행 | 하연 (트레이스 변환) |
 | `tasks.csv` | 명세서 작업 로그 필드 (아래) | — | 작업마다 1행 | 하네스 기록기 (민지) |
 | `assignments.csv` | — (팀 정의, 아래) | — | 할당 호출마다 | 하연 (`amr_fleet_manager`) |
+| `task_outcomes.csv` | — (팀 정의) | `task_id, request_time, first_assign_time, robots, final_state, end_time` | 작업마다 1행 | 하연 (`fleet_metrics`, bag에서 만든 Fleet 쪽 결과. 로봇 BT 작업 로그 `tasks.csv`와 별개) |
+| `recovery.csv` | — (연구 1 로봇 장애) | `robot, kill_time, task_id, reassign_time, reassigned_robot, recovery_s, completed` | 로봇 강제종료 × 하던 작업마다 1행 | 하연 (`fleet_metrics`) |
 | `coverage/` | `colcon test --coverage` 텍스트·HTML | 모듈별 하위 폴더 | — | 전원 |
 
 - `localization.csv`
@@ -215,7 +219,7 @@ tools/harness/results/<run_id>/
 | --- | --- | --- |
 | `git_sha` | `9ef33ea` | 어느 코드로 나온 결과인지 |
 | `scenario`, `repeat`, `seed` | `loc_square_10m`, `3`, `42` | 반복·재현. Fleet 시나리오의 `seed`는 작업 생성기 seed이고, 넣은 작업 일정은 `tasks.json`(JSON Task 파일, `task_generator`의 `schedule_out`)에 남는다 |
-| `fault` | `{"delay_ms": 100, "loss_pct": 0, "direction": "server_to_robot", "relay_auction": false, "kill_at_s": 60, "restart_after_s": 10}` | 연구 1 조건별 비교. 서버 강제종료가 없으면 `kill_at_s`는 -1. `direction`은 지연·손실을 건 방향(`server_to_robot`, 역방향 추가 시 `both`). `relay_auction`은 분산 경매 토픽(로봇 → 로봇)에도 걸었는지 (분산·하이브리드 비교군은 `true`) |
+| `fault` | `{"delay_ms": 100, "loss_pct": 0, "direction": "server_to_robot", "relay_auction": false, "kill_at_s": 60, "restart_after_s": 10, "kill_robot": "amr_03", "kill_robot_at_s": 120}` | 연구 1 조건별 비교. 서버 강제종료가 없으면 `kill_at_s`는 -1. 로봇 장애가 없으면 `kill_robot`은 `none`, `kill_robot_at_s`는 -1 (`fault_events.csv`에 `robot_kill:<로봇>`). `direction`은 지연·손실을 건 방향(`server_to_robot`, 역방향 추가 시 `both`). `relay_auction`은 분산 경매 토픽(로봇 → 로봇)에도 걸었는지 (분산·하이브리드 비교군은 `true`) |
 | `num_robots` | `5` | 다중 로봇 조건 |
 | `assignment_algorithm`, `cost_fn` | `hungarian`, `euclidean` | 할당 알고리즘 비교. 비용 함수가 다르면 `total_cost`끼리 비교할 수 없다 |
 | `controller` | `pure_pursuit` · `stanley` | 경로 추종 제어기 비교 (이진 요청, #5) |

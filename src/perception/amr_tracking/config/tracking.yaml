@@ -1,6 +1,23 @@
 # 장애물 추적 노드 파라미터 (tracking_node, synthetic_obstacles_node)
 /**/tracking:
   ros__parameters:
+    # 입력: scan(필터된 LiDAR 스캔을 이 노드가 군집화, 기본) 또는 poses(perception/obstacle_measurements 시험용)
+    measurement_source: scan
+    # 추적 좌표계. 비우면 <네임스페이스>/odom (예: amr_01/odom). DWA 입력이라 odom (api.md 4-3절)
+    fixed_frame: ""
+    tf_timeout: 0.1          # s. 스캔 촬영 시각의 lidar_link → odom TF를 기다리는 시간
+
+    # 군집화 (amr_perception_core clustering, 근거는 docs/algorithms/perception.md 1-1절)
+    breakpoint_lambda_deg: 10.0
+    range_noise_std: 0.03    # m. amr_description/config/sensors.yaml LiDAR 잡음
+    max_gap_beams: 2
+    min_points: 3
+    max_obstacle_extent: 2.0   # m. R1: 이보다 큰 군집은 벽·랙 면
+    # 다리 묶기: LiDAR 높이(0.2 m)에서 사람은 다리 두 개로 보인다. 크기 leg_max_extent 이하 군집 두 개의
+    # 중심이 leg_merge_distance 안이면 한 사람으로 합친다 (0.6 m = 어깨너비 수준, Gazebo로 확인). 0이면 끔
+    leg_max_extent: 0.35
+    leg_merge_distance: 0.6
+
     # 가속도 잡음 σa [m/s²]. 사람 방향 전환·지게차 가감속 수준.
     # 0.5로 낮추면 정지 물체 속도 잡음은 줄지만 보행자 방향 전환을 못 따라가 ID가 자주 바뀌었다
     accel_noise_std: 1.0
@@ -12,14 +29,79 @@
     gate_mahalanobis_sq: 13.82
     # 이 횟수 관측되면 확정 트랙으로 발행
     confirm_hits: 3
-    # 마지막 관측 후 이 시간 [s]이 지나면 삭제 (LiDAR 10 Hz 5프레임)
-    max_coast_time: 0.5
-    # 속력이 dynamic_speed_threshold [m/s]를 넘는 프레임이 dynamic_confirm_frames번 연속되면 동적 (이후 유지).
-    # 동적 장애물 분류 작업 전까지의 임시 규칙
+    # 마지막 관측 후 이 시간 [s]이 지나면 삭제. 작업자가 랙 뒤에 가려지는 시간을 녹화로 쟀다(10/8):
+    # 중앙 0.4 s, 90% 1.9 s, 최대 5.3 s. 0.5 s면 짧게 가려질 때마다 트랙이 지워져 ID가 바뀌었다
+    # (작업자 1명, 시뮬레이션 약 1분에 4번). 2.0 s는 90%를 덮어 2번으로 줄었다. 길수록 사라진 사람이
+    # 예측 위치로 더 오래 남는다(1.5 m/s면 2 s에 3 m). 그동안 KF 공분산이 커져 소비자가 구분할 수 있다
+    max_coast_time: 2.0
+    # R3: 속력이 dynamic_speed_threshold [m/s]를 넘는 프레임이 dynamic_confirm_frames번 연속되면 동적 (이후 유지).
+    # 멈춰 선 사람도 동적으로 남는다. 정지 물체의 속도 추정 잡음으로 한두 프레임 넘는 것은 연속 조건이 거른다
     dynamic_speed_threshold: 0.25
     dynamic_confirm_frames: 5
-    # 임시 고정 반경 [m] (LiDAR 군집 반경으로 교체)
+    # 빈 공간 침입 증거 (amr_perception_core free_space.py): 군집 점이 "최근 빔이 지나간(비어 있던) 칸"에
+    # free_evidence_min_points개 이상 들어오면 증거. 증거가 dynamic_evidence_frames 프레임 이상이어야 동적.
+    # 로봇이 움직이면 랙이 벽을 가리는 경계가 바뀌어 벽 조각이 미끄러지며 동적 트랙이 됐다 (회전 중 프레임당
+    # 13.7개, Gazebo 10/9). 벽 조각은 빔이 맞는 칸에만 있어 증거가 생기지 않는다
+    use_free_space: true
+    # 2 → 3: 가짜 동적 트랙 2.6 → 1.1개/프레임 (hit_quiet 3.0과 함께, 녹화 재생 10/10)
+    dynamic_evidence_frames: 3
+    free_evidence_min_points: 2
+    free_space_resolution: 0.1     # m. 칸 크기
+    free_space_size: 30.0          # m. 로봇 주변 격자 한 변
+    free_space_max_range: 12.0     # m. 이보다 먼 구간은 비어 있다고 적지 않는다 (빔 간격 > 칸)
+    free_space_endpoint_margin: 0.2  # m. 반사점 앞 이 거리는 비어 있다고 적지 않는다 (거리 잡음 3σ + 여유)
+    free_space_memory: 3.0         # s. 이만큼 지난 "비어 있음"은 잊는다
+    # s. 이 안에 반사점이 떨어진 칸은 증거로 보지 않는다 (벽 칸). 1.0이면 빔이 맞았다 놓쳤다 하는 얇은 랙 다리가
+    # 1초 넘게 안 맞다가 다시 맞을 때 증거가 됐다
+    free_space_hit_quiet: 3.0
+    # m. 이번 스캔 반사점에서 이 거리 안의 칸은 비어 있다고 적지 않는다. 물체 옆을 스치는 빔이 옆 칸을 비었다고
+    # 적어, 로봇이 움직여 다른 면이 보이면 랙 다리·기둥이 동적이 됐다 (녹화 재생 10/10)
+    free_space_hit_clearance: 0.2
+    # 트랙 반경 = 군집 반경의 지수 평활 (새 값 반영 비율). 프레임마다 보이는 면이 달라 군집 반경이 흔들린다
+    radius_smoothing: 0.3
+    # poses 입력처럼 반경 측정이 없을 때 쓰는 고정 반경 [m]
     obstacle_radius: 0.3
+
+    # R2 정적 지도 대조: 지도의 막힌 칸(벽·랙·기둥) 위 스캔 점을 군집화 전에 뺀다. 지도·map TF가 없으면 안 뺀다.
+    # 기본 끔: 위치추정이 지도와 어긋나면(Gazebo 회전 뒤 0.3 m·6°) 벽 빔이 새어 효과가 없었다 (perception.md 1-2-1)
+    use_static_map: false
+    map_topic: /map
+    map_frame: map
+    # 막힌 칸 부풀림 [m]. 위치추정 오차 + 지도 해상도(0.05 m)만큼 벽 점이 칸 밖으로 나간다.
+    # 이보다 벽에 가까이 붙은 사람은 추적에서 빠진다 (안전 노드의 정지 판정은 원본 스캔이라 영향 없음)
+    map_inflation: 0.15
+    map_occupied_threshold: 65   # OccupancyGrid 값. map_server occupied_thresh 0.65
+    # 국소 정렬: 대조 전에 스캔을 ±map_align_max_shift [m] 안에서 밀어 지도와 가장 잘 맞는 위치를 쓴다.
+    # 위치추정이 지도와 0.25 m 어긋나 벽 점의 60%가 새어 나와 가짜 동적 트랙이 됐다 (Gazebo, 10/9). 0이면 끔
+    map_align_max_shift: 0.3
+    map_align_step: 0.05
+
+    # 충돌 위험(TTC) → perception/collision_risks. 로봇 = 실제 차체 사각형
+    base_frame: ""           # 비우면 <네임스페이스>/base_footprint
+    robot_length: 0.6        # m. amr_description properties.xacro
+    robot_width: 0.4
+    ttc_horizon: 5.0         # s. 이 안에 닿지 않으면 inf
+    odom_timeout: 0.5        # s. 이보다 오래된 odom 속도는 쓰지 않는다 (속도 0으로 계산)
+
+    # 카메라 연관: perception/objects(YOLO 3D 검출)를 트랙에 짝지어 class_name·confidence·source를 채운다
+    # (amr_perception_core association.py, perception.md 1-6절)
+    use_camera_association: true
+    detections_topic: perception/objects
+    assoc_gate_mahalanobis_sq: 9.21   # 2자유도 χ² 99% (트랙 예측 + 검출 공분산)
+    assoc_max_distance: 1.0           # m. 공분산이 커도 이보다 멀면 짝짓지 않는다
+    assoc_min_confidence: 0.5         # amr_detection confidence_threshold와 같게
+    assoc_evidence_tau: 5.0           # s. 클래스 근거가 줄어드는 시정수 (카메라 시야 밖에서도 이만큼 유지)
+    assoc_min_evidence: 1.0           # confidence 합. 0.5 검출 두 번이면 클래스를 붙인다 (한 번 오검출 방지)
+    # 붙은 클래스는 근거가 이 아래로 줄어야 뗀다 (히스테리시스, τ 5 s면 약 6 s 유지).
+    # Gazebo에서 YOLO가 CPU를 나눠 0.3 FPS일 때 검출 사이에 클래스가 깜빡였다
+    assoc_release_evidence: 0.3
+    assoc_camera_recent_s: 1.0        # s. 이 안에 짝지어졌으면 source = LIDAR_CAMERA
+    # 클래스별 최소 반경 [m]. 사람은 LiDAR 높이(0.38 m)에서 다리만 보여 반경이 0.12 m 정도로 작게 잡혔다
+    min_radius_classes: ["person"]
+    min_radius_values: [0.25]
+
+    publish_markers: true    # perception/obstacle_markers (RViz 확인용)
+    stats_period: 5.0        # s. 프레임당 후보·트랙 수, 처리 시간 로그 주기
 
 /**/synthetic_obstacles:
   ros__parameters:

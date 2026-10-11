@@ -7,6 +7,9 @@ endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# amr_nav2_plugins가 이 정적 라이브러리를 공유 라이브러리(플러그인)에 링크한다 -
+# PIC 없이 빌드하면 "can not be used when making a shared object"로 링크가 깨진다.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(ament_cmake REQUIRED)
 

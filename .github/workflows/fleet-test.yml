@@ -32,11 +32,17 @@ on:
         description: 장애 주입 손실 (%, 0~10)
         default: "0"
       label:
-        description: 조건 이름 (요약에서 묶는 이름. 비우면 d<지연>_l<손실>)
+        description: 조건 이름 (요약에서 묶는 이름. 비우면 d<지연>_l<손실>[_kill_<로봇>])
         default: ""
       duration_s:
         description: 시나리오 시간 (s). 비우면 시나리오 기본값
         default: ""
+      kill_robot:
+        description: "로봇 장애 - 죽일 로봇 (예: amr_03). none이면 끄기"
+        default: none
+      kill_robot_at_s:
+        description: 로봇 장애 - 가짜 로봇 launch 시작 후 죽일 시각 (s). -1이면 끄기
+        default: "-1"
   # TODO: 하네스 연결 후 활성화 (매일 03:00 KST)
   # schedule:
   #   - cron: "0 18 * * *"
@@ -122,6 +128,8 @@ jobs:
           LOSS_PCT: ${{ github.event.inputs.loss_pct }}
           LABEL: ${{ github.event.inputs.label }}
           DURATION_S: ${{ github.event.inputs.duration_s }}
+          KILL_ROBOT: ${{ github.event.inputs.kill_robot }}
+          KILL_ROBOT_AT_S: ${{ github.event.inputs.kill_robot_at_s }}
           HARNESS_IMAGE: amr-fleet-system:latest
           # 있으면 하네스가 끝날 때 요약을 실험 결과 채널로 보낸다 (tools/harness README "Discord 알림")
           HARNESS_DISCORD_WEBHOOK: ${{ secrets.HARNESS_DISCORD_WEBHOOK }}
@@ -132,11 +140,18 @@ jobs:
           num='^[0-9]+([.][0-9]+)?$'
           [[ "$DELAY_MS" =~ $num && "$LOSS_PCT" =~ $num ]] || { echo "::error::delay_ms·loss_pct는 숫자"; exit 1; }
           label="${LABEL:-d${DELAY_MS}_l${LOSS_PCT}}"
+          # 로봇 장애 실행이 장애 없는 실행과 같은 묶음으로 요약되지 않게 기본 라벨에 붙인다
+          if [ -z "$LABEL" ] && [ "$KILL_ROBOT" != none ]; then label="${label}_kill_${KILL_ROBOT}"; fi
           [[ "$label" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "::error::label은 영문·숫자·_.-만: $label"; exit 1; }
           # 업로드 경로(runs/<시나리오>-<라벨>/)에 쓴다
           echo "RESULTS_PREFIX=runs/${SCENARIO}-${label}" >> "$GITHUB_ENV"
           args=("$SCENARIO" -n "$REPEATS" --label "$label" --out "results/$(basename "$RUN_DIR")"
                 --set "delay_ms=$DELAY_MS" --set "loss_pct=$LOSS_PCT")
+          if [ "$KILL_ROBOT" != none ]; then
+            [[ "$KILL_ROBOT" =~ ^amr_0[1-5]$ && "$KILL_ROBOT_AT_S" =~ $num ]] \
+              || { echo "::error::kill_robot은 amr_01~05, kill_robot_at_s는 0 이상 숫자"; exit 1; }
+            args+=(--set "kill_robot=$KILL_ROBOT" --set "kill_robot_at_s=$KILL_ROBOT_AT_S")
+          fi
           if [ -n "$DURATION_S" ]; then
             [[ "$DURATION_S" =~ ^[0-9]+$ ]] || { echo "::error::duration_s는 정수"; exit 1; }
             args+=(--set "duration_s=$DURATION_S")

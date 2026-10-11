@@ -63,3 +63,15 @@ variable "budget_currency" {
   type        = string
   default     = "KRW"
 }
+
+variable "results_viewers" {
+  description = "결과 버킷을 읽을 팀원 Google 계정 (이메일). 개인정보라 terraform.tfvars에만 쓴다"
+  type        = list(string)
+  default     = []
+}
+
+variable "results_writers" {
+  description = "결과 버킷에 새 파일을 올릴 팀원 (읽기 포함). 덮어쓰기·삭제는 못 한다 (논문 원자료 보호)"
+  type        = list(string)
+  default     = []
+}
