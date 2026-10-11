@@ -6,13 +6,48 @@
     # 서버 → 로봇 토픽 앞부분. /fleet = 서버 원본, fleet = 장애 주입기 중계본 (/<ns>/fleet/...)
     server_topic_prefix: /fleet
     tick_hz: 10.0
-    # RobotState 발행 주기 [Hz] (RobotState.msg: 1~5 Hz)
+    # RobotState 발행 주기 [Hz] (RobotState.msg: 1~5 Hz). 이동 거리(distance_traveled)도 이 주기로 더한다
     state_rate_hz: 2.0
     # RobotState.pose: global_frame 기준 base_frame 위치 (TF). base_frame을 비우면 <robot_id>/base_footprint
     global_frame: map
     base_frame: ""
-    # 자리채움 동작 시간 [s]. Nav2·도킹을 붙이기 전까지 이동·싣기를 시간만 흘려 흉내 낸다 (작업 9에서 바꿈)
-    stub_move_s: 5.0
-    stub_dwell_s: 2.0
-    # 가상 배터리 모델 전까지 고정값
-    battery_percent: 100.0
+
+    # ---- 이동·도킹 ----
+    # false면 시간만 흘리는 자리채움 (Nav2·도킹 서버 없이 도는 1단계 하네스). launch 인자로 켠다
+    use_nav2: false
+    use_docking: false
+    nav_action: navigate_to_pose      # 네임스페이스 안 상대 이름 (/<ns>/navigate_to_pose)
+    dock_action: docking/dock          # Dock.action
+    # 액션 서버가 없을 때 목표를 보내려고 기다리는 시간 [s]. 넘으면 그 시도는 실패
+    server_wait_s: 10.0
+    stub_move_s: 5.0                   # 자리채움 이동 시간 [s]
+    stub_dock_s: 1.0                   # 자리채움 도킹 시간 [s]
+    # 싣기·내리기 시간 [s] (도킹 뒤 가상 적재·하역 이벤트)
+    dwell_s: 2.0
+
+    # ---- MoveTo 규칙 ----
+    # 멈춘 시간을 뺀 이동 시간 상한 [s] → NAV_TIMEOUT
+    nav_timeout_s: 300.0
+    # Nav2가 실패(abort)하면 같은 목표를 다시 보내는 횟수 (모두 실패하면 NAV_NO_PATH)
+    nav_retries: 2
+    # zone_client/state가 waiting·blocked·backing이거나 kidnap_recovery/state가 tracking이 아니면 멈춘다.
+    # 한 번 멈춘 채 이만큼 지나면 실패 [s] (구역 → TRAFFIC_LEASE_TIMEOUT, 위치 → NAV_TIMEOUT)
+    pause_timeout_s: 60.0
+    # 진행 상태가 이만큼 이어져야 목표를 다시 보낸다 [s] (상태가 한 틱만 바뀌는 것을 거른다)
+    resume_hold_s: 0.3
+
+    # ---- 가상 배터리 (include/amr_bt/battery.hpp) ----
+    battery:
+      initial_percent: 100.0
+      move_per_m: 0.05             # 이동 1 m당 [%]
+      idle_per_s: 0.002            # 시간당 [%/s]
+      charge_per_s: 0.5            # 충전 [%/s] (시뮬레이션이라 빠르게)
+      charge_target_percent: 100.0 # 충전 작업은 이만큼 차면 COMPLETED
+      charge_timeout_s: 600.0
+      # 이보다 낮으면 충전이 아닌 작업을 ASSIGN_BATTERY_LOW로 거부 (서버 min_battery_percent 20 %보다 낮게)
+      reject_below_percent: 10.0
+
+    # Groot 실시간 모니터링 포트 (0이면 끔). 로봇마다 다르게 (publisher = 이 값, server = 이 값 + 1)
+    groot_port: 0
+    # 작업 로그 CSV 경로 (비우면 안 씀). 작업이 끝날 때마다 한 줄
+    task_log_file: ""
