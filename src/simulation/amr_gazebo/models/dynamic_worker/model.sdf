@@ -37,5 +37,10 @@
       <odom_publish_frequency>50</odom_publish_frequency>
       <dimensions>2</dimensions>
     </plugin>
+    <!-- YOLO 학습 라벨 번호 (amr_gazebo README "라벨 카메라"): 1 사람, 2 화물, 3 표지판.
+         라벨 카메라(label_camera:=true)가 이 번호로 화면 속 상자를 낸다 -->
+    <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+      <label>1</label>
+    </plugin>
   </model>
 </sdf>

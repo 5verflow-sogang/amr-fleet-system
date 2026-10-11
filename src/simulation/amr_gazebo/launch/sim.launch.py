@@ -40,6 +40,9 @@ def generate_launch_description():
             'enable_camera', default_value='true',
             description='RGBD 카메라 센서와 브리지를 만들지. CPU sim에서 여러 대를 띄울 때 false'),
         DeclareLaunchArgument(
+            'label_camera', default_value='false',
+            description='라벨 카메라(YOLO 학습 데이터 수집 전용)를 만들지'),
+        DeclareLaunchArgument(
             'dynamic_obstacles', default_value='false',
             description='동적 장애물을 띄울지. 지도 매핑 때는 끈다'),
         DeclareLaunchArgument(
@@ -62,6 +65,7 @@ def generate_launch_description():
                 'payload_mass': LaunchConfiguration('payload_mass'),
                 'publish_odom_tf': LaunchConfiguration('publish_odom_tf'),
                 'enable_camera': LaunchConfiguration('enable_camera'),
+                'label_camera': LaunchConfiguration('label_camera'),
             }.items(),
         ),
         IncludeLaunchDescription(

@@ -27,6 +27,7 @@ def generate_launch_description():
             ' payload_mass:=', LaunchConfiguration('payload_mass'),
             ' gt_rate:=', LaunchConfiguration('gt_rate'),
             ' enable_camera:=', LaunchConfiguration('enable_camera'),
+            ' label_camera:=', LaunchConfiguration('label_camera'),
         ]),
         value_type=str)
 
@@ -43,6 +44,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_camera', default_value='true',
             description='RGBD 카메라 센서를 만들지. false면 TF 프레임만 남는다'),
+        DeclareLaunchArgument(
+            'label_camera', default_value='false',
+            description='라벨 카메라(YOLO 학습 데이터 수집 전용)를 만들지'),
         DeclareLaunchArgument(
             'use_sim_time', default_value='true',
             description='Gazebo /clock 사용 여부'),
