@@ -171,6 +171,12 @@ public:
     if (base_frame_.empty()) {
       base_frame_ = robot_id_ + "/base_footprint";
     }
+    // 이동 거리(distance_traveled·배터리)는 odom 기준으로 잰다. map 기준이면 AMCL 보정·kidnap 순간 이동만큼
+    // 부풀어서다 (#141 하연 리뷰). odom → base_footprint는 연속이다 (EKF 로컬)
+    odom_frame_ = declare_parameter<std::string>("odom_frame", "");
+    if (odom_frame_.empty()) {
+      odom_frame_ = robot_id_ + "/odom";
+    }
     BatteryConfig battery;
     battery.initial_percent = declare_parameter<double>("battery.initial_percent", 100.0);
     battery.move_per_m = declare_parameter<double>("battery.move_per_m", 0.05);
@@ -478,7 +484,16 @@ private:
       msg.pose.position.y = t.transform.translation.y;
       msg.pose.position.z = t.transform.translation.z;
       msg.pose.orientation = t.transform.rotation;
-      // TaskStatus.distance_traveled: 작업 중 이 주기(state_rate_hz)마다 map 위 이동 거리를 더한다
+    } catch (const tf2::TransformException & e) {
+      // 위치 추정(map → odom)이 아직 없으면 원점을 보낸다
+      msg.pose.orientation.w = 1.0;
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 10000, "%s → %s TF 없음, pose를 원점으로 보낸다: %s",
+        global_frame_.c_str(), base_frame_.c_str(), e.what());
+    }
+    // TaskStatus.distance_traveled·배터리: 이 주기(state_rate_hz)마다 odom 위 이동 거리를 더한다
+    try {
+      const auto t = tf_buffer_->lookupTransform(odom_frame_, base_frame_, tf2::TimePointZero);
       const double x = t.transform.translation.x;
       const double y = t.transform.translation.y;
       if (last_xy_) {
@@ -488,12 +503,8 @@ private:
         }
       }
       last_xy_ = std::make_pair(x, y);
-    } catch (const tf2::TransformException & e) {
-      // 위치 추정(map → odom)이 아직 없으면 원점을 보낸다
-      msg.pose.orientation.w = 1.0;
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 10000, "%s → %s TF 없음, pose를 원점으로 보낸다: %s",
-        global_frame_.c_str(), base_frame_.c_str(), e.what());
+    } catch (const tf2::TransformException &) {
+      // odom이 아직 없으면 이번 주기는 거리 0 (경고는 위 pose 쪽에서 낸다)
     }
     const double t = now().seconds();
     if (last_state_t_ > 0.0) {
@@ -521,6 +532,7 @@ private:
   std::string robot_id_;
   std::string global_frame_;
   std::string base_frame_;
+  std::string odom_frame_;
   Battery battery_;
   double reject_below_percent_ = 10.0;
   double last_state_t_ = 0.0;

@@ -95,7 +95,7 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 | 시간 소모 | 0.002 %/s | 약 7 %/h |
 | 충전 | 0.5 %/s | 0 → 100 %가 200 s |
 
-- `RobotState.battery_percent`로 낸다. 이동 거리는 `RobotState`와 같은 TF 위치 변화(2 Hz)
+- `RobotState.battery_percent`로 낸다. 이동 거리는 `odom` 기준 TF 위치 변화(2 Hz)
 - 충전 작업은 충전소 도킹 뒤 `Charge` 노드가 `charge_target_percent`(100)까지 기다린다. 그동안 `RobotState.mode` = `MODE_CHARGING`
 - `reject_below_percent`(10 %)보다 낮으면 충전이 아닌 할당을 `ASSIGN_BATTERY_LOW`로 거부한다. 서버는 20 % 미만 로봇을 후보에서 빼므로(`min_battery_percent`) 보통은 그 전에 걸러진다
 - 아직 없는 것: 0 %에서 멈추기, 적재 질량에 따른 소모 차이
@@ -118,7 +118,7 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 - 적재 질량을 동역학에 반영 (명세 8장, Gazebo 질량을 실행 중 바꾸는 방법이 필요)
 - 구역 허가(`ZoneRequest`/`ZoneGrant`), 분산 모드 전환 (heartbeat 끊김)
 - `RobotState.pose`는 `map` → `<robot_id>/base_footprint` TF. 위치 추정(map → odom)이 없으면 원점을 보내고 10초마다 경고
-- `TaskStatus.distance_traveled`는 작업 중 `state_rate_hz`(2 Hz)마다 위 TF 위치 변화를 더한 값이다
+- `TaskStatus.distance_traveled`는 작업 중 `state_rate_hz`(2 Hz)마다 `odom` → `base_footprint` TF 위치 변화를 더한 값이다. map 기준이면 AMCL 보정·kidnap 순간 이동만큼 부풀어서 odom으로 잰다 (배터리 이동 소모도 같다)
 
 ## 파라미터
 
@@ -131,6 +131,7 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 | `tick_hz` | `10.0` | BT tick 주기 |
 | `state_rate_hz` | `2.0` | `RobotState` 주기 (1~5 Hz) |
 | `global_frame` / `base_frame` | `map` / `""` | `RobotState.pose` TF. `base_frame`을 비우면 `<robot_id>/base_footprint` |
+| `odom_frame` | `""` | 이동 거리·배터리용. 비우면 `<robot_id>/odom` |
 | `use_nav2` / `use_docking` | `false` / `false` | true면 액션 클라이언트, false면 자리채움. launch 인자로도 켠다 |
 | `nav_action` / `dock_action` | `navigate_to_pose` / `docking/dock` | 액션 이름 (네임스페이스 안 상대 이름) |
 | `server_wait_s` | `10.0` | 액션 서버가 없을 때 기다리는 시간 [s]. 넘으면 그 시도는 실패 |

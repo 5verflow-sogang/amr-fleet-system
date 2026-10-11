@@ -11,6 +11,8 @@
     # RobotState.pose: global_frame 기준 base_frame 위치 (TF). base_frame을 비우면 <robot_id>/base_footprint
     global_frame: map
     base_frame: ""
+    # 이동 거리(distance_traveled·배터리)를 잴 프레임. 비우면 <robot_id>/odom (map은 AMCL 보정만큼 튄다)
+    odom_frame: ""
 
     # ---- 이동·도킹 ----
     # false면 시간만 흘리는 자리채움 (Nav2·도킹 서버 없이 도는 1단계 하네스). launch 인자로 켠다
