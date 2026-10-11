@@ -76,4 +76,6 @@ def test_render_and_fault_meta():
     assert fault_meta({}) is None
     f = fault_meta({'delay_ms': '200', 'loss_pct': '5'})
     assert f == {'delay_ms': 200.0, 'loss_pct': 5.0, 'direction': 'server_to_robot',
-                 'kill_at_s': -1.0, 'restart_after_s': -1.0}
+                 'kill_at_s': -1.0, 'restart_after_s': -1.0, 'kill_robot': 'none', 'kill_robot_at_s': -1.0}
+    f = fault_meta({'delay_ms': '0', 'kill_robot': 'amr_03', 'kill_robot_at_s': '120'})
+    assert (f['kill_robot'], f['kill_robot_at_s']) == ('amr_03', 120.0)

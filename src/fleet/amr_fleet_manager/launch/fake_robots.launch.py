@@ -2,37 +2,75 @@
 
     ros2 launch amr_fleet_manager fake_robots.launch.py count:=3
     ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 relayed:=true   # 장애 주입기 중계본 구독
+    # 120초에 amr_03을 SIGKILL로 죽인다 (연구 1 로봇 장애). 시각은 fault_events.csv에 남는다
+    ros2 launch amr_fleet_manager fake_robots.launch.py kill_robot:=amr_03 kill_robot_at_s:=120.0 \\
+        fault_events_file:=/tmp/run1/fault_events.csv
 
 로봇 이름은 amr_01부터 차례로 붙는다. 시작 위치는 config/fake_robots.yaml.
+kill_robot_at_s는 이 launch를 시작한 때부터 잰 실제 시간이다. 다시 띄운 로봇은 작업 없이 새로 시작한다.
 """
 
 import os
+import signal
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, EmitEvent, LogInfo, OpaqueFunction, TimerAction
+from launch.events import matches_action
+from launch.events.process import SignalProcess
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from amr_fleet_manager.records import append_fault_event
+
+
+def _record(context, path, event):
+    now = append_fault_event(path, event)
+    return [LogInfo(msg=f'[장애 주입] 가짜 로봇 {event} (time={now:.3f})')]
+
 
 def _robots(context):
+    def arg(name):
+        return LaunchConfiguration(name).perform(context)
+
     config = os.path.join(
         get_package_share_directory('amr_fleet_manager'), 'config', 'fake_robots.yaml')
-    count = int(LaunchConfiguration('count').perform(context))
-    relayed = LaunchConfiguration('relayed').perform(context).lower() == 'true'
+    count = int(arg('count'))
+    relayed = arg('relayed').lower() == 'true'
     # 장애 주입기는 /<robot_id>/fleet/<topic>으로 중계한다. 네임스페이스 안의 상대 이름이 그 토픽이 된다
     prefix = 'fleet' if relayed else '/fleet'
-    nodes = []
-    for i in range(1, count + 1):
-        robot_id = f'amr_{i:02d}'
-        nodes.append(Node(
+
+    def robot(robot_id):
+        return Node(
             package='amr_fleet_manager',
             executable='fake_robot',
             namespace=robot_id,
             parameters=[config, {'robot_id': robot_id, 'server_topic_prefix': prefix}],
             output='screen',
-        ))
-    return nodes
+        )
+
+    robot_ids = [f'amr_{i:02d}' for i in range(1, count + 1)]
+    nodes = {robot_id: robot(robot_id) for robot_id in robot_ids}
+    actions = list(nodes.values())
+
+    victim = arg('kill_robot')
+    kill_at = float(arg('kill_robot_at_s'))
+    restart_after = float(arg('restart_robot_after_s'))
+    events_file = arg('fault_events_file')
+    if victim not in ('', 'none') and kill_at >= 0:
+        if victim not in nodes:
+            raise ValueError(f'kill_robot {victim}가 없다 (가능: {robot_ids})')
+        actions.append(TimerAction(period=kill_at, actions=[
+            OpaqueFunction(function=_record, args=[events_file, f'robot_kill:{victim}']),
+            # 정리 과정 없이 죽인다 (로봇 장애). 서버는 RobotState가 끊기는 것으로 알아챈다
+            EmitEvent(event=SignalProcess(signal_number=signal.SIGKILL, process_matcher=matches_action(nodes[victim]))),
+        ]))
+        if restart_after >= 0:
+            actions.append(TimerAction(period=kill_at + restart_after, actions=[
+                OpaqueFunction(function=_record, args=[events_file, f'robot_restart:{victim}']),
+                robot(victim),
+            ]))
+    return actions
 
 
 def generate_launch_description():
@@ -41,5 +79,15 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'relayed', default_value='false',
             description='true면 장애 주입기 중계본(/<robot_id>/fleet/*)을 구독한다'),
+        DeclareLaunchArgument('kill_robot', default_value='', description='죽일 로봇 (예: amr_03). 비우거나 none이면 끄기'),
+        DeclareLaunchArgument(
+            'kill_robot_at_s', default_value='-1',
+            description='launch 시작 후 이 시각(실제 시간, s)에 SIGKILL. 음수면 끄기'),
+        DeclareLaunchArgument(
+            'restart_robot_after_s', default_value='-1',
+            description='죽인 뒤 이 시간(s)이 지나면 다시 띄운다. 음수면 죽은 채로 둔다'),
+        DeclareLaunchArgument(
+            'fault_events_file', default_value='',
+            description='강제종료·재시작 시각 기록 파일 (fault_events.csv). 비우면 기록하지 않는다'),
         OpaqueFunction(function=_robots),
     ])

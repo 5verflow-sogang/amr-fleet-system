@@ -74,6 +74,7 @@
 | Ack 유실, 그러나 그 로봇의 `RobotState.current_task_id` 또는 `TaskStatus`가 그 작업 | 받은 것으로 보고 재전송 중지 |
 | `resend.interval_s` 동안 아무 확인 없음 | 같은 메시지를 재전송 |
 | 재전송 `resend.max_resends`번 후에도 확인 없음 | 작업을 큐로 되돌리고 다시 할당 (새 `assignment_id`) |
+| 작업을 맡은 로봇의 `RobotState`가 `assignment.reclaim_timeout_s`(5초) 동안 없음 (로봇 장애) | 작업을 회수해 다른 로봇에 다시 할당 (새 `assignment_id`). 죽은 로봇의 늦은 보고는 무시. FAILED 재시도 횟수와 따로 센다 |
 
 - Ack 유실 확인에 `RobotState.last_assignment_id`를 쓰지 않는 이유: 서버가 재시작하면 번호가 1부터 다시 시작해, 로봇이 새 epoch를 보기 전에 보낸 큰 번호를 확인으로 잘못 볼 수 있다.
 - 재전송·heartbeat·로봇 생존 판정은 실제 시간(단조 시계)으로 잰다. 메시지의 `header.stamp`는 노드 시계(`use_sim_time`이면 시뮬레이션 시간)다.
@@ -116,7 +117,20 @@
 
 - 정리 과정 없이 죽이므로 마지막 heartbeat 이후 아무 메시지도 나가지 않는다. 로봇은 heartbeat 타임아웃으로 알아챈다.
 - 다시 띄운 서버는 epoch가 1 오르고, 작업·구역 장부가 비어 있다. 서버가 죽기 전에 맡긴 작업을 이어받는 일(작업표 복구)은 아직 없다.
-- `fault_events.csv` 컬럼: `time, event`. `time`은 실제 시간(UNIX 초)이라 rosbag2의 수신 시각과 맞춰 볼 수 있다. `event`는 `kill`·`restart`.
+- `fault_events.csv` 컬럼: `time, event`. `time`은 실제 시간(UNIX 초)이라 rosbag2의 수신 시각과 맞춰 볼 수 있다. `event`는 `kill`·`restart`(서버), `robot_kill:<로봇>`·`robot_restart:<로봇>`(로봇).
+
+### 로봇 강제종료 (연구 1 장애)
+
+`fake_robots.launch.py`가 정해진 시각에 가짜 로봇 하나를 SIGKILL로 죽이고, 원하면 다시 띄운다. 서버는 그 로봇의 `RobotState`가 `assignment.reclaim_timeout_s` 동안 끊기면 작업을 회수해 살아 있는 로봇에 다시 할당한다.
+
+| launch 인자 | 기본값 | 설명 |
+| --- | --- | --- |
+| `kill_robot` | `''` | 죽일 로봇 (예: `amr_03`). 비우거나 `none`이면 끄기 |
+| `kill_robot_at_s` | `-1` | launch 시작 후 이 시각(실제 시간, s)에 SIGKILL |
+| `restart_robot_after_s` | `-1` | 죽인 뒤 이 시간(s)이 지나면 다시 띄운다. 다시 띄운 로봇은 작업 없이 새로 시작 |
+| `fault_events_file` | `''` | 시각 기록 (`fault_events.csv`, 서버 강제종료와 같은 파일을 써도 된다) |
+
+하네스: `run.py fleet_fake --set kill_robot=amr_03 --set kill_robot_at_s=120`. GCP: `fleet-test` 입력 `kill_robot`, `kill_robot_at_s`.
 
 ### 작업 생성기
 
@@ -159,6 +173,7 @@
 | `assignment.algorithm` | `nearest` | `nearest` / `load_balance` / `hungarian`. launch 인자 `algorithm` |
 | `assignment.min_battery_percent` | `20.0` | 할당 후보 배터리 하한 (%) |
 | `assignment.failed_retries` | `1` | FAILED 보고된 작업을 큐로 되돌려 다시 할당하는 횟수. 넘으면 실패로 남긴다. 분산 재경매(최대 1회)와 같게 둔다 |
+| `assignment.reclaim_timeout_s` | `5.0` | 작업을 맡은 로봇의 `RobotState`가 이 시간 동안 끊기면 로봇이 죽은 것으로 보고 작업을 회수해 다시 할당한다 (실제 시간, s). 0이면 끄기. `robot_timeout_s` 이상 |
 | `robot_timeout_s` | `3.0` | 이 시간 동안 `RobotState`가 없으면 후보에서 뺀다 (s) |
 | `resend.interval_s` | `1.0` | Ack 없을 때 재전송 간격 (s) |
 | `resend.max_resends` | `5` | 재전송 한도. 첫 발송은 세지 않는다 |
@@ -272,6 +287,6 @@ colcon test --packages-select amr_fleet_manager
 | 가짜 로봇의 구역 요청 | `fake_robot`은 구역을 요청하지 않는다 |
 | 작업 취소 | `ACTION_CANCEL` 발행 경로 없음 (가짜 로봇은 받으면 처리한다). 취소로 멈춘 작업은 FAILED + `ErrorInfo.ASSIGN_CANCELED`로 보고받고 다시 할당하지 않는다 |
 | FAILED 작업 | `assignment.failed_retries`(1)번까지 다시 할당한다(10/8, 분산 재경매와 같게). 취소(`ASSIGN_CANCELED`)는 빼고 센다. 다시 맡을 로봇은 고르지 않는다(같은 로봇이 다시 받을 수 있음). "다른 로봇 우선"은 분산과 같이 정한다(10/12 회의) |
-| 로봇 끊김 | 작업 중인 로봇의 `RobotState`가 끊겨도 작업을 회수하지 않는다 |
+| 로봇 끊김 | `reclaim_timeout_s` 뒤 작업을 회수해 다시 할당한다. 로봇이 살아 돌아와 옛 작업을 계속하면 두 로봇이 같은 작업을 하게 되는데, 그 로봇에 취소(`ACTION_CANCEL`)를 보내는 일은 아직 없다. 분산 경매에는 같은 회수가 없다(비교 실험 전에 이진과 맞춤) |
 | 작업표 크기 | 끝난 작업도 계속 싣는다. 장시간 운용(4시간) 전에 정리 규칙을 정한다 |
 | 로봇 → 서버 토픽 장애 주입 | [api.md 4-4절](../../../docs/api.md#4-4-쟁점-정리) 미결 |
