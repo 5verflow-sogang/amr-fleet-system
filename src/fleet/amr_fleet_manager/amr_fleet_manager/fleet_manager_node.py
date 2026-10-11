@@ -1,6 +1,6 @@
 """중앙집중 Fleet 서버 (최소판): 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송.
 
-구역 허가(ZoneRequest/ZoneGrant)는 정원·lease·대기열만 있다. 교차로 우선순위와 교착 해소는 아직 없다.
+구역 허가(ZoneRequest/ZoneGrant)는 정원·lease·작업 우선순위 대기열, 교착이면 우선순위 낮은 로봇의 허가를 회수한다.
 흐름은 architecture.md 5-1절.
 """
 
@@ -71,7 +71,8 @@ class FleetManager(Node):
         self._zones = ZoneManager(
             load_zones(self.declare_parameter('traffic.zones_file', '').value),
             lease_s=self.declare_parameter('traffic.lease_s', 5.0).value,
-            release_timeout_s=self.declare_parameter('traffic.release_timeout_s', 30.0).value)
+            release_timeout_s=self.declare_parameter('traffic.release_timeout_s', 30.0).value,
+            deadlock_strategy=self.declare_parameter('traffic.deadlock_strategy', 'revoke').value)
         csv_path = self.declare_parameter('assignments_csv', '').value
         self._log = AssignmentLog(csv_path) if csv_path else None
 
@@ -153,12 +154,20 @@ class FleetManager(Node):
         if msg.type == ZoneRequest.TYPE_RELEASE:
             self._publish_grants(self._zones.release(msg.robot_id, msg.zone_id, now))
         else:
-            self._publish_grants(self._zones.request(msg.robot_id, msg.zone_id, msg.request_id, now))
+            # ZoneRequest에는 우선순위가 없어 그 로봇이 맡은 작업의 priority를 쓴다 (교차로 우선순위)
+            priority = self._dispatcher.robot_priority(msg.robot_id)
+            self._publish_grants(self._zones.request(msg.robot_id, msg.zone_id, msg.request_id, now, priority))
 
     # ---- 발행 ----
 
     def _expire_zones(self):
-        self._publish_grants(self._zones.expire(self._now_sec()))
+        now = self._now_sec()
+        self._publish_grants(self._zones.expire(now))
+        revoked = self._zones.resolve_deadlocks(now)
+        for d in revoked:
+            self.get_logger().warn(
+                f'교착 해소: {d.robot_id}의 {d.zone_id} 허가 회수, {d.holder_robot_id}에게 양보')
+        self._publish_grants(revoked)
 
     def _publish_grants(self, decisions: list[Decision]):
         for d in decisions:

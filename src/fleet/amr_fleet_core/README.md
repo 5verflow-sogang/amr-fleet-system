@@ -135,15 +135,18 @@ def assign_xxx(
 
 ### 구역 허가 (`traffic/zones.py`)
 
-> 상태: 정원·lease·대기열 구현(3주차). 교차로 우선순위(`REASON_PRIORITY_YIELD`)와 교착 해소(`GRANT_REVOKED`)는 아직 없다.
+> 상태: 정원·lease·우선순위 대기열·교착 해소 2종(허가 회수 / 회피) 구현(3주차).
 
 `ZoneRequest`/`ZoneGrant`의 서버 측 판단만 한다. 메시지 변환과 발행은 `amr_fleet_manager`가 한다.
 
 ```python
-zm = ZoneManager([ZoneSpec('narrow_01', capacity=1)], lease_s=5.0, release_timeout_s=30.0)
-zm.request(robot_id, zone_id, request_id, now) -> list[Decision]  # 요청한 로봇에 대한 답 1건
+zm = ZoneManager([ZoneSpec('narrow_01', capacity=1)], lease_s=5.0, release_timeout_s=30.0,
+                 deadlock_strategy='revoke')  # 또는 'avoid'
+zm.request(robot_id, zone_id, request_id, now, priority=0) -> list[Decision]  # 요청한 로봇에 대한 답 1건
 zm.release(robot_id, zone_id, now) -> list[Decision]              # 자리가 나서 허가받은 대기 로봇의 답
 zm.expire(now) -> list[Decision]                                  # 주기 호출. 만료 정리 후 대기 로봇 허가
+zm.resolve_deadlocks(now) -> list[Decision]                       # 주기 호출. 교착마다 허가 1건 회수(REVOKED)
+zm.wait_for() -> dict[str, dict[str, str]]                        # wait-for 그래프 [기다리는 로봇][점유 로봇] = 구역
 ```
 
 | 상황 | 답 |
@@ -151,15 +154,49 @@ zm.expire(now) -> list[Decision]                                  # 주기 호�
 | 모르는 `zone_id` | `REJECTED` |
 | 이미 허가받은 로봇이 다시 요청 (연장) | `GRANTED`, `lease_expiry = now + lease_s` |
 | 자리가 있음 | `GRANTED` |
-| 정원이 참 | `QUEUED` (`REASON_OCCUPIED`, `holder_robot_id` = 먼저 들어간 로봇), 대기열 끝에 넣는다 |
-| 점유 로봇이 반납 | 대기열 맨 앞 로봇에게 그 로봇의 마지막 `request_id`로 `GRANTED` |
+| 정원이 참 | `QUEUED` (`REASON_OCCUPIED`, `holder_robot_id` = 먼저 들어간 로봇), 대기열에 넣는다 |
+| 정원이 차 있고 더 급한 로봇이 앞에서 기다림 | `QUEUED` (`REASON_PRIORITY_YIELD`, `holder_robot_id` = 그 로봇) |
+| 점유 로봇이 반납 | 대기열에서 차례인 로봇(아래 순서)에게 그 로봇의 마지막 `request_id`로 `GRANTED` |
+| 교착 (서로 상대가 점유한 구역을 기다림) | 우선순위가 가장 낮은 로봇에게 `REVOKED` (`REASON_DEADLOCK_RESOLUTION`, `holder_robot_id` = 양보받는 로봇). 반납 전까지는 구역을 넘기지 않는다 |
+| 회수당한 로봇이 다시 요청 | 같은 `REVOKED` (연장하지 않는다. 회수 통보가 유실돼도 다시 알 수 있다) |
 | 점유 로봇의 lease가 지남 | **넘기지 않는다.** 통로 안에서 만료되면 로봇은 빠져나간 뒤 반납한다 (이진 합의) |
 | 점유 로봇이 `release_timeout_s` 동안 요청도 반납도 없음 | 죽은 것으로 보고 풀어 대기 로봇에게 넘긴다 |
 | 대기 로봇이 `lease_s` 동안 다시 요청하지 않음 | 대기열에서 뺀다 (답 없음) |
 | 반납 | 반납한 로봇에게는 답하지 않는다 |
 
 - `now`는 로봇이 `lease_expiry`와 비교하는 시계와 같아야 한다. `amr_fleet_manager`는 노드 시계(`use_sim_time`이면 시뮬레이션 시간)를 넘긴다. 실제 시간으로 재면 시뮬레이터가 느릴 때 서버가 로봇보다 먼저 허가를 풀어 두 대가 동시에 들어갈 수 있다.
-- 대기 순서는 먼저 요청한 순서(FIFO)다.
+- 대기 순서(교차로 우선순위): 로봇이 맡은 작업의 `priority` 높은 순 → 대기열에 처음 들어온 시각 → `robot_id`. `ZoneRequest`에는 우선순위가 없어 `amr_fleet_manager`가 작업 장부에서 찾아 넘긴다 (작업이 없으면 0).
+
+### 교착 탐지 (`deadlock/`)
+
+구역 점유·대기로 wait-for 그래프를 만든다. 간선 A → B는 "A가 기다리는 구역을 B가 점유 중"이다. 순환이 있으면 교착이다 (예: 좁은 통로 양 끝에서 마주 본 두 대가 각자 한 구역을 점유하고 상대 구역을 기다림).
+
+```python
+find_deadlocks(edges) -> list[list[str]]       # 크기 2 이상인 강한 연결 요소(SCC). 그 안의 로봇은 모두 어떤 순환 위에 있다
+choose_victim(robots, priority) -> str         # 물러날 로봇: 우선순위 가장 낮은 로봇, 같으면 robot_id가 가장 뒤
+would_deadlock(edges, waiter, holders) -> bool # waiter가 holders를 기다리게 되면 순환이 닫히는지
+```
+
+해소 1 (허가 회수, `ZoneManager.resolve_deadlocks`):
+
+1. 교착 묶음마다 물러날 로봇을 고르고, 묶음 안의 다른 로봇이 기다리는 그 로봇의 점유 구역 하나를 회수한다.
+2. 회수당한 로봇은 구역에서 물러나 `TYPE_RELEASE`를 보낸다 (로봇 쪽 처리는 `amr_zone_client`). 기다리던 구역도 반납해 대기열에서 빠진다.
+3. 서버는 반납이 오면 대기 순서대로 다음 로봇에게 허가한다. 회수당한 로봇이 죽어 반납이 없으면 `release_timeout_s` 뒤 풀린다.
+4. 회수 중인 점유는 그래프에서 빼서 같은 교착을 두 번 풀지 않는다.
+
+해소 2 (회피, `deadlock_strategy='avoid'`):
+
+1. 구역이 차서 대기열에 넣기 전에, 이 대기로 순환이 닫히는지(`would_deadlock`) 본다.
+2. 닫히면 대기열에 넣지 않고 `REJECTED` (`REASON_DEADLOCK_RESOLUTION`, `holder_robot_id` = 점유 로봇)로 답한다. 로봇은 그 구역에 들어가지 않고 경로를 다시 계획한다 (`ZoneGrant.msg` REJECTED 규칙).
+3. 순환이 아예 생기지 않으므로 이미 들어간 구역에서 물러날 일이 없다. 대신 우회로가 없으면 그 로봇은 다시 요청할 때까지 돌아가야 한다.
+4. 대기열 승격(자리가 나서 기다리던 로봇이 점유자가 됨)으로 순환이 생기는 드문 경우를 위해 해소 1도 같이 돈다. 거부 판단은 대기열에 넣을 때의 점유 로봇만 보므로, 한 로봇이 여러 구역을 함께 기다리다 그중 하나로 승격되면 순환이 생길 수 있다. 이때는 `avoid`에서도 구역 안 로봇이 `REVOKED`를 받는다 (`test_avoid_still_revokes_cycle_from_queue_promotion`).
+
+| | 해소 1: 허가 회수 (`revoke`, 기본) | 해소 2: 회피 (`avoid`) |
+| --- | --- | --- |
+| 시점 | 순환이 생긴 뒤 (탐지 → 회복) | 순환이 생기기 전 (회피) |
+| 대상 | 순환 안에서 우선순위가 가장 낮은 로봇 | 순환을 닫게 될 요청을 보낸 로봇 |
+| 로봇 동작 | 점유 구역에서 물러나 반납 | 다음 구역에 들어가지 않고 경로 재계획 |
+| 비용 | 후진 거리, 이미 진행한 이동을 되돌림 | 우회 거리, 우선순위와 무관하게 늦게 요청한 쪽이 양보 |
 
 ## 파라미터
 
