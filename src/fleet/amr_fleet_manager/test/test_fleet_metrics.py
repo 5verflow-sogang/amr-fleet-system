@@ -6,8 +6,10 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from amr_fleet_manager.fleet_metrics import (FLEET_LATENCY_HEADER, RESPONSE_TIME_HEADER, Cutoff, Record, convert,
-                                             fleet_latency, observation_start, response_time)
+from amr_fleet_manager.fleet_metrics import (FLEET_LATENCY_HEADER, RECOVERY_HEADER, RESPONSE_TIME_HEADER,
+                                             TASK_OUTCOMES_HEADER, Cutoff, Record, convert, fleet_latency,
+                                             observation_start, read_kill_events, recovery, response_time,
+                                             task_outcomes)
 
 
 def stamp(sec, nanosec=0):
@@ -171,3 +173,75 @@ def test_warmup_before_relay_subscribed_not_judged():
     late = assignment(1, 'amr_01', 50)
     assert observation_start(records + [rec('/fleet/task_assignments', 50.0, late),
                                         rec('/amr_01/fleet/task_assignments', 50.2, late)], 200.0) == pytest.approx(11.21)
+
+
+# ---- 작업 결과·로봇 장애 회수 ----
+
+def request(task_id):
+    return NS(task_id=task_id)
+
+
+def status(task_id, robot, state):
+    return NS(task_id=task_id, robot_id=robot, state=state)
+
+
+COMPLETED, FAILED, IN_PROGRESS = 2, 3, 1
+
+
+def kill_scenario():
+    # t1은 amr_01이 끝내고, t2를 하던 amr_01이 15초에 죽어 서버가 21초에 amr_02에게 다시 맡긴다. t3는 할당 전
+    a1, a2, a2b = assignment(1, 'amr_01', 1, 't1'), assignment(2, 'amr_01', 11, 't2'), assignment(3, 'amr_02', 21, 't2')
+    return [
+        rec('/fleet/task_requests', 0.5, request('t1')),
+        rec('/fleet/task_assignments', 1.0, a1),
+        rec('/fleet/task_assignments', 2.0, a1),                  # 재전송은 한 번만 센다
+        rec('/fleet/task_status', 8.0, status('t1', 'amr_01', COMPLETED)),
+        rec('/fleet/task_requests', 10.5, request('t2')),
+        rec('/fleet/task_assignments', 11.0, a2),
+        rec('/fleet/task_status', 12.0, status('t2', 'amr_01', IN_PROGRESS)),
+        rec('/fleet/task_assignments', 21.0, a2b),
+        rec('/fleet/task_status', 40.0, status('t2', 'amr_02', COMPLETED)),
+        rec('/fleet/task_requests', 50.0, request('t3')),
+    ]
+
+
+def test_task_outcomes():
+    rows = task_outcomes(kill_scenario())
+    assert [r[0] for r in rows] == ['t1', 't2', 't3']
+    assert rows[0][3:] == ['amr_01', 'COMPLETED', '8.000000']
+    assert rows[1][2:] == ['11.000000', 'amr_01 amr_02', 'COMPLETED', '40.000000']
+    assert rows[2][2:] == ['', '', '', '']
+
+
+def test_task_outcome_failed_then_retried_is_not_final():
+    records = [rec('/fleet/task_assignments', 1.0, assignment(1, 'amr_01', 1, 't1')),
+               rec('/fleet/task_status', 5.0, status('t1', 'amr_01', FAILED)),
+               rec('/fleet/task_assignments', 6.0, assignment(2, 'amr_02', 6, 't1'))]
+    assert task_outcomes(records)[0][4] == ''   # 다시 맡긴 뒤 아직 끝 보고 없음
+
+
+def test_recovery_busy_and_idle_robot():
+    rows = recovery(kill_scenario(), [(15.0, 'amr_01'), (15.0, 'amr_03')])
+    assert rows == [
+        ['amr_01', '15.000000', 't2', '21.000000', 'amr_02', '6.000', '1'],
+        ['amr_03', '15.000000', '', '', '', '', ''],       # 하던 작업이 없던 로봇
+    ]
+    # 끝낸 작업(t1)은 회수 대상이 아니고, 다시 할당되지 않았으면 빈칸
+    records = kill_scenario()[:7]
+    assert recovery(records, [(15.0, 'amr_01')]) == [['amr_01', '15.000000', 't2', '', '', '', '0']]
+
+
+def test_convert_writes_outcomes_and_recovery(tmp_path):
+    (tmp_path / 'fault_events.csv').write_text('time,event\n15.0,robot_kill:amr_01\n16.0,kill\n')
+    assert read_kill_events(tmp_path / 'fault_events.csv') == [(15.0, 'amr_01')]
+    assert read_kill_events(tmp_path / 'none.csv') == []
+    convert(kill_scenario(), tmp_path, delay_ms=0.0)
+    with (tmp_path / 'task_outcomes.csv').open(newline='') as f:
+        assert next(csv.reader(f)) == TASK_OUTCOMES_HEADER
+    with (tmp_path / 'recovery.csv').open(newline='') as f:
+        rows = list(csv.reader(f))
+    assert rows[0] == RECOVERY_HEADER and rows[1][2] == 't2'
+    # 로봇 장애가 없으면 recovery.csv를 만들지 않는다
+    other = tmp_path / 'other'
+    convert(kill_scenario(), other, delay_ms=0.0)
+    assert not (other / 'recovery.csv').exists()
