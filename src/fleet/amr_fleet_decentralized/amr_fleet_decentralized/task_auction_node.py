@@ -455,5 +455,6 @@ def main(args=None):
         # Ctrl+C는 터미널과 launch에서 SIGINT가 두 번 온다. 정리 중에 끊기지 않게 이후 신호는 무시한다
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        # ok() 확인과 shutdown() 사이에 SIGINT 처리기가 먼저 종료하면 "already called" 예외로
+        # 종료 코드 1이 난다 - try_shutdown은 이미 종료됐으면 그냥 넘어간다 (amr_fleet_manager와 같음)
+        rclpy.try_shutdown()
