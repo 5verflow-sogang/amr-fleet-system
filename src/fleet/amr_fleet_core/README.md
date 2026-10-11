@@ -189,7 +189,7 @@ would_deadlock(edges, waiter, holders) -> bool # waiter가 holders를 기다리�
 1. 구역이 차서 대기열에 넣기 전에, 이 대기로 순환이 닫히는지(`would_deadlock`) 본다.
 2. 닫히면 대기열에 넣지 않고 `REJECTED` (`REASON_DEADLOCK_RESOLUTION`, `holder_robot_id` = 점유 로봇)로 답한다. 로봇은 그 구역에 들어가지 않고 경로를 다시 계획한다 (`ZoneGrant.msg` REJECTED 규칙).
 3. 순환이 아예 생기지 않으므로 이미 들어간 구역에서 물러날 일이 없다. 대신 우회로가 없으면 그 로봇은 다시 요청할 때까지 돌아가야 한다.
-4. 대기열 승격(자리가 나서 기다리던 로봇이 점유자가 됨)으로 순환이 생기는 드문 경우를 위해 해소 1도 같이 돈다.
+4. 대기열 승격(자리가 나서 기다리던 로봇이 점유자가 됨)으로 순환이 생기는 드문 경우를 위해 해소 1도 같이 돈다. 거부 판단은 대기열에 넣을 때의 점유 로봇만 보므로, 한 로봇이 여러 구역을 함께 기다리다 그중 하나로 승격되면 순환이 생길 수 있다. 이때는 `avoid`에서도 구역 안 로봇이 `REVOKED`를 받는다 (`test_avoid_still_revokes_cycle_from_queue_promotion`).
 
 | | 해소 1: 허가 회수 (`revoke`, 기본) | 해소 2: 회피 (`avoid`) |
 | --- | --- | --- |

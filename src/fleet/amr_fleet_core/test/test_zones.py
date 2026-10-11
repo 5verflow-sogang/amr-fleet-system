@@ -269,3 +269,23 @@ def test_avoid_keeps_plain_queue():
     assert zm.request('amr_02', 'z1', 1, 0.0)[0].grant == GRANT_QUEUED
     # 이미 기다리는 로봇의 재요청도 그대로 대기
     assert zm.request('amr_02', 'z1', 1, 1.0)[0].grant == GRANT_QUEUED
+
+
+def test_avoid_still_revokes_cycle_from_queue_promotion():
+    # 회피는 대기열에 넣을 때 지금 점유 로봇만 보고 판단한다. amr_02가 두 구역을 함께 기다리다 그중 하나로
+    # 승격되면, 그 구역을 기다리던 amr_03과 순환이 생긴다. 이때는 구역 안 로봇도 REVOKED를 받는다
+    zm = avoid_zones('z1', 'z2', 'z3')
+    for robot, held in (('amr_01', 'z1'), ('amr_02', 'z2'), ('amr_03', 'z3')):
+        zm.request(robot, held, 1, 0.0)
+    assert zm.request('amr_02', 'z1', 2, 1.0)[0].grant == GRANT_QUEUED   # amr_02 → amr_01
+    assert zm.request('amr_03', 'z1', 2, 1.0)[0].grant == GRANT_QUEUED   # amr_03 → amr_01
+    assert zm.request('amr_02', 'z3', 3, 1.0)[0].grant == GRANT_QUEUED   # amr_02 → amr_03
+    assert zm.resolve_deadlocks(1.5) == []
+
+    [d] = zm.release('amr_01', 'z1', 2.0)
+    assert (d.robot_id, d.zone_id, d.grant) == ('amr_02', 'z1', GRANT_GRANTED)
+    assert zm.wait_for() == {'amr_02': {'amr_03': 'z3'}, 'amr_03': {'amr_02': 'z1'}}
+    # 우선순위가 같으면 robot_id가 뒤인 amr_03이 물러난다
+    [r] = zm.resolve_deadlocks(2.5)
+    assert (r.robot_id, r.zone_id, r.grant, r.reason, r.holder_robot_id) == \
+        ('amr_03', 'z3', GRANT_REVOKED, REASON_DEADLOCK_RESOLUTION, 'amr_02')
