@@ -32,13 +32,16 @@ class TrackerConfig:
     # 순간 속력이 0.2 m/s를 넘곤 해서(σa 1.0일 때 프레임의 약 8%) 연속 조건을 둔다
     dynamic_speed_threshold: float = 0.25
     dynamic_confirm_frames: int = 5
+    # 빈 공간 침입 증거(free_space.py)가 붙은 측정을 이 프레임 수 이상 받아야 동적으로 판정한다.
+    # step()에 free_evidence를 주지 않으면(위치 측정 입력 등) 증거 조건 없이 속력만 본다
+    dynamic_evidence_frames: int = 3
     # 측정 반경을 트랙 반경에 반영하는 비율 (지수 평활). 프레임마다 보이는 면이 달라 군집 반경이 흔들린다
     radius_smoothing: float = 0.3
 
     def __post_init__(self):
         if not (math.isfinite(self.gate_mahalanobis_sq) and self.gate_mahalanobis_sq > 0.0):
             raise ValueError(f'gate_mahalanobis_sq는 양수여야 한다: {self.gate_mahalanobis_sq}')
-        for name in ('confirm_hits', 'dynamic_confirm_frames'):
+        for name in ('confirm_hits', 'dynamic_confirm_frames', 'dynamic_evidence_frames'):
             value = getattr(self, name)
             if int(value) != value or value < 1:
                 raise ValueError(f'{name}는 1 이상의 정수여야 한다: {value}')
@@ -59,6 +62,7 @@ class Track:
     confirmed: bool = False
     is_dynamic: bool = False
     fast_frames: int = 0        # 속력이 임계값을 넘은 연속 프레임 수
+    evidence_frames: int = 0    # 빈 공간 침입 증거가 붙은 측정을 받은 프레임 수 (누적)
     radius: Optional[float] = None  # 장애물 반경 [m] (측정 반경의 지수 평활). 반경 없이 측정하면 None
 
 
@@ -96,10 +100,13 @@ class MultiTargetTracker:
         self._last_time = None
 
     def step(self, timestamp: float, measurements: Sequence[Sequence[float]],
-             radii: Optional[Sequence[float]] = None) -> List[Track]:
+             radii: Optional[Sequence[float]] = None,
+             free_evidence: Optional[Sequence[bool]] = None) -> List[Track]:
         """timestamp [s]의 측정 위치 목록을 반영하고 확정 트랙을 돌려준다. 측정이 없어도 호출한다.
 
         radii: 측정마다 장애물 반경 [m] (LiDAR 군집 반경). 주면 트랙 반경을 지수 평활로 갱신한다.
+        free_evidence: 측정마다 빈 공간 침입 증거 (free_space.FreeSpaceGrid). 주면 동적 판정에
+        증거 조건(dynamic_evidence_frames)을 더한다. 안 주면 속력만 본다.
 
         측정은 고정 좌표계(odom 또는 map) 기준이어야 한다. 로봇 기준 좌표면 로봇 자신의 움직임이
         장애물 속도로 잡힌다. 시각이 거꾸로 가면 ValueError를 내고, 호출자가 reset()으로 처리한다.
@@ -111,6 +118,10 @@ class MultiTargetTracker:
             raise ValueError(f'시각이 거꾸로 갔다: {t} < {self._last_time}')
         zs = [_as_measurement(m) for m in measurements]
         rs = self._as_radii(radii, len(zs))
+        use_evidence = free_evidence is not None
+        evidence = [bool(e) for e in free_evidence] if use_evidence else [False] * len(zs)
+        if len(evidence) != len(zs):
+            raise ValueError(f'free_evidence 개수({len(evidence)})가 측정 개수({len(zs)})와 다르다')
         self._last_time = t
 
         for track in self._tracks:
@@ -121,27 +132,32 @@ class MultiTargetTracker:
             track = self._tracks[ti]
             track.kf.update(zs[mi])
             self._update_radius(track, rs[mi])
+            track.evidence_frames += evidence[mi]
             track.hits += 1
             track.last_update = t
             if track.hits >= self.config.confirm_hits:
                 track.confirmed = True
         for mi in unmatched:
-            self._tracks.append(self._new_track(zs[mi], t, rs[mi]))
+            track = self._new_track(zs[mi], t, rs[mi])
+            track.evidence_frames = int(evidence[mi])
+            self._tracks.append(track)
 
         self._tracks = [
             track for track in self._tracks
             if t - track.last_update <= self.config.max_coast_time
         ]
         for track in self._tracks:
-            self._update_dynamic(track)
+            self._update_dynamic(track, use_evidence)
         return self.confirmed_tracks
 
-    def _update_dynamic(self, track: Track) -> None:
+    def _update_dynamic(self, track: Track, use_evidence: bool) -> None:
         if track.kf.speed > self.config.dynamic_speed_threshold:
             track.fast_frames += 1
         else:
             track.fast_frames = 0
-        if track.fast_frames >= self.config.dynamic_confirm_frames:
+        evidence_ok = (not use_evidence
+                       or track.evidence_frames >= self.config.dynamic_evidence_frames)
+        if track.fast_frames >= self.config.dynamic_confirm_frames and evidence_ok:
             track.is_dynamic = True
 
     @staticmethod

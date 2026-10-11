@@ -1,4 +1,4 @@
-"""노드를 띄우지 않고 검사한다: 쿼터니언 yaw, 공분산 배치, 추적 마커."""
+"""노드를 띄우지 않고 검사한다: 쿼터니언 yaw, 공분산 배치, 추적 마커, 충돌 위험(TTC)."""
 
 import math
 
@@ -8,7 +8,13 @@ from visualization_msgs.msg import Marker
 
 from amr_msgs.msg import TrackedObstacle, TrackedObstacleArray
 from amr_tracking.markers import DYNAMIC_COLOR, STATIC_COLOR, track_markers
-from amr_tracking.tracking_node import UNKNOWN_VARIANCE, covariance_6x6, yaw_from_quaternion
+from amr_tracking.tracking_node import (
+    collision_risks,
+    covariance_6x6,
+    robot_velocity_in_fixed,
+    UNKNOWN_VARIANCE,
+    yaw_from_quaternion,
+)
 
 
 @pytest.mark.parametrize('yaw', [0.0, 0.5, -1.2, math.pi - 0.01])
@@ -53,3 +59,28 @@ def test_track_markers_cylinder_arrow_text_per_track():
 
 def test_track_markers_empty_still_clears():
     assert [m.action for m in track_markers(TrackedObstacleArray()).markers] == [Marker.DELETEALL]
+
+
+def test_robot_velocity_in_fixed_rotates_body_velocity():
+    vx, vy = robot_velocity_in_fixed(1.0, 0.0, math.pi / 2)
+    assert (vx, vy) == pytest.approx((0.0, 1.0))
+
+
+def test_collision_risks_per_track():
+    # 트랙 0: x=2에서 +1 m/s로 멀어짐 → inf. 트랙 1: x=5 정지(반경 0.2), 로봇이 +1 m/s로 다가감
+    risks = collision_risks(_obstacles(), (0.0, 0.0), 0.0, (1.0, 0.0), 0.6, 0.4, 10.0)
+    assert risks.header.frame_id == 'amr_01/odom'
+    assert [r.track_id for r in risks.risks] == [0, 1]
+    assert risks.risks[0].ttc == math.inf
+    assert risks.risks[1].ttc == pytest.approx(5.0 - 0.3 - 0.2, rel=1e-5)   # 앞면 0.3, float32
+
+
+def test_collision_risks_uses_body_axes():
+    # 로봇이 +y를 봄 (yaw 90°): odom x=5 트랙은 로봇 오른쪽 옆. 옆면은 0.2 m라 (5 − 0.2 − 0.2) / 1
+    risks = collision_risks(_obstacles(), (0.0, 0.0), math.pi / 2, (1.0, 0.0), 0.6, 0.4, 10.0)
+    assert risks.risks[1].ttc == pytest.approx(5.0 - 0.2 - 0.2, rel=1e-5)
+
+
+def test_collision_risks_empty_still_published():
+    empty = collision_risks(TrackedObstacleArray(), (0.0, 0.0), 0.0, (0.0, 0.0), 0.6, 0.4, 5.0)
+    assert empty.risks == []

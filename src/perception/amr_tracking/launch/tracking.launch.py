@@ -17,8 +17,11 @@ def generate_launch_description():
             'use_synthetic', default_value='false',
             description='LiDAR 스캔 대신 시험용 장애물 측정(PoseArray) 발행·구독'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
+        # 로봇 네임스페이스 (amr_bringup이 로봇마다 namespace:=<이름>으로 넘긴다)
+        DeclareLaunchArgument('namespace', default_value='amr_01'),
         Node(
             package='amr_tracking', executable='tracking_node', name='tracking',
+            namespace=LaunchConfiguration('namespace'),
             parameters=[config, {
                 # 시험용 측정 발행기를 쓰면 스캔 대신 PoseArray 측정을 받는다
                 'measurement_source': PythonExpression([
@@ -29,6 +32,7 @@ def generate_launch_description():
             output='screen'),
         Node(
             package='amr_tracking', executable='synthetic_obstacles_node',
-            name='synthetic_obstacles', parameters=[config], output='screen',
+            name='synthetic_obstacles', namespace=LaunchConfiguration('namespace'),
+            parameters=[config], output='screen',
             condition=IfCondition(LaunchConfiguration('use_synthetic'))),
     ])
