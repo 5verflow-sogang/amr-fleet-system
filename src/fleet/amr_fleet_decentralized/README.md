@@ -72,6 +72,10 @@
   재경매로 바뀌어도 이어서 센다) 중앙의 `TaskEntry.failures`와 같은 역할을 한다.
   단 취소(`ErrorInfo.ASSIGN_CANCELED`)로 온 FAILED는 재경매하지 않고 실패로 남기며 횟수에도
   세지 않는다 - 중앙 #107(취소된 작업은 다시 할당하지 않음)과 같은 규칙.
+- **낙찰 로봇 장애 회수**: ACCEPT한 낙찰 로봇의 `RobotState`가 `reclaim_timeout_s`(5초, 실제 시간) 동안
+  끊기면 경매인이 새 `auction_id`로 재경매한다 - 중앙 #132(작업 회수)와 같은 규칙으로, FAILED 재시도와 따로
+  세고 상한이 없다(`max_reclaims`). 옛 낙찰 로봇이 늦게 돌아와 보낸 보고는 무시된다. COMPLETED를 받은 작업은
+  감시하지 않는다. 경매인 자신이 죽으면 그 경매를 대신 볼 로봇이 없다(서버 장애 폴백 설계와 같이 정한다).
 - **구독 토픽 접두어**: 기본은 절대 경로 원본(`/fleet/task_auctions`,
   `/fleet/task_bids`)을 직접 구독한다. `relayed:=true`(launch 인자, 또는 파라미터
   `auction_topic_prefix:=fleet`)면 상대 이름(장애 주입기 `relay_auction` 중계본)을
@@ -104,6 +108,8 @@
 | `robot_speed_mps` | `1.0` | `estimated_finish_time` 추정용 단순 등속 |
 | `award_resend_interval_s` / `award_max_attempts` | `1.0` / `5` | AWARD 재전송 간격·횟수 (10/7 결정) |
 | `failed_retries` | `1` | ACCEPT 뒤 FAILED 보고 시 재경매 최대 횟수 (10/9 결정) |
+| `reclaim_timeout_s` | `5.0` | ACCEPT한 낙찰 로봇의 `RobotState`가 이 시간(실제 시간, s) 동안 끊기면 재경매. 0이면 끄기 (중앙 #132와 같음) |
+| `max_reclaims` | `-1` | 장애 회수 재경매 상한. 음수면 상한 없음 (#132와 같음) |
 | `auction_topic_prefix` | `/fleet` | 구독 접두어. `fleet`면 중계본(`relayed:=true`와 동일) |
 | `robot_states_topic` | `/fleet/robot_states` | 내 로봇 상태(위치·배터리·모드) |
 | `update_rate_hz` | `10.0` | 마감 판정·AWARD 재전송·재경매를 확인하는 주기 |

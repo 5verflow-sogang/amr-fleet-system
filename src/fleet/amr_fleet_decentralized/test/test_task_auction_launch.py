@@ -248,6 +248,49 @@ class TestTaskAuctionLive(unittest.TestCase):
             new_ids,
             f'두 번째 FAILED 뒤에도 재경매가 발행됨(실패로 남아야 함): new_ids={new_ids}')
 
+    def test_winner_lost_reauctioned(self):
+        # ACCEPT한 낙찰 로봇(amr_02)의 RobotState가 reclaim_timeout_s(기본 5초) 끊기면 경매인(amr_01)이
+        # 새 auction_id로 재경매한다 - 중앙 #132의 작업 회수와 같은 규칙
+        auction_pub = self.node.create_publisher(TaskAuction, '/fleet/task_auctions', 10)
+        state_pub = self.node.create_publisher(RobotState, '/fleet/robot_states', 10)
+        bids, auctions = [], []
+        self.node.create_subscription(TaskBid, '/fleet/task_bids', bids.append, 10)
+        self.node.create_subscription(TaskAuction, '/fleet/task_auctions', auctions.append, 10)
+        self.assertTrue(self.spin_until(
+            lambda: auction_pub.get_subscription_count() >= 3
+            and state_pub.get_subscription_count() >= 4,
+            15.0))
+
+        def amr_01_alive():
+            self.publish_robot_state(state_pub, 'amr_01', x=0.0, y=0.0, battery=80.0)
+
+        def both_alive():
+            amr_01_alive()
+            self.publish_robot_state(state_pub, 'amr_02', x=9.0, y=0.0, battery=80.0)
+
+        auction = self.make_auction('amr_01', auction_id=100, task_id='task_reclaim', bid_window_s=2)
+
+        def accepted_by_amr_02():
+            both_alive()
+            auction_pub.publish(auction)
+            return [b for b in bids if b.robot_id == 'amr_02' and b.type == TaskBid.TYPE_ACCEPT
+                    and b.task_id == 'task_reclaim']
+        self.assertTrue(
+            self.spin_until(accepted_by_amr_02, 10.0),
+            f'amr_02가 수락하지 않음: {[(b.robot_id, b.type, b.task_id) for b in bids]}')
+
+        # 이제 amr_02 상태를 끊는다 (amr_01 것만 계속 보낸다)
+        silent_since = time.monotonic()
+
+        def reauctioned():
+            amr_01_alive()
+            return [a for a in auctions if a.task.task_id == 'task_reclaim' and a.auction_id != 100]
+        self.assertTrue(
+            self.spin_until(reauctioned, 10.0),
+            '낙찰 로봇 상태가 끊겼는데 재경매(새 auction_id)가 발행되지 않음')
+        # 끊긴 지 reclaim_timeout_s(5초) 전에 회수하면 안 된다 (마지막 상태가 끊기기 직전에 갔으므로 약간 여유)
+        self.assertGreaterEqual(time.monotonic() - silent_since, 4.5)
+
     def test_relayed_prefix_subscribes_relative_not_absolute(self):
         # amr_03은 auction_topic_prefix='fleet'(relayed:=true와 동일)로 떴다 -
         # 절대 경로 /fleet/task_auctions는 무시하고, 자기 네임스페이스 밑
