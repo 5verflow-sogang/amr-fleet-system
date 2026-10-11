@@ -50,8 +50,8 @@ def test_close_point_off_path_only_slows():
 
 
 @pytest.mark.parametrize('ttc, level', [(0.9, LEVEL_CRITICAL), (1.0, LEVEL_CRITICAL),
-                                        (2.5, LEVEL_WARNING), (3.0, LEVEL_WARNING),
-                                        (3.1, LEVEL_NORMAL), (math.inf, LEVEL_NORMAL)])
+                                        (1.5, LEVEL_WARNING), (2.0, LEVEL_WARNING),
+                                        (2.1, LEVEL_NORMAL), (math.inf, LEVEL_NORMAL)])
 def test_ttc_thresholds(ttc, level):
     state = _update(SafetyMonitor(), obstacles=[_obs(track_id=7, ttc=ttc)])
     assert state.level == level

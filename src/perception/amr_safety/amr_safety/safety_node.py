@@ -93,7 +93,7 @@ class SafetyNode(Node):
         self.config = SafetyConfig(
             critical_distance=p('critical_distance', 0.3).value,
             ttc_critical=p('ttc_critical', 1.0).value,
-            ttc_warning=p('ttc_warning', 3.0).value,
+            ttc_warning=p('ttc_warning', 2.0).value,
             dynamic_warning_distance=p('dynamic_warning_distance', 1.5).value,
             warning_speed_limit=p('warning_speed_limit', 0.6).value,
             release_hold_s=p('release_hold_s', 0.5).value,
