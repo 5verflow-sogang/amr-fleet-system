@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 
 namespace amr_planning_core
@@ -120,6 +121,68 @@ bool DwaPlanner::footprintCollides(const Grid & grid, double x, double y, double
   return evaluateFootprint(grid, x, y, yaw, &unused_cost);
 }
 
+namespace
+{
+
+// (px, py)에서 중심 (x, y), 회전 yaw, 반폭(half_length, half_width)인 사각형
+// 표면까지의 최단 거리. 점이 사각형 안이면 0.
+double rectangleSurfaceDistance(
+  double x, double y, double yaw, double half_length, double half_width, double px, double py)
+{
+  // 사각형의 로컬 좌표계로 변환(역회전).
+  const double dx = px - x;
+  const double dy = py - y;
+  const double cos_yaw = std::cos(yaw);
+  const double sin_yaw = std::sin(yaw);
+  const double local_x = dx * cos_yaw + dy * sin_yaw;
+  const double local_y = -dx * sin_yaw + dy * cos_yaw;
+
+  const double excess_x = std::max(0.0, std::abs(local_x) - half_length);
+  const double excess_y = std::max(0.0, std::abs(local_y) - half_width);
+  return std::hypot(excess_x, excess_y);
+}
+
+}  // namespace
+
+bool DwaPlanner::evaluateDynamicObstacles(
+  const std::vector<DynamicObstacle> & obstacles, double t, double x, double y, double yaw,
+  double * min_surface_distance) const
+{
+  *min_surface_distance = std::numeric_limits<double>::infinity();
+  const double predict_t = config_.predict_dynamic_obstacles ? t : 0.0;
+
+  for (const DynamicObstacle & obstacle : obstacles) {
+    const double obs_x = obstacle.x + obstacle.vx * predict_t;
+    const double obs_y = obstacle.y + obstacle.vy * predict_t;
+    const double to_rect = rectangleSurfaceDistance(
+      x, y, yaw, config_.footprint_half_length, config_.footprint_half_width, obs_x, obs_y);
+    const double surface_distance = to_rect - obstacle.radius;
+
+    if (surface_distance <= config_.dynamic_obstacle_safety_margin) {
+      *min_surface_distance = std::max(0.0, surface_distance);
+      return true;
+    }
+    *min_surface_distance = std::min(*min_surface_distance, surface_distance);
+  }
+
+  return false;
+}
+
+bool DwaPlanner::dynamicObstacleCollides(
+  const std::vector<DynamicObstacle> & obstacles, double t, double x, double y, double yaw) const
+{
+  double unused_distance = 0.0;
+  return evaluateDynamicObstacles(obstacles, t, x, y, yaw, &unused_distance);
+}
+
+double DwaPlanner::dynamicObstacleCost(double min_surface_distance) const
+{
+  const double range = std::max(config_.dynamic_obstacle_influence_radius, 1e-6);
+  const double beyond_margin = min_surface_distance - config_.dynamic_obstacle_safety_margin;
+  const double cost = 1.0 - beyond_margin / range;
+  return std::clamp(cost, 0.0, 1.0);
+}
+
 double DwaPlanner::headingCost(const TrajectoryPoint & trajectory_end, const Point2D & goal) const
 {
   const double desired_yaw = std::atan2(goal.y - trajectory_end.y, goal.x - trajectory_end.x);
@@ -148,8 +211,36 @@ double DwaPlanner::evaluateCost(
          config_.velocity_weight * velocity;
 }
 
+DwaCommand DwaPlanner::rotateToGoalYaw(
+  const RobotState & state, double goal_yaw, double yaw_tolerance) const
+{
+  DwaCommand result;
+  result.v = 0.0;
+
+  const double yaw_error = normalizeAngle(goal_yaw - state.yaw);
+  if (std::abs(yaw_error) <= yaw_tolerance) {
+    result.status = DwaStatus::kGoalReached;
+    return result;
+  }
+
+  // speed_cap_for_stop(amr_zone_client/geometry.py)과 같은 발상: 등가감속(acc_w)으로
+  // 남은 오차만큼 정확히 서는 각속도 상한을 goal_yaw 쪽 부호로 준다 - max_w로 돌다가
+  // 멈출 거리(각도)보다 오차가 작아지면 자연히 느려져서 넘어가지 않는다.
+  const double stopping_speed = std::sqrt(2.0 * config_.acc_w * std::abs(yaw_error));
+  const double desired_w_magnitude = std::min(config_.max_w, stopping_speed);
+  const double desired_w = (yaw_error > 0.0) ? desired_w_magnitude : -desired_w_magnitude;
+
+  const double max_dw = config_.acc_w * config_.dt;
+  const double dw = std::clamp(desired_w - state.w, -max_dw, max_dw);
+
+  result.status = DwaStatus::kOk;
+  result.w = state.w + dw;
+  return result;
+}
+
 DwaCommand DwaPlanner::computeVelocityCommand(
-  const RobotState & state, const Point2D & goal, const Grid & grid) const
+  const RobotState & state, const Point2D & goal, const Grid & grid,
+  const std::vector<DynamicObstacle> & dynamic_obstacles) const
 {
   DwaCommand result;
 
@@ -177,19 +268,34 @@ DwaCommand DwaPlanner::computeVelocityCommand(
 
       bool collides = false;
       double max_cell_cost = 0.0;
-      for (const TrajectoryPoint & point : trajectory) {
+      double min_dynamic_surface_distance = std::numeric_limits<double>::infinity();
+      for (std::size_t i = 0; i < trajectory.size(); ++i) {
+        const TrajectoryPoint & point = trajectory[i];
         double point_max_cost = 0.0;
         if (evaluateFootprint(grid, point.x, point.y, point.yaw, &point_max_cost)) {
           collides = true;
           break;
         }
         max_cell_cost = std::max(max_cell_cost, point_max_cost);
+
+        if (!dynamic_obstacles.empty()) {
+          const double t = static_cast<double>(i + 1) * config_.dt;
+          double point_min_distance = std::numeric_limits<double>::infinity();
+          if (evaluateDynamicObstacles(
+              dynamic_obstacles, t, point.x, point.y, point.yaw, &point_min_distance))
+          {
+            collides = true;
+            break;
+          }
+          min_dynamic_surface_distance = std::min(min_dynamic_surface_distance, point_min_distance);
+        }
       }
       if (collides || trajectory.empty()) {
         continue;
       }
 
-      const double cost = evaluateCost(trajectory.back(), goal, v, max_cell_cost);
+      const double cost = evaluateCost(trajectory.back(), goal, v, max_cell_cost) +
+        config_.dynamic_weight * dynamicObstacleCost(min_dynamic_surface_distance);
       if (cost < best_cost) {
         best_cost = cost;
         best_v = v;

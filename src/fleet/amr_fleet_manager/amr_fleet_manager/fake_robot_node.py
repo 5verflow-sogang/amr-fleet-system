@@ -79,7 +79,7 @@ class FakeRobot(Node):
     def _handle(self, msg: TaskAssignment) -> tuple[int, ErrorInfo]:
         if msg.action == TaskAssignment.ACTION_CANCEL:
             if self._task is not None and self._task.task_id == msg.task.task_id:
-                self._finish(TaskStatus.STATE_FAILED, ErrorInfo(message='canceled'))
+                self._finish(TaskStatus.STATE_FAILED, ErrorInfo(code=ErrorInfo.ASSIGN_CANCELED, message='canceled'))
             return TaskAssignmentAck.RESULT_ACCEPTED, ErrorInfo()
         if self._run is not None:
             return TaskAssignmentAck.RESULT_REJECTED, ErrorInfo(

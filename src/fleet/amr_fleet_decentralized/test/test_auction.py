@@ -6,6 +6,7 @@ from amr_fleet_decentralized.auction import (
     RobotInfo,
     TaskInfo,
     award_exhausted,
+    can_retry_failed_task,
     can_withdraw,
     compute_bid_cost,
     decide_bid,
@@ -137,3 +138,18 @@ def test_award_exhausted_after_max_attempts():
 def test_can_withdraw_only_before_accept():
     assert can_withdraw(accepted=False) is True
     assert can_withdraw(accepted=True) is False
+
+
+# --- ACCEPT 뒤 TaskStatus FAILED: 최대 failed_retries번 재경매 (10/9 결정, #107·#108) ---
+
+
+def test_auction_params_default_failed_retries_is_one():
+    assert AuctionParams().failed_retries == 1
+
+
+def test_can_retry_failed_task_allows_up_to_limit():
+    assert can_retry_failed_task(failures=0, failed_retries=1) is True
+
+
+def test_can_retry_failed_task_stops_after_limit():
+    assert can_retry_failed_task(failures=1, failed_retries=1) is False

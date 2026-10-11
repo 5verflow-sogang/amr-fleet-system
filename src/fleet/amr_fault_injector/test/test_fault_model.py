@@ -9,11 +9,18 @@ def line(delay_ms=0.0, loss_pct=0.0, seed=0):
     return DelayLine(FaultConfig(delay_ms=delay_ms, loss_pct=loss_pct), random.Random(seed))
 
 
-def test_invalid_config():
+@pytest.mark.parametrize('kwargs', [
+    {'delay_ms': -1.0}, {'delay_ms': 500.1}, {'delay_ms': float('nan')},
+    {'loss_pct': -0.1}, {'loss_pct': 10.1}, {'loss_pct': float('nan')},
+])
+def test_out_of_spec_range_rejected(kwargs):
     with pytest.raises(ValueError):
-        FaultConfig(delay_ms=-1.0)
-    with pytest.raises(ValueError):
-        FaultConfig(loss_pct=101.0)
+        FaultConfig(**kwargs)
+
+
+def test_spec_range_edges_accepted():
+    FaultConfig(delay_ms=0.0, loss_pct=0.0)
+    FaultConfig(delay_ms=500.0, loss_pct=10.0)
 
 
 def test_zero_delay_passes_immediately():
@@ -46,8 +53,14 @@ def test_no_loss_by_default():
     assert d.dropped == 0
 
 
-def test_full_loss():
-    d = line(loss_pct=100.0)
+class _AlwaysZero(random.Random):
+    def random(self):
+        return 0.0
+
+
+def test_dropped_when_loss_drawn():
+    # 손실로 뽑히면 큐에 넣지 않고 센다
+    d = DelayLine(FaultConfig(loss_pct=10.0), _AlwaysZero())
     assert not d.push('a', now=0.0)
     assert d.pop_due(1.0) == []
     assert (d.received, d.dropped) == (1, 1)

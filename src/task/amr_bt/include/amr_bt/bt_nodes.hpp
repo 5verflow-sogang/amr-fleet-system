@@ -115,4 +115,8 @@ bool cancel_task(
   BT::Tree & tree, TaskContext & ctx, const std::string & task_id,
   const amr_msgs::msg::ErrorInfo & error);
 
+// 서버 취소(ACTION_CANCEL)로 멈춘 작업의 FAILED 오류: ASSIGN_CANCELED + "canceled".
+// 서버는 이 코드가 붙은 FAILED를 다시 할당하지 않는다 (#107)
+amr_msgs::msg::ErrorInfo canceled_error();
+
 }  // namespace amr_bt

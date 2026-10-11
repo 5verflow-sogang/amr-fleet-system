@@ -4,7 +4,7 @@
 
 - 같은 시나리오를 N회 반복해 KPI의 평균·신뢰구간을 산출한다.
 - 장애 조건(지연·손실)별 결과와 ros2_tracing 데이터를 수집한다.
-- `.github/workflows/fleet-test.yml`이 이 디렉토리의 진입 스크립트(`run.py`)를 호출한다.
+- `.github/workflows/fleet-test.yml`이 GCP 러너에서 `docker_run.sh`로 이 하네스를 돌린다 (입력: 시나리오, 반복 횟수, 지연·손실, 라벨, 시간).
 - 로그 포맷은 명세서 1-4절 "성능 지표 측정 절차" 표를 따른다.
 
 ## 실행 (하네스 v1)
@@ -35,7 +35,7 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 | 이름 | 내용 | 주요 결과 |
 | --- | --- | --- |
 | `loc_basic` | 로봇 1대, 지도 v0. 정지 → 직진 3 m → 한 바퀴 → 반 바퀴 → 복귀 직진 → 정지. 약 1분 | `eval_ekf/`·`eval_amcl/`의 `localization.csv`·궤적 |
-| `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분 | `fleet_latency.csv`, `response_time.csv`(Ack), `tasks.json`, `assignments.csv`, `fault_events.csv` |
+| `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분. `kill_robot`으로 로봇 장애 | `fleet_latency.csv`, `response_time.csv`(Ack), `task_outcomes.csv`, `recovery.csv`(로봇 장애 시), `tasks.json`, `assignments.csv`, `fault_events.csv` |
 
 `fleet_fake`는 Fleet 계층(지연·손실·Ack)만 잰다. 가짜 로봇은 `odom`을 내지 않아 응답 시간 KPI(200 ms)는 비어 있으므로, 그 Before 데이터는 실제 로봇 스택 시나리오가 따로 필요하다. 서버 강제종료 `kill_at_s`는 서버 launch 시작 기준이라 작업 시작보다 약 10초 빠르다.
 
@@ -51,12 +51,27 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 
 seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도 위치 오차 RMSE가 최대 2 cm 달랐다(10/6, AMCL 파티클 필터·Gazebo 센서 노이즈·메시지 도착 순서 등). 그래서 같은 seed가 "같은 조건"은 보장하지만 "같은 결과"는 보장하지 않고, 판정은 N회 반복의 신뢰구간으로 한다.
 
+**작업·로봇 장애 지표** (`fleet_fake`): `fleet.tasks_requested`·`tasks_completed`·`task_completion_rate`(`task_outcomes.csv`), 로봇 장애 실행이면 `fleet.reclaimed_tasks`·`recovery_s.mean`·`recovery_s.max`·`reclaimed_completed_rate`(`recovery.csv`). 실행 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로 완료율은 같은 seed(같은 작업 일정)의 장애 있음·없음끼리 비교한다.
+
 **요약** (`summary_<시나리오>-<라벨>_<시각>.md`): 지표마다 실행별 값의 평균·표준편차·범위와 95% 신뢰구간. KPI가 있는 지표는 CI 상한까지 기준 안이면 PASS, 평균만 기준 안이면 MARGINAL, 아니면 FAIL이다.
 
 주의:
 
 - 위치 오차는 로봇이 **처음 움직인 뒤부터** 센다(`eval_node`의 `skip_initial_stationary`, 기본 켬). 초기 위치를 정답으로 주므로 그 전 구간은 오차가 0이라 정지 RMSE를 낮춘다(10/6 실측: 대기 60초가 5.5 → 2.4 cm로 낮춤).
 - 같은 설정·seed에서도 AMCL 파티클 무작위성 때문에 실행마다 RMSE가 최대 2 cm 다르다(10/6). 튜닝값 비교와 KPI 판정은 단일 실행이 아니라 이 요약의 CI로 한다.
+
+**Discord 알림**: 환경 변수 `HARNESS_DISCORD_WEBHOOK`(Discord 채널 웹후크 URL)이 있으면 `run.py`가 끝날 때 요약을 그 채널로 보낸다. 없으면 보내지 않는다.
+
+```bash
+export HARNESS_DISCORD_WEBHOOK='https://discord.com/api/webhooks/...'   # 셸 설정에만 두고 커밋하지 않는다
+tools/harness/docker_run.sh fleet_fake -n 10 --label d100      # 컨테이너에도 그대로 넘어간다
+python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --notify   # 지난 결과 다시 보내기
+```
+
+- 조건 묶음마다 embed 하나: ✅ KPI 모두 PASS, ⚠️ MARGINAL 또는 실패한 반복 있음, ❌ KPI FAIL 또는 완료 0회, ℹ️ KPI 없음. KPI 지표와 Fleet 주요 지표(지연·손실률·Ack)의 평균·95% CI를 싣고 `summary.md`를 첨부한다.
+- 첫 줄에 git SHA, 호스트, 장애 조건, seed 범위를 적는다.
+- 보내기가 실패해도 실험 결과에는 영향이 없다 (경고만 출력).
+- CI 실패 알림(`DISCORD_WEBHOOK_URL`, [workflows/README](../../.github/workflows/README.md))과 다른 채널을 쓰려고 이름을 따로 둔다.
 
 ## 로그 포맷
 
@@ -105,6 +120,8 @@ seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도
 | `hop_latency.csv` | — (연구 1, 아래) | — | 구독 수신 1건마다 1행 | 하연 (트레이스 변환) |
 | `tasks.csv` | 명세서 작업 로그 필드 (아래) | — | 작업마다 1행 | 하네스 기록기 (민지) |
 | `assignments.csv` | — (팀 정의, 아래) | — | 할당 호출마다 | 하연 (`amr_fleet_manager`) |
+| `task_outcomes.csv` | — (팀 정의) | `task_id, request_time, first_assign_time, robots, final_state, end_time` | 작업마다 1행 | 하연 (`fleet_metrics`, bag에서 만든 Fleet 쪽 결과. 로봇 BT 작업 로그 `tasks.csv`와 별개) |
+| `recovery.csv` | — (연구 1 로봇 장애) | `robot, kill_time, task_id, reassign_time, reassigned_robot, recovery_s, completed` | 로봇 강제종료 × 하던 작업마다 1행 | 하연 (`fleet_metrics`) |
 | `coverage/` | `colcon test --coverage` 텍스트·HTML | 모듈별 하위 폴더 | — | 전원 |
 
 - `localization.csv`
@@ -149,7 +166,8 @@ seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도
   - `send_time`: 기록기가 원본 `/fleet/<topic>`을 받은 시각. `recv_time`: 기록기가 중계본 `/<robot>/fleet/<topic>`을 받은 시각. 둘 다 실제 시간
   - **기록 방법**: rclpy 기록 노드를 쓰지 않고 rosbag2로 `/fleet/*`, `/<robot>/fleet/*`, `/fleet/task_assignment_acks`를 녹화한 뒤 CSV를 오프라인으로 만든다. 변환은 `ros2 run amr_fleet_manager fleet_metrics <bag> --out <실행 폴더> --delay-ms <지연>`이 한다([amr_fleet_manager README](../../src/fleet/amr_fleet_manager/README.md) "Fleet 지표 변환"). 수신 시각은 bag에 저장된 수신 시각을 쓴다. Python 노드는 부하가 걸리면 수신 시각을 수 ms 늦게 적는데, 재려는 값이 바로 그 ms 단위 지연이라 측정이 틀어진다(민지, #33). `response_time.csv`의 Ack 컬럼도 같은 bag에서 만든다
   - `latency_ms` = (`recv_time` − `send_time`) × 1000. 주입 지연 + 중계 1홉 + DDS. 주입 0ms 조건이 중계 오버헤드 기준선이다
-  - `delivered`: 중계본이 오면 `1`, 안 오면 `0`(`recv_time`, `latency_ms`는 비움). 관측 마감 뒤에 보낸 메시지는 비운다(판정 안 함). 손실률은 `0`/`1`인 행만으로 센다
+  - `delivered`: 중계본이 오면 `1`, 안 오면 `0`(`recv_time`, `latency_ms`는 비움). 관측 시작 전·관측 마감 뒤에 보낸 메시지는 비운다(판정 안 함). 손실률은 `0`/`1`인 행만으로 센다
+  - **관측 시작**: rosbag은 토픽을 찾는 대로 구독해서 녹화 초반에는 원본만 녹화되고 로봇별 중계본은 아직 구독 전일 수 있다. 주기 토픽(heartbeat, task_table)의 모든 로봇 중계본이 한 번씩 녹화된 시각 − `delay_ms`보다 먼저 보낸 메시지는 판정하지 않는다. 실행 하나에 한 시각을 쓴다(링크마다 자르면 링크마다 초반 손실이 빠져 손실률이 낮게 나온다). 10/10 GCP 첫 실행에서 손실 0% 주입에 0.8%로 나오던 것이 0%가 됐다(녹화 시작 후 1.2초, 45행 제외)
   - 같은 `key`가 여러 번 오면(재전송) 첫 도착만 쓴다
   - **관측 마감**: 실행 종료 시각에서 `delay_ms` + 여유 시간(`grace_s`, 기본 1초)을 뺀 시각 이후에 보낸 메시지는 지연·손실 계산에서 뺀다. 예를 들어 지연 0.5초 조건에서 실행이 10초에 끝나면, 9.8초에 보낸 메시지는 10.3초에 도착할 예정이라 아직 오는 중이다. 이걸 손실로 세면 지연이 클수록 손실이 많은 것처럼 나와 연구 1의 결론이 왜곡된다(민지, #33). Ack도 같은 규칙을 쓰되, 여유 시간에 서버 재전송 간격 × 최대 재전송 횟수를 더한다(`amr_fleet_manager`의 `resend.interval_s` × `resend.max_resends`, 기본 1초 × 5 = 5초). 쓴 마감 시각은 `meta.json`의 `observation_cutoff`에 남긴다
 - `hop_latency.csv`: 구독 노드가 메시지를 꺼낸 1건(`ros2:rmw_take`, `taken=1`)마다 1행. `trace/`에서 오프라인으로 변환한다
@@ -198,7 +216,7 @@ tools/harness/results/<run_id>/
 | --- | --- | --- |
 | `git_sha` | `9ef33ea` | 어느 코드로 나온 결과인지 |
 | `scenario`, `repeat`, `seed` | `loc_square_10m`, `3`, `42` | 반복·재현. Fleet 시나리오의 `seed`는 작업 생성기 seed이고, 넣은 작업 일정은 `tasks.json`(JSON Task 파일, `task_generator`의 `schedule_out`)에 남는다 |
-| `fault` | `{"delay_ms": 100, "loss_pct": 0, "direction": "server_to_robot", "relay_auction": false, "kill_at_s": 60, "restart_after_s": 10}` | 연구 1 조건별 비교. 서버 강제종료가 없으면 `kill_at_s`는 -1. `direction`은 지연·손실을 건 방향(`server_to_robot`, 역방향 추가 시 `both`). `relay_auction`은 분산 경매 토픽(로봇 → 로봇)에도 걸었는지 (분산·하이브리드 비교군은 `true`) |
+| `fault` | `{"delay_ms": 100, "loss_pct": 0, "direction": "server_to_robot", "relay_auction": false, "kill_at_s": 60, "restart_after_s": 10, "kill_robot": "amr_03", "kill_robot_at_s": 120}` | 연구 1 조건별 비교. 서버 강제종료가 없으면 `kill_at_s`는 -1. 로봇 장애가 없으면 `kill_robot`은 `none`, `kill_robot_at_s`는 -1 (`fault_events.csv`에 `robot_kill:<로봇>`). `direction`은 지연·손실을 건 방향(`server_to_robot`, 역방향 추가 시 `both`). `relay_auction`은 분산 경매 토픽(로봇 → 로봇)에도 걸었는지 (분산·하이브리드 비교군은 `true`) |
 | `num_robots` | `5` | 다중 로봇 조건 |
 | `assignment_algorithm`, `cost_fn` | `hungarian`, `euclidean` | 할당 알고리즘 비교. 비용 함수가 다르면 `total_cost`끼리 비교할 수 없다 |
 | `controller` | `pure_pursuit` · `stanley` | 경로 추종 제어기 비교 (이진 요청, #5) |
@@ -209,7 +227,7 @@ tools/harness/results/<run_id>/
 | `use_sim_time`, `real_time_factor` | `true`, `0.87` | 시뮬레이터가 실제보다 느리게 돌았는지 |
 | `rmw_implementation` | `rmw_cyclonedds_cpp` | 연구 1 After 측정의 DDS 벤더 비교 (하연, #33) |
 | `qos_profile` | `default` | 연구 1 After 측정의 QoS 튜닝 전후 구분. 값은 [api.md 6절](../../docs/api.md#6-qos-기본값) 프로파일 이름 (하연, #33) |
-| `observation_cutoff` | `{"end": 612.3, "grace_s": 1.0, "cutoff": 610.8}` | 연구 1 지연·손실·Ack에서 뺀 실행 끝 구간 (하연·민지, #33) |
+| `observation_cutoff` | `{"end": 612.3, "grace_s": 1.0, "cutoff": 610.8, "start": 12.4}` | 연구 1 지연·손실·Ack에서 뺀 실행 끝 구간(하연·민지, #33)과 녹화 초반 구간(`start`) |
 
 ### 요약 통계
 

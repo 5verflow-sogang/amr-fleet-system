@@ -53,8 +53,10 @@ if (result.status == amr_planning_core::PlanStatus::kSuccess) {
 
 ### `amr_planning_core::DwaPlanner` (`dwa.hpp`)
 
-DWA(Dynamic Window Approach) 로컬 컨트롤러 코어. 이번 주 범위는 **정적 장애물
-회피까지**다(동적 장애물·Nav2 플러그인 연결은 3주차, [docs/algorithms/navigation.md](../../../docs/algorithms/navigation.md#4-dwa-dynamic-window-approach) 4절 참고).
+DWA(Dynamic Window Approach) 로컬 컨트롤러 코어. 정적 장애물(`Grid`)은 하드
+필터(충돌 궤적 제외)로, 동적 장애물(`DynamicObstacle`, 3주차)은 등속 예측 위치를
+하드 필터와 소프트 비용 둘 다에 반영한다. 자세한 설계는
+[docs/algorithms/navigation.md](../../../docs/algorithms/navigation.md#4-dwa-dynamic-window-approach) 4절 참고.
 
 `RobotState`의 `(x, y)`는 `Grid`와 같은 로컬 좌표계(미터, 셀 `(0,0)`의 모서리가
 원점)다 — `Grid`가 원점을 들고 있지 않은 설계와 같은 이유로, odom/map 프레임
@@ -71,6 +73,12 @@ const amr_planning_core::DwaCommand command = planner.computeVelocityCommand(sta
 if (command.status == amr_planning_core::DwaStatus::kOk) {
   // command.v, command.w를 다음 제어 주기에 낸다
 }
+
+// 동적 장애물(perception/obstacles 기반)은 네 번째 인자(기본값 빈 벡터)로 넘긴다.
+// 빈 벡터면 위 호출과 결과가 완전히 같다(2주차 정적 장애물 전용 동작과 동일).
+std::vector<amr_planning_core::DynamicObstacle> obstacles{{/*x=*/2.0, /*y=*/1.0,
+  /*vx=*/-0.5, /*vy=*/0.0, /*radius=*/0.3}};
+planner.computeVelocityCommand(state, goal, grid, obstacles);
 ```
 
 `DwaStatus`: `kOk`, `kGoalReached`(목표까지 `goal_tolerance` 이내), `kNoValidTrajectory`
@@ -91,6 +99,10 @@ if (command.status == amr_planning_core::DwaStatus::kOk) {
 | `lethal_cost_threshold` | `253` | `AStarConfig`와 동일한 치명 비용 임계값 |
 | `heading_weight` / `clearance_weight` / `velocity_weight` | `0.8` / `0.1` / `0.1` | 비용 함수 가중치(근거는 navigation.md 4-3절) |
 | `goal_tolerance` | `0.15` m | 이 거리 이내면 `kGoalReached` |
+| `predict_dynamic_obstacles` | `true` | 동적 장애물을 등속 예측할지(`false`면 관측 위치에 정지한 것으로 본다) |
+| `dynamic_obstacle_safety_margin` | `0.2` m | 장애물 표면에서 이 안쪽이면 충돌 |
+| `dynamic_obstacle_influence_radius` | `1.0` m | 소프트 비용이 미치는 거리(표면 기준) |
+| `dynamic_weight` | `0.3` | 동적 장애물 거리비용 가중치(나머지 세 가중치와 합이 1일 필요는 없다) |
 
 ## 파라미터
 

@@ -35,3 +35,14 @@ def can_withdraw(accepted: bool) -> bool:
     다시 경매한다(이 모듈은 TaskStatus 발행까지는 안 다룬다 - 노드 몫).
     """
     return not accepted
+
+
+def can_retry_failed_task(failures: int, failed_retries: int) -> bool:
+    """ACCEPT 뒤 TaskStatus FAILED를 받았을 때 재경매해도 되는지.
+
+    10/9 하연·이진 결정(#107·#108): 최대 failed_retries번까지만 재경매하고,
+    그래도 또 실패하면 실패로 남긴다 - 중앙(assignment.failed_retries)과 같은
+    규칙이어야 비교군 조건이 같다. failures는 이 작업이 지금까지 FAILED로
+    보고된 횟수(재경매 전 값)다.
+    """
+    return failures < failed_retries

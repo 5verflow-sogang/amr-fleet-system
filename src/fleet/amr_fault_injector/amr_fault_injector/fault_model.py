@@ -7,19 +7,24 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Optional
 
+# 명세 범위 (project-spec 3장 장애 주입기: 지연 0~500ms, 손실 0~10%). 밖의 값은 실험 조건 실수로 보고 거부한다
+MAX_DELAY_MS = 500.0
+MAX_LOSS_PCT = 10.0
+
 
 @dataclass(frozen=True)
 class FaultConfig:
-    """링크 하나에 거는 장애 조건. 명세 범위: 지연 0~500ms, 손실 0~10%."""
+    """링크 하나에 거는 장애 조건. 명세 범위 밖이면 ValueError."""
 
     delay_ms: float = 0.0
     loss_pct: float = 0.0
 
     def __post_init__(self):
-        if self.delay_ms < 0:
-            raise ValueError(f'delay_ms는 0 이상이어야 한다: {self.delay_ms}')
-        if not 0 <= self.loss_pct <= 100:
-            raise ValueError(f'loss_pct는 0~100이어야 한다: {self.loss_pct}')
+        # NaN은 비교가 모두 False라 범위 검사를 통과하지 않는다
+        if not 0 <= self.delay_ms <= MAX_DELAY_MS:
+            raise ValueError(f'delay_ms는 0~{MAX_DELAY_MS:g}이어야 한다: {self.delay_ms}')
+        if not 0 <= self.loss_pct <= MAX_LOSS_PCT:
+            raise ValueError(f'loss_pct는 0~{MAX_LOSS_PCT:g}이어야 한다: {self.loss_pct}')
 
 
 class DelayLine:

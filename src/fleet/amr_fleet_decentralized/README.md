@@ -8,10 +8,11 @@
 
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
-| Publish | `/fleet/task_auctions` (파라미터 `task_auctions_pub_topic`) | `amr_msgs/msg/TaskAuction` | 경매 공고. 재경매 때도 여기로 보낸다 |
-| Publish | `/fleet/task_bids` (파라미터 `task_bids_pub_topic`) | `amr_msgs/msg/TaskBid` | 입찰(BID)·낙찰 통보(AWARD)·수락(ACCEPT)·포기(WITHDRAW) |
-| Subscribe | `fleet/task_auctions` (파라미터 `task_auctions_sub_topic`) | `amr_msgs/msg/TaskAuction` | 상대 이름 → 장애 주입기 `relay_auction` 중계본. 꺼진 실험에서는 절대 경로로 바꿔 원본을 직접 구독 |
-| Subscribe | `fleet/task_bids` (파라미터 `task_bids_sub_topic`) | `amr_msgs/msg/TaskBid` | 위와 동일 |
+| Publish | `/fleet/task_auctions` | `amr_msgs/msg/TaskAuction` | 경매 공고. 재경매 때도 여기로 보낸다 |
+| Publish | `/fleet/task_bids` | `amr_msgs/msg/TaskBid` | 입찰(BID)·낙찰 통보(AWARD)·수락(ACCEPT)·포기(WITHDRAW) |
+| Subscribe | `/fleet/task_auctions` (파라미터 `auction_topic_prefix`, 기본 `/fleet`) | `amr_msgs/msg/TaskAuction` | 기본은 절대 경로 원본. `relayed:=true`(launch) 또는 `auction_topic_prefix:=fleet`면 상대 이름 → 장애 주입기 `relay_auction` 중계본을 구독 (`amr_bt`·가짜 로봇의 `relayed` 인자와 같은 방식) |
+| Subscribe | `/fleet/task_bids` (파라미터 `auction_topic_prefix`) | `amr_msgs/msg/TaskBid` | 위와 동일 |
+| Subscribe | `/fleet/task_status` | `amr_msgs/msg/TaskStatus` | ACCEPT 뒤 낙찰 로봇이 보낸 FAILED를 보고 재경매 여부 판단 (relay 목록에 없어 항상 절대 경로) |
 | Subscribe | `/fleet/robot_states` (파라미터 `robot_states_topic`) | `amr_msgs/msg/RobotState` | 내 로봇 것만 걸러서 입찰 판단(위치·배터리·IDLE 여부)에 쓴다 |
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
@@ -40,6 +41,8 @@
   -> 낙찰 통보(AWARD, 1초 간격 x 5회 재전송)
   -> 낙찰 로봇 수락(ACCEPT) 또는 그사이 사정이 바뀌면 포기(WITHDRAW, ACCEPT 전까지만)
   -> ACCEPT 없이 재전송을 다 쓰거나 WITHDRAW를 받으면 재경매(auction_id를 올려 다시 공고)
+  -> ACCEPT 뒤 수행 중 TaskStatus FAILED를 받으면 최대 failed_retries번(기본 1) 재경매,
+     그래도 실패하면 실패로 남긴다
 ```
 
 10/7 하연·이진 결정(`docs/api.md` 4-4절 "쟁점 정리" 표, #91 리뷰 제안을 그대로 채택):
@@ -48,20 +51,31 @@
   `MODE_IDLE`(`amr_msgs/msg/RobotState.MODE_*`와 같은 값)이 아니면 입찰하지 않는다.
 - **입찰가(`compute_bid_cost`)**: 현재 위치 → 작업 시작점(픽업, 없으면 목적지) 직선
   거리. 중앙 할당(`amr_fleet_core.assignment.cost.euclidean_cost`, `nearest` 규칙)과
-  같은 식이다 - 분산·중앙 비교군의 비용 계산이 같아야 공정하다(연구 1). **주의**:
-  `amr_msgs/msg/TaskBid.msg`의 `cost` 필드 주석은 아직 예전 식("현재 큐 끝 → pickup →
-  dropoff 증가분")을 적고 있다 - 메시지 파일은 이번 범위 밖이라 안 고쳤다. 고치려면
-  CONTRIBUTING에 따라 모든 publisher·subscriber 승인이 필요한 별도 PR.
-  IDLE 로봇만 입찰해서 "진행 중인 작업을 마치는 지점"(큐) 보정은 필요 없어졌다.
+  같은 식이다 - 분산·중앙 비교군의 비용 계산이 같아야 공정하다(연구 1). IDLE 로봇만
+  입찰해서 "진행 중인 작업을 마치는 지점"(큐) 보정은 필요 없어졌다.
 - **배터리 하한**: 중앙집중(`fleet_manager.yaml` `min_battery_percent`)과 같은 20%.
 - **입찰 마감 판정**: 경매인이 "받은" 시각 기준(보낸 로봇의 자기 신고 시각이 아니다) -
   시계 오차·네트워크 지연이 있는 로봇의 타임스탬프를 믿으면 마감 판정이 공정하지 않다.
   `task_auction_node`는 `TaskBid`를 받는 즉시 자기 시계로 `Bid.bid_time`을 채운다.
 - **AWARD 재전송**: 중앙 Ack 재전송과 같게 1초 간격 x 5회(재전송 정책이 같아야 지연
   내성 비교가 공정하다) - 그래도 ACCEPT가 없으면 재경매.
-- **WITHDRAW 범위**: ACCEPT 전까지만. 수락 뒤 못 하게 되면(이 노드는 아직 그 보고까지는
-  안 다룬다) `TaskStatus` FAILED로 보고하고 경매인이 다시 경매해야 한다 - 범위는 아래
-  "확인 필요" 참고.
+- **WITHDRAW 범위**: ACCEPT 전까지만. 수락 뒤 못 하게 되면 `TaskStatus` FAILED로
+  보고하고(`amr_bt`가 발행) 경매인이 재경매한다 - 아래 "ACCEPT 뒤 실패 재시도" 참고.
+
+10/9 하연·이진 결정(#107·#108):
+
+- **ACCEPT 뒤 실패 재시도**: 수락한 작업을 `amr_bt`가 수행하다 `TaskStatus` FAILED를
+  보내면, 경매인이 새 `auction_id`로 최대 `failed_retries`번(기본 1) 재경매한다.
+  그래도 또 FAILED면 더 재경매하지 않고 실패로 남긴다 - 중앙집중
+  (`fleet_manager.yaml` `assignment.failed_retries`)과 같은 규칙·기본값이어야
+  두 비교군의 재시도 조건이 같다. 재시도 횟수는 `task_id`로 세어(`auction_id`가
+  재경매로 바뀌어도 이어서 센다) 중앙의 `TaskEntry.failures`와 같은 역할을 한다.
+- **구독 토픽 접두어**: 기본은 절대 경로 원본(`/fleet/task_auctions`,
+  `/fleet/task_bids`)을 직접 구독한다. `relayed:=true`(launch 인자, 또는 파라미터
+  `auction_topic_prefix:=fleet`)면 상대 이름(장애 주입기 `relay_auction` 중계본)을
+  구독한다 - `amr_bt`·가짜 로봇의 `relayed` 인자와 이름·동작을 맞췄다. 발행은
+  항상 절대 경로 원본(장애 주입기가 읽어 로봇별로 다시 보낸다). `TaskStatus`는
+  장애 주입기 relay 목록에 없어 `relayed`와 무관하게 항상 절대 경로다.
 
 ## 확인 필요 (하연과 맞출 부분)
 
@@ -70,9 +84,6 @@
   포함) 반응하는 것과, 재전송을 다 쓰고도 ACCEPT가 없을 때 재경매하는 것만 한다.
   `FleetTaskTable` 미할당 작업 감지, `FleetHeartbeat` 끊김 판단, 여러 로봇이 같은
   작업을 동시에 경매하지 않게 하는 조정(리더 선출?)은 다음 단계.
-- **ACCEPT 뒤 실패 보고**: 수락한 작업을 중간에 못 하게 되면 `TaskStatus` FAILED로
-  보고해 경매인이 재경매하게 해야 한다(위 "WITHDRAW 범위" 참고) - `amr_bt`(지수)가
-  보통 `TaskStatus`를 발행하는 쪽이라 범위·형식을 같이 맞춰야 한다.
 - **여러 경매 동시 진행 시 자원 경합**: 한 로봇이 동시에 여러 경매에 입찰해 둘 다
   낙찰되면(각 경매는 독립적으로 판단한다) 실제로 둘 다 못 할 수 있다 - 아직 처리
   안 함.
@@ -90,8 +101,8 @@
 | `min_battery_percent` | `20.0` | 이 미만이면 입찰하지 않는다 (10/7 결정) |
 | `robot_speed_mps` | `1.0` | `estimated_finish_time` 추정용 단순 등속 |
 | `award_resend_interval_s` / `award_max_attempts` | `1.0` / `5` | AWARD 재전송 간격·횟수 (10/7 결정) |
-| `task_auctions_sub_topic` / `task_bids_sub_topic` | `fleet/task_auctions` / `fleet/task_bids` | 상대 이름(중계본). `relay_auction` 끈 실험은 절대 경로로 |
-| `task_auctions_pub_topic` / `task_bids_pub_topic` | `/fleet/task_auctions` / `/fleet/task_bids` | 항상 절대 경로 원본 |
+| `failed_retries` | `1` | ACCEPT 뒤 FAILED 보고 시 재경매 최대 횟수 (10/9 결정) |
+| `auction_topic_prefix` | `/fleet` | 구독 접두어. `fleet`면 중계본(`relayed:=true`와 동일) |
 | `robot_states_topic` | `/fleet/robot_states` | 내 로봇 상태(위치·배터리·모드) |
 | `update_rate_hz` | `10.0` | 마감 판정·AWARD 재전송·재경매를 확인하는 주기 |
 
@@ -99,6 +110,7 @@
 
 ```bash
 ros2 launch amr_fleet_decentralized task_auction.launch.py namespace:=amr_01 robot_id:=amr_01
+ros2 launch amr_fleet_decentralized task_auction.launch.py relayed:=true   # 장애 주입기 중계본 구독
 ```
 
 ## 테스트

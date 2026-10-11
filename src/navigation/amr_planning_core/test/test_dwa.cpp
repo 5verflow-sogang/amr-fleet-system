@@ -260,4 +260,240 @@ TEST(DwaPlannerTest, PassesThroughNarrowCorridorWithoutFootprintCollision)
   EXPECT_TRUE(reached) << "목표에 도달하지 못하고 반복 상한에 도달함";
 }
 
+// --- 3주차: 동적 장애물(등속 예측) ---
+
+TEST(DwaPlannerTest, StationaryDynamicObstacleStillBlocksRegardlessOfTime)
+{
+  DwaPlanner planner;  // predict_dynamic_obstacles = true 기본값
+
+  DynamicObstacle stopped;
+  stopped.x = 3.0;
+  stopped.y = 2.0;
+  stopped.vx = 0.0;
+  stopped.vy = 0.0;
+  stopped.radius = 0.3;
+  const std::vector<DynamicObstacle> obstacles{stopped};
+
+  // 속도가 0이면 등속 예측을 켜도(t가 커져도) 위치가 안 바뀌므로, 장애물 위에
+  // 있으면 어느 시각에 확인해도 똑같이 충돌이어야 한다 - "정지 장애물은 기존
+  // (정적 장애물) 결과와 같아야 한다"는 요구를 등속 예측 수식으로 만족하는지 확인.
+  EXPECT_TRUE(planner.dynamicObstacleCollides(obstacles, 0.0, 3.0, 2.0, 0.0));
+  EXPECT_TRUE(planner.dynamicObstacleCollides(obstacles, 2.0, 3.0, 2.0, 0.0));
+  EXPECT_TRUE(planner.dynamicObstacleCollides(obstacles, 100.0, 3.0, 2.0, 0.0));
+
+  // 충분히 떨어진 지점은 시각과 상관없이 충돌이 아니다.
+  EXPECT_FALSE(planner.dynamicObstacleCollides(obstacles, 0.0, 0.0, 0.0, 0.0));
+  EXPECT_FALSE(planner.dynamicObstacleCollides(obstacles, 50.0, 0.0, 0.0, 0.0));
+}
+
+TEST(DwaPlannerTest, NoDynamicObstaclesMatchesStaticOnlyBehaviorExactly)
+{
+  // computeVelocityCommand에 동적 장애물을 안 넘기면(기본 인자, 빈 벡터) 2주차
+  // 정적 장애물 전용 경로와 완전히 같은 결과가 나와야 한다 - dynamic_weight가
+  // 곱해지는 항이 정확히 0.0이 되는지 확인한다(부동소수점 오차 없이).
+  TestGrid test_grid(160, 80, 0.05);
+  test_grid.setRegion(2.6, 2.8, 1.7, 2.3, 254);
+
+  DwaPlanner planner;
+  RobotState state;
+  state.x = 0.5;
+  state.y = 2.0;
+  state.v = 1.0;
+
+  const Point2D goal{6.0, 2.0};
+
+  const DwaCommand without_arg = planner.computeVelocityCommand(state, goal, test_grid.grid());
+  const DwaCommand with_empty_vector =
+    planner.computeVelocityCommand(state, goal, test_grid.grid(), {});
+
+  EXPECT_EQ(without_arg.status, with_empty_vector.status);
+  EXPECT_EQ(without_arg.v, with_empty_vector.v);
+  EXPECT_EQ(without_arg.w, with_empty_vector.w);
+}
+
+TEST(DwaPlannerTest, CrossingObstacleCollisionDependsOnPredictedTime)
+{
+  // (3,0)에서 y축 방향으로 2 m/s로 가로지르는 장애물 - t=1s에 (3,2)에 와서
+  // 로봇과 같은 자리가 된다. "등속 예측" 없이는(predict_dynamic_obstacles=false)
+  // 관측 당시 위치(3,0)에 그대로 있다고 보므로 (3,2)는 늘 안전하다고 오판한다.
+  DynamicObstacle crossing;
+  crossing.x = 3.0;
+  crossing.y = 0.0;
+  crossing.vx = 0.0;
+  crossing.vy = 2.0;
+  crossing.radius = 0.3;
+  const std::vector<DynamicObstacle> obstacles{crossing};
+
+  DwaPlanner predicting;  // predict_dynamic_obstacles = true
+  EXPECT_FALSE(predicting.dynamicObstacleCollides(obstacles, 0.0, 3.0, 2.0, 0.0))
+    << "t=0에는 장애물이 아직 (3,0)에 있어 2m 떨어져 있다";
+  EXPECT_TRUE(predicting.dynamicObstacleCollides(obstacles, 1.0, 3.0, 2.0, 0.0))
+    << "t=1에는 장애물이 (3,2)로 올라와 로봇과 같은 자리다";
+
+  DwaConfig no_predict_config;
+  no_predict_config.predict_dynamic_obstacles = false;
+  DwaPlanner not_predicting(no_predict_config);
+  EXPECT_FALSE(not_predicting.dynamicObstacleCollides(obstacles, 1.0, 3.0, 2.0, 0.0))
+    << "예측을 꺼면 t=1에도 관측 위치(3,0) 기준으로만 보므로 충돌을 놓친다";
+}
+
+TEST(DwaPlannerTest, FrontApproachingObstacleIsAvoidedOnlyWithPrediction)
+{
+  TestGrid test_grid(320, 160, 0.05);  // 16m x 8m, 전부 비어 있음(정적 장애물 없음)
+
+  RobotState state;
+  state.x = 0.0;
+  state.y = 2.0;
+  state.yaw = 0.0;
+  state.v = 2.0;  // 이미 최고속 근처 - 동적 윈도우가 [1.9, 2.0]으로 고정돼 계산이 쉽다
+  state.w = 0.0;
+  const Point2D goal{10.0, 2.0};  // 정면으로 멀리
+
+  // 8 m 앞에서 로봇을 향해 3 m/s로 다가오는 장애물. 동적 윈도우 안에서 로봇이
+  // 낼 수 있는 최대 전진 거리는 window.max_v(2.0)*sim_time(2.0)=4m(풋프린트
+  // 앞면까지 더해도 4.3m)뿐이라, 관측 위치(8,2)에 멈춰 있다고 보면(예측 끔)
+  // 전혀 안 걸린다(표면까지 3.4m 이상 남는다). 등속으로 예측하면 t=1.6s에
+  // 장애물이 로봇과 같은 x(3.2m)로 와서 경로를 막는다(8-3*1.6 = 2*1.6 = 3.2).
+  DynamicObstacle approaching;
+  approaching.x = 8.0;
+  approaching.y = 2.0;
+  approaching.vx = -3.0;
+  approaching.vy = 0.0;
+  approaching.radius = 0.3;
+  const std::vector<DynamicObstacle> obstacles{approaching};
+
+  DwaPlanner predicting;  // predict_dynamic_obstacles = true 기본값
+  const DynamicWindow window = predicting.computeDynamicWindow(state);
+
+  // 시나리오가 실제로 위협적인지 먼저 확인: 장애물을 무시하고 정면 최고속으로
+  // 가는 궤적은 예측된 장애물과 충돌해야 한다.
+  const std::vector<TrajectoryPoint> naive_trajectory =
+    predicting.simulateTrajectory(state, window.max_v, 0.0);
+  bool naive_collides = false;
+  for (std::size_t i = 0; i < naive_trajectory.size(); ++i) {
+    const double t = static_cast<double>(i + 1) * predicting.config().dt;
+    const TrajectoryPoint & p = naive_trajectory[i];
+    if (predicting.dynamicObstacleCollides(obstacles, t, p.x, p.y, p.yaw)) {
+      naive_collides = true;
+      break;
+    }
+  }
+  ASSERT_TRUE(naive_collides) << "시나리오 전제: 장애물을 무시하면 정면 직진은 충돌해야 한다";
+
+  // 실제 계획은 그 충돌을 피해야 한다.
+  const DwaCommand command = predicting.computeVelocityCommand(state, goal, test_grid.grid(), obstacles);
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+
+  const std::vector<TrajectoryPoint> chosen_trajectory =
+    predicting.simulateTrajectory(state, command.v, command.w);
+  for (std::size_t i = 0; i < chosen_trajectory.size(); ++i) {
+    const double t = static_cast<double>(i + 1) * predicting.config().dt;
+    const TrajectoryPoint & p = chosen_trajectory[i];
+    EXPECT_FALSE(predicting.dynamicObstacleCollides(obstacles, t, p.x, p.y, p.yaw))
+      << "step " << i << "에서 예측된 장애물과 충돌";
+  }
+
+  // 예측을 끄면(관측 위치에 멈춰 있다고 봄) 이 장애물은 4m보다 멀어 사실상
+  // 안 보이므로, 장애물이 전혀 없을 때(EmptyMapMovesTowardGoal)와 같이 정면
+  // 최고속을 그대로 고른다.
+  DwaConfig no_predict_config;
+  no_predict_config.predict_dynamic_obstacles = false;
+  DwaPlanner not_predicting(no_predict_config);
+  const DwaCommand ignoring_command =
+    not_predicting.computeVelocityCommand(state, goal, test_grid.grid(), obstacles);
+  ASSERT_EQ(ignoring_command.status, DwaStatus::kOk);
+  EXPECT_NEAR(ignoring_command.v, window.max_v, 1e-6);
+  EXPECT_NEAR(ignoring_command.w, 0.0, 0.05);
+}
+
+// --- rotateToGoalYaw: 최종 접근(위치는 도착, 각도만 맞추는 제자리 회전) ---
+
+TEST(DwaPlannerTest, RotateToGoalYawReachedWithinTolerance)
+{
+  DwaConfig config;
+  DwaPlanner planner(config);
+
+  RobotState state;
+  state.yaw = 0.1;
+  const DwaCommand command = planner.rotateToGoalYaw(state, /*goal_yaw=*/0.3, /*yaw_tolerance=*/0.25);
+
+  EXPECT_EQ(command.status, DwaStatus::kGoalReached);
+  EXPECT_NEAR(command.v, 0.0, 1e-9);
+  EXPECT_NEAR(command.w, 0.0, 1e-9);
+}
+
+TEST(DwaPlannerTest, RotateToGoalYawTurnsTowardShorterDirection)
+{
+  DwaConfig config;
+  DwaPlanner planner(config);
+  RobotState state;  // yaw = 0, w = 0
+
+  const DwaCommand positive = planner.rotateToGoalYaw(state, /*goal_yaw=*/1.0, /*yaw_tolerance=*/0.01);
+  ASSERT_EQ(positive.status, DwaStatus::kOk);
+  EXPECT_NEAR(positive.v, 0.0, 1e-9);
+  EXPECT_GT(positive.w, 0.0);
+
+  const DwaCommand negative = planner.rotateToGoalYaw(state, /*goal_yaw=*/-1.0, /*yaw_tolerance=*/0.01);
+  ASSERT_EQ(negative.status, DwaStatus::kOk);
+  EXPECT_LT(negative.w, 0.0);
+}
+
+TEST(DwaPlannerTest, RotateToGoalYawRespectsAngularAccelerationLimit)
+{
+  DwaConfig config;
+  DwaPlanner planner(config);
+  RobotState state;  // w = 0
+
+  // 오차가 커도(여기선 거의 180도) 한 스텝에서는 acc_w*dt만큼만 바뀐다.
+  const DwaCommand command = planner.rotateToGoalYaw(state, /*goal_yaw=*/3.0, /*yaw_tolerance=*/0.01);
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  EXPECT_NEAR(command.w, config.acc_w * config.dt, 1e-9);
+}
+
+TEST(DwaPlannerTest, RotateToGoalYawDoesNotExceedMaxAngularVelocity)
+{
+  DwaConfig config;
+  DwaPlanner planner(config);
+  RobotState state;
+  state.w = config.max_w;  // 이미 최고 각속도로 돌고 있다
+
+  const DwaCommand command = planner.rotateToGoalYaw(state, /*goal_yaw=*/3.0, /*yaw_tolerance=*/0.01);
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  EXPECT_LE(std::abs(command.w), config.max_w + 1e-9);
+}
+
+TEST(DwaPlannerTest, RotateToGoalYawConvergesWithoutOvershootOscillation)
+{
+  // 제자리 회전을 반복 적용하면 허용 오차 안에 들어와서 멈추고, 그 과정에서
+  // 목표 각도를 크게 지나쳐 반대로 다시 도는 진동이 없어야 한다(등가감속으로
+  // 정확히 서는 각속도를 고르기 때문 - speed_cap_for_stop과 같은 발상).
+  DwaConfig config;
+  DwaPlanner planner(config);
+  constexpr double kYawTolerance = 0.05;
+  constexpr double kGoalYaw = 1.0;  // 약 57도, 사용자가 겪은 34.7도 오차보다 크게 잡음
+
+  RobotState state;
+  double max_abs_error_after_first_entering_tolerance = 0.0;
+  bool reached = false;
+
+  for (int i = 0; i < 200; ++i) {
+    const DwaCommand command = planner.rotateToGoalYaw(state, kGoalYaw, kYawTolerance);
+    state.w = command.w;
+    state.yaw += state.w * config.dt;
+
+    if (command.status == DwaStatus::kGoalReached) {
+      reached = true;
+      break;
+    }
+    // 허용 오차의 2배를 넘겨 반대쪽으로 지나가면(오버슈트해서 되돌아오는 진동) 실패로 본다.
+    const double error = std::abs(kGoalYaw - state.yaw);
+    max_abs_error_after_first_entering_tolerance =
+      std::max(max_abs_error_after_first_entering_tolerance, error);
+  }
+
+  EXPECT_TRUE(reached) << "200스텝 안에 허용 오차 안으로 들어오지 못함";
+  EXPECT_LE(max_abs_error_after_first_entering_tolerance, kGoalYaw + kYawTolerance)
+    << "목표 각도를 지나쳐 반대쪽으로 넘어감(오버슈트)";
+}
+
 }  // namespace amr_planning_core
