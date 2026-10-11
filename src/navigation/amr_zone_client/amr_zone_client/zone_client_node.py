@@ -86,7 +86,7 @@ class ZoneClientNode(Node):
             backing_speed_mps=p('backing_speed_mps', 0.15).value,
             backing_margin_m=p('backing_margin_m', 0.3).value,
             backing_max_distance_m=p('backing_max_distance_m', 5.0).value,
-            backing_timeout_s=p('backing_timeout_s', 40.0).value,
+            backing_timeout_s=p('backing_timeout_s', 25.0).value,
         ))
 
         self._path_xy: List[tuple] = []

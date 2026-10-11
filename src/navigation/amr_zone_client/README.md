@@ -90,9 +90,11 @@
 `IDLE`로 돌아가고, 그 뒤로는 평소처럼(새 `request_id`로) 다시 접근한다.
 
 안전장치(fail-closed): `backing_max_distance_m`(총 후진 거리, 기본 5 m) 또는 `backing_timeout_s`
-(경과 시간, 기본 40 s)를 넘으면 그 순간 속도를 0으로 묶고 ERROR 로그를 한 번 남긴다. 그 뒤로는
+(경과 시간, 기본 25 s)를 넘으면 그 순간 속도를 0으로 묶고 ERROR 로그를 한 번 남긴다. 그 뒤로는
 반납·재시도 없이 그대로 멈춰 선다 — 계속 후진하다 더 큰 사고로 이어지는 것보다, 서버가 자리를 계속
-쥐고 있더라도 멈춰서 수동 확인을 받는 쪽이 안전하다.
+쥐고 있더라도 멈춰서 수동 확인을 받는 쪽이 안전하다. `backing_timeout_s`는 서버
+`release_timeout_s`(`amr_fleet_manager.yaml` 기본 30 s)보다 작게 둔다 — 서버가 "반납이 안
+온다"고 보고 구역을 다른 로봇에게 넘기기 전에, 이 로봇의 ERROR가 먼저 뜨게 하려고다.
 
 TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BACKING` 중에도 그 순간 0을 낸다(`core`
 상태는 그대로 두고 그 틱만 건너뛴다 — TF가 돌아오면 이어서 재개한다).
@@ -123,7 +125,7 @@ TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BAC
 | `backing_speed_mps` | `0.15` | `BACKING` 후진 속도 (10/11 결정) |
 | `backing_margin_m` | `0.3` | 구역 경계를 벗어난 뒤 이만큼 더 나가면 정지·반납 |
 | `backing_max_distance_m` | `5.0` | `BACKING` 안전장치: 총 후진 거리 한도(fail-closed) |
-| `backing_timeout_s` | `40.0` | `BACKING` 안전장치: 경과 시간 한도(fail-closed) |
+| `backing_timeout_s` | `25.0` | `BACKING` 안전장치: 경과 시간 한도(fail-closed). 서버 `release_timeout_s`(30 s)보다 작게 |
 | `lookahead_m` | `0.0` (= `trigger_distance_m + 2.0`) | 아직 안 건드린 구역을 로봇 앞 이 거리까지만 찾는다. `0.0`이면 `trigger_distance_m`에 여유를 더해 자동으로 정한다 |
 | `zone_requests_topic` | `/fleet/zone_requests` | 로봇 → 서버 토픽. 다른 파라미터처럼 `declare_parameter`로 선언돼 있지만, 장애 주입기가 중계하지 않는 절대 토픽이라 네임스페이스와 상관없이 항상 같은 기본값을 쓴다(`fleet_manager_node.py`) — 보통 바꿀 일이 없다 |
 | `safety_status_topic` | `safety/status` | `SafetyStatus` 상대 이름 ('SafetyStatus 연동' 절 참고) |

@@ -129,9 +129,10 @@ class ZoneClientConfig:
     # 안전장치(fail-closed): 후진 시작 위치에서 이 거리를 넘으면 멈추고 ERROR. 가장 큰 구역도
     # 충분히 빠져나올 수 있는 여유(수 m)를 둔다 - zones.yaml 구역 크기에 맞춰 조정한다.
     backing_max_distance_m: float = 5.0
-    # 안전장치(fail-closed): 후진을 시작한 뒤 이 시간을 넘으면 멈추고 ERROR. backing_speed_mps로
-    # backing_max_distance_m를 다 가는 시간(기본값 기준 33 s)보다 넉넉히 크게 둔다.
-    backing_timeout_s: float = 40.0
+    # 안전장치(fail-closed): 후진을 시작한 뒤 이 시간을 넘으면 멈추고 ERROR. 서버
+    # release_timeout_s(#124 fleet_manager.yaml 기본 30 s)보다 작게 둔다 - 그래야 서버가
+    # 구역을 다른 로봇에게 넘기기 전에 이 로봇의 ERROR가 먼저 뜬다.
+    backing_timeout_s: float = 25.0
 
 
 class ZoneClientCore:
@@ -372,12 +373,16 @@ class ZoneClientCore:
             return (f'구역 {zone_id} 진입 거부 (reason={reason}, '
                     f'holder={holder_robot_id or "-"}) → 진입하지 않음, {self._config.retry_period_s}초 뒤 재시도')
         if grant == GRANT_REVOKED:
+            # holder_robot_id는 REVOKED에서 "양보받는 로봇"이다(REJECTED의 "점유 중인 로봇"과 다른
+            # 뜻, amr_fleet_core README '구역 허가' 절) - yield_to로 적어 혼동하지 않게 한다.
             if state.phase is Phase.APPROACHING:
                 state.phase = Phase.BLOCKED
                 state.last_sent = now
                 state.pending_release = True
-                return (f'구역 {zone_id} 허가 회수(교착 해소, reason={reason}) → 진입하지 않고 반납, '
+                return (f'구역 {zone_id} 허가 회수(교착 해소, reason={reason}, '
+                        f'yield_to={holder_robot_id or "-"}) → 진입하지 않고 반납, '
                         f'{self._config.retry_period_s}초 뒤 재시도')
             state.phase = Phase.BACKING  # INSIDE에서 받음 - 다음 틱부터 직접 후진
-            return f'구역 {zone_id} 허가 회수(교착 해소, reason={reason}) → 후진 시작'
+            return (f'구역 {zone_id} 허가 회수(교착 해소, reason={reason}, '
+                    f'yield_to={holder_robot_id or "-"}) → 후진 시작')
         return None

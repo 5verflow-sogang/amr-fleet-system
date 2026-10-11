@@ -42,5 +42,7 @@
     # 안전장치(fail-closed): 후진 시작 위치에서 이 거리를 넘으면 멈추고 ERROR. zones.yaml 구역
     # 크기에 맞춰 조정한다 - 기본값은 수 m 구역을 넉넉히 빠져나올 여유다
     backing_max_distance_m: 5.0
-    # 안전장치(fail-closed): 후진을 시작한 뒤 이 시간을 넘으면 멈추고 ERROR
-    backing_timeout_s: 40.0
+    # 안전장치(fail-closed): 후진을 시작한 뒤 이 시간을 넘으면 멈추고 ERROR. 서버
+    # release_timeout_s(amr_fleet_manager.yaml 기본 30 s)보다 작게 둔다 - 서버가 구역을
+    # 다른 로봇에게 넘기기 전에 이 로봇의 ERROR가 먼저 뜨게 하려고
+    backing_timeout_s: 25.0
