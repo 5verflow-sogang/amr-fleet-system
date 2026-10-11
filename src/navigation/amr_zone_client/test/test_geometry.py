@@ -5,7 +5,8 @@ import math
 import pytest
 
 from amr_zone_client.geometry import (
-    combine_caps, point_in_rect, ramp_cap_down, remaining_distance_to_rect, speed_cap_for_stop,
+    combine_caps, distance, point_in_rect, ramp_cap_down, ramp_speed, remaining_distance_to_rect,
+    speed_cap_for_stop,
 )
 
 RECT = (5.0, 6.0, -1.0, 1.0)
@@ -124,3 +125,30 @@ def test_ramp_cap_down_current_speed_none_keeps_old_behavior():
     # 안 주면(기본값 None) 기존처럼 no_limit_value에서부터 내려간다
     result = ramp_cap_down(0.0, None, dt=0.1, decel=1.0, no_limit_value=2.0)
     assert result == pytest.approx(1.9)
+
+
+# --- distance, ramp_speed (BACKING 후진 속도 가감속, 10/11 결정) ---
+
+
+def test_distance_basic():
+    assert distance((0.0, 0.0), (3.0, 4.0)) == pytest.approx(5.0)
+
+
+def test_ramp_speed_increases_within_rate():
+    # rate(1.0) x dt(0.1) = 0.1 이내로만 올라간다
+    assert ramp_speed(0.0, 0.15, dt=0.1, rate=1.0) == pytest.approx(0.1)
+
+
+def test_ramp_speed_reaches_target_when_within_step():
+    # 남은 차이(0.05)가 이번 틱 최대 변화량(0.1)보다 작으면 바로 target
+    assert ramp_speed(0.05, 0.15, dt=0.1, rate=1.0) == pytest.approx(0.15)
+
+
+def test_ramp_speed_decreases_within_rate_symmetric():
+    # 내려갈 때도 같은 rate로 - ramp_cap_down과 달리 올릴 때도 같게 묶는다(후진 시작도
+    # 느닷없이가 아니라 가속해야 해서)
+    assert ramp_speed(0.15, 0.0, dt=0.05, rate=1.0) == pytest.approx(0.1)
+
+
+def test_ramp_speed_dt_zero_keeps_current():
+    assert ramp_speed(0.05, 0.15, dt=0.0, rate=1.0) == 0.05
