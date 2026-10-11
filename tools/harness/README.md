@@ -212,7 +212,7 @@ tools/harness/results/<run_id>/
 | --- | --- | --- |
 | `git_sha` | `9ef33ea` | 어느 코드로 나온 결과인지 |
 | `scenario`, `repeat`, `seed` | `loc_square_10m`, `3`, `42` | 반복·재현. Fleet 시나리오의 `seed`는 작업 생성기 seed이고, 넣은 작업 일정은 `tasks.json`(JSON Task 파일, `task_generator`의 `schedule_out`)에 남는다 |
-| `fault` | `{"delay_ms": 100, "loss_pct": 0, "direction": "server_to_robot", "relay_auction": false, "kill_at_s": 60, "restart_after_s": 10}` | 연구 1 조건별 비교. 서버 강제종료가 없으면 `kill_at_s`는 -1. `direction`은 지연·손실을 건 방향(`server_to_robot`, 역방향 추가 시 `both`). `relay_auction`은 분산 경매 토픽(로봇 → 로봇)에도 걸었는지 (분산·하이브리드 비교군은 `true`) |
+| `fault` | `{"delay_ms": 100, "loss_pct": 0, "direction": "server_to_robot", "relay_auction": false, "kill_at_s": 60, "restart_after_s": 10, "kill_robot": "amr_03", "kill_robot_at_s": 120}` | 연구 1 조건별 비교. 서버 강제종료가 없으면 `kill_at_s`는 -1. 로봇 장애가 없으면 `kill_robot`은 `none`, `kill_robot_at_s`는 -1 (`fault_events.csv`에 `robot_kill:<로봇>`). `direction`은 지연·손실을 건 방향(`server_to_robot`, 역방향 추가 시 `both`). `relay_auction`은 분산 경매 토픽(로봇 → 로봇)에도 걸었는지 (분산·하이브리드 비교군은 `true`) |
 | `num_robots` | `5` | 다중 로봇 조건 |
 | `assignment_algorithm`, `cost_fn` | `hungarian`, `euclidean` | 할당 알고리즘 비교. 비용 함수가 다르면 `total_cost`끼리 비교할 수 없다 |
 | `controller` | `pure_pursuit` · `stanley` | 경로 추종 제어기 비교 (이진 요청, #5) |
