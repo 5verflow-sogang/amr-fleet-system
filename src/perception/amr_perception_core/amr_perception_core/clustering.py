@@ -8,6 +8,9 @@
 멀수록 이웃 빔 사이 간격이 벌어지므로(10 m에서 0.5°는 약 9 cm) 고정 임계값으로는 먼 물체가 쪼개지거나
 가까운 물체끼리 붙는다. λ는 빔과 표면이 이루는 가장 얕은 각도로, 이보다 비스듬한 표면은 끊어진다.
 
+LiDAR 높이(약 0.2 m)에서 사람은 다리 두 개로 보인다. 작은 군집 두 개가 가까우면 한 사람으로 묶는다
+(merge_leg_pairs). 묶지 않으면 사람 하나가 가는 장애물 두 개로 추적된다.
+
 무효 빔(REP 117: NaN, ±inf)은 점으로 쓰지 않는다. 물체 안에서 빠진 빔 몇 개(max_gap_beams 이하)는
 건너뛰고 이어 붙이되, 빠진 각도만큼 임계값을 늘린다.
 """
@@ -34,12 +37,19 @@ class ClusteringConfig:
     # R1 크기 규칙: 군집 안 두 점 사이 최대 거리(extent)가 이보다 크면 벽·랙 면 같은 구조물로 본다 [m].
     # 사람(약 0.5 m), 다른 AMR(0.6 × 0.4 m), 지게차 측면(약 2 m 이하 가정)을 통과시키는 값
     max_obstacle_extent: float = 2.0
+    # 다리 묶기: 보이는 크기가 leg_max_extent [m] 이하인 군집 두 개의 중심이 leg_merge_distance [m]
+    # 안이면 한 물체로 합친다. 0.6 m는 사람 어깨너비 수준 (Gazebo 작업자 다리 간격으로 확인한다).
+    # leg_merge_distance를 0으로 두면 묶지 않는다
+    leg_max_extent: float = 0.35
+    leg_merge_distance: float = 0.6
+    # 튄 점 하나 건너뛰기: 한 점 건너 이웃이 이어지면 가운데 점과 양쪽도 잇는다 (cluster_scan 설명)
+    bridge_single_outlier: bool = True
 
     def __post_init__(self):
         if not 0.0 < self.breakpoint_lambda_deg < 90.0:
             raise ValueError(
                 f'breakpoint_lambda_deg는 (0, 90) 범위여야 한다: {self.breakpoint_lambda_deg}')
-        for name in ('range_noise_std', 'max_obstacle_extent'):
+        for name in ('range_noise_std', 'max_obstacle_extent', 'leg_max_extent'):
             value = getattr(self, name)
             if not (math.isfinite(value) and value > 0.0):
                 raise ValueError(f'{name}는 양수여야 한다: {value}')
@@ -47,6 +57,8 @@ class ClusteringConfig:
             raise ValueError(f'max_gap_beams는 0 이상의 정수여야 한다: {self.max_gap_beams}')
         if int(self.min_points) != self.min_points or self.min_points < 1:
             raise ValueError(f'min_points는 1 이상의 정수여야 한다: {self.min_points}')
+        if not (math.isfinite(self.leg_merge_distance) and self.leg_merge_distance >= 0.0):
+            raise ValueError(f'leg_merge_distance는 0 이상이어야 한다: {self.leg_merge_distance}')
 
 
 @dataclass(frozen=True)
@@ -132,12 +144,33 @@ def cluster_scan(
         limit = breakpoint_distance(r[i], beam_gap * angle_increment, config)
         return float(np.linalg.norm(points[j] - points[i])) <= limit
 
-    groups: List[List[int]] = [[int(indices[0])]]
-    for prev, cur in zip(indices[:-1], indices[1:]):
-        if connected(prev, cur, int(cur - prev)):
-            groups[-1].append(int(cur))
-        else:
-            groups.append([int(cur)])
+    # 이웃한 유효 빔끼리 이어지는지를 numpy로 한 번에 판정한다 (connected와 같은 규칙, 빔 수백 개를
+    # 한 쌍씩 Python으로 보던 것이 처리 시간의 대부분이었다)
+    prev, cur = indices[:-1], indices[1:]
+    gap = cur - prev
+    step = gap * angle_increment
+    lam = math.radians(config.breakpoint_lambda_deg)
+    noise = 3.0 * config.range_noise_std
+    shallow = step < lam
+    denom = np.where(shallow, np.sin(lam - step), 1.0)
+    limit = np.where(shallow, r[prev] * np.sin(step) / denom + noise, noise)
+    dist = np.linalg.norm(points[cur] - points[prev], axis=1)
+    linked = (gap - 1 <= config.max_gap_beams) & (dist <= limit)
+    if config.bridge_single_outlier and indices.size >= 3:
+        # 튄 점 하나 건너뛰기. 한계의 3σ는 점 하나의 거리 잡음인데, 실제로 비교하는 것은 잡음 낀 거리 둘의
+        # 차이(σ√2)다. 그래서 가까운 벽(기하 항이 작다)에서는 이웃 점 쌍이 약 1% 확률로 끊겨, 벽이 프레임마다
+        # 다른 곳에서 조각났다 (Gazebo, 벽 0.6 m 앞 프레임당 1.4번). 조각 중심이 벽을 따라 뛰어 동적 트랙이
+        # 됐다. 한 점 건너 이웃 (a, c)가 이어지면 가운데 점 b의 양쪽 연결을 모두 잇는다. 한계값은 그대로라
+        # 물체 사이의 진짜 틈은 그대로 끊긴다 (두 점 이상 이어진 물체를 건너뛰지 않는다).
+        # (a, c) 한계는 두 칸 각도로 새로 구하지 않고 한 칸 한계 중 큰 쪽을 쓴다. 두 칸 각도면 기하 항이
+        # 두 배가 되어, 벽 0.2 m 앞에 선 사람(1.5 m 거리 한 칸 한계 0.17 m)이 벽에 붙어 버린다
+        a, c = indices[:-2], indices[2:]
+        limit2 = np.maximum(limit[:-1], limit[1:])
+        dist2 = np.linalg.norm(points[c] - points[a], axis=1)
+        bridged = (c - a - 2 <= config.max_gap_beams) & (dist2 <= limit2)
+        linked[:-1] |= bridged
+        linked[1:] |= bridged
+    groups: List[List[int]] = [g.tolist() for g in np.split(indices, np.flatnonzero(~linked) + 1)]
 
     if len(groups) > 1 and _is_full_circle(r.size, angle_increment):
         last, first = groups[-1][-1], groups[0][0]
@@ -151,5 +184,60 @@ def cluster_scan(
 
 
 def is_obstacle_candidate(cluster: Cluster, config: ClusteringConfig = ClusteringConfig()) -> bool:
-    """R1 크기 규칙: 벽·랙 면처럼 큰 군집이 아니면 장애물 후보다."""
+    """R1 크기 규칙: 벽·랙 면처럼 큰 군집이 아니면 장애물 후보다.
+
+    extent는 모든 점 쌍을 보므로(점 N개면 N²) 점이 수백 개인 벽 군집에서 느리다. 양 끝 점 거리는
+    extent보다 클 수 없으므로, 그것만으로 기준을 넘으면 extent를 계산하지 않고 바로 뺀다.
+    """
+    ends = float(np.linalg.norm(cluster.points[-1] - cluster.points[0]))
+    if ends > config.max_obstacle_extent:
+        return False
     return cluster.extent <= config.max_obstacle_extent
+
+
+def merge_leg_pairs(clusters: Sequence[Cluster],
+                    config: ClusteringConfig = ClusteringConfig()) -> List[Cluster]:
+    """작은 군집 두 개(다리 한 쌍)의 중심이 leg_merge_distance 안이면 하나로 합친다.
+
+    가까운 쌍부터 묶고, 한 군집은 한 번만 묶는다 (사람 셋이 붙어 서도 둘씩만 합쳐진다).
+    합친 군집의 중심은 두 다리 사이, 반경은 두 다리를 감싸는 크기가 된다.
+    """
+    clusters = list(clusters)
+    if config.leg_merge_distance <= 0.0:
+        return clusters
+    small = [i for i, c in enumerate(clusters) if c.extent <= config.leg_max_extent]
+    pairs = []
+    for a_pos, i in enumerate(small):
+        for j in small[a_pos + 1:]:
+            d = float(np.linalg.norm(clusters[i].centroid - clusters[j].centroid))
+            if d <= config.leg_merge_distance:
+                pairs.append((d, i, j))
+    pairs.sort()
+    used, merged = set(), []
+    for _, i, j in pairs:
+        if i in used or j in used:
+            continue
+        used.update((i, j))
+        merged.append(Cluster(
+            points=np.vstack([clusters[i].points, clusters[j].points]),
+            beam_indices=np.concatenate([clusters[i].beam_indices, clusters[j].beam_indices])))
+    return [c for k, c in enumerate(clusters) if k not in used] + merged
+
+
+def detect_obstacles(ranges: Sequence[float], angle_min: float, angle_increment: float,
+                     config: ClusteringConfig = ClusteringConfig()) -> List[Cluster]:
+    """스캔 → 군집화 → R1 크기 규칙 → 다리 묶기. 좌표는 스캔 좌표계 그대로다."""
+    candidates = [c for c in cluster_scan(ranges, angle_min, angle_increment, config)
+                  if is_obstacle_candidate(c, config)]
+    return merge_leg_pairs(candidates, config)
+
+
+def transform_points_2d(points: np.ndarray, yaw: float, translation: Sequence[float]) -> np.ndarray:
+    """(N, 2) 점들을 yaw [rad]만큼 돌리고 translation (tx, ty)만큼 옮긴다 (2D 강체 변환).
+
+    스캔 좌표계(lidar_link) → 고정 좌표계(odom)에 쓴다. LiDAR가 수평이라 2D 변환이면 된다.
+    """
+    pts = np.asarray(points, dtype=float).reshape(-1, 2)
+    c, s = math.cos(yaw), math.sin(yaw)
+    rotation = np.array([[c, -s], [s, c]])
+    return pts @ rotation.T + np.asarray(translation, dtype=float).reshape(2)

@@ -246,8 +246,10 @@ dot -Tpng frames_*.gv -o tf_tree.png
 
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
-| Subscribe | `perception/obstacle_measurements` | `geometry_msgs/msg/PoseArray` | 장애물 위치 측정, `odom` 좌표계. 인지 도메인 내부 |
-| Publish | `perception/obstacles` | `amr_msgs/msg/TrackedObstacleArray` | 확정 트랙의 위치·속도·공분산, `odom` 좌표계 (DWA 입력). `header`는 측정을 그대로 따른다 |
+| Subscribe | `scan` | `sensor_msgs/msg/LaserScan` | 필터된 LiDAR 스캔 (`amr_odometry`). 노드 안에서 군집화한다 (`measurement_source: scan`, 기본) |
+| Subscribe | `perception/obstacle_measurements` | `geometry_msgs/msg/PoseArray` | 시험용 장애물 위치 측정, `odom` 좌표계 (`measurement_source: poses`) |
+| Publish | `perception/obstacles` | `amr_msgs/msg/TrackedObstacleArray` | 확정 트랙의 위치·속도·공분산·반경, `odom` 좌표계 (DWA 입력). `header.stamp`는 스캔 촬영 시각 |
+| Publish | `perception/obstacle_markers` | `visualization_msgs/msg/MarkerArray` | 트랙 원기둥(동적 빨강·정적 회색)·속도 화살표·ID (RViz 확인용) |
 ### amr_fleet_manager
 
 | 종류 | 이름 | 타입 | 설명 |
