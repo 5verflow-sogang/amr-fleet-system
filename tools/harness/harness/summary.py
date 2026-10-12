@@ -105,14 +105,23 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
 def nav_metrics(run_dir: Path) -> dict[str, float]:
     """nav_result.json(목표 1회 주행 결과, experiments/teb_compare/nav_measure.py) → nav.* 지표.
 
-    nav.success는 성공 1·실패 0이라 평균이 성공률이다. 도착 시간은 성공한 실행만 센다.
+    nav.success는 성공(Nav2 도착이고 충돌 없음) 1·실패 0이라 평균이 성공률이다.
+    도착 시간은 둘로 나눈다 (#145 민지 리뷰):
+      nav.arrival_s  성공한 실행만
+      nav.reached_s  Nav2가 목표에 닿은 실행 모두 (충돌 포함)
+    reached_s가 없는 옛 결과는 result가 succeeded일 때의 arrival_s를 Nav2 도착 시간으로 본다.
     값이 없는 지표(장애물 없는 시나리오의 최소 장애물 거리 등)는 빼서 평균에 0이 섞이지 않게 한다.
     """
     out = {}
     for path in sorted(run_dir.glob('**/nav_result.json')):
         r = json.loads(path.read_text(encoding='utf-8'))
         out['nav.success'] = 1.0 if r.get('success') else 0.0
-        for key in ('arrival_s', 'min_obstacle_m', 'path_length_m', 'cte_mean_m', 'cte_max_m'):
+        reached = r.get('reached_s', r.get('arrival_s') if r.get('result') == 'succeeded' else None)
+        if isinstance(reached, (int, float)):
+            out['nav.reached_s'] = float(reached)
+            if r.get('success'):
+                out['nav.arrival_s'] = float(reached)
+        for key in ('min_obstacle_m', 'path_length_m', 'cte_mean_m', 'cte_max_m'):
             if isinstance(r.get(key), (int, float)):
                 out[f'nav.{key}'] = float(r[key])
     return out

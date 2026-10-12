@@ -6,12 +6,13 @@
 
 segments: [선속도 m/s, 각속도 rad/s, 시간 s]를 차례로 보낸다. 구간 사이에 정지 명령을 보낸다.
 command: 셸 명령 하나를 끝날 때까지 돌린다(예: Nav2 목표를 보내고 결과를 재는 스크립트). 그동안 시계를
-돌려 rtf를 잰다. 명령이 0이 아닌 코드로 끝나면 주행 실패로 본다.
+돌려 rtf를 잰다. 명령이 0이 아닌 코드로 끝나거나 timeout_s(실제 시간)를 넘기면 주행 실패로 본다.
+명령은 자기 프로세스 그룹으로 띄워 끝·시간 초과 때 그룹째 정리한다(proc.py) - runner는 시간 초과 때 이
+프로세스를 SIGKILL로 죽여 손자(측정 스크립트)를 못 치우므로, timeout_s는 시나리오 timeout_s보다 짧게 둔다.
 마지막 줄에 {"sim_s", "wall_s", "rtf"} JSON을 출력한다.
 """
 
 import json
-import subprocess
 import sys
 import time
 
@@ -19,6 +20,8 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+
+from proc import TIMEOUT, run_group  # 같은 폴더 (runner가 이 파일을 스크립트로 부른다)
 
 
 def main(argv):
@@ -61,12 +64,14 @@ def main(argv):
         spin_for(float(spec['duration_s']))
     elif mode == 'command':
         # 명령의 출력은 이 프로세스의 stderr(drive.log)로 보낸다. stdout은 마지막 JSON 한 줄만 쓴다
-        proc = subprocess.Popen(spec['cmd'], shell=True, executable='/bin/bash', stdout=sys.stderr,
-                                stderr=sys.stderr)
-        while proc.poll() is None:
-            rclpy.spin_once(node, timeout_sec=0.1)
-        if proc.returncode != 0:
-            print(f'명령 실패 (종료 코드 {proc.returncode}): {spec["cmd"]}', file=sys.stderr)
+        timeout_s = spec.get('timeout_s')
+        code = run_group(spec['cmd'], None if timeout_s is None else float(timeout_s),
+                         poll=lambda: rclpy.spin_once(node, timeout_sec=0.1))
+        if code == TIMEOUT:
+            print(f'명령 시간 초과 ({timeout_s}s), 프로세스 그룹 정리: {spec["cmd"]}', file=sys.stderr)
+            return 1
+        if code != 0:
+            print(f'명령 실패 (종료 코드 {code}): {spec["cmd"]}', file=sys.stderr)
             return 1
     else:
         print(f'알 수 없는 mode: {mode}', file=sys.stderr)

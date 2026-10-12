@@ -105,20 +105,30 @@ def test_fleet_task_and_recovery_metrics(tmp_path):
     assert m['fleet.reclaimed_tasks'] == 0 and 'fleet.recovery_s.mean' not in m
 
 
+def write_nav(root: Path, name: str, **result) -> Path:
+    run = root / name
+    run.mkdir()
+    (run / 'nav_result.json').write_text(json.dumps(result))
+    return run
+
 
 def test_nav_metrics(tmp_path):
-    # 목표 주행 1회 결과(nav_result.json): 성공은 1/0, 값이 없는 지표(장애물 없는 시나리오)는 뺀다
-    ok = tmp_path / 'ok'
-    ok.mkdir()
-    (ok / 'nav_result.json').write_text(json.dumps({
-        'success': True, 'arrival_s': 12.5, 'min_obstacle_m': None, 'path_length_m': 3.4,
-        'cte_mean_m': 0.02, 'cte_max_m': 0.08}))
-    m = nav_metrics(ok)
-    assert m == {'nav.success': 1.0, 'nav.arrival_s': 12.5, 'nav.path_length_m': 3.4,
-                 'nav.cte_mean_m': 0.02, 'nav.cte_max_m': 0.08}
-    bad = tmp_path / 'bad'
-    bad.mkdir()
-    (bad / 'nav_result.json').write_text(json.dumps({
-        'success': False, 'arrival_s': None, 'min_obstacle_m': 0.12, 'path_length_m': 1.0}))
+    # 성공: 도착 시간이 arrival_s(성공만)·reached_s(Nav2 도착 모두) 둘 다. 값이 없는 지표는 뺀다
+    ok = write_nav(tmp_path, 'ok', result='succeeded', success=True, collision=False, reached_s=12.5,
+                   arrival_s=12.5, min_obstacle_m=None, path_length_m=3.4, cte_mean_m=0.02, cte_max_m=0.08)
+    assert nav_metrics(ok) == {'nav.success': 1.0, 'nav.arrival_s': 12.5, 'nav.reached_s': 12.5,
+                               'nav.path_length_m': 3.4, 'nav.cte_mean_m': 0.02, 'nav.cte_max_m': 0.08}
+    # 충돌했지만 Nav2는 도착: reached_s만, arrival_s 평균에는 안 섞인다 (#145 민지 리뷰)
+    hit = write_nav(tmp_path, 'hit', result='succeeded', success=False, collision=True, reached_s=39.5,
+                    arrival_s=39.5, min_obstacle_m=0.0, path_length_m=4.4)
+    m = nav_metrics(hit)
+    assert m['nav.success'] == 0.0 and m['nav.reached_s'] == 39.5 and 'nav.arrival_s' not in m
+    # reached_s가 없는 옛 결과: result가 succeeded면 arrival_s를 Nav2 도착 시간으로 본다
+    old = write_nav(tmp_path, 'old', result='succeeded', success=False, arrival_s=7.2, min_obstacle_m=0.0)
+    m = nav_metrics(old)
+    assert m['nav.reached_s'] == 7.2 and 'nav.arrival_s' not in m
+    # 도착 못 함
+    bad = write_nav(tmp_path, 'bad', result='aborted', success=False, arrival_s=None, min_obstacle_m=0.12,
+                    path_length_m=1.0)
     assert nav_metrics(bad) == {'nav.success': 0.0, 'nav.min_obstacle_m': 0.12, 'nav.path_length_m': 1.0}
     assert nav_metrics(tmp_path / 'none') == {}

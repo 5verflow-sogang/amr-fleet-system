@@ -43,9 +43,13 @@ processes:
 driver:
   mode: command
   use_sim_time: true
+  # 시나리오 timeout_s(600)보다 짧게 - drive.py가 먼저 끝내야 측정 스크립트 프로세스 그룹을 정리할 수 있다
+  timeout_s: 570
   cmd: >-
     python3 /repo/experiments/teb_compare/nav_measure.py --controller {controller} --scenario {scenario}
     --out {run_dir}/nav_result.json
 cleanup:
   - pkill -9 -f "[i]gn gazebo" || true
   - pkill -9 -f "[p]arameter_bridge" || true
+  # drive.py가 SIGKILL로 죽으면 측정 스크립트가 남는다 (drive.py가 정상·시간 초과로 끝나면 이미 정리돼 있다)
+  - pkill -9 -f "[n]av_measure.py" || true
