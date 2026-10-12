@@ -17,7 +17,7 @@ def point_in_rect(xy: Point, rect: Rect) -> bool:
     return x_min <= x <= x_max and y_min <= y <= y_max
 
 
-def _dist(a: Point, b: Point) -> float:
+def distance(a: Point, b: Point) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
@@ -48,9 +48,9 @@ def _closest_index(path_xy: Sequence[Point], robot_xy: Point) -> int:
     """robot_xy와 가장 가까운 path_xy의 인덱스. 경로가 로봇 뒤쪽 점도 담고 있을 때,
     그 지난 점들부터 거리를 쌓지 않으려고 쓴다(하연 리뷰, #66)."""
     best_index = 0
-    best_distance = _dist(robot_xy, path_xy[0])
+    best_distance = distance(robot_xy, path_xy[0])
     for i in range(1, len(path_xy)):
-        d = _dist(robot_xy, path_xy[i])
+        d = distance(robot_xy, path_xy[i])
         if d < best_distance:
             best_distance = d
             best_index = i
@@ -79,9 +79,9 @@ def remaining_distance_to_rect(
             return None
         hit = _segment_rect_entry(prev, point, rect)
         if hit is not None:
-            distance = total + _dist(prev, hit)
-            return None if (max_distance is not None and distance > max_distance) else distance
-        total += _dist(prev, point)
+            hit_distance = total + distance(prev, hit)
+            return None if (max_distance is not None and hit_distance > max_distance) else hit_distance
+        total += distance(prev, point)
         prev = point
     return None
 
@@ -92,6 +92,22 @@ def speed_cap_for_stop(remaining_to_boundary: float, stop_margin: float, decel: 
     if remaining_to_stopline <= 0.0:
         return 0.0
     return (2.0 * decel * remaining_to_stopline) ** 0.5
+
+
+def ramp_speed(current: float, target: float, dt: float, rate: float) -> float:
+    """current에서 target으로 이번 틱에 rate(단위/s) 이내로만 움직인다 (양방향).
+
+    후진 속도(크기, 항상 0 이상)의 시작·정지를 decel_mps2 이내로 부드럽게 하는 데 쓴다
+    (geometry.speed_cap_for_stop로 정한 목표를 향해, ramp_cap_down과 달리 올라갈 때도 똑같이
+    rate로 묶는다 - 후진 시작도 "느닷없이"가 아니라 가속해야 하므로).
+    """
+    if dt <= 0.0:
+        return current
+    step = rate * dt
+    diff = target - current
+    if abs(diff) <= step:
+        return target
+    return current + (step if diff > 0.0 else -step)
 
 
 def combine_caps(*caps: Optional[float]) -> Optional[float]:
