@@ -3,17 +3,22 @@
     uv run python scripts/evaluate.py raw/proposed_s0_* raw/r2_s0_*                  # S1·S2 각 200개
     uv run python scripts/evaluate.py raw/proposed_s0_* --mass-obs exact plus30 minus30 unknown
     uv run python scripts/evaluate.py raw/proposed_s0_* --scenarios mixed            # 학습과 같은 섞인 분포
+    uv run python scripts/evaluate.py --rule mass_agnostic mass_aware --eval-list 100   # 규칙 정책 (참고 기준선)
 
 결과: raw/eval/<시각>/episodes.csv와 meta.json (실행마다 새 폴더라 앞 결과를 덮어쓰지 않는다).
 
 평가 시나리오는 학습 시드 k마다 다른 목록 k를 쓴다 (seeds.py). 같은 시나리오 시드는 질량·비교군·정보
 조건과 관계없이 같은 시나리오다. S1과 S2는 같은 시드 번호를 쓰므로 시나리오는 (scenario,
 scenario_seed)로 구분한다.
+
+--rule은 학습 없이 규칙 정책(payload_nav/rule_policy.py, 참고 기준선)을 같은 시나리오·열로 평가한다.
+학습 시드가 없으므로 --eval-list가 필요하다. 환경 설정은 --config(기본 config/env_v0.toml)의 [env]다.
+run·variant 열은 rule_agnostic / rule_aware다.
 """
 
 import argparse
 import csv
-from dataclasses import fields
+from dataclasses import asdict, fields, replace
 import datetime
 import hashlib
 import json
@@ -32,9 +37,10 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from payload_nav import (EnvConfig, PayloadNavEnv, RobotParams, ScenarioConfig,  # noqa: E402
-                         eval_seed)
+                         eval_seed, load_experiment)
 from payload_nav.seeds import EVAL_LIST_STRIDE, EVAL_SEED_BASE  # noqa: E402
-from payload_nav.evaluation import run_episode  # noqa: E402
+from payload_nav.evaluation import run_policy_episode  # noqa: E402
+from payload_nav.rule_policy import RULE_VARIANTS, RulePolicy  # noqa: E402
 
 
 def load_env_config(d: dict) -> EnvConfig:
@@ -91,7 +97,11 @@ def mean_or_dash(values, width):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('runs', nargs='+', type=Path)
+    parser.add_argument('runs', nargs='*', type=Path, help='학습 실행 폴더 (raw/<variant>_s<seed>_<시각>)')
+    parser.add_argument('--rule', nargs='+', choices=list(RULE_VARIANTS), default=[],
+                        help='규칙 정책(참고 기준선)도 평가한다. --eval-list가 필요하다')
+    parser.add_argument('--config', type=Path, default=ROOT / 'config' / 'env_v0.toml',
+                        help='--rule이 쓰는 환경 설정 ([env])')
     parser.add_argument('--masses', type=float, nargs='+', default=[0, 2, 10, 25, 15, 30])
     parser.add_argument('--episodes', type=int, default=200, help='시나리오 종류마다 에피소드 수')
     parser.add_argument('--eval-list', type=int, default=None,
@@ -113,13 +123,17 @@ def main():
     if (out_dir / 'episodes.csv').exists():
         sys.exit(f'이미 결과가 있다: {out_dir / "episodes.csv"} (다른 --out-dir을 쓴다)')
 
+    if args.rule and args.eval_list is None:
+        sys.exit('--rule은 학습 시드가 없어 --eval-list가 필요하다 (튜닝은 100번대, 0~9는 최종 평가용)')
+
     rows = []
     runs = [r for r in args.runs if (r / f'{args.checkpoint}_model.zip').exists()]
     for skipped in sorted(set(args.runs) - set(runs)):
         print(f'건너뜀: {skipped} ({args.checkpoint}_model.zip 없음, 학습이 끝나지 않은 실행)')
-    if not runs:
+    if not runs and not args.rule:
         sys.exit('평가할 실행이 없다')
     run_meta = []
+    targets = []   # (run 이름, variant, 학습 시드, 평가 목록, env, act(obs), 정보 조건 목록)
     for run in runs:
         meta = json.loads((run / 'config.json').read_text())
         train_seed = meta['args']['seed']
@@ -141,6 +155,29 @@ def main():
             'vecnormalize_sha256': sha256(run / f'{args.checkpoint}_vecnormalize.pkl'),
             'config_toml_sha256': sha256(run / 'config.toml'),
         })
+
+        def act(obs, model=model, vecnorm=vecnorm):
+            return model.predict(vecnorm.normalize_obs(obs), deterministic=True)[0]
+        targets.append((run.name, meta['variant'], train_seed, eval_list, env, act, run_labels))
+    if args.rule:
+        base = load_experiment(args.config).env
+    for rule in args.rule:
+        policy = RulePolicy(mass_aware=rule == 'mass_aware')
+        # observe_mass는 mass_known 열에만 쓰인다 (규칙 정책은 관측 벡터를 읽지 않는다)
+        env = PayloadNavEnv(replace(base, observe_mass=policy.mass_aware))
+        # 질량을 보지 않는 규칙은 정보 조건이 결과를 바꾸지 않는다
+        run_labels = labels if policy.mass_aware else ['exact']
+        run_meta.append({
+            'run': policy.name, 'variant': policy.name, 'train_seed': None, 'mass_obs': run_labels,
+            'eval_list': args.eval_list,
+            'scenario_seeds': [eval_seed(args.eval_list, 0), eval_seed(args.eval_list, args.episodes - 1)],
+            'rule': {'name': rule, **asdict(policy)},
+            'config': str(args.config), 'config_toml_sha256': sha256(args.config),
+        })
+        targets.append((policy.name, policy.name, None, args.eval_list, env,
+                        lambda obs, policy=policy, env=env: policy(env), run_labels))
+
+    for name, variant, train_seed, eval_list, env, act, run_labels in targets:
         for label in run_labels:
             for scenario in args.scenarios:
                 for mass in args.masses:
@@ -148,8 +185,8 @@ def main():
                         seed = eval_seed(eval_list, ep)
                         options = {'payload_kg': mass, 'mass_obs_kg': mass_obs_for(label, mass),
                                    'popout': SCENARIOS[scenario]}
-                        result = run_episode(model, vecnorm, env, seed, options)
-                        rows.append({'run': run.name, 'variant': meta['variant'],
+                        result = run_policy_episode(act, env, seed, options)
+                        rows.append({'run': name, 'variant': variant,
                                      'train_seed': train_seed, 'eval_list': eval_list,
                                      'scenario': scenario, 'scenario_seed': seed, 'mass_obs': label,
                                      'mass_obs_kg': options['mass_obs_kg'], 'episode': ep, **result})
@@ -167,7 +204,7 @@ def main():
         'eval': {'episodes': args.episodes, 'masses': args.masses, 'scenarios': args.scenarios,
                  'mass_obs': labels, 'checkpoint': args.checkpoint,
                  'eval_seed_base': EVAL_SEED_BASE, 'eval_list_stride': EVAL_LIST_STRIDE,
-                 'eval_list_override': args.eval_list},
+                 'eval_list_override': args.eval_list, 'rules': args.rule},
         'runs': run_meta,
         'host': {'machine': platform.machine(), 'processor': platform.processor() or None,
                  'cpu_count': os.cpu_count(), 'torch_threads': torch.get_num_threads()},
@@ -183,18 +220,18 @@ def main():
     print(f'{"run":36s} {"info":7s} {"sc":5s} {"kg":>4s} {"성공":>5s} {"충돌":>5s} {"초과":>5s} '
           f'{"근접":>5s} {"시간s":>6s} {"충돌v":>6s} {"여유m":>6s} {"멈춤":>4s} {"minTTC":>7s} '
           f'{"출현":>4s} {"장충돌":>5s} {"못섬":>4s}')
-    for run in runs:
-        for label in dict.fromkeys(r['mass_obs'] for r in rows if r['run'] == run.name):
+    for name, *_ in targets:
+        for label in dict.fromkeys(r['mass_obs'] for r in rows if r['run'] == name):
             for scenario in args.scenarios:
                 for mass in args.masses:
-                    sel = [r for r in rows if r['run'] == run.name and r['mass_obs'] == label
+                    sel = [r for r in rows if r['run'] == name and r['mass_obs'] == label
                            and r['scenario'] == scenario and r['payload_kg'] == mass]
                     impacts = [r['impact_speed'] for r in sel if r['collision']]
                     margins = [r['popout_stop_margin'] for r in sel if r['popout_result'] == 'stopped']
                     ttcs = [r['min_ttc'] for r in sel if np.isfinite(r['min_ttc'])]
                     appeared = [r for r in sel if r['popout_appeared']]
                     hits = [r for r in appeared if r['popout_result'] == 'collision']
-                    print(f'{run.name:36s} {label:7s} {scenario:5s} {mass:4.0f} '
+                    print(f'{name:36s} {label:7s} {scenario:5s} {mass:4.0f} '
                           f'{rate([r["success"] for r in sel])} {rate([r["collision"] for r in sel])} '
                           f'{rate([r["timeout"] for r in sel])} {rate([r["near_miss"] for r in sel])} '
                           f'{np.mean([r["time_s"] for r in sel]):6.2f} {mean_or_dash(impacts, 6)} '

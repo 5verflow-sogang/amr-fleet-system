@@ -44,6 +44,7 @@ uv run python scripts/evaluate.py raw/proposed_s0_* raw/r2_s0_* raw/r1_s0_*   # 
 uv run python scripts/evaluate.py raw/proposed_s0_* --mass-obs exact plus30 minus30 unknown   # 정보 조건 4개
 uv run python scripts/evaluate.py raw/proposed_s0_* --scenarios mixed      # 학습과 같은 섞인 분포
 uv run python scripts/evaluate.py raw/r2_s3_* --eval-list 0                # 시드 3 실행을 목록 0으로 (짝짓기 확인용)
+uv run python scripts/evaluate.py --rule mass_agnostic mass_aware --eval-list 100 --scenarios mixed   # 규칙 정책 (참고 기준선)
 uv run tensorboard --logdir raw
 ```
 
@@ -54,6 +55,7 @@ uv run tensorboard --logdir raw
 | `payload_nav/scenarios.py` | 직선 통로(폭 1.2~2.0 m)에서 S1 돌발 장애물(가로지름·멈춰 섬) + S2 정밀 정지. 시나리오는 질량과 무관하게 뽑는다 |
 | `payload_nav/env.py` | gymnasium 환경. 관측 48차원(경로 오차·벽 거리·남은 시간·질량 값 + 앎 여부 포함) |
 | `payload_nav/evaluation.py` | 에피소드 1회 실행과 지표 (학습 콜백·평가 공용) |
+| `payload_nav/rule_policy.py` | 규칙 정책 (참고 기준선, 아래 "규칙 정책") |
 | `payload_nav/seeds.py` | 시드 규칙 (아래) |
 
 **환경 규칙**
@@ -111,6 +113,53 @@ uv run tensorboard --logdir raw
 - 체크포인트는 학습 질량 검증 환경의 성공률로 고른다(`best_*`)
 - 평가 질량 기본값: 학습 0·2·10·25 kg + 미학습 15·30 kg
 - pytest는 `uv.lock`을 바꾸지 않으려고 `--with`로만 쓴다
+
+## 규칙 정책 (참고 기준선)
+
+명세서 4-2절의 "안전 순항 속도를 지키는 규칙 정책"이다(`payload_nav/rule_policy.py`). **정식 비교군(B1·B2·R1·R2·제안)이 아니다.** 환경이 "미리 속도를 줄이면 모든 학습 질량에서 피할 수 있게" 만들어졌는지 확인하고, RL 결과의 충돌률·도착 시간을 읽는 기준으로만 쓴다. 가설 판정(`analyze.py`)에는 들어가지 않고 `per_seed.csv`에만 나온다.
+
+관측 벡터 대신 환경 내부 상태(로봇 위치·속도, 보이는 장애물)를 바로 읽는다. 장애물은 나타난 뒤에만 보이므로 출현 지점은 RL 정책처럼 모른다. 학습이 없어 결정적이다.
+
+- **조향**: 통로 중심선을 따라간다. ω 행동 = clip((−2y − 2θ) / 1.5, −1, 1)
+- **순항**: 안전 순항 속도 $v_{\text{cruise}}(m)$로 달린다. 가장 짧은 출현 간격(0.5 m)에 장애물이 나와도 반응 지연(0.1 s) 뒤 급정지로 서는 가장 빠른 속도다. 출현 지점 하한(`min_trigger_x`), "설 수 있었는지" 판정(`popout_stoppable`)과 같은 식이다
+
+```math
+v\,t_{\text{react}} + \frac{v^2}{2\,a_{\max}(m)} = g_{\min}
+\quad\Rightarrow\quad
+v_{\text{cruise}}(m) = a_{\max}(m)\left(\sqrt{t_{\text{react}}^2 + \frac{2\,g_{\min}}{a_{\max}(m)}} - t_{\text{react}}\right)
+```
+
+$g_{\min}$ = `popout_gap` 하한(0.5 m), $t_{\text{react}}$ = `reaction_s`(0.1 s), $a_{\max}(m)$ = `max_linear_accel`. 0 kg 1.25, 10 kg 1.10, 25 kg 0.95, 30 kg 0.91 m/s다.
+- **장애물**: 진행선(로봇 폭 + 양쪽 0.1 m) 안에 장애물이 보이면 급정지한다(조향 0, 토크를 제동에만 쓴다). 멈춰 선 장애물이면 진행선에서 비킬 때까지 서서 기다렸다가 다시 간다. 옆으로 비켜 가지는 않는다.
+- **목표**: 남은 거리 d에서 v ≤ √(2 · 0.5·a_max(m) · (d − 0.05))로 줄여 목표 바로 앞에서 선다.
+
+| 변형 | `run`·`variant` | 순항·감속에 쓰는 질량 |
+| --- | --- | --- |
+| `mass_agnostic` | `rule_agnostic` | 질량을 모른다. 가장 무거운 학습 질량 25 kg(`guard_payload_kg`) 기준 |
+| `mass_aware` | `rule_aware` | 관측 질량(`mass_obs_kg`). 정보 조건 exact면 실제 질량이고, unknown이면 25 kg 기준(= `mass_agnostic`) |
+
+```bash
+uv run python scripts/evaluate.py --rule mass_agnostic mass_aware --eval-list 100 --scenarios mixed
+uv run python scripts/evaluate.py raw/r2_s0_* --rule mass_aware --eval-list 0     # RL 실행과 같은 CSV에 같이 평가
+```
+
+- 학습 시드가 없어 `--eval-list`가 필요하다. CSV 열은 RL 실행과 같고 `train_seed`는 빈칸이다. 환경 설정은 `--config`(기본 `config/env_v0.toml`)의 `[env]`다.
+- `mass_agnostic`은 질량을 보지 않으므로 R1·R2처럼 exact로 한 번만 평가한다.
+
+**튜닝 목록(100·101) 결과 (10/12)**: `--scenarios mixed`, 목록마다 질량별 200회(두 목록 합쳐 질량별 400회, 돌발 장애물 출현 253회). 최종 평가 목록(0~9)은 쓰지 않았다. 시간 초과·목표 지나침은 0건이다. 도착 시간은 성공 에피소드 평균이다.
+
+| 질량 (kg) | `rule_agnostic` 성공 / 충돌 | 도착 시간 (s) | `rule_aware` 성공 / 충돌 | 도착 시간 (s) |
+| --- | --- | --- | --- | --- |
+| 0 | 100% / 0 | 17.69 | 100% / 0 | 13.75 |
+| 2 | 100% / 0 | 17.68 | 100% / 0 | 14.12 |
+| 10 | 100% / 0 | 17.64 | 100% / 0 | 15.44 |
+| 25 | 100% / 0 | 17.55 | 100% / 0 | 17.55 |
+| 15 (미학습) | 100% / 0 | 17.61 | 100% / 0 | 16.19 |
+| 30 (미학습) | 99.8% / 1건 | 17.53 | 100% / 0 | 18.17 |
+
+- 학습 질량에서는 두 변형 모두 100%다. 환경 설계(출현 지점 하한)대로 미리 속도를 줄이면 모두 피할 수 있다.
+- 질량을 알면 0 kg 도착 시간이 25 kg 기준 순항보다 22% 짧다(13.75 s vs 17.69 s). 명세서의 13.8 s vs 17.4 s와 맞는다.
+- `rule_agnostic` 30 kg 충돌 1건(목록 100)은 25 kg 기준 순항(0.95 m/s)이 30 kg의 안전 순항(0.91 m/s)보다 빨라서다. 간격이 0.5 m 가까이에서 나온 경우로, 출현 순간 이미 설 수 없었다(`못섬` 1, 충돌 속도 0.13 m/s). 25 kg보다 무거운 미학습 질량에서는 질량을 모르는 규칙도 안전을 보장하지 않는다.
 
 ## v0 튜닝 기록 (10/11)
 
