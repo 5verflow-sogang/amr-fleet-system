@@ -56,6 +56,7 @@ class EnvConfig:
     d_safe: float = 0.3                 # m. 명세 긴급정지 거리
     w_smooth: float = 0.05              # 정규화된 명령 변화량(|Δv|/v_max + |Δω|/ω_max)당
     r_collision: float = -40.0          # v0 튜닝 (README "v0 튜닝 기록")
+    w_impact: float = 0.0               # 충돌 순간 속도 [m/s]당 추가 벌점. 0이면 속도와 무관 (v1 튜닝 후보 H)
     r_arrival: float = 10.0
     r_timeout: float = -10.0
     w_overshoot: float = 5.0            # /m
@@ -84,6 +85,15 @@ class _Obstacle:
     vy: float
     radius: float
     hold_until: float = 0.0   # s. 이 시각까지 제자리에 서 있다 (멈춰 서는 장애물)
+
+
+def collision_penalty(c: 'EnvConfig', impact_speed: Optional[float]) -> float:
+    """충돌 종료 보상. r_collision에 충돌 순간 속도에 비례한 벌점(w_impact)을 더한다.
+
+    속도와 무관하면 0.1 m/s로 살짝 닿는 것과 1.5 m/s로 박는 것이 같은 벌이라, 돌발 장애물이 나올 수 있는
+    구간에서 미리 감속할 이유가 약하다 (v1 튜닝 진단: 멈춰 선 장애물 충돌 대부분이 "이미 설 수 없던" 경우).
+    """
+    return c.r_collision - c.w_impact * abs(impact_speed or 0.0)
 
 
 class PayloadNavEnv(gym.Env):
@@ -200,7 +210,7 @@ class PayloadNavEnv(gym.Env):
 
         outcome = None
         if collided:
-            reward += c.r_collision
+            reward += collision_penalty(c, self.impact_speed)
             outcome = 'collision'
             if self.popout_result is None and self.popout_appeared and self.collision_with == 'obstacle':
                 self.popout_result = 'collision'

@@ -1,0 +1,124 @@
+"""여러 학습 실행의 검증 곡선을 겹쳐 그리고 요약 지표로 비교한다 (README "학습 곡선 비교").
+
+    uv run python scripts/plot_curves.py --out raw/curves/v1 \
+        --group F raw/proposed_s100_20261011-182026 raw/proposed_s101_20261011-184621 \
+        --group H raw/proposed_s100_20261012-164424 raw/proposed_s101_20261012-164429
+
+그룹(후보)마다 시드 평균 곡선과 최소~최대 범위(음영), 시드별 곡선(가는 선)을 그린다.
+결과: <out>/curves.png, curves.csv(모든 점), summary.csv와 화면 출력(실행·그룹별 요약 지표).
+"""
+
+import argparse
+import csv
+from pathlib import Path
+import sys
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from payload_nav.curves import curve_summary, mean_band  # noqa: E402
+
+# (TensorBoard 태그, 그래프 제목, 요약에 쓸 기준값). 없는 태그는 건너뛴다 (예전 실행에는 timeout이 없다)
+PANELS = [('eval/success_rate', '검증 성공률', 0.8),
+          ('eval/collision_rate', '검증 충돌률', None),
+          ('eval/timeout_rate', '검증 시간 초과율', None)]
+COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#8a63d2', '#c9a227', '#d6457a']
+
+
+def read_run(run: Path) -> dict:
+    tb = sorted((run / 'tb').glob('*/'))
+    if not tb:
+        raise FileNotFoundError(f'TensorBoard 기록이 없다: {run}')
+    ea = EventAccumulator(str(tb[0]))
+    ea.Reload()
+    tags = set(ea.Tags()['scalars'])
+    return {tag: ([e.step for e in ea.Scalars(tag)], [e.value for e in ea.Scalars(tag)])
+            for tag, _, _ in PANELS if tag in tags}
+
+
+# 한글 글꼴 파일 (Windows·WSL, Linux, macOS 순). 이름만으로는 matplotlib이 못 찾는 경우가 있어 파일을 등록한다
+KOREAN_FONTS = ['/mnt/c/Windows/Fonts/malgun.ttf', 'C:/Windows/Fonts/malgun.ttf',
+                '/usr/share/fonts/truetype/nanum/NanumGothic.ttf',
+                '/System/Library/Fonts/AppleSDGothicNeo.ttc', '/System/Library/Fonts/Supplemental/AppleGothic.ttf']
+
+
+def use_korean_font():
+    for path in KOREAN_FONTS:
+        if Path(path).exists():
+            matplotlib.font_manager.fontManager.addfont(path)
+            plt.rcParams['font.family'] = matplotlib.font_manager.FontProperties(fname=path).get_name()
+            plt.rcParams['axes.unicode_minus'] = False
+            return
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--group', nargs='+', action='append', required=True, metavar=('NAME', 'RUN'),
+                   help='후보 이름과 실행 폴더들 (여러 번)')
+    p.add_argument('--out', type=Path, required=True)
+    args = p.parse_args()
+    args.out.mkdir(parents=True, exist_ok=True)
+
+    groups = {g[0]: [Path(r) for r in g[1:]] for g in args.group}
+    data = {name: {run.name: read_run(run) for run in runs} for name, runs in groups.items()}
+    panels = [pn for pn in PANELS if any(pn[0] in d for runs in data.values() for d in runs.values())]
+
+    use_korean_font()
+    fig, axes = plt.subplots(1, len(panels), figsize=(5.2 * len(panels), 4.2), squeeze=False)
+    rows, summary = [], []
+    for gi, (name, runs) in enumerate(data.items()):
+        color = COLORS[gi % len(COLORS)]
+        for ax, (tag, title, threshold) in zip(axes[0], panels):
+            curves = [(np.asarray(d[tag][0]) / 1e6, d[tag][1]) for d in runs.values() if tag in d]
+            if not curves:
+                continue
+            for s, v in curves:
+                ax.plot(s, v, color=color, lw=0.8, alpha=0.35)
+            grid, mean, low, high = mean_band(curves)
+            ax.fill_between(grid, low, high, color=color, alpha=0.12, lw=0)
+            ax.plot(grid, mean, color=color, lw=2.2, label=f'{name} (시드 {len(curves)}개)')
+            ax.set_title(title)
+        for run_name, d in runs.items():
+            for tag, title, threshold in panels:
+                if tag not in d:
+                    continue
+                for step, value in zip(*d[tag]):
+                    rows.append({'group': name, 'run': run_name, 'tag': tag, 'step': step, 'value': value})
+                sm = curve_summary(*d[tag], threshold=threshold if threshold else 1.01)
+                summary.append({'group': name, 'run': run_name, 'tag': tag, **sm})
+
+    for ax in axes[0]:
+        ax.set_xlabel('학습 스텝 (백만)')
+        ax.set_ylim(0, 1)
+        ax.grid(alpha=0.3)
+    axes[0][0].legend(loc='lower right', fontsize=9)
+    fig.tight_layout()
+    fig.savefig(args.out / 'curves.png', dpi=150)
+
+    with open(args.out / 'curves.csv', 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=['group', 'run', 'tag', 'step', 'value'])
+        w.writeheader()
+        w.writerows(rows)
+    keys = ['group', 'run', 'tag', 'points', 'last_step', 'auc', 'final', 'peak', 'drop', 'steps_to']
+    with open(args.out / 'summary.csv', 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=keys)
+        w.writeheader()
+        w.writerows(summary)
+
+    pct = lambda x: '-' if x is None else f'{100 * x:.0f}%'  # noqa: E731
+    print(f'{"후보":6s} {"실행":34s} {"지표":22s} {"점":>3s} {"끝(M)":>6s} {"AUC":>5s} {"최종":>5s} {"최고":>5s} '
+          f'{"하락":>5s} {"80%도달(M)":>9s}')
+    for r in summary:
+        to = '-' if r['steps_to'] is None else f'{r["steps_to"] / 1e6:.2f}'
+        print(f'{r["group"]:6s} {r["run"]:34s} {r["tag"]:22s} {r["points"]:3d} {r["last_step"] / 1e6:6.2f} '
+              f'{pct(r["auc"]):>5s} {pct(r["final"]):>5s} {pct(r["peak"]):>5s} {pct(r["drop"]):>5s} {to:>9s}')
+    print(f'저장: {args.out}/curves.png, curves.csv, summary.csv')
+
+
+if __name__ == '__main__':
+    main()

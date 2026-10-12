@@ -17,7 +17,18 @@ from .seeds import train_env_seed
 def make_model(env_config: EnvConfig, n_envs: int, train_seed: int, ppo_kwargs: dict,
                net_arch: Sequence[int], tensorboard_log: Optional[str] = None,
                verbose: int = 1) -> Tuple[PPO, VecNormalize, int]:
-    """병렬 학습 환경(VecNormalize)과 PPO 모델을 만든다. 반환: (모델, 환경, 학습 환경 시드)."""
+    """병렬 학습 환경(VecNormalize)과 PPO 모델을 만든다. 반환: (모델, 환경, 학습 환경 시드).
+
+    ppo_kwargs의 lr_schedule: "constant"(기본) 또는 "linear"(learning_rate에서 학습 끝에 0까지 선형 감소).
+    """
+    ppo_kwargs = dict(ppo_kwargs)
+    schedule = ppo_kwargs.pop('lr_schedule', 'constant')
+    if schedule == 'linear':
+        lr0 = ppo_kwargs.get('learning_rate', 3e-4)
+        # SB3는 남은 학습 비율(1 → 0)을 넘긴다
+        ppo_kwargs['learning_rate'] = lambda progress_remaining: lr0 * progress_remaining
+    elif schedule != 'constant':
+        raise ValueError(f'lr_schedule은 constant 또는 linear여야 한다: {schedule}')
     env_seed = train_env_seed(train_seed, n_envs)
     venv = make_vec_env(PayloadNavEnv, n_envs=n_envs, seed=env_seed,
                         env_kwargs={'config': env_config})

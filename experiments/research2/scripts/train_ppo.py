@@ -10,6 +10,7 @@ best_model.zip, best_vecnormalize.pkl, final_model.zip, final_vecnormalize.pkl, 
 """
 
 import argparse
+from collections import deque
 from dataclasses import asdict
 import datetime
 import json
@@ -49,11 +50,38 @@ class SuccessEvalCallback(BaseCallback):
         self.logger.record('eval/success_rate', success)
         self.logger.record('eval/collision_rate', float(np.mean([r['collision'] for r in results])))
         self.logger.record('eval/mean_time_s', float(np.mean([r['time_s'] for r in results])))
+        self.logger.record('eval/timeout_rate', float(np.mean([r['outcome'] == 'timeout' for r in results])))
         if success > self.best:
             self.best = success
             self.model.save(self.run_dir / 'best_model.zip')
             self.vecnorm.save(str(self.run_dir / 'best_vecnormalize.pkl'))
         return True
+
+
+class OutcomeLogCallback(BaseCallback):
+    """학습 중 끝난 에피소드의 결과 비율(최근 window개)을 롤아웃마다 기록한다 (outcome/*).
+
+    검증 평가(eval/*)는 정확하지만 듬성듬성하고, 학습 중 성공률만으로는 왜 실패했는지가 곡선에 남지 않는다.
+    학습 중 결과라 무작위 행동이 섞여 있다.
+    """
+
+    OUTCOMES = ('success', 'collision', 'timeout', 'overshoot')
+
+    def __init__(self, window=200):
+        super().__init__()
+        self.recent = deque(maxlen=window)
+
+    def _on_step(self) -> bool:
+        for done, info in zip(self.locals['dones'], self.locals['infos']):
+            if done:
+                self.recent.append(info.get('outcome'))
+        return True
+
+    def _on_rollout_end(self) -> None:
+        if self.recent:
+            for outcome in self.OUTCOMES:
+                self.logger.record(f'outcome/{outcome}_rate',
+                                   sum(o == outcome for o in self.recent) / len(self.recent))
 
 
 def main():
@@ -88,7 +116,7 @@ def main():
          'n_envs': n_envs, 'env_seed_base': env_seed, 'ppo': {**ppo, 'net_arch': net_arch},
          'env': asdict(env_config), 'torch': torch.__version__}, indent=2, ensure_ascii=False))
     callback = SuccessEvalCallback(env_config, venv, run_dir, args.eval_every, args.eval_episodes)
-    model.learn(args.steps, callback=callback)
+    model.learn(args.steps, callback=[callback, OutcomeLogCallback()])
     model.save(run_dir / 'final_model.zip')
     venv.save(str(run_dir / 'final_vecnormalize.pkl'))
     print(f'저장: {run_dir} (검증 최고 성공률 {callback.best:.2f})')
