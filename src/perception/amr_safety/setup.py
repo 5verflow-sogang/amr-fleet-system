@@ -24,6 +24,10 @@ setup(
     entry_points={
         'console_scripts': [
             'safety_node = amr_safety.safety_node:main',
+            # 동적 장애물 회피 KPI(test-plan I17) 기록·판정 (평가 전용, GT 사용)
+            'avoidance_eval = amr_safety.avoidance_eval_node:main',
+            'avoidance_eval_offline = amr_safety.avoidance_eval.cli:offline_main',
+            'avoidance_report = amr_safety.avoidance_eval.cli:report_main',
         ],
     },
 )

@@ -10,7 +10,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harness.runner import fault_meta, render  # noqa: E402
-from harness.summary import fleet_metrics, kpi_verdict, nav_metrics, summarize, to_markdown  # noqa: E402
+from harness.summary import (avoidance_metrics, fleet_metrics, kpi_verdict, nav_metrics,  # noqa: E402
+                             summarize, to_markdown)
 
 
 def make_run(root: Path, name: str, scenario='loc_basic', label='', outcome='completed', rmse=0.02):
@@ -132,3 +133,16 @@ def test_nav_metrics(tmp_path):
                     path_length_m=1.0)
     assert nav_metrics(bad) == {'nav.success': 0.0, 'nav.min_obstacle_m': 0.12, 'nav.path_length_m': 1.0}
     assert nav_metrics(tmp_path / 'none') == {}
+
+
+def test_avoidance_metrics(tmp_path):
+    run = tmp_path / 'r'
+    (run / 'avoidance').mkdir(parents=True)
+    assert avoidance_metrics(run) == {}
+    (run / 'avoidance' / 'avoidance_summary.json').write_text(json.dumps({
+        'robot': 'amr_01', 'collision': {'count': 0, 'min_clearance': 0.15},
+        'deviation': {'max': 0.6}, 'avoidance': {'max_return_s': None}, 'kpi': {'pass': False}}))
+    m = avoidance_metrics(run)
+    assert m == {'avoid.amr_01.collisions': 0, 'avoid.amr_01.min_clearance': 0.15,
+                 'avoid.amr_01.max_deviation': 0.6, 'avoid.amr_01.pass': 0.0}
+    assert kpi_verdict('avoid.amr_01.max_deviation', 0.6, 0.7) is None     # 판정은 avoidance_report

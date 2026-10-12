@@ -1,0 +1,55 @@
+# 동적 장애물 회피 KPI 시나리오 (test-plan I17, 연우·이진). **초안: 아직 한 번도 돌려 보지 않았다.**
+# DWA 회피 모드(TTC 3 s 미만, 이진)와 안전 노드 cmd_vel 체인 통합 뒤 실행해 고친다.
+#
+#   python3 tools/harness/run.py nav_avoidance -n 30
+#   ros2 run amr_safety avoidance_report tools/harness/results/nav_avoidance_<시각>_*   # 30회 판정 (README)
+#
+# 로봇 1대가 world (0, 1.5) → map (goal_x, goal_y)로 가는 동안 작업자 1명이 1.0 m/s로 경로를 가로지른다
+# (amr_safety/config/avoidance_eval_obstacles.yaml). avoidance_eval이 GT로 충돌·경로 이탈·복귀 시간을 잰다.
+#
+# 확인할 것 (첫 실행 때):
+# - nav2_dwa_demo는 launch 15초 뒤(실제 시간) 목표를 보낸다. avoidance_eval을 먼저 띄워 첫 전역 경로(/amr_01/plan)를
+#   놓치지 않게 했다. 장애물 스폰이 목표 뒤로 밀려도 장애물이 계속 왕복하므로 만나긴 한다
+# - 데모에는 EKF가 없어 odom이 diff_drive/odom이다. 추적 노드 odom을 그쪽으로 돌렸다
+# - 안전 노드(amr_safety)는 아직 이 데모의 cmd_vel 체인에 없다 (I17은 DWA + 추적 + 안전 노드). 통합 launch가 생기면 바꾼다
+name: nav_avoidance
+num_robots: 1
+use_sim_time: true
+seed_base: 1
+timeout_s: 400
+params:
+  # 목표 (map 기준). world = map + (0, 1.5) (warehouse_v0)
+  goal_x: 6.0
+  goal_y: 0.0
+  map_origin: "[0.0, 1.5, 0.0]"
+  obstacles_config: $(ros2 pkg prefix amr_safety)/share/amr_safety/config/avoidance_eval_obstacles.yaml
+  # 목표 전송(launch 15초 뒤) + 6 m 주행 + 회피 여유 (시뮬레이션 시간)
+  duration_s: 60
+processes:
+  # 기록을 가장 먼저 띄운다: 첫 전역 경로가 기준 경로다. 장애물 토픽은 1초마다 찾아 붙는다
+  - name: avoidance_eval
+    cmd: >-
+      ros2 run amr_safety avoidance_eval --ros-args -r __ns:=/amr_01
+      -p use_sim_time:=true -p "map_origin_in_world:={map_origin}" -p output_dir:={run_dir}/avoidance
+    stop_first: true
+    wait_files: ["{run_dir}/avoidance/avoidance_summary.json"]
+    settle_s: 2
+  - name: nav
+    cmd: ros2 launch amr_bringup nav2_dwa_demo.launch.py gui:=false goal_x:={goal_x} goal_y:={goal_y}
+    ready_topic: /amr_01/ground_truth/odom
+  - name: obstacles
+    cmd: >-
+      ros2 launch amr_gazebo dynamic_obstacles.launch.py config:={obstacles_config} seed:={seed}
+    ready_topic: /dynamic_obstacles/worker_cross/ground_truth/odom
+  - name: tracking
+    cmd: >-
+      ros2 run amr_tracking tracking_node --ros-args -r __ns:=/amr_01 -r __node:=tracking -r odom:=diff_drive/odom
+      --params-file $(ros2 pkg prefix amr_tracking)/share/amr_tracking/config/tracking.yaml -p use_sim_time:=true
+    ready_topic: /amr_01/perception/obstacles
+driver:
+  mode: wait
+  use_sim_time: true
+  duration_s: "{duration_s}"
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true

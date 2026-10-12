@@ -57,6 +57,59 @@ ros2 service call /amr_01/safety/estop std_srvs/srv/SetBool "{data: true}"
 ros2 topic echo /amr_01/safety/status
 ```
 
+## 회피 평가 (I17)
+
+원 명세 7장 KPI "동적 장애물 회피 30회 충돌 0건, 경로 이탈 1 m 이내, 원래 경로 복귀 5초 이내"([test-plan I17](../../../docs/test-plan.md))를 Gazebo 정답(GT)으로 잰다. 로봇 판단에는 쓰지 않는 **평가 전용** 도구다. 계산은 ROS 비의존 모듈 `amr_safety/avoidance_eval/`(`metrics.py`·`recorder.py`·`cli.py`)이 하고, `avoidance_eval` 노드는 토픽을 받아 넘기기만 한다(`amr_localization` `eval_node`와 같은 구성).
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `ground_truth/odom` | `nav_msgs/msg/Odometry` | 로봇 GT, world 기준 (`amr_gazebo`) |
+| Subscribe | `plan` (`plan_topic`) | `nav_msgs/msg/Path` | Nav2 `planner_server` 전역 경로, map 기준. **처음 받은 경로**를 기준 경로로 고정한다 |
+| Subscribe | `/dynamic_obstacles/<id>/ground_truth/odom` | `nav_msgs/msg/Odometry` | 장애물 GT, world 기준. `obstacle_ids`가 비면 1초마다 찾아 붙는다 |
+| Service | `~/save` | `std_srvs/srv/Trigger` | 지금까지로 계산해 저장. 종료(SIGINT·SIGTERM) 때도 저장 |
+
+**지표 정의**
+
+- **이격 거리** `clearance`: 로봇 차체 사각형(0.6×0.4 m, 중심 = `base_footprint`)과 장애물 충돌체 사이 최소 거리. 장애물 모양은 id 앞부분으로 `amr_gazebo` 모델 충돌체를 쓴다: `worker` 원 r 0.25 m, `forklift` 사각형 1.2×0.9 m, `robot` 사각형 0.6×0.4 m (모르는 종류는 `default_obstacle_radius` 원). 장애물 GT(50 Hz)는 로봇 GT(100 Hz) 시각으로 선형 보간하고, 0.2 s 넘게 끊긴 구간은 모르는 것으로 본다.
+- **충돌**: 이격 거리 ≤ `collision_margin`(0.01 m)인 샘플이 이어진 구간 하나 = 1건. Gazebo 충돌체는 서로 파고들지 않고 닿은 채 멈춰 이격이 정확히 0이 되지 않을 수 있어 0보다 조금 크게 뒀다. 충돌 순간 로봇·장애물 속력을 함께 남긴다. 최소 이격이 0.3 m 미만이면 `near_miss`(명세서 연구 2 안전성 지표).
+- **경로 이탈** `deviation`: 로봇 위치에서 기준 경로 꺾은선까지 최소 거리. 기준 경로는 회피 전에 받은 첫 전역 경로다. Nav2는 주기적으로 재계획해 회피 중 경로가 장애물을 돌아가게 바뀌므로 그 경로로 재면 "원래 경로" 대비 이탈이 0에 가깝게 나온다. 재계획 경로는 `plans.csv`에만 남긴다. 고정 경로로 재려면 `reference_mode:=fixed`, `fixed_path:=[x0, y0, x1, y1, ...]`(map 기준). 기준 경로를 받기 전 샘플은 보지 않는다.
+- **회피 구간과 복귀 시간**: 이탈이 `start_deviation`(0.1 m)을 넘은 시각에 구간이 시작한다(`start_on: deviation`). 그 구간에서 이탈이 `return_deviation`(0.2 m)을 마지막으로 넘은 뒤 0.2 m 이하가 `return_hold_s`(1.0 s) 동안 유지되기 시작한 시각이 복귀 시각이고, **복귀 시간 = 복귀 시각 − 시작 시각**이다. 0.2 m 띠를 벗어나지 않았으면 0, 끝까지 못 돌아오면 미복귀(불합격). 시작 2 s 전(`obstacle_lookback_s`)부터 복귀까지 장애물이 `interaction_distance`(1.5 m, 안전 노드 WARNING 근접 기준과 같음) 안에 있었으면 회피 구간, 아니면 추종 오차 구간으로 보고 복귀 KPI에서 뺀다(이탈 KPI에는 넣는다).
+  - `start_on: proximity`면 장애물이 1.5 m 안에 들어온 시각부터 잰다(서서 기다린 시간까지 들어간다), `either`면 둘 중 먼저.
+- **유효 실행**: 기준 경로가 있고 장애물이 1.5 m 안에 한 번이라도 들어온 실행. 장애물을 안 만난 실행은 회피를 시험한 것이 아니라 30회에 세지 않는다.
+- **실행 합격**: 유효 + 충돌 0건 + 최대 이탈 ≤ 1.0 m + 모든 회피 구간 복귀 ≤ 5.0 s + 목표(기준 경로 끝점 0.3 m 안) 도착. 목표 도착을 넣은 것은 멈춰 서 있기만 해도 충돌·이탈이 0이 되기 때문이다(`require_goal:=false`로 뺄 수 있다).
+- **I17 판정** (`avoidance_report`): 원 명세 KPI가 "30회 모두"라 평균·신뢰구간이 아니라 **최악값**으로 본다. 유효 실행 중 하나라도 불합격이면 FAIL, 불합격이 없는데 유효 실행이 30회보다 적으면 INSUFFICIENT, 아니면 PASS. 하네스 `outcome`이 `completed`가 아닌 실행은 따로 센다.
+
+기준값은 모두 노드 파라미터(`AvoidanceParams` 필드 이름 그대로, 실수 파라미터는 `5.0`처럼 소수점을 붙인다)이고 `avoidance_summary.json`의 `params`에 남는다. 0.1·0.2 m·1.0 s는 초안이다. DWA 회피 모드가 들어간 뒤 장애물 없는 주행의 추종 오차 분포를 보고 확정한다(추종 오차가 0.1 m를 자주 넘으면 회피 구간이 잘게 쪼개진다).
+
+**출력** (`output_dir`, 기본 `/tmp/amr_avoidance/<로봇>_<시각>`)
+
+| 파일 | 내용 |
+| --- | --- |
+| `avoidance.csv` | 로봇 GT 시점마다 `timestamp, robot_x, robot_y, robot_yaw, deviation, clearance, nearest_obstacle, obstacle_speed, episode, collision, robot` (world, m·rad·s, 시뮬레이션 시간) |
+| `avoidance_summary.json` | 충돌 건(시각·장애물·속력), 최소 이격, 최대 이탈, 회피 구간별 시작·최대 이탈·복귀 시간·가장 가까운 장애물과 속력, 목표 도착, KPI 판정, 기준값 |
+| `robot_gt.csv`, `obstacles_gt.csv`, `plans.csv` | 원자료. 받는 즉시 이어 써서 강제 종료돼도 남는다 |
+| `reference_path.csv`, `avoidance_config.json` | 쓴 기준 경로(world), 기록 설정(`map_origin_in_world`·모양·기준값) |
+
+**실행**
+
+```bash
+# 하네스 (초안 시나리오, 아직 미실행): 30회 → 판정
+python3 tools/harness/run.py nav_avoidance -n 30
+ros2 run amr_safety avoidance_report tools/harness/results/nav_avoidance_<시각>_* --out i17.md --json i17.json
+
+# 손으로: 주행 스택을 띄운 뒤
+ros2 run amr_safety avoidance_eval --ros-args -r __ns:=/amr_01 -p use_sim_time:=true \
+    -p "map_origin_in_world:=[0.0, 1.5, 0.0]" -p output_dir:=/tmp/amr_avoidance/run1
+ros2 service call /amr_01/avoidance_eval/save std_srvs/srv/Trigger
+
+# 기준값을 바꿔 다시 계산 (ROS 불필요, python3 -m amr_safety.avoidance_eval.cli offline ...과 같다)
+ros2 run amr_safety avoidance_eval_offline /tmp/amr_avoidance/run1 --set return_deviation=0.15 --out /tmp/re
+```
+
+- `map_origin_in_world`: world에서 본 map 원점 `[x, y, yaw]`. 지도 v0·v1 모두 `[0.0, 1.5, 0.0]`(매핑 시작 자세). 전역 경로(map)를 GT 좌표계(world)로 옮기는 데만 쓴다.
+- `nav_avoidance` 시나리오의 장애물은 [`config/avoidance_eval_obstacles.yaml`](config/avoidance_eval_obstacles.yaml)(작업자 1명, x = 3에서 통로를 1.0 m/s로 가로지름)이다.
+- 정적 장애물(벽·랙)과의 충돌은 보지 않는다. GT에 정적 물체 모양이 없어서다.
+
 ## 테스트
 
 ```bash
