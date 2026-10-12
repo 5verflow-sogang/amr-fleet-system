@@ -424,3 +424,44 @@ def test_training_envs_differ_between_seeds():
 
 def test_training_envs_reproducible():
     assert _first_training_scenarios(5) == _first_training_scenarios(5)
+
+
+# ---------------------------------------------------------------- v1 튜닝 옵션
+def test_collision_penalty_scales_with_impact_speed():
+    from payload_nav.env import collision_penalty
+    assert collision_penalty(EnvConfig(), 1.2) == EnvConfig().r_collision   # 기본 w_impact 0
+    c = EnvConfig(r_collision=-20.0, w_impact=40.0)
+    assert collision_penalty(c, 0.5) == pytest.approx(-40.0)
+    assert collision_penalty(c, -1.0) == pytest.approx(-60.0)               # 후진 충돌도 속도 크기
+    assert collision_penalty(c, None) == pytest.approx(-20.0)
+
+
+def test_linear_lr_schedule():
+    model, _, _ = make_model(EnvConfig(), 2, 0, {'n_steps': 64, 'batch_size': 64, 'learning_rate': 3e-4,
+                                                 'lr_schedule': 'linear'}, [8], verbose=0)
+    assert model.lr_schedule(1.0) == pytest.approx(3e-4)
+    assert model.lr_schedule(0.25) == pytest.approx(7.5e-5)
+    with pytest.raises(ValueError):
+        make_model(EnvConfig(), 2, 0, {'lr_schedule': 'cosine'}, [8], verbose=0)
+
+
+# ---------------------------------------------------------------- 학습 곡선 요약 (plot_curves.py)
+def test_curve_summary():
+    from payload_nav.curves import curve_summary
+    steps = [1, 2, 3, 4, 5]
+    values = [0.1, 0.5, 0.9, 0.7, 0.7]
+    s = curve_summary(steps, values, final_frac=0.25, threshold=0.8)
+    assert s['auc'] == pytest.approx(0.58)
+    assert s['final'] == pytest.approx(0.7)          # 마지막 25% 구간 = 스텝 4·5
+    assert s['peak'] == pytest.approx(0.9)
+    assert s['drop'] == pytest.approx(0.2)           # 최고 뒤 무너진 정도
+    assert s['steps_to'] == 3
+    assert curve_summary(steps, [0.1] * 5)['steps_to'] is None
+
+
+def test_mean_band_uses_common_range():
+    from payload_nav.curves import mean_band
+    grid, mean, low, high = mean_band([([0, 10], [0.0, 1.0]), ([0, 5], [0.0, 0.5])], num=3)
+    assert grid.tolist() == [0.0, 2.5, 5.0]          # 두 시드가 다 있는 0~5까지만
+    assert mean.tolist() == pytest.approx([0.0, 0.25, 0.5])
+    assert (low <= mean).all() and (mean <= high).all()

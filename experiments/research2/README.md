@@ -207,6 +207,36 @@ uv run python scripts/evaluate.py raw/r2_s0_* --rule mass_aware --eval-list 0   
 - 이 결과로 (1) R1·R2가 F 설정에서 무너지지 않는지, (2) 질량별 시간 초과율과 도착 시간, (3) 본 실험 학습량(200만 또는 300만), (4) 시드 수(10 또는 20)를 정한다.
 - 정식 평가(`evaluate.py`, 정보 조건 4개)로 "설 수 있었는데 충돌"이 줄었는지와 무거울수록 느리게 달리는지 본다.
 
+## 학습 곡선 비교 (튜닝)
+
+튜닝 후보는 마지막 값 하나가 아니라 **곡선 전체**로 비교한다. 마지막 값만 보면 빨리 배우는지, 중간에 무너지는지, 시드마다 흔들리는지가 사라진다.
+
+```bash
+uv run python scripts/plot_curves.py --out raw/curves/<이름> \
+    --group F raw/proposed_s100_<시각> raw/proposed_s101_<시각> \
+    --group H raw/proposed_s100_<시각> raw/proposed_s101_<시각>
+```
+
+- 결과: `curves.png`(후보별 시드 평균 + 최소~최대 음영 + 시드별 가는 선), `curves.csv`(모든 점), `summary.csv`
+- 곡선은 실행마다 `raw/<실행>/tb/`의 TensorBoard 기록에서 읽는다 (`uv run tensorboard --logdir raw`로도 볼 수 있다)
+
+| 기록 (TensorBoard 태그) | 주기 | 내용 |
+| --- | --- | --- |
+| `eval/success_rate`·`collision_rate`·`timeout_rate`·`mean_time_s` | `--eval-every` (기본 5만 스텝) | 검증 환경, 평균 행동(deterministic) 100회 |
+| `outcome/success_rate`·`collision_rate`·`timeout_rate`·`overshoot_rate` | 롤아웃마다 (약 1.6만 스텝) | 학습 중 끝난 최근 200개 에피소드의 결과 비율. 무작위 행동이 섞여 있다 |
+| `train/approx_kl` 등 | 업데이트마다 | 학습 안정성 |
+
+| 요약 지표 (`payload_nav/curves.py`) | 뜻 |
+| --- | --- |
+| AUC | 모든 검증 점의 평균. 얼마나 빨리, 꾸준히 배우는지 |
+| 최종 | 마지막 25% 구간 점들의 평균. 끝에서의 성능 (대표값) |
+| 최고 | 여러 번 잰 것 중 최댓값. 위로 치우치므로 참고만 |
+| 하락 | 최고 − 최종. 학습 중에 무너졌는지 |
+| 80% 도달 | 처음 80%를 넘은 스텝. 학습 속도 |
+
+- 같은 학습량에서 비교한다. 후보마다 실행 길이가 다르면 평균 곡선은 모든 시드가 있는 구간까지만 그린다.
+- 튜닝 실행은 검증 점이 충분하도록 `--eval-every` 10만 이하로 둔다 (v0 튜닝은 25만이라 200만 스텝에 8점뿐이었다).
+
 ## 결과 분석 (가설 판정)
 
 `scripts/evaluate.py`가 만든 `episodes.csv`들을 모아 시드별 요약과 H1~H3 판정표를 만든다. 판정 기준은 [명세서 4장](../../docs/project-spec.md)과 실험 설계 메모(#72)를 따른다.
