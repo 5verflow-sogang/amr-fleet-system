@@ -102,8 +102,11 @@ Nav2는 `nav2_params.yaml`의 DWA를 `FollowPath` 이름으로 등록해 쓴다(
 colcon test --packages-select amr_bringup
 ```
 
-- `test/test_robots.py`: 로봇 목록, world → map 변환, 로봇별 seed, 스폰 위치가 동적 장애물 경로·범위(`amr_gazebo config/dynamic_obstacles.yaml`)와 1 m 이상 떨어졌는지 (ROS 없이)
-- `test/test_system_launch.py`: launch를 불러 include하는 파일이 설치돼 있는지, 로봇 수에 맞게 액션이 만들어지는지 (ROS 환경에서만). 실제로 Gazebo를 띄우지는 않는다
+- `test/test_robots.py`: 로봇 목록, world → map 변환, 로봇별 seed, 스폰 위치가 동적 장애물 경로·범위(`amr_gazebo config/dynamic_obstacles.yaml`)와 1 m 이상 떨어졌는지, 속도 체인 규칙 (ROS 없이)
+- `test/test_stack.py`: 로봇 한 대의 launch 목록(`amr_bringup/stack.py`)이 단계·인자에 맞는지 — 순서, 네임스페이스, 속도 토픽, BT `use_nav2`·`use_docking`, 입력 검사 (ROS 없이)
+- `test/test_system_launch.py`: launch를 불러 include하는 파일이 설치돼 있는지, 로봇 수에 맞게 액션이 만들어지는지, 입력 검사 (ROS 환경에서만). 실제로 Gazebo를 띄우지는 않는다
+
+로봇마다 무엇을 띄울지는 `stack.py`에 모아 ROS 없이 테스트한다. launch 객체(`GroupAction`, `TimerAction`, `IncludeLaunchDescription`)의 내부 구조를 테스트에서 뜯어보지 않는다 — Humble에서는 Push/Pop이 끼고, 경로가 펼쳐지기 전엔 `location`이 Substitution의 repr이며, include의 하위 항목을 보면 그 launch 파일을 실제로 불러온다.
 
 ## 미결
 

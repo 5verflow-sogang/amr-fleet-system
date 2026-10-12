@@ -41,7 +41,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from amr_bringup.robots import cmd_vel_chain, encoder_seed, load_robots, world_to_map
+from amr_bringup.robots import load_robots, world_to_map
+from amr_bringup.stack import Options, robot_stack
 
 
 def _launch(package, name, **arguments):
@@ -62,73 +63,30 @@ def _system(context):
     robots = load_robots(arg('robots_file'), int(arg('num_robots')))
     origin = [float(v) for v in yaml.safe_load(arg('map_origin_in_world'))]
     seed = int(arg('seed'))
-    localization = flag('localization')
     fleet = flag('fleet')
-    nav2 = flag('nav2')
-    zone_client = flag('zone_client')
-    safety = flag('safety')
-    if nav2 and not localization:
-        raise RuntimeError('nav2:=true는 map → odom TF를 내는 위치추정이 필요하다 (localization:=true)')
-    for name in ('detection', 'docking'):
-        if flag(name) and not flag('enable_camera'):
-            raise RuntimeError(f'{name}:=true는 카메라가 필요하다 (enable_camera:=true)')
-    chain = cmd_vel_chain(zone_client, safety)
-    nav_out, zone_out, safety_in = chain['nav_out'], chain['zone_out'], chain['safety_in']
-    zones_file = os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', 'zones.yaml')
     interval = float(arg('spawn_interval_s'))
+    # 로봇마다 무엇을 띄울지는 amr_bringup/stack.py가 정한다 (ROS 없이 테스트)
+    opt = Options(
+        localization=flag('localization'), bt=flag('bt'), fleet=fleet, nav2=flag('nav2'),
+        zone_client=flag('zone_client'), tracking=flag('tracking'), safety=flag('safety'),
+        detection=flag('detection'), docking=flag('docking'), enable_camera=flag('enable_camera'),
+        payload_mass=arg('payload_mass'), seed=seed, map=arg('map'), use_imu=arg('use_imu'),
+        zones_file=os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', 'zones.yaml'))
+    opt.validate()
 
     actions = [_launch('amr_gazebo', 'world.launch.py', gui=arg('gui'))]
     if flag('dynamic_obstacles'):
         actions.append(_launch('amr_gazebo', 'dynamic_obstacles.launch.py', seed=seed, use_sim_time='true'))
 
     for i, robot in enumerate(robots):
-        ns = robot.name
-        mx, my, myaw = world_to_map(robot.x, robot.y, robot.yaw, origin)
-        stack = [
-            _launch('amr_gazebo', 'spawn_robot.launch.py',
-                    namespace=ns, x=robot.x, y=robot.y, yaw=robot.yaw,
-                    # EKF(ekf_local)가 odom → base_footprint를 내므로 DiffDrive TF는 끈다 (docs/api.md 2-1절)
-                    publish_odom_tf='false' if localization else 'true',
-                    enable_camera=arg('enable_camera'), payload_mass=arg('payload_mass'), use_sim_time='true'),
-            _launch('amr_odometry', 'odometry.launch.py',
-                    namespace=ns, encoder_seed=encoder_seed(seed, i), use_sim_time='true'),
-            _launch('amr_odometry', 'sensor_filters.launch.py', namespace=ns, use_sim_time='true'),
-        ]
-        if localization:
-            stack.append(_launch(
-                'amr_localization', 'localization.launch.py',
-                namespace=ns, map=arg('map'), start_map_server='true' if i == 0 else 'false',
-                use_imu=arg('use_imu'), initial_x=mx, initial_y=my, initial_yaw=myaw, use_sim_time='true'))
-        if flag('bt'):
-            stack.append(_launch('amr_bt', 'amr_bt.launch.py',
-                                 namespace=ns, relayed='true' if fleet else 'false', use_sim_time='true',
-                                 use_nav2='true' if nav2 else 'false',
-                                 use_docking='true' if flag('docking') else 'false'))
-        if nav2:
-            stack.append(_launch('amr_bringup', 'nav2.launch.py',
-                                 namespace=ns, cmd_vel_topic=nav_out, use_sim_time='true'))
-        if zone_client:
-            # 서버와 같은 구역 목록. 시뮬레이션 프레임은 <ns>/base_footprint라 접두어를 넘긴다
-            stack.append(_launch('amr_zone_client', 'zone_client.launch.py',
-                                 namespace=ns, robot_id=ns, zones_file=zones_file,
-                                 base_frame=f'{ns}/base_footprint', cmd_vel_out_topic=zone_out,
-                                 use_sim_time='true'))
-        if flag('docking'):
-            # 도킹 서버는 Nav2 컨트롤러 자리로 속도를 낸다 (같은 cmd_vel 체인)
-            stack.append(_launch('amr_docking', 'docking.launch.py',
-                                 namespace=ns, cmd_vel_topic=nav_out, use_sim_time='true'))
-        if flag('tracking'):
-            stack.append(_launch('amr_tracking', 'tracking.launch.py', namespace=ns, use_sim_time='true'))
-        if flag('detection'):
-            stack.append(_launch('amr_detection', 'detection.launch.py', namespace=ns, use_sim_time='true'))
-        if safety:
-            stack.append(_launch('amr_safety', 'safety.launch.py',
-                                 namespace=ns, cmd_vel_in_topic=safety_in, use_sim_time='true'))
+        pose = (robot.x, robot.y, robot.yaw)
+        stack = [_launch(inc.package, inc.launch, **inc.arguments)
+                 for inc in robot_stack(opt, i, robot.name, pose, world_to_map(*pose, origin))]
         # 한꺼번에 스폰하면 Gazebo가 수십 초 동안 크게 느려진다(명세서 11-3절 측정). 로봇마다 시차를 둔다
         actions.append(TimerAction(period=i * interval, actions=[GroupAction(stack)]))
 
     if flag('docking'):
-        # (로봇 TimerAction 뒤에 둔다. 테스트가 로봇 순서로 센다) 스테이션 28곳의 ArUco 마커판. 월드가 뜬 뒤 한 번만 스폰한다
+        # 스테이션 28곳의 ArUco 마커판. 월드가 뜬 뒤 한 번만 스폰한다
         actions.append(TimerAction(period=interval, actions=[_launch('amr_docking', 'aruco_markers.launch.py')]))
 
     if fleet:

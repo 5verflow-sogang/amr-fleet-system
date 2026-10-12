@@ -10,8 +10,8 @@ pytest.importorskip('launch_ros')
 pytest.importorskip('ament_index_python')
 import launch  # noqa: E402
 from ament_index_python.packages import get_package_share_directory  # noqa: E402
-from launch.actions import IncludeLaunchDescription, TimerAction  # noqa: E402
-from launch.utilities import normalize_to_list_of_substitutions, perform_substitutions  # noqa: E402
+from launch.actions import TimerAction  # noqa: E402
+from launch.utilities import perform_substitutions  # noqa: E402
 from launch_ros.actions import Node  # noqa: E402
 
 # 이 launch가 include하는 파일. 이름이 바뀌면 여기서 먼저 깨진다
@@ -73,62 +73,12 @@ def test_options_off():
     assert not any(isinstance(a, Node) for a in actions)
 
 
-def _includes(entity):
-    """entity 안(어느 깊이든)의 IncludeLaunchDescription을 순서대로 모은다.
-
-    GroupAction은 앞뒤에 Push/PopLaunchConfigurations를 끼우므로 몇 번째 하위 항목이 include라고 가정하지 않는다.
-    TimerAction은 get_sub_entities()가 비어 있어서 .actions로 내려간다.
-    """
-    if isinstance(entity, IncludeLaunchDescription):
-        return [entity]
-    found = []
-    subs = entity.actions if isinstance(entity, TimerAction) else entity.get_sub_entities()
-    for sub in subs:
-        found.extend(_includes(sub))
-    return found
-
-
-def _text(value):
-    """문자열 또는 Substitution(목록)을 문자열로. include의 location·launch_arguments는 둘 중 어느 쪽으로도 나온다."""
-    if isinstance(value, str):
-        return value
-    return perform_substitutions(launch.LaunchContext(), normalize_to_list_of_substitutions(value))
-
-
-def _include_name(include):
-    return os.path.basename(_text(include.launch_description_source.location))
-
-
-def _robot_stack(actions, index=0):
-    """index번째 로봇의 TimerAction 안 include 목록 (launch 파일 이름)."""
-    timers = [a for a in actions if isinstance(a, TimerAction)]
-    return [_include_name(i) for i in _includes(timers[index])]
-
-
-def test_default_is_stage_one():
+def test_stage_flags_do_not_change_robot_count():
+    # 2·3단계를 켜도 로봇마다 TimerAction 하나 (스택 내용은 test_stack.py가 ROS 없이 본다)
     module = load_module()
-    stack = _robot_stack(module._system(context_with_defaults(module)))
-    assert stack == ['spawn_robot.launch.py', 'odometry.launch.py', 'sensor_filters.launch.py',
-                     'localization.launch.py', 'amr_bt.launch.py']
-
-
-def test_stage_two_adds_nav2_and_zone_client():
-    module = load_module()
-    stack = _robot_stack(module._system(context_with_defaults(module, nav2=True, zone_client=True)))
-    assert stack[-2:] == ['nav2.launch.py', 'zone_client.launch.py']
-
-
-def test_stage_three_adds_tracking_and_safety_last():
-    module = load_module()
-    stack = _robot_stack(module._system(context_with_defaults(
-        module, nav2=True, zone_client=True, tracking=True, safety=True)))
-    assert stack[-4:] == ['nav2.launch.py', 'zone_client.launch.py', 'tracking.launch.py', 'safety.launch.py']
-
-
-def test_each_robot_gets_its_own_stack():
-    module = load_module()
-    actions = module._system(context_with_defaults(module, num_robots=3, nav2=True))
-    assert [_robot_stack(actions, i) for i in range(3)] == [_robot_stack(actions, 0)] * 3
+    actions = module._system(context_with_defaults(
+        module, num_robots=2, nav2=True, zone_client=True, tracking=True, safety=True))
+    assert sum(isinstance(a, TimerAction) for a in actions) == 2
 
 
 def test_nav2_needs_localization():
@@ -137,12 +87,18 @@ def test_nav2_needs_localization():
         module._system(context_with_defaults(module, nav2=True, localization=False))
 
 
-def test_detection_needs_camera():
+@pytest.mark.parametrize('name', ['detection', 'docking'])
+def test_camera_features_need_camera(name):
     module = load_module()
     with pytest.raises(RuntimeError, match='enable_camera'):
-        module._system(context_with_defaults(module, detection=True))
-    stack = _robot_stack(module._system(context_with_defaults(module, detection=True, enable_camera=True)))
-    assert 'detection.launch.py' in stack
+        module._system(context_with_defaults(module, **{name: True}))
+
+
+def test_docking_spawns_markers_once():
+    module = load_module()
+    actions = module._system(context_with_defaults(module, num_robots=3, docking=True, enable_camera=True))
+    # 로봇마다 TimerAction 1 + 마커판 TimerAction 1
+    assert sum(isinstance(a, TimerAction) for a in actions) == 3 + 1
 
 
 def test_nav2_launch_description_builds():
@@ -152,32 +108,3 @@ def test_nav2_launch_description_builds():
     spec.loader.exec_module(module)
     names = {a.name for a in module.generate_launch_description().get_launch_arguments()}
     assert {'namespace', 'use_sim_time', 'params_file', 'odom_topic', 'cmd_vel_topic'} <= names
-
-
-def _bt_arguments(actions):
-    """첫 로봇 스택에서 amr_bt include가 받은 launch 인자."""
-    timers = [a for a in actions if isinstance(a, TimerAction)]
-    for include in _includes(timers[0]):
-        if _include_name(include) == 'amr_bt.launch.py':
-            return {_text(k): _text(v) for k, v in include.launch_arguments}
-    raise AssertionError('amr_bt include 없음')
-
-
-def test_bt_follows_nav2_and_docking_flags():
-    module = load_module()
-    off = _bt_arguments(module._system(context_with_defaults(module)))
-    assert (off['use_nav2'], off['use_docking']) == ('false', 'false')
-    nav = _bt_arguments(module._system(context_with_defaults(module, nav2=True)))
-    assert (nav['use_nav2'], nav['use_docking']) == ('true', 'false')
-    dock = _bt_arguments(module._system(context_with_defaults(module, nav2=True, docking=True, enable_camera=True)))
-    assert (dock['use_nav2'], dock['use_docking']) == ('true', 'true')
-
-
-def test_docking_needs_camera_and_spawns_markers_once():
-    module = load_module()
-    with pytest.raises(RuntimeError, match='enable_camera'):
-        module._system(context_with_defaults(module, docking=True))
-    actions = module._system(context_with_defaults(module, num_robots=3, docking=True, enable_camera=True))
-    # 로봇마다 TimerAction 1 + 마커판 TimerAction 1
-    assert sum(isinstance(a, TimerAction) for a in actions) == 3 + 1
-    assert all('docking.launch.py' in _robot_stack(actions, i) for i in range(3))
