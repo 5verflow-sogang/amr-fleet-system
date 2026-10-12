@@ -1,0 +1,10 @@
+# 위치추정 KPI 최종 측정 (민지, 4주차 작업 4). loc_basic과 같은 주행, 지도 v1 0.025 m + 지도 정렬 보정(B안).
+# map_origin은 amr_mapping README "지도 정렬"의 강체 정합값(#98), AMCL 초기 위치도 그 좌표로 준다.
+#   tools/harness/docker_run.sh loc_kpi_b0025 -n 10      # GCP: fleet-test 워크플로 scenario=loc_kpi_b0025
+name: loc_kpi_b0025
+extends: loc_basic
+params:
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1_0025.yaml
+  map_origin: "[-0.0562, 1.5317, 0.00009]"
+  initial_x: "0.0562"
+  initial_y: "-0.0317"

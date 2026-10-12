@@ -11,6 +11,9 @@ params:
   map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1.yaml
   # world에서 본 map 원점 (지도 인계 때 받은 매핑 시작 자세)
   map_origin: "[0.0, 1.5, 0.0]"
+  # AMCL 초기 위치 (map 좌표). 스폰 자세 world (0, 1.5, 0)을 map_origin 기준으로 바꾼 값
+  initial_x: "0.0"
+  initial_y: "0.0"
   # 동적 장애물 (amr_gazebo #58). 켜면 obstacle_seed로 같은 seed를 쓴다
   dynamic_obstacles: "false"
 processes:
@@ -26,7 +29,7 @@ processes:
     # IMU 바이어스 보정(정지 2초)
     settle_s: 3
   - name: localization
-    cmd: ros2 launch amr_localization localization.launch.py map:={map}
+    cmd: ros2 launch amr_localization localization.launch.py map:={map} initial_x:={initial_x} initial_y:={initial_y}
     ready_topic: /amr_01/odometry/filtered
     # lifecycle 전환 응답이 가끔 유실돼 지도 서버나 AMCL이 inactive로 남는다(10/6 하네스 30회 중 3회).
     # 둘 다 active인지 확인하고, 아니면 기동 실패로 보고 다시 시도한다
