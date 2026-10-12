@@ -77,11 +77,13 @@ def _includes(entity):
     """entity 안(어느 깊이든)의 IncludeLaunchDescription을 순서대로 모은다.
 
     GroupAction은 앞뒤에 Push/PopLaunchConfigurations를 끼우므로 몇 번째 하위 항목이 include라고 가정하지 않는다.
+    TimerAction은 get_sub_entities()가 비어 있어서 .actions로 내려간다.
     """
     if isinstance(entity, IncludeLaunchDescription):
         return [entity]
     found = []
-    for sub in entity.get_sub_entities():
+    subs = entity.actions if isinstance(entity, TimerAction) else entity.get_sub_entities()
+    for sub in subs:
         found.extend(_includes(sub))
     return found
 
