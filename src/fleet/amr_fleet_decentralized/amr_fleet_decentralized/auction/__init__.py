@@ -3,7 +3,8 @@
 from .bidding import compute_bid_cost, decide_bid, estimate_finish_time
 from .decision import decide_winner
 from .lifecycle import (
-    ERROR_CANCELED, award_exhausted, can_retry_failed_task, can_withdraw, should_resend_award,
+    ERROR_CANCELED, TaskRetryLedger, award_exhausted, can_reclaim, can_retry_failed_task,
+    can_withdraw, should_resend_award, winner_lost,
 )
 from .params import AuctionParams
 from .types import (
@@ -23,7 +24,9 @@ __all__ = [
     'Bid',
     'RobotInfo',
     'TaskInfo',
+    'TaskRetryLedger',
     'award_exhausted',
+    'can_reclaim',
     'can_retry_failed_task',
     'can_withdraw',
     'compute_bid_cost',
@@ -31,4 +34,5 @@ __all__ = [
     'decide_winner',
     'estimate_finish_time',
     'should_resend_award',
+    'winner_lost',
 ]

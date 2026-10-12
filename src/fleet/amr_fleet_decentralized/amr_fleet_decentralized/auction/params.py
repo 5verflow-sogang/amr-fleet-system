@@ -17,3 +17,8 @@ class AuctionParams:
     # 재경매하고, 그래도 실패하면 실패로 남긴다. 중앙(fleet_manager.yaml
     # assignment.failed_retries)과 같은 규칙·이름 - 비교군 조건을 같게 둔다.
     failed_retries: int = 1
+    # 낙찰 로봇 장애 회수 (중앙 #132 assignment.reclaim_timeout_s와 같은 규칙): ACCEPT한 낙찰 로봇의
+    # RobotState가 이 시간(실제 시간, s) 동안 안 오면 죽은 것으로 보고 재경매한다. 0 이하면 끈다.
+    reclaim_timeout_s: float = 5.0
+    # 회수 재경매 상한. 음수면 상한 없음(#132와 같음). FAILED 재시도(failed_retries)와 따로 센다.
+    max_reclaims: int = -1

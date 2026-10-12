@@ -24,7 +24,10 @@ fleet/task_auctions, fleet/task_bids로 - 장애 주입기 relay_auction 중계�
 README '확인 필요' 절 참고. 재경매는 두 가지 - AWARD 재전송 다 썼는데 ACCEPT 없음,
 그리고 ACCEPT 뒤 TaskStatus FAILED(최대 failed_retries번, 그래도 실패하면 실패로 남김
 - 중앙 assignment.failed_retries와 같은 규칙). 취소(ErrorInfo.ASSIGN_CANCELED)로 온 FAILED는
-재경매하지 않는다(중앙 #107과 같음).
+재경매하지 않는다(중앙 #107과 같음). 그리고 ACCEPT한 낙찰 로봇의 RobotState가
+reclaim_timeout_s(실제 시간) 동안 끊기면 로봇이 죽은 것으로 보고 재경매한다 - 중앙 #132의
+작업 회수와 같은 규칙(FAILED 재시도와 따로 세고 상한 없음). 회수된 옛 낙찰 로봇의 늦은
+보고는 그 경매가 이미 새 경매로 바뀌어 맞는 경매가 없으므로 무시된다.
 
 내 상태(RobotState)를 아직 모를 때 공고를 받으면(기동 직후 등) 입찰 여부 결정을 미룬다 -
 상태를 먼저 확인하기 전에 "결정 끝"으로 기록해 버리면 그 경매에 영원히 입찰을 못 한다
@@ -33,6 +36,7 @@ README '확인 필요' 절 참고. 재경매는 두 가지 - AWARD 재전송 다
 from __future__ import annotations
 
 import signal
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -50,12 +54,13 @@ from .auction import (
     Bid,
     RobotInfo,
     TaskInfo,
+    TaskRetryLedger,
     award_exhausted,
-    can_retry_failed_task,
     can_withdraw,
     decide_bid,
     decide_winner,
     should_resend_award,
+    winner_lost,
 )
 
 # 발행은 항상 이 절대 경로 원본 - 장애 주입기가 여기서 읽어 로봇별로 다시 보낸다(파라미터로
@@ -102,8 +107,8 @@ def _task_from_msg(task: Task) -> TaskInfo:
 @dataclass
 class _AuctionState:
     """내가 경매인인 경매 1건의 진행 상태. phase: collecting(입찰 수집 중) ->
-    awarded(낙찰 통보, ACCEPT 기다림) -> done(확정) -> failed(ACCEPT 뒤 FAILED,
-    재경매 다 쓰고 실패로 남김 - 더 안 건드림)."""
+    awarded(낙찰 통보, ACCEPT 기다림) -> done(확정, 낙찰 로봇 장애 감시) -> completed(COMPLETED
+    보고, 감시 끝) 또는 failed(ACCEPT 뒤 FAILED, 재경매 다 쓰고 실패로 남김 - 더 안 건드림)."""
 
     task: TaskInfo
     announce_time: float
@@ -114,6 +119,8 @@ class _AuctionState:
     winning_cost: Optional[float] = None
     award_attempts: int = 0
     award_last_sent: Optional[float] = None
+    # ACCEPT를 받은 시각 (실제 시간, 낙찰 로봇 장애 판정 기준 - winner_lost)
+    accepted_at: Optional[float] = None
 
 
 class TaskAuctionNode(Node):
@@ -141,6 +148,8 @@ class TaskAuctionNode(Node):
                 'award_resend_interval_s', AuctionParams.award_resend_interval_s).value,
             award_max_attempts=p('award_max_attempts', AuctionParams.award_max_attempts).value,
             failed_retries=p('failed_retries', AuctionParams.failed_retries).value,
+            reclaim_timeout_s=p('reclaim_timeout_s', AuctionParams.reclaim_timeout_s).value,
+            max_reclaims=p('max_reclaims', AuctionParams.max_reclaims).value,
         )
 
         self._robot_info: Optional[RobotInfo] = None
@@ -159,9 +168,12 @@ class TaskAuctionNode(Node):
         # 또 ACCEPT를 보내지 않는 데도 쓴다(멱등).
         self._accepted: set = set()
         self._next_reauction_id: Dict[str, int] = {}
-        # ACCEPT 뒤 TaskStatus FAILED 보고 횟수 - task_id로 키를 잡아 재경매로 auction_id가
-        # 바뀌어도 이어서 센다(10/9 결정, 중앙 TaskEntry.failures와 같은 역할).
-        self._task_failures: Dict[str, int] = {}
+        # 작업별 FAILED 재시도·장애 회수 횟수 - task_id로 세어 재경매로 auction_id가 바뀌어도
+        # 이어서 센다(중앙 TaskEntry.failures·reclaims와 같은 역할, 둘은 따로 센다).
+        self._retries = TaskRetryLedger(self._params.failed_retries, self._params.max_reclaims)
+        # 로봇별 마지막 RobotState 수신 시각 (실제 시간). 낙찰 로봇 장애 판정에 쓴다 - 중앙 #132처럼
+        # 로봇 생존은 실제 시간으로 잰다(메시지 stamp는 시뮬레이션 시간일 수 있다)
+        self._robot_last_seen: Dict[str, float] = {}
 
         self.create_subscription(RobotState, robot_states_topic, self._on_robot_state, 10)
         self.create_subscription(TaskAuction, task_auctions_sub_topic, self._on_task_auction, 10)
@@ -182,6 +194,7 @@ class TaskAuctionNode(Node):
     # --- 내 상태 ---
 
     def _on_robot_state(self, msg: RobotState):
+        self._robot_last_seen[msg.robot_id] = time.monotonic()
         if msg.robot_id != self._robot_id:
             return
         had_info = self._robot_info is not None
@@ -324,6 +337,7 @@ class TaskAuctionNode(Node):
         if state is None or state.phase != 'awarded' or state.winner_id != robot_id:
             return
         state.phase = 'done'
+        state.accepted_at = time.monotonic()
         self.get_logger().info(f'경매 {key}: {robot_id} 수락, 작업 {state.task.task_id} 확정')
 
     def _on_withdraw(self, key: AuctionKey, robot_id: str):
@@ -339,23 +353,25 @@ class TaskAuctionNode(Node):
     # --- 확정된 작업이 수행 중 실패했다는 보고(amr_bt가 TaskStatus로 발행) ---
 
     def _on_task_status(self, msg: TaskStatus):
-        if msg.state != TaskStatus.STATE_FAILED:
+        if msg.state not in (TaskStatus.STATE_FAILED, TaskStatus.STATE_COMPLETED):
             return
         for key, state in list(self._auctions.items()):
             if (
                 state.phase == 'done' and state.task.task_id == msg.task_id
                 and state.winner_id == msg.robot_id
             ):
-                self._on_task_failed(key, state, msg.error.code)
+                if msg.state == TaskStatus.STATE_COMPLETED:
+                    # 끝난 작업은 낙찰 로봇이 그 뒤 꺼져도 회수하지 않는다
+                    state.phase = 'completed'
+                else:
+                    self._on_task_failed(key, state, msg.error.code)
                 return
 
     def _on_task_failed(self, key: AuctionKey, state: _AuctionState, error_code: int = 0):
         task_id = state.task.task_id
-        failures = self._task_failures.get(task_id, 0)
-        if can_retry_failed_task(failures, self._params.failed_retries, error_code):
-            self._task_failures[task_id] = failures + 1
+        if self._retries.on_failed(task_id, error_code):
             self.get_logger().warn(
-                f'경매 {key}: 작업 {task_id} 실패 보고({failures + 1}/'
+                f'경매 {key}: 작업 {task_id} 실패 보고({self._retries.failures(task_id)}/'
                 f'{self._params.failed_retries}) - 재경매')
             self._reauction(key, state)
         elif error_code == ERROR_CANCELED:
@@ -377,6 +393,30 @@ class TaskAuctionNode(Node):
                 self._maybe_decide_winner(key, state, now)
             elif state.phase == 'awarded':
                 self._maybe_resend_or_reauction(key, state, now)
+            elif state.phase == 'done':
+                self._maybe_reclaim(key, state)
+
+    def _maybe_reclaim(self, key: AuctionKey, state: _AuctionState):
+        """ACCEPT한 낙찰 로봇의 RobotState가 reclaim_timeout_s 동안 없으면 재경매한다 (중앙 #132와 같음)."""
+        if state.winner_id is None or state.accepted_at is None:
+            return  # 입찰 없이 끝난 경매
+        if not winner_lost(
+            self._robot_last_seen.get(state.winner_id), state.accepted_at, time.monotonic(),
+            self._params.reclaim_timeout_s,
+        ):
+            return
+        task_id = state.task.task_id
+        if self._retries.on_winner_lost(task_id):
+            self.get_logger().warn(
+                f'경매 {key}: 낙찰 로봇 {state.winner_id}의 RobotState가 '
+                f'{self._params.reclaim_timeout_s:g}초 끊김 - 작업 {task_id} 회수해 재경매 '
+                f'(회수 {self._retries.reclaims(task_id)}회)')
+            self._reauction(key, state)
+        else:
+            state.phase = 'failed'
+            self.get_logger().error(
+                f'경매 {key}: 낙찰 로봇 {state.winner_id} 끊김, 회수 상한'
+                f'({self._params.max_reclaims}회) 다 씀 - 실패로 남김')
 
     def _maybe_decide_winner(self, key: AuctionKey, state: _AuctionState, now: float):
         if now < state.announce_time + state.bid_window_s:

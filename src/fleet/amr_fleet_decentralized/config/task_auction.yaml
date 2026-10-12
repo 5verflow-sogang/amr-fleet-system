@@ -15,6 +15,11 @@
     # 10/9 결정(#107·#108): ACCEPT 뒤 TaskStatus FAILED를 받으면 최대 1회 재경매, 그래도
     # 실패하면 실패로 남긴다. 중앙(fleet_manager.yaml assignment.failed_retries)과 같은 값.
     failed_retries: 1
+    # 낙찰 로봇 장애 회수 (중앙 #132 assignment.reclaim_timeout_s와 같은 규칙): ACCEPT한 낙찰 로봇의
+    # RobotState가 이 시간(실제 시간, s) 동안 끊기면 재경매한다. 0이면 끈다.
+    reclaim_timeout_s: 5.0
+    # 회수 재경매 상한. -1이면 상한 없음(#132와 같음). failed_retries와 따로 센다.
+    max_reclaims: -1
     # TaskAuction·TaskBid 구독 접두어. 기본은 절대 경로 원본(/fleet, 중계 없이 직접 구독) -
     # relayed:=true(launch 인자) 또는 이 값을 'fleet'로 주면 상대 이름(장애 주입기
     # relay_auction 중계본)을 구독한다. amr_bt의 server_topic_prefix와 같은 방식.
