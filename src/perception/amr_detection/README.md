@@ -8,10 +8,14 @@
 
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
-| Publish | | | |
-| Subscribe | | | |
-| Service | | | |
-| Action | | | |
+| Publish | `perception/objects` | `amr_msgs/msg/DetectedObject3DArray` | 카메라 프레임별 인식 결과와 3D 위치·측정 공분산, `target_frame`(기본 `map`) 좌표계. `header.stamp`는 영상 촬영 시각. 검출이 없어도 빈 배열 (TF를 못 구한 프레임은 내지 않는다) |
+| Publish | `perception/markers` | `visualization_msgs/msg/MarkerArray` | 객체별 클래스 색 상자와 `Class: <class>, Conf: <conf>, Dist: <dist>m` 텍스트 (RViz 확인용, 수명 1 s) |
+| Subscribe | `camera/color/image_raw` | `sensor_msgs/msg/Image` | RGB 영상 (`amr_gazebo`). Depth와 촬영 시각이 같은 짝만 쓴다 |
+| Subscribe | `camera/depth/image_raw` | `sensor_msgs/msg/Image` | Depth `32FC1` (m), RGB와 픽셀 1:1. bbox 대표 깊이에 쓴다 |
+| Subscribe | `camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 내부 파라미터 K. 처음 받은 값을 쓴다 |
+
+- TF: 영상 촬영 시각의 `camera_optical_frame → target_frame`을 조회한다.
+- 처리 과정과 식(YOLO, Pinhole 역투영, 대표 깊이, 공분산 전파, 좌표 변환)은 [docs/algorithms/perception.md 4절](../../../docs/algorithms/perception.md#4-yolo-인식과-3d-변환).
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 

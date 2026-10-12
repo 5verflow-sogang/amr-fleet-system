@@ -16,8 +16,6 @@
 | Subscribe | `odom` | `nav_msgs/msg/Odometry` | 로봇 선속도 (TTC 계산) |
 | Subscribe | `perception/objects` | `amr_msgs/msg/DetectedObject3DArray` | YOLO 3D 검출 (`amr_detection`). 트랙에 클래스를 붙인다 (`use_camera_association`) |
 | Subscribe | `/map` | `nav_msgs/msg/OccupancyGrid` | 정적 지도 대조 R2 (`use_static_map`, 기본 꺼짐) |
-| Service | | | |
-| Action | | | |
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 

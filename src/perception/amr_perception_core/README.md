@@ -50,8 +50,14 @@ ROS 비의존 라이브러리이므로 파라미터는 함수/생성자 인자�
 
 ## 실행
 
+노드가 없는 라이브러리라 따로 실행하지 않는다. `amr_detection`(Pinhole 3D 변환), `amr_tracking`(군집화·추적·카메라 연관·TTC),
+`amr_safety`(안전 판정)가 import해서 쓴다. 노드 실행은 각 패키지 README를 본다.
+
+rclpy·ROS 메시지를 import하지 않고 numpy만 쓴다. 그래서 ROS 없이 pytest로도 테스트를 돌릴 수 있다.
+
 ```bash
-# TODO
+cd src/perception/amr_perception_core
+python3 -m pytest test          # numpy, pytest 필요
 ```
 
 ## 테스트
