@@ -712,18 +712,17 @@ P2 종료 시점에 데이터가 부족하면 MOST를 포기하고 KCSE에 집�
 
 서지 확인(10/7): arXiv 논문은 arXiv API로, 학술지 논문은 Crossref DOI로 모두 존재·제목·저자를 확인했다. 2026년 arXiv 논문은 동료 심사 전이라 원고 제출 때 게재 여부를 다시 확인한다.
 
-### 10-2. 연구 2: 적재 질량 대응 RL 로컬 플래너 (조사 후보)
+### 10-2. 연구 2: 적재 질량 대응 RL 로컬 플래너
 
-아래는 출발점 후보이며 서지 정보는 투고 전 원문으로 확인해야 한다.
+서지 확인과 그룹별 비교표는 [연구 2 관련 선행연구](../experiments/research2/related_work.md)에 있다(10/12). 그룹과 대표 논문은 다음과 같다.
 
-- DWA 원논문(Fox 외, 1997): baseline 정의
-- PPO(Schulman 외, 2017): 학습 알고리즘
-- Arena-Rosnav(Kästner 외): DRL 플래너와 DWA·TEB 벤치마크
-- 동역학 무작위화 sim-to-real(Peng 외, ICRA 2018), Domain randomization(Tobin 외, 2017)
-- RMA: Rapid Motor Adaptation(Kumar 외, RSS 2021): 4족 로봇의 적재 변화 적응, 과거 이력으로 환경 파라미터 추정
-- 바퀴형·차동 구동 + payload + DRL navigation: 조사 필요
+- 동역학·도메인 무작위화: Peng 외(ICRA 2018), Tobin 외(IROS 2017)
+- 물리 파라미터 적응·특권 정보: Yu 외(RSS 2017, UP-OSI), RMA(Kumar 외, RSS 2021), Lee 외(Science Robotics 2020)
+- DRL 로컬 플래너: PPO(Schulman 외, 2017), CADRL(Chen 외, ICRA 2017), Arena-Rosnav(Kästner 외, IROS 2021), DRL-VO(Xie·Dames, T-RO 2023)
+- 적재 인지 주행·DWA: DWA 원논문(Fox 외, 1997), 차동 구동 로봇의 적재 무작위화 DRL(Demir·Sezer, IRC 2019 / IJSC 2019)
+- 안전: VO(Fiorini·Shiller, IJRR 1998), ORCA, shielding(Alshiekh 외, AAAI 2018), CBF, ABS(He 외, RSS 2024)
 
-**차별점 후보**: DRL 플래너와 DWA 비교 자체는 기존 연구가 있다. 적재 무작위화는 주로 4족 보행 로봇에서 다뤘다. 이 연구는 바퀴형 물류 AMR의 로컬 플래너가 토크 한계 구간(급정지·고가속)에서 적재 질량 변화에 대응하는 문제로 범위를 좁히고, 질량 정보의 유무·오차를 ablation으로 분리한다. 조사 결과에 따라 문장을 조정한다.
+**차별점**: 적재 무작위화 DRL과 적재 인지 효과는 차동 구동 로봇에서 이미 보고됐다(Demir·Sezer 2019). 이 연구는 질량 효과를 바퀴 토크 한계의 가감속·회전 결합 한계로 모델링해 급정지 구간으로 좁히고, 질량에 맞춘 DWA(B2)를 기준으로 질량 정보 오차(±30%)·결측에서의 성능 저하를 비교하며, 위치 기준 출현 지점으로 항상 설 수 있는 돌발 장애물 시나리오를 둔다. 알고리즘이 아니라 문제 설정과 평가 설계가 기여다.
 
 ## 11. 비용 및 하드웨어
 
@@ -792,7 +791,7 @@ P2 종료 시점에 데이터가 부족하면 MOST를 포기하고 KCSE에 집�
 - 분산 협상 로직 최소 스코프 팀 합의
 - 하네스 반복 횟수 N과 통계 검정 방법 설계
 - 인식 결과 3D 메시지 타입(confidence·공분산 포함) 확정: 연우 작성, 소비 측(이진·지수) 리뷰
-- 연구 2 선행연구(wheeled / differential-drive + payload + DRL navigation) 서지 확인 및 차별점 문장 확정
+- 연구 2 선행연구 서지 확인 및 차별점 문장 확정: 완료(10/12, [연구 2 관련 선행연구](../experiments/research2/related_work.md)). 원고에 인용하기 전 본문만 다시 확인한다
 - 연구 2 2D–Gazebo 제동 정합 확인 (연우·이진)
 - KF 트랙 메시지(Track ID·위치·속도·P·timestamp) `amr_msgs` 정의: 연우 작성, 하연 리뷰
 - 2차 회의: 실물 네트워크(이진 주도)·Jetson 채택 여부, 논문 2편 분리안 확정
