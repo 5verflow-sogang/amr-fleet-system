@@ -106,3 +106,18 @@ def test_patch_yaml_changes_only_named_values(tmp_path):
     import pytest
     with pytest.raises(KeyError):
         runner.patch_yaml(src, {'controller_server.ros__parameters.DWA.max_vv': 0.5}, tmp_path / 'q.yaml')
+
+
+def test_ready_check_timeout_is_not_run_timeout(monkeypatch):
+    # 준비 확인 명령이 멈춰도(TimeoutExpired) 실행 전체 시간 초과가 아니라 기동 실패(startup)로 끝나야 재시도된다
+    def hang(*a, **k):
+        raise subprocess.TimeoutExpired(cmd='ros2', timeout=30)
+    monkeypatch.setattr(runner.subprocess, 'run', hang)
+    monkeypatch.setattr(runner.time, 'sleep', lambda s: None)
+    for wait in (lambda: runner.wait_topic('/x', 0.05), lambda: runner.wait_cmd('ros2 lifecycle get /amcl', 0.05)):
+        try:
+            wait()
+        except runner.RunError as e:
+            assert e.startup
+        else:
+            raise AssertionError('RunError가 나야 한다')

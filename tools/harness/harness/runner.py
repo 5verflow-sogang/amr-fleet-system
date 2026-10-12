@@ -142,7 +142,11 @@ def wait_topic(topic: str, timeout_s: float, proc: Optional[Proc] = None) -> flo
     while time.monotonic() - t0 < timeout_s:
         if proc is not None and proc.popen.poll() is not None:
             raise RunError('error', f'{proc.name}이(가) 끝남 (로그: {proc.log})', startup=True)
-        out = subprocess.run(['ros2', 'topic', 'list'], capture_output=True, text=True, timeout=30).stdout
+        try:
+            out = subprocess.run(['ros2', 'topic', 'list'], capture_output=True, text=True, timeout=30).stdout
+        except subprocess.TimeoutExpired:
+            # CLI가 DDS 발견을 못 끝내 멈춘 것이다. 실행 전체 시간 초과로 번지지 않게 "아직 준비 안 됨"으로 본다
+            out = ''
         if topic in out.split():
             return time.monotonic() - t0
         time.sleep(1.0)
@@ -153,8 +157,11 @@ def wait_cmd(cmd: str, timeout_s: float) -> float:
     """명령이 성공(종료 코드 0)할 때까지 다시 실행한다. 예: lifecycle 노드가 active인지 확인."""
     t0 = time.monotonic()
     while time.monotonic() - t0 < timeout_s:
-        if subprocess.run(cmd, shell=True, executable='/bin/bash', capture_output=True, timeout=30).returncode == 0:
-            return time.monotonic() - t0
+        try:
+            if subprocess.run(cmd, shell=True, executable='/bin/bash', capture_output=True, timeout=30).returncode == 0:
+                return time.monotonic() - t0
+        except subprocess.TimeoutExpired:
+            pass  # wait_topic과 같다: 확인 명령이 멈추면 다시 시도한다
         time.sleep(1.0)
     raise RunError('error', f'준비 확인 실패: {cmd} ({timeout_s:.0f}s)', startup=True)
 
