@@ -45,9 +45,10 @@ class SafetyConfig:
     # 진행 방향이 아닌 점의 WARNING 거리
     critical_distance: float = 0.3
     # TTC 임계 [s]. CRITICAL: 0.6 m/s에서 반응 0.2 s + 1.0 m/s² 정지 0.6 s ≈ 0.8 s에 여유.
-    # WARNING: 최고속 2.0 m/s에서 0.6까지 줄이는 반응 0.2 s + 1.4 s ≈ 1.6 s에 여유
+    # WARNING: 최고속 2.0 m/s에서 0.6까지 줄이는 반응 0.2 s + 1.4 s ≈ 1.6 s에 여유.
+    # 3 s 미만은 DWA 회피 모드가 먼저 맡는다 (명세서 8장 TTC 역할 분담)
     ttc_critical: float = 1.0
-    ttc_warning: float = 3.0
+    ttc_warning: float = 2.0
     # 움직이는 트랙(사람·지게차)이 차체에서 이 거리 [m] 안이면 미리 저속
     dynamic_warning_distance: float = 1.5
     # WARNING의 speed_limit [m/s] (#70: 반응 0.2 s + 1.0 m/s²로 0.3 m 안에 서는 최대 속도)

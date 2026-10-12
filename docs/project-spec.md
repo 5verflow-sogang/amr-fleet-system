@@ -49,7 +49,7 @@
 | 4. 경로 계획 | A* 직접 구현 vs NavFn/Smac, 경로 평활화, DWA 직접 구현 vs TEB, Costmap 3레이어, 좁은 통로(로봇 폭+20cm) | 50쌍 성공률 98%, 재계획 500ms, 주행시간 예측 오차 15% | 이진 | 연구 2 baseline(B1·B2)으로 DWA 사용 |
 | 5. 모션 제어 | Pure Pursuit/Stanley 직접 구현(적응형 look-ahead), PID 속도 제어, 사다리꼴/S-curve, 저크 제한 | CTE 직선 5cm·곡선 10cm | 이진 | 연구 2 효율성 지표(jerk)로 재사용 |
 | 6. AI 인지 | YOLOv8 3종 이상(화물·사람·표지판), 커스텀 메시지 + RViz2 마커, Pinhole 2D→3D(map frame) | CPU 10 FPS 또는 GPU 30 FPS | 연우 | Jetson 고도화안 연결 |
-| 7. 동적 환경 대응 | LiDAR 동적 장애물 분류, KF/EKF 추적(속도·방향·신뢰도), 미래 위치 예측·TTC, VO/ORCA, 긴급정지(0.3m), Safety Zone(Warning/Critical), E-Stop, 센서 고장 감지 → 안전 정지/저속 | 30회 충돌 0건, 경로 이탈 1m, 복귀 5초, 1.0m/s 장애물 재계획 회피 | 연우 | 필수 구현. 연구 2 관측에 `TrackedObstacleArray` 제공 |
+| 7. 동적 환경 대응 | LiDAR 동적 장애물 분류, KF/EKF 추적(속도·방향·신뢰도), 미래 위치 예측·TTC, VO 개념 반응형 회피(DWA 동적 필터, 8장), 긴급정지(0.3m), Safety Zone(Warning/Critical), E-Stop, 센서 고장 감지 → 안전 정지/저속 | 30회 충돌 0건, 경로 이탈 1m, 복귀 5초, 1.0m/s 장애물 재계획 회피 | 연우 | 필수 구현. 연구 2 관측에 `TrackedObstacleArray` 제공 |
 | 8. 작업 수행 | BehaviorTree.CPP, 대기-이동-인식-작업-복귀, 노드 15개 이상, 서브트리, 에러 3종 이상 자동 복구, Groot 시각화, ArUco 도킹(3회 실패 시 대체 작업), JSON Task, 상태 이벤트, 우선순위·마감 스케줄링, 작업 로그 | 도킹 2cm·1도, 단일 작업 성공률 97%, BT 확장 시 수정 3파일 이내 | 지수 | 작업 로그를 관측 스택으로 수집 |
 | 9. Fleet Management | 5대 이상, 네임스페이스·TF 분리, 통신 지연 100ms 반영, 중앙 할당(최소거리/부하균형/Hungarian), 최적성 지표, 경로 충돌 예측, 교차로 우선순위, 교착 탐지 + 해소 전략 2가지 이상, 대시보드(위치·상태·배터리·작업, KPI, 이상 알림) | 5대 동시 운용 시 교착 없이 수행 | 하연 (분산 로직은 이진 공동) | **연구 1 본체.** 100ms 반영을 장애 주입기의 한 설정값으로 구현. 대시보드는 Prometheus/Grafana(지수) |
 | 10. 통합·품질 | 성능 리포트, README·아키텍처·알고리즘·API 문서 | 평균 응답 200ms(50회 이상), 5대 CPU 80% 이하, 연속 4시간 운용, 커버리지 70%, 통합 테스트 10개 이상 자동화, `colcon build` 경고 0 | 민지(테스트) + 이진(문서) + 전원 | ros2_tracing으로 응답시간 분해, 하네스로 CI 자동 검증 |
@@ -95,7 +95,7 @@
 | 4. 경로 계획 | A* vs NavFn/Smac 비교 지표: **경로 길이·계획 소요 시간·장애물 여유 거리** / DWA 4단계(속도 샘플링·궤적 시뮬레이션·비용 함수·최적 속도 선택) 모두 직접 구현 / TEB 대비 장단점 분석 / Inflation 반경·cost scaling 튜닝 / Costmap **센서 업데이트 주기·장애물 유지 시간** 설정 | 이진 |
 | 5. 모션 제어 | PID **게인 튜닝 과정 문서화** | 이진 |
 | 6. AI 인지 | 인식 객체의 3D 위치를 **지도상 마커**로 표시(텍스트: class·confidence·거리) | 연우 |
-| 7. 동적 환경 | TTC 임계값 이하 시 회피 기동 / Safety Zone 단계별 대응 로직 | 연우 |
+| 7. 동적 환경 | TTC 임계값 이하 시 회피 기동 / Safety Zone 단계별 대응 로직. TTC 3 s 미만 DWA 회피 모드, 2 s 미만 안전 노드 감속, 1 s 미만 정지 (8장 역할 분담) | 연우·이진 |
 | 8. 작업 수행 | 가상 물품 3종과 적재 이벤트(아래 표), 적재 시 **질량 변화를 동역학에 반영** / 작업 상태 4종 **Pending·InProgress·Completed·Failed** 관리 및 이벤트 발행 / 작업 로그 필드(시작·종료 시각, 이동 거리, 소요 시간, 결과)를 분석 가능한 형태로 저장 / 물품 픽업·배송은 도킹 완료 후 가상 적재·하역 이벤트로 대체 | 지수 |
 | 9. Fleet | 작업 할당 최적성 지표(총 이동 거리·작업 완료 시간) 측정·분석 / 교착 해소 전략 예: 우선순위 기반 양보, 대체 경로 탐색 | 하연 |
 | 10. 품질 | 아래 "성능 지표 측정 절차" 표의 산출 방법·로그 포맷 준수 / 커버리지는 **주요 모듈별 분리 보고** / 응답 시간은 평균과 **최대**를 함께 보고 | 민지 + 전원 |
@@ -415,7 +415,7 @@ B2는 질량을 정확히 알면 충분히 강할 수 있다. 이 경우 H2의 �
 - **Gazebo 평가**: 지수 로봇 모델(#44), 월드 v0(통로 폭은 랙 사이 통로 기준), `payload_mass` 스폰 인자(#43), 동적 장애물(#58). 실험용 설정에서만 DiffDrive 감속 제한을 풀고 일반 Nav2 KPI 설정은 그대로 둔다.
 - **정책 노드**: SB3 모델과 VecNormalize 통계를 읽어 10 Hz로 `cmd_vel`을 낸다. 관측 벡터를 만드는 코드는 2D 환경과 공유해 어긋나지 않게 한다.
 - **안전 노드**: Gazebo 평가에서 켤지는 평가 단계에서 정한다. 켜면 개입 횟수를 지표로 기록한다.
-- **필수 구현과의 관계**: TTC와 ORCA(고정 margin)는 원 명세 7장 필수라 연구 2와 별개로 구현한다.
+- **필수 구현과의 관계**: TTC와 VO 개념 반응형 회피(DWA 동적 필터, 고정 margin)는 원 명세 7장 필수라 연구 2와 별개로 구현한다.
 - **범위 밖**: 다중 로봇 RL, 코너·합류 경로(S3·S4 이후), 실물 로봇.
 - **후속 실험 (P2 이후 여유 시)**: R2를 RecurrentPPO(LSTM)로 바꿔 "기억이 있으면 질량을 스스로 추정하는가"를 본다. 측정상 학습이 약 7배 느려(이 PC 기준 PPO 1,108 vs RecurrentPPO 153 steps/s) 본 실험에는 쓰지 않는다.
 
@@ -490,7 +490,7 @@ B2는 질량을 정확히 알면 충분히 강할 수 있다. 이 경우 H2의 �
 | 민지 | 위치추정(AMCL 튜닝, EKF 센서퓨전, Kidnapped Robot 복구, GT 대비 RMSE 측정), TF `map→odom` | (발행 없음) Fleet 메시지 신뢰성 규약(명령 ID·Ack·lease·경매) 공동 설계 | 회귀 테스트 하네스(N회 반복·신뢰구간·baseline 비교), 연구 1 통계 분석 |
 | 지수 | 동적 장애물·로봇모델링/센서, 오도메트리·센서 전처리, SLAM 매핑(지도 생성), 작업수행(BT, 도킹) | `RobotState`(가상 배터리 포함), `TaskStatus`, `TaskAssignmentAck`, `Dock.action` | 관측 스택(Prometheus/Grafana, 스냅샷, 여유 시 착수), 연구 2 Gazebo 평가 환경 |
 | 이진 (팀장) | 경로계획/모션제어(A*·DWA 직접구현, Pure Pursuit/Stanley, PID), 물류센터 정적 환경(월드), 로봇 측 구역 진입 처리 | `ZoneRequest`, 분산 폴백 시 `TaskAuction`·`TaskBid`(하연과 공동) | 분산 협상 로직(하연과 공동), 논문 구조·투고 일정 조율, **실물 네트워크 고도화 주도** |
-| 연우 | AI인지/동적장애물(YOLOv8, 3D 변환, KF 추적, TTC, ORCA), 안전 시스템(긴급정지·Safety Zone·E-Stop·센서 고장 감지) | `DetectedObject3DArray`, `TrackedObstacleArray`, `CollisionRiskArray`, `SafetyStatus`, E-Stop 서비스(`std_srvs/SetBool`) | 연구 2 주도(적재 질량 RL). 주저자는 10/12 회의에서 정한다 |
+| 연우 | AI인지/동적장애물(YOLOv8, 3D 변환, KF 추적, TTC), 안전 시스템(긴급정지·Safety Zone·E-Stop·센서 고장 감지) | `DetectedObject3DArray`, `TrackedObstacleArray`, `CollisionRiskArray`, `SafetyStatus`, E-Stop 서비스(`std_srvs/SetBool`) | 연구 2 주도(적재 질량 RL). 주저자는 10/12 회의에서 정한다 |
 
 > 로봇 측 `ZoneRequest` 담당은 이진으로 확정했다(D6, 10/1 지수·하연 합의). 구역 앞 정지·재개가 주행 제어에 붙는 기능이라서다.
 > 프로토콜(#31·#57, 하연과 합의): 구역 경계 3 m 앞에서 요청하고, 허가가 없으면 경계 0.5 m 앞에서 정지한다. 같은 request_id로 1초마다 다시 요청해 연장하고(lease 5초), 구역을 벗어나면 반납한다. 구역 안에서 lease가 만료되면 멈추지 않고 빠져나간 뒤 반납하며, 서버는 반납이 올 때까지 그 구역을 다른 로봇에 주지 않는다. 허가는 장애주입기 중계본 `fleet/zone_grants`(네임스페이스 상대 이름)로 받는다. 구역 목록은 `amr_fleet_manager/config/zones.yaml`.
@@ -502,11 +502,20 @@ B2는 질량을 정확히 알면 충분히 강할 수 있다. 이 경우 H2의 �
 | 하연 | `amr_msgs` msg/srv/action 작성·빌드·버전 관리(변경 PR은 발행자·소비자 모두 승인) / 중앙집중 작업할당(최소거리/부하균형/Hungarian), Traffic Management(구역 허가 `ZoneRequest`/`ZoneGrant` 서버 측, 경로충돌 예측, 교차로 우선순위), 교착탐지·해소 2가지 이상 / 할당 명령 재전송·Ack 처리, heartbeat·작업표 방송 / 장애 주입기(지연 0~500ms, 손실 0~10%, 서버 강제종료) / ros2_tracing 셋업, QoS·DDS 벤더 튜닝 / GitHub Actions·Docker·Git Flow |
 | 민지 | AMCL 튜닝(파티클 수, alpha1~5, 리샘플링) / EKF 센서퓨전(Wheel Odom+IMU+AMCL, config 매트릭스, 50Hz 이상) + 공분산 근거 문서화 / Kidnapped Robot 복구(전역 재초기화 + 제자리 회전) / GT 대비 RMSE·Max Error 측정 파이프라인(100개 시점, 지정 로그 포맷) / 목표: 정지 3cm·직선 5cm·회전 8cm 이내 / 하네스 설계: 반복 횟수 N, 신뢰구간, 통계 검정, Ack 왕복시간 등 Fleet 메시지 기반 지표 수집 / Fleet 메시지 신뢰성 규약 리뷰 |
 | 지수 | 동적 장애물(작업자·지게차·다른 로봇, 0.3~1.5m/s) 배치, compose `sim` 서비스 launch, GT 토픽 제공 / URDF·xacro, TF 트리(`base_link` 하위, `odom→base_link`) 문서화, 센서 노이즈 모델링 / 차동구동 순기구학·휠 오도메트리, 드리프트 측정 실험 / LiDAR·Depth·IMU 전처리 필터 / 2D SLAM 매핑(slam_toolbox 튜닝, Loop Closure, 지도 저장, 맵 품질 지표) / Behavior Tree(15개 이상 노드), ArUco 도킹(2cm/1도), 3회 실패 시 대체 작업 / `RobotState`(가상 배터리 모델)·`TaskStatus`·`TaskAssignmentAck` 발행 / (여유 시) Prometheus+Grafana, 교착·충돌 스냅샷 |
-| 이진 | 물류센터 정적 환경(60×40m 벽·기둥·선반·입출고·충전소 3개·통로, 바닥 마찰·조명) / A* 직접구현 및 NavFn/Smac 비교, 경로평활화 / DWA 직접구현 및 TEB 비교(`TrackedObstacleArray`의 pose·twist·radius로 동적 장애물 반영) / Costmap(Static/Obstacle/Inflation) / Pure Pursuit·Stanley, PID, 속도 프로파일링(`SafetyStatus.speed_limit` 참고 감속) / 로봇 측 구역 진입 처리(`ZoneRequest` 발행, 허가 없으면 구역 앞 정지) / 분산 협상 로직(단순 규칙 기반) / 논문 구조·KSC·MOST 일정 관리 / (채택 시) 실물 네트워크: 라즈베리파이 셋업, tc netem 지연 주입, 발표 데모 리허설 |
-| 연우 | YOLOv8 ROS2 노드(화물·사람·표지판 3종 이상), RViz2 마커 / Pinhole 3D 변환 / LiDAR 동적 장애물 분류 + KF 추적 + 카메라 연관 + NEES 점검 / TTC → `CollisionRiskArray` / VO·ORCA(고정 margin) / 안전 노드: `cmd_vel` 게이트(정지 책임), Safety Zone(Warning/Critical), E-Stop, 센서 고장 감지 / 연구 2: RL 문제 정의, 2D 학습 환경, PPO 학습, 평가 스크립트 |
+| 이진 | 물류센터 정적 환경(60×40m 벽·기둥·선반·입출고·충전소 3개·통로, 바닥 마찰·조명) / A* 직접구현 및 NavFn/Smac 비교, 경로평활화 / DWA 직접구현 및 TEB 비교(`TrackedObstacleArray`의 pose·twist·radius로 동적 장애물 반영 = VO 개념 반응형 회피, `collision_risks`의 TTC 3 s 미만이면 회피 모드) / Costmap(Static/Obstacle/Inflation) / Pure Pursuit·Stanley, PID, 속도 프로파일링(`SafetyStatus.speed_limit` 참고 감속) / 로봇 측 구역 진입 처리(`ZoneRequest` 발행, 허가 없으면 구역 앞 정지) / 분산 협상 로직(단순 규칙 기반) / 논문 구조·KSC·MOST 일정 관리 / (채택 시) 실물 네트워크: 라즈베리파이 셋업, tc netem 지연 주입, 발표 데모 리허설 |
+| 연우 | YOLOv8 ROS2 노드(화물·사람·표지판 3종 이상), RViz2 마커 / Pinhole 3D 변환 / LiDAR 동적 장애물 분류 + KF 추적 + 카메라 연관 + NEES 점검 / TTC → `CollisionRiskArray` (DWA 회피 모드 트리거) / 안전 노드: `cmd_vel` 게이트(정지 책임), Safety Zone(Warning/Critical), E-Stop, 센서 고장 감지 / 연구 2: RL 문제 정의, 2D 학습 환경, PPO 학습, 평가 스크립트 |
 
 - 논문은 전원 공동 작성. 각자 담당 모듈 파트는 본인이, 서론·관련연구·결론은 분담, 전체 구조는 이진이 조율한다.
-- 안전 정지 책임은 안전 노드(연우)가 `cmd_vel`을 가로채는 방식에 둔다(9/28 회의). 제어(이진)는 `speed_limit`을 참고해 부드럽게 감속하는 부가 역할만 한다.
+- 안전 정지 책임은 안전 노드(연우)가 `cmd_vel`을 가로채는 방식에 둔다(9/28 회의). 제어(이진)는 `speed_limit`을 참고해 부드럽게 감속한다.
+- **동적 장애물 회피는 TTC 단계로 나눈다** (10/11 이진·연우, 9/28 결정 보완). TTC 계산은 인지(`amr_tracking`)만 하고, DWA는 `collision_risks`의 TTC를 회피 모드 트리거로만 쓴다. 바깥 단계(플래너)가 먼저 피하고 안쪽 단계(안전 노드)는 최후 방어선이다.
+
+| 움직이는 장애물의 TTC | 담당 | 동작 |
+| --- | --- | --- |
+| 3 s 미만 | DWA (이진) | 회피 모드: 동적 장애물 가중치·여유 거리를 키워 비켜 간다 (원 명세 "TTC 임계값 이하 시 회피 기동") |
+| 2 s 미만 | 안전 노드 WARNING (연우) | 선속도 0.6 m/s 제한 |
+| 1 s 미만 | 안전 노드 CRITICAL (연우) | 정지 |
+
+- **VO/ORCA**: 원 명세는 "VO 또는 ORCA 개념을 적용한 반응형 회피"다. DWA가 후보 속도마다 궤적을 시뮬레이션하며 등속으로 예측한 동적 장애물과의 충돌을 거르는 것이 VO(충돌을 일으키는 속도 집합 제외)를 궤적 샘플링으로 근사한 것이라 이것으로 충족한다(수식은 [navigation.md](algorithms/navigation.md), 이진). ORCA(로봇끼리 서로 반씩 양보)는 로봇 간 충돌을 Fleet 구역 허가가 먼저 막으므로 넣지 않고, 5대 운용에서 로봇끼리 서로 피하다 진동·교착이 보이면 추가한다.
 
 #### 인터페이스 경계 (amr_msgs 확정안)
 
@@ -649,7 +658,7 @@ P2 종료 시점에 데이터가 부족하면 MOST를 포기하고 KCSE에 집�
 | 민지 | Docker/ROS2 세팅, slam_toolbox·AMCL·robot_localization 동작 검증, `amr_msgs` 리뷰, 지수와 인계 계약 확정(8-2절), GT 대비 RMSE 계산기 스텁 | SLAM 매핑 페어 지원(Loop Closure 디버깅), EKF config 초안(mock·초기 `/odom`·`/imu/data`), RMSE 파이프라인을 Gazebo GT에 연결, 하연과 하네스 지표 형식 합의 | **지도 v1 인계(10/11)** 후 AMCL 튜닝 + EKF 공분산 튜닝 + Kidnapped Robot 복구, 100개 시점 정확도 테스트 | **위치추정 필수 KPI 확정**(정지 3cm·직선 5cm·회전 8cm, EKF 50Hz) | 논문(Localization 파트) 작성 + 버그수정 |
 | 지수 | 물류센터 월드 기본형(v0 보완은 2주차부터 이진), URDF 착수, 센서 노이즈 초안(민지 합의) | URDF·xacro 완성, TF(`base_link` 하위) 검증, 순기구학·휠 오도메트리(`/odom` 공분산), LiDAR·IMU 필터, slam_toolbox 매핑(민지 페어) | **지도 v1 인계(10/11)**, 드리프트 실험 → 기준값 합의(10/14), TF 트리 문서화, Behavior Tree 착수 | **지도 KPI 확정**(0.05m·벽 겹침 없음) + 드리프트·맵 품질 리포트, **BT+도킹 KPI 확정**, 통합테스트 | 논문(시스템구축·매핑 파트) 작성 + 여유되면 관측스택 착수 |
 | 이진 | Nav2 기본셋업, Costmap 착수 | A* 직접구현 + 물류센터 월드 v0(물리·조명·좁은 통로·동적 장애물 자리) + 적재 질량 제동 거리 테스트 + DWA 코어 착수(3차 선행) | DWA 완성(동적 장애물 반영·Nav2 플러그인·TEB 비교) + Pure Pursuit/Stanley | **PID+CTE KPI 확정** + 분산 협상로직 초안 | 논문 전체 조율·투고원고 취합 |
-| 연우 | Pinhole Camera Model 설계, YOLO 착수 | YOLO 통합 + 3D좌표변환 + 칼만필터 추적 구현·LiDAR 동적 장애물 분류 착수(3차 선행) | LiDAR 동적 장애물 분류(R2·R3) + YOLO 노드 + 카메라 연관 + TTC·ORCA(고정 margin) + **D7 RL 문제 정의**·2D 학습 환경·첫 PPO 학습 | **탐지율/FPS/회피 KPI 확정**(TTC+ORCA 포함) + RL 예비 결과(baseline 비교, 질량별 평가) | 논문(연구 2·Perception 파트) 작성 |
+| 연우 | Pinhole Camera Model 설계, YOLO 착수 | YOLO 통합 + 3D좌표변환 + 칼만필터 추적 구현·LiDAR 동적 장애물 분류 착수(3차 선행) | LiDAR 동적 장애물 분류(R2·R3) + YOLO 노드 + 카메라 연관 + TTC + **D7 RL 문제 정의**·2D 학습 환경·첫 PPO 학습 | **탐지율/FPS/회피 KPI 확정**(TTC·DWA 회피, I17) + RL 예비 결과(baseline 비교, 질량별 평가) | 논문(연구 2·Perception 파트) 작성 |
 
 ## 10. 관련 선행연구
 
