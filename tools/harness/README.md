@@ -4,7 +4,7 @@
 
 - 같은 시나리오를 N회 반복해 KPI의 평균·신뢰구간을 산출한다.
 - 장애 조건(지연·손실)별 결과와 ros2_tracing 데이터를 수집한다.
-- `.github/workflows/fleet-test.yml`이 GCP 러너에서 `docker_run.sh`로 이 하네스를 돌린다 (입력: 시나리오, 반복 횟수, 지연·손실, 로봇 강제종료, 라벨, 시나리오 값 `params`, 새 컨테이너 모드. 사용법은 [GCP README](../infra/gcp/README.md) "3. 실행").
+- `.github/workflows/fleet-test.yml`이 GCP 러너에서 `docker_run.sh`로 이 하네스를 돌린다 (입력: 시나리오, 반복 횟수, 지연·손실, 로봇 강제종료, 라벨, 시나리오 값 `params`, 새 컨테이너 모드). 로컬 명령의 `docker_run.sh`를 `gcp_run.sh`로 바꾸면 같은 인자로 GCP에서 돈다 ([GCP README](../infra/gcp/README.md) "3. 실행").
 - 로그 포맷은 명세서 1-4절 "성능 지표 측정 절차" 표를 따른다.
 
 ## 실행 (하네스 v1)
@@ -19,6 +19,9 @@ python3 tools/harness/run.py fleet_fake -n 10 --set delay_ms=200 --set loss_pct=
 # 호스트에서 컨테이너로 (필요한 패키지만 빌드하고 run.py를 부른다)
 tools/harness/docker_run.sh loc_basic -n 10
 HARNESS_FRESH=1 tools/harness/docker_run.sh loc_basic -n 10   # 반복마다 새 컨테이너
+
+# GCP 러너로 (같은 인자, 지금 브랜치의 PR 코드. RTF 1.0, 결과는 버킷)
+tools/harness/gcp_run.sh loc_basic -n 10
 
 # 실행 목록(index.csv)에 한 줄 더하기 (fleet-test.yml이 버킷에 올리며 쓴다, ROS 불필요)
 python3 tools/harness/index_run.py tools/harness/results/<out 폴더> --index index.csv --path <결과 위치>

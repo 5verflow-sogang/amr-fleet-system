@@ -81,7 +81,30 @@ terraform output                          # 2번에 넣을 값
 
 ### 3. 실행
 
-Actions → Fleet Regression Test → Run workflow. 저장소 관리자면 누구나 돌릴 수 있다.
+**가장 쉬운 방법: 로컬 하네스 명령에서 `docker_run.sh`를 `gcp_run.sh`로 바꾼다.** 인자가 같다. `gh`(`gh auth login`)만 있으면 된다.
+
+```bash
+# 로컬
+tools/harness/docker_run.sh loc_basic -n 10
+# GCP (지금 브랜치의 PR 코드로 돈다. push한 데까지)
+tools/harness/gcp_run.sh loc_basic -n 10
+
+# 시나리오 값·라벨·새 컨테이너·빌드 패키지도 로컬과 같다
+HARNESS_FRESH=1 HARNESS_PACKAGES="amr_bringup amr_nav2_plugins" \
+  tools/harness/gcp_run.sh nav_compare -n 10 --set controller=teb --set scenario=obstacle --label teb_obstacle
+
+# Fleet 장애도 --set으로
+tools/harness/gcp_run.sh fleet_fake -n 10 --set delay_ms=200 --ref dev
+```
+
+| 옵션 | 뜻 |
+| --- | --- |
+| (없음) | 지금 브랜치의 열린 PR 코드로 돈다. PR이 없으면 멈추고 안내한다 |
+| `--pr 145` / `--ref dev` | 다른 PR이나 브랜치 코드로 |
+| `--watch` | 끝날 때까지 진행을 보여 준다. 없으면 실행 링크만 찍고 끝난다 |
+| `--fresh`, `--packages a,b` | `HARNESS_FRESH=1`, `HARNESS_PACKAGES`와 같다 |
+
+`gcp_run.sh`는 아래 워크플로 입력으로 바꿔 `gh workflow run`을 부를 뿐이다. 브라우저에서는 Actions → Fleet Regression Test → Run workflow에 같은 값을 넣는다. 저장소 관리자면 누구나 돌릴 수 있다.
 
 | 입력 | 기본값 | 설명 |
 | --- | --- | --- |
@@ -105,14 +128,7 @@ Actions → Fleet Regression Test → Run workflow. 저장소 관리자면 누�
 | 위치추정 KPI (RTF 1.0) | `scenario=loc_basic`, `repeats=10` |
 | DWA·TEB 비교 (PR #145) | `ref=refs/pull/145/head`, `scenario=nav_compare`, `params=controller=teb scenario=obstacle packages=amr_bringup,amr_nav2_plugins`, `label=teb_obstacle`, `fresh` 켬 |
 
-터미널에서는 `gh workflow run`으로 같은 입력을 준다.
-
-```bash
-gh workflow run fleet-test.yml -R 5verflow-sogang/amr-fleet-system --ref dev \
-  -f ref=refs/pull/145/head -f scenario=nav_compare -f repeats=10 -f label=teb_obstacle -f fresh=true \
-  -f params='controller=teb scenario=obstacle packages=amr_bringup,amr_nav2_plugins'
-gh run list -R 5verflow-sogang/amr-fleet-system --workflow fleet-test.yml   # 진행 상황
-```
+진행 상황은 `gh run list -R 5verflow-sogang/amr-fleet-system --workflow fleet-test.yml`로 본다.
 
 - 러너는 동시에 1대다. 앞 실행이 끝날 때까지 대기열에 선다. 10회면 시나리오에 따라 1~2시간 걸리므로 긴 실행은 팀 채널에 미리 알린다.
 - 카메라가 필요한 측정(도킹 ArUco, YOLO FPS)은 GCP에 맞지 않는다. CPU 렌더링이라 카메라를 켜면 RTF가 0.37로 떨어진다(명세서 11-3절).
