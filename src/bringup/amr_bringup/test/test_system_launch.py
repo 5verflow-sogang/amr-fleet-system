@@ -88,8 +88,15 @@ def _includes(entity):
     return found
 
 
+def _text(value):
+    """문자열 또는 Substitution(목록)을 문자열로. include의 location·launch_arguments는 둘 중 어느 쪽으로도 나온다."""
+    if isinstance(value, str):
+        return value
+    return perform_substitutions(launch.LaunchContext(), normalize_to_list_of_substitutions(value))
+
+
 def _include_name(include):
-    return os.path.basename(str(include.launch_description_source.location))
+    return os.path.basename(_text(include.launch_description_source.location))
 
 
 def _robot_stack(actions, index=0):
@@ -150,11 +157,9 @@ def test_nav2_launch_description_builds():
 def _bt_arguments(actions):
     """첫 로봇 스택에서 amr_bt include가 받은 launch 인자."""
     timers = [a for a in actions if isinstance(a, TimerAction)]
-    context = launch.LaunchContext()
     for include in _includes(timers[0]):
         if _include_name(include) == 'amr_bt.launch.py':
-            return {k: v if isinstance(v, str) else perform_substitutions(
-                context, normalize_to_list_of_substitutions(v)) for k, v in include.launch_arguments}
+            return {_text(k): _text(v) for k, v in include.launch_arguments}
     raise AssertionError('amr_bt include 없음')
 
 
