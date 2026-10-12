@@ -10,8 +10,8 @@ pytest.importorskip('launch_ros')
 pytest.importorskip('ament_index_python')
 import launch  # noqa: E402
 from ament_index_python.packages import get_package_share_directory  # noqa: E402
-from launch.actions import TimerAction  # noqa: E402
-from launch.utilities import perform_substitutions  # noqa: E402
+from launch.actions import IncludeLaunchDescription, TimerAction  # noqa: E402
+from launch.utilities import normalize_to_list_of_substitutions, perform_substitutions  # noqa: E402
 from launch_ros.actions import Node  # noqa: E402
 
 # 이 launch가 include하는 파일. 이름이 바뀌면 여기서 먼저 깨진다
@@ -73,12 +73,27 @@ def test_options_off():
     assert not any(isinstance(a, Node) for a in actions)
 
 
+def _includes(entity):
+    """entity 안(어느 깊이든)의 IncludeLaunchDescription을 순서대로 모은다.
+
+    GroupAction은 앞뒤에 Push/PopLaunchConfigurations를 끼우므로 몇 번째 하위 항목이 include라고 가정하지 않는다.
+    """
+    if isinstance(entity, IncludeLaunchDescription):
+        return [entity]
+    found = []
+    for sub in entity.get_sub_entities():
+        found.extend(_includes(sub))
+    return found
+
+
+def _include_name(include):
+    return os.path.basename(str(include.launch_description_source.location))
+
+
 def _robot_stack(actions, index=0):
-    """index번째 로봇의 TimerAction 안 include 목록 (이름에 쓰인 launch 파일 경로)."""
+    """index번째 로봇의 TimerAction 안 include 목록 (launch 파일 이름)."""
     timers = [a for a in actions if isinstance(a, TimerAction)]
-    group = timers[index].actions[0]
-    return [os.path.basename(str(include.get_sub_entities()[0].launch_description_source.location))
-            for include in group.get_sub_entities()]
+    return [_include_name(i) for i in _includes(timers[index])]
 
 
 def test_default_is_stage_one():
@@ -133,10 +148,11 @@ def test_nav2_launch_description_builds():
 def _bt_arguments(actions):
     """첫 로봇 스택에서 amr_bt include가 받은 launch 인자."""
     timers = [a for a in actions if isinstance(a, TimerAction)]
-    for group in timers[0].actions[0].get_sub_entities():
-        include = group.get_sub_entities()[0]
-        if str(include.launch_description_source.location).endswith('amr_bt.launch.py'):
-            return {k: perform_substitutions(launch.LaunchContext(), v) for k, v in include.launch_arguments}
+    context = launch.LaunchContext()
+    for include in _includes(timers[0]):
+        if _include_name(include) == 'amr_bt.launch.py':
+            return {k: v if isinstance(v, str) else perform_substitutions(
+                context, normalize_to_list_of_substitutions(v)) for k, v in include.launch_arguments}
     raise AssertionError('amr_bt include 없음')
 
 
