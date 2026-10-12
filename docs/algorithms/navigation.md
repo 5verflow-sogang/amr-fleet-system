@@ -481,47 +481,40 @@ GT 직선이 큰 이유를 경로 순서별로 나눠 보면 추종기가 아니
 리뷰 지적). margin을 키울지 BT가 옆으로 비켜서게 할지는 10/12 회의에서 정한다 - 아직
 `backing_margin_m` 자체는 그대로 뒀다.
 
-## 7. 로컬 컨트롤러 비교 (DWA vs TEB/대안) — 초안
+## 7. 로컬 컨트롤러 비교 (DWA vs TEB)
 
-> 상태: 지표 정의 초안 (10/8). 아직 측정 전. 원 명세 "DWA 직접구현 vs TEB" 비교 준비.
+> 상태: 하네스 시나리오 `nav_compare`로 1차 측정 (10/12, 조합마다 3회). 원 명세 "DWA 직접구현 vs TEB".
+> 실행·원자료·해석은 [experiments/teb_compare](../../experiments/teb_compare/README.md).
 
-### 7-1. 지금 쓸 수 있는 것 (dev 이미지 기준, 10/8 확인)
+### 7-1. TEB 도입 (#110)
 
-| 컨트롤러 | Humble apt | 이미지 설치 | 비고 |
-| --- | --- | --- | --- |
-| TEB (`teb_local_planner`) | **없음** | 없음 | 소스만. `humble-devel` 브랜치(마지막 2022-09), `ros2-master`(2024-11, Jazzy 대응). `costmap_converter`도 apt 없음(소스 `ros2` 브랜치) |
-| DWB (`dwb_core`) | 있음 (1.1.20) | **없음** | `nav2_params.yaml`의 `FollowPath`가 이 플러그인인데 이미지에 없어 지금은 `controller_server`가 못 띄운다 |
-| MPPI (`nav2_mppi_controller`) | 있음 (1.1.20) | 없음 | 샘플링 기반 예측 제어. 바이너리가 AVX2·FMA로 빌드돼 있어 그 명령어가 있는 CPU가 필요하다(개발 PC는 있음) |
-| Regulated Pure Pursuit | 있음 (1.1.20) | 없음 | 경로 추종 전용(회피는 경로 재계획에 맡김). 우리 Pure Pursuit 대조군으로 쓸 수 있다 |
-| 우리 DWA (`amr_planning_core`) | — | 코어만 | `amr_nav2_plugins`가 아직 빈 골격이라 Nav2 플러그인이 아니다 |
+TEB(`teb_local_planner`)는 Humble apt 패키지가 없어 이미지가 `/opt/teb_ws` underlay에 소스로 빌드한다
+(SHA 고정: `humble-devel` 630a22e, `costmap_converter` 0.1.2(9565858) + 로거 수정 b8a8179 - `ros2` 브랜치 최신은
+Jazzy부터 있는 `cv_bridge.hpp`를 써서 Humble에서 안 된다). 10/8 초안에서 대안으로 적었던 MPPI는 TEB가 이렇게
+들어와 쓰지 않는다. `nav2_params.yaml`의 `teb` 블록은 예제 값에 로봇 스펙(풋프린트 0.6 × 0.4 m 다각형, 2.0 m/s,
+1.5 rad/s, 1.0 m/s²)을 넣었고, 동적 장애물은 `costmap_converter::CostmapToDynamicObstacles`(costmap 배경 차분 +
+추적)로 본다. 데모 `nav2_dwa_demo.launch.py controller:=teb`로 DWA와 바꿔 띄운다.
 
-이미지에 있는 Nav2는 서버들(`nav2_controller`, `nav2_planner`+NavFn, `nav2_bt_navigator`, `nav2_behaviors`,
-`nav2_costmap_2d`, `nav2_amcl`)뿐이고 **컨트롤러 플러그인은 하나도 없다.** 그래서 어떤 비교든 먼저 플러그인
-설치가 필요하다.
+### 7-2. 결과 (1차, 10/12)
 
-### 7-2. 설치 방법 (정리만, 아직 안 함)
+| 컨트롤러 | 시나리오 | 성공/전체 | Nav2 도착 | 충돌 | 도착 시간 [s] | 최소 장애물 거리 [cm] | 경로 길이 [m] | CTE 평균 [cm] | CTE 최대 [cm] |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| DWA | clear | 3/3 | 3/3 | 0/3 | 9.5 (9.2~9.8) | — | 3.14 (3.14~3.14) | 1.3 (1.2~1.4) | 3.9 (3.7~4.2) |
+| DWA | obstacle | 0/3 | 3/3 | 3/3 | 39.5 (33.0~43.7) | 0.0 (0.0~0.0) | 4.44 (3.67~5.18) | 30.8 (22.2~39.3) | 138.2 (96.3~169.4) |
+| TEB | clear | 3/3 | 3/3 | 0/3 | 6.8 (5.6~8.8) | — | 3.36 (3.32~3.42) | 2.7 (2.3~3.5) | 8.1 (5.6~13.0) |
+| TEB | obstacle | 0/3 | 3/3 | 3/3 | 7.2 (7.2~7.3) | 0.0 (0.0~0.0) | 4.01 (3.97~4.05) | 7.1 (5.3~8.4) | 28.3 (27.4~29.0) |
 
-Dockerfile 원칙(의존성은 `package.xml`에 적고 rosdep으로 설치)대로 한다.
+평균(최소~최대). 목표 map (0,0) → (3.0, 1.5), 지도 v1, 위치추정 없음(map→odom 항등). obstacle은 경로 중점을 남북으로
+왕복하는 장애물 1개(0.5 m/s, 반지름 0.25 m), 장애물이 북쪽 끝에서 출발할 때 목표를 보내 교차 시점을 맞췄다.
+성공 = Nav2 SUCCEEDED이고 충돌(풋프린트-장애물 1 cm 미만) 없음.
 
-1. apt로 되는 것: `amr_bringup/package.xml`에 `<exec_depend>`를 추가하면 이미지 빌드 때 rosdep이 깐다.
-   - `dwb_core`, `dwb_critics`, `dwb_plugins` (기준선 DWB와 TEB 의존성)
-   - `nav2_mppi_controller` (TEB 대안)
-   - `nav2_regulated_pure_pursuit_controller` (선택)
-2. TEB는 소스 빌드라 워크스페이스에 받아야 한다. 레포에 직접 넣지 말고 `.repos` 파일 + `vcs import`로 받는 쪽을 권한다.
-   - `teb_local_planner`: https://github.com/rst-tu-dortmund/teb_local_planner `humble-devel`
-     (`teb_local_planner`, `teb_msgs` 두 패키지)
-   - `costmap_converter`: https://github.com/rst-tu-dortmund/costmap_converter `ros2`
-     (`humble` 브랜치는 2020년이 마지막이라 쓰지 않는다)
-   - apt 의존성(rosdep이 해결): `ros-humble-libg2o`, `dwb_critics`, `tf2_eigen`, `nav2_bringup`(exec)
-   - 위험: Humble용 TEB는 2022년 이후 손을 안 탔다. 빌드 경고 0 규칙(CI)에 걸릴 수 있으므로, 우리 패키지와
-     따로 빌드하거나 CI에서 제외하는 방법을 정해야 한다
-3. 모두 이미지 재빌드가 필요하다(`docker compose build`). 팀 이미지를 바꾸는 일이라 합의 후 진행한다.
+- 장애물 없으면 둘 다 3/3. TEB가 30% 빠르고(속도 한계는 같음 - 시간 최적화 대 DWA의 heading 가중치 0.8) DWA가 경로에 더 붙는다(CTE 최대 3.9 vs 8.1 cm)
+- 왕복 장애물에는 둘 다 3/3 접촉. TEB는 앞질러 지나가다, DWA는 선 앞에서 기다리다 되돌아온 장애물에 맞는다. DWA는
+  장애물 GT를 직접 받는데도(인식이 DWA에 유리) 못 피했다. 두 컨트롤러의 등속 예측이 왕복 장애물의 반환을 못 보는 것으로
+  보이며, 이 시나리오로는 둘을 가릴 수 없다 - 한 번 가로지르기·멈췄다 가기로 나눠 다시 잰다
+- 3회라 신뢰구간은 내지 않았다. 원자료는 로컬 `tools/harness/results/`(git 제외)
 
-권장: **TEB 대신 MPPI를 비교 대상으로** 쓰는 안을 함께 올린다. Humble에서 apt로 바로 되고 유지보수 중이며,
-TEB처럼 경로 추종과 회피를 함께 하는 예측형 로컬 플래너라 "DWA vs 최적화/예측형" 비교 취지에 맞는다.
-원 명세가 TEB를 명시했으므로 바꿀지는 팀 결정.
-
-### 7-3. 비교 지표 (초안)
+### 7-3. 비교 지표
 
 모든 지표는 **GT**(`ground_truth/odom`)로 잰다. 추정 위치(odom·AMCL) 기준으로 재면 위치추정 오차가 섞인다
 (5-8절에서 odom 기준 2.4 cm가 GT 기준 31 cm였다).
@@ -530,12 +523,12 @@ TEB처럼 경로 추종과 회피를 함께 하는 예측형 로컬 플래너라
 | --- | --- | --- | --- |
 | 성공 여부 | `NavigateToPose` 결과 SUCCEEDED이고 충돌 0. 실패는 timeout·abort·충돌로 나눠 센다 | — | 실행마다 |
 | 도착 시간 | 목표 수락 시각 → SUCCEEDED 결과 시각 (시뮬레이션 시간). 성공한 실행만 평균 | s | 실행마다 |
-| 최소 장애물 거리 | 주행 중 매 GT 시점에서 **사각 풋프린트(0.6×0.4 m)** 와 가장 가까운 장애물 사이 거리의 최솟값. 정적 장애물은 월드 SDF의 랙·벽·기둥 상자, 동적 장애물은 각자의 GT(#58) | m | 실행마다 최솟값 + 시계열 |
+| 최소 장애물 거리 | 주행 중 매 GT 시점에서 **사각 풋프린트(0.6×0.4 m)** 와 가장 가까운 장애물 사이 거리의 최솟값. 동적 장애물은 각자의 GT(#58)와 충돌 반지름. 정적 장애물(월드 SDF의 랙·벽·기둥)은 아직 안 잰다. 1 cm 미만이면 충돌로 본다(Gazebo에서 닿은 몸체는 겹치지 않고 0.1~1 mm로 붙는다) | m | 실행마다 최솟값(`nav_result.json`) + 시계열(`nav_series.csv`) |
 | 경로 길이 | GT 위치 증분의 합. 같은 실행의 전역 경로 길이(NavFn) 대비 비율도 같이 | m, 비 | 실행마다 |
-| CTE | GT 위치를 **그 시각의 전역 경로**(map 프레임)에 투영한 거리. 5-4절 `cte.csv` 형식, 직선·곡선 구간별 평균·RMSE·최대 | m | 시점마다 |
+| CTE | GT 위치를 **그 시각의 전역 경로**(map 프레임)에 투영한 거리의 평균·최대. 직선·곡선 구간 분리는 아직 안 했다 | m | 시점마다 |
 
 - CTE는 장애물 회피로 일부러 벗어난 구간까지 섞인다. 회피가 없는 구간(로봇 주변 1 m 안에 장애물이 없는
-  시점)만 따로 집계한 값을 함께 낸다.
+  시점)만 따로 집계하는 건 아직 안 했다(`nav_series.csv`로 다시 계산할 수 있다).
 - 보조 지표(여유 있으면): 정지 횟수(선속도 < 0.01 m/s가 0.5 s 이상), 가가속도(jerk) RMS — 5절 PID·연구 2와 공유.
 - 최소 장애물 거리는 LiDAR 최소 거리로 대신하지 않는다. 스캔은 풋프린트 모양을 모르고 노이즈가 있다.
 
@@ -553,6 +546,8 @@ TEB처럼 경로 추종과 회피를 함께 하는 예측형 로컬 플래너라
 | 반복 | 조건마다 N회(하네스 seed 규칙). 실행 단위 부트스트랩 신뢰구간 |
 | 기록 | 하네스 `meta.json`의 `controller`에 컨트롤러 이름 |
 
-TODO: 지표 계산 스크립트(GT·SDF 기반 최소 거리), 하네스 시나리오(지도 v1·EKF+AMCL 준비 뒤, (8) 작업),
-`amr_nav2_plugins`로 우리 DWA를 Nav2 컨트롤러 플러그인화.
+1차 측정(7-2)에서 지킨 것: 지도 v1, NavFn 고정, 같은 costmap·풋프린트·속도 한계·제어 주기·goal checker, 장애물
+없음/있음 두 조건, 하네스 `meta.json` `params.controller`. 아직 안 한 것: 위치추정(EKF+AMCL) 켜기, 여러 시작·목표
+쌍(좁은 통로·곡선), 0.5 m/s 상한 맞추기(지금은 둘 다 2.0 m/s 한계라 도착 시간에 순항 속도 차이가 들어간다), 정적
+장애물 최소 거리, N회 반복 신뢰구간.
 

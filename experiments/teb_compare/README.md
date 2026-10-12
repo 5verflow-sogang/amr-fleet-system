@@ -1,7 +1,7 @@
 # DWA vs TEB 로컬 컨트롤러 비교 ((10) 작업)
 
 우리 DWA(`amr_nav2_plugins::DwaController`, #103)와 TEB(`teb_local_planner`, #110 underlay)를 같은 Gazebo 데모에서
-하네스 시나리오 `nav_compare`로 비교한다. 지표 정의·조건은 [docs/algorithms/navigation.md](../../docs/algorithms/navigation.md) 6절.
+하네스 시나리오 `nav_compare`로 비교한다. 지표 정의·조건은 [docs/algorithms/navigation.md](../../docs/algorithms/navigation.md) 7절.
 
 ## 실행
 
@@ -60,4 +60,4 @@ python3 experiments/teb_compare/analyze.py tools/harness/results/nav_compare-*_<
 
 - 장애물 시나리오를 "한 번만 가로지르기"(왕복 없음)와 "로봇 앞에서 멈췄다 지나가기"로 나눠 다시 잰다 - 지금 왕복 시나리오는 두 컨트롤러 모두 0/3이라 차이를 못 가린다
 - DWA 쪽 인식을 LiDAR 군집화(`amr_tracking`)로 바꿔 TEB와 같은 실제 센서 경로로 맞춘다 (지금은 DWA에 유리)
-- 위치추정(EKF+AMCL)·지도 정렬(#98)을 켠 조건과 좁은 통로·곡선 목표 쌍으로 넓힌다 (6-4절)
+- 위치추정(EKF+AMCL)·지도 정렬(#98)을 켠 조건과 좁은 통로·곡선 목표 쌍으로 넓힌다 (7-4절)

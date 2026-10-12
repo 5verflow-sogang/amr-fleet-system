@@ -1,6 +1,6 @@
 # 로컬 컨트롤러 비교 ((10) DWA vs TEB, 이진). 로봇 1대, 지도 warehouse_v1, Nav2(NavFn + 고른 컨트롤러).
 # 목표 1곳(map (0,0) -> (3.0, 1.5))을 1회 주행하고 nav_result.json에 GT 지표를 남긴다
-# (experiments/teb_compare/README.md, docs/algorithms/navigation.md 6절).
+# (experiments/teb_compare/README.md, docs/algorithms/navigation.md 7절).
 #
 #   HARNESS_FRESH=1 HARNESS_PACKAGES="amr_bringup amr_nav2_plugins" \
 #     tools/harness/docker_run.sh nav_compare -n 3 --set controller=teb --set scenario=obstacle --label teb_obstacle

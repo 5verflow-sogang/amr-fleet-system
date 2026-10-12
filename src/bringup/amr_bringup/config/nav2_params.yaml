@@ -273,7 +273,7 @@ controller_server:
 # costmap_converter_plugin은 CostmapToDynamicObstacles - costmap 변화로 움직이는 장애물을
 # 추적해 속도까지 추정한다(배경 차분 + 다중 추적, 우리 DWA의 predict_dynamic_obstacles와
 # 같은 역할이지만 perception/obstacles 대신 costmap만 보고 직접 추정한다는 차이가 있다 -
-# navigation.md 6절 비교 결과에 적는다).
+# navigation.md 7절 비교 결과에 적는다).
     teb:
       plugin: "teb_local_planner::TebLocalPlannerROS"
 

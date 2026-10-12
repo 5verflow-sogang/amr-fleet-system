@@ -1,5 +1,5 @@
 """amr_nav2_plugins::DwaController 증명용 데모: Gazebo 월드에서 목표점 1곳으로 주행.
-controller:=teb로 TEB와도 바꿔 띌 수 있다 ((10) DWA vs TEB 비교, navigation.md 6절).
+controller:=teb로 TEB와도 바꿔 띌 수 있다 ((10) DWA vs TEB 비교, navigation.md 7절).
 
 로봇 1대(네임스페이스 amr_01). nav2_params.yaml은 네임스페이스를 가정하지 않으므로
 (CONTRIBUTING 4-5절), TF 프레임 이름이 들어가는 파라미터(costmap의 robot_base_frame,

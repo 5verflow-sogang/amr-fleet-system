@@ -5,7 +5,7 @@
 
 데모(nav2_dwa_demo.launch.py send_goal:=false)가 떠 있는 상태에서:
   1. NavigateToPose로 목표(map (3.0, 1.5), 데모 기본값)를 보내고 결과(succeeded/aborted/...)를 받는다.
-  2. 지표는 전부 GT(ground_truth/odom)로 잰다 (docs/algorithms/navigation.md 6-3절).
+  2. 지표는 전부 GT(ground_truth/odom)로 잰다 (docs/algorithms/navigation.md 7-3절).
      - 도착 시간: 목표 수락 → SUCCEEDED (시뮬레이션 시간). Nav2가 목표에 닿은 실행만(충돌과 따로)
      - 경로 길이: 목표 수락부터 결과까지 GT 위치 증분의 합
      - CTE: GT 위치를 그 시각의 전역 경로(/<ns>/plan, map)에 투영한 거리의 평균·최대
@@ -195,7 +195,7 @@ class NavMeasure(Node):
             record['result'] = 'timeout'
             handle.cancel_goal_async()
             self.spin_until(lambda: False, 2.0)
-        # 6-3절 정의: 성공 = SUCCEEDED이고 충돌 0. 풋프린트와 장애물이 COLLISION_GAP_M보다 가까워진 적이 있으면 충돌
+        # 7-3절 정의: 성공 = SUCCEEDED이고 충돌 0. 풋프린트와 장애물이 COLLISION_GAP_M보다 가까워진 적이 있으면 충돌
         record['collision'] = self.min_obstacle < COLLISION_GAP_M
         record['success'] = record['result'] == 'succeeded' and not record['collision']
         if record['result'] == 'succeeded':
@@ -228,7 +228,7 @@ def main():
         node.destroy_node()
         rclpy.try_shutdown()
     record['controller'] = args.controller
-    # 시계열 (6-3절 "실행마다 최솟값 + 시계열"): 충돌·회피 모양을 나중에 다시 볼 수 있게 남긴다
+    # 시계열 (7-3절 "실행마다 최솟값 + 시계열"): 충돌·회피 모양을 나중에 다시 볼 수 있게 남긴다
     series_path = os.path.join(os.path.dirname(args.out), 'nav_series.csv')
     with open(series_path, 'w', encoding='utf-8') as f:
         f.write('t,robot_x,robot_y,robot_yaw,obstacle_x,obstacle_y,gap_m\n')
