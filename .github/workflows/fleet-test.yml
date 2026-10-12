@@ -2,8 +2,12 @@
 # GCP Spot 일회용 러너(tools/infra/gcp)를 만들어 하네스(tools/harness) 시나리오를 N회 돌리고,
 # 결과와 요약을 버킷에 올린 뒤 러너를 지운다.
 #
-# 러너만 빨리 확인하려면 repeats=1, duration_s=120 (약 8분).
+# 러너만 빨리 확인하려면 repeats=1, params에 duration_s=120 (약 8분).
 # fleet_fake 기본값(620초)으로 N회면 1회 약 12분이다. 제한 시간(240분) 안에 들게 repeats는 15 이하로 둔다.
+#
+# 시나리오마다 다른 값(컨트롤러, 지도, 시간 등)은 params에 '이름=값'을 공백으로 나눠 넣는다.
+# 장애 입력(delay_ms·loss_pct·kill_robot)은 시나리오 params에 그 이름이 있을 때만 넘긴다.
+# workflow_dispatch 입력은 10개까지라 시나리오별 값은 따로 입력을 만들지 않고 params로 받는다.
 #
 # 필요한 설정 (tools/infra/gcp/README.md)
 # - 저장소 변수 GCP_WIF_PROVIDER, GCP_GHA_SA: terraform output
@@ -32,10 +36,7 @@ on:
         description: 장애 주입 손실 (%, 0~10)
         default: "0"
       label:
-        description: 조건 이름 (요약에서 묶는 이름. 비우면 d<지연>_l<손실>[_kill_<로봇>])
-        default: ""
-      duration_s:
-        description: 시나리오 시간 (s). 비우면 시나리오 기본값
+        description: 조건 이름 (요약·index.csv에서 묶는 이름). 비우면 d<지연>_l<손실>[_kill_<로봇>], 장애 없는 시나리오는 default. params를 쓰면 직접 정한다
         default: ""
       kill_robot:
         description: "로봇 장애 - 죽일 로봇 (예: amr_03). none이면 끄기"
@@ -43,6 +44,13 @@ on:
       kill_robot_at_s:
         description: 로봇 장애 - 가짜 로봇 launch 시작 후 죽일 시각 (s). -1이면 끄기
         default: "-1"
+      params:
+        description: "시나리오 값 '이름=값' 공백 구분 (예: controller=teb scenario=obstacle, duration_s=120). packages=a,b는 빌드할 패키지"
+        default: ""
+      fresh:
+        description: 반복마다 새 컨테이너 (Nav2 시나리오를 여러 번 돌릴 때)
+        type: boolean
+        default: false
   # TODO: 하네스 연결 후 활성화 (매일 03:00 KST)
   # schedule:
   #   - cron: "0 18 * * *"
@@ -127,35 +135,79 @@ jobs:
           DELAY_MS: ${{ github.event.inputs.delay_ms }}
           LOSS_PCT: ${{ github.event.inputs.loss_pct }}
           LABEL: ${{ github.event.inputs.label }}
-          DURATION_S: ${{ github.event.inputs.duration_s }}
           KILL_ROBOT: ${{ github.event.inputs.kill_robot }}
           KILL_ROBOT_AT_S: ${{ github.event.inputs.kill_robot_at_s }}
+          PARAMS: ${{ github.event.inputs.params }}
+          HARNESS_FRESH: ${{ inputs.fresh && '1' || '0' }}
           HARNESS_IMAGE: amr-fleet-system:latest
           # 있으면 하네스가 끝날 때 요약을 실험 결과 채널로 보낸다 (tools/harness README "Discord 알림")
           HARNESS_DISCORD_WEBHOOK: ${{ secrets.HARNESS_DISCORD_WEBHOOK }}
         run: |
           # 입력값은 셸에 끼워 넣지 않고 환경 변수로 받아 형식을 확인한다
-          [[ "$REPEATS" =~ ^[0-9]+$ ]] && (( REPEATS >= 1 && REPEATS <= 15 )) || { echo "::error::repeats는 1~15"; exit 1; }
-          [[ "$SCENARIO" =~ ^[a-z0-9_]+$ ]] || { echo "::error::scenario 이름 형식이 아님: $SCENARIO"; exit 1; }
+          fail() { echo "::error::$1"; exit 1; }
+          [[ "$REPEATS" =~ ^[0-9]+$ ]] || fail "repeats는 1~15"
+          (( REPEATS >= 1 && REPEATS <= 15 )) || fail "repeats는 1~15"
+          [[ "$SCENARIO" =~ ^[a-z0-9_]+$ ]] || fail "scenario 이름 형식이 아님: $SCENARIO"
+          scenario_file="tools/harness/scenarios/${SCENARIO}.yaml"
+          [ -f "$scenario_file" ] || fail "$scenario_file 없음. ref에 그 시나리오가 있는지 확인 (머지 전이면 refs/pull/<번호>/head)"
+          # 시나리오 params 절의 이름 목록. 넘기는 값이 시나리오에 없으면(오타) 조용히 무시되므로 막는다
+          scenario_params=$(awk '/^params:/ {p = 1; next} /^[^[:space:]#]/ {p = 0}
+            p && /^[[:space:]]+[A-Za-z_][A-Za-z0-9_]*:/ {sub(/^[[:space:]]+/, ""); sub(/:.*/, ""); print}' "$scenario_file")
+          has_param() { grep -qx "$1" <<< "$scenario_params"; }
           num='^[0-9]+([.][0-9]+)?$'
-          [[ "$DELAY_MS" =~ $num && "$LOSS_PCT" =~ $num ]] || { echo "::error::delay_ms·loss_pct는 숫자"; exit 1; }
-          label="${LABEL:-d${DELAY_MS}_l${LOSS_PCT}}"
-          # 로봇 장애 실행이 장애 없는 실행과 같은 묶음으로 요약되지 않게 기본 라벨에 붙인다
-          if [ -z "$LABEL" ] && [ "$KILL_ROBOT" != none ]; then label="${label}_kill_${KILL_ROBOT}"; fi
-          [[ "$label" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "::error::label은 영문·숫자·_.-만: $label"; exit 1; }
+          zero='^0+([.]0+)?$'
+          [[ "$DELAY_MS" =~ $num && "$LOSS_PCT" =~ $num ]] || fail "delay_ms·loss_pct는 숫자"
+
+          args=("$SCENARIO" -n "$REPEATS" --out "results/$(basename "$RUN_DIR")")
+          # 장애 입력은 그 장애를 쓰는 시나리오에만 넘긴다 (위치추정·주행 시나리오의 meta.json에 장애 조건이 남지 않게)
+          fault_label=""
+          if has_param delay_ms; then
+            args+=(--set "delay_ms=$DELAY_MS" --set "loss_pct=$LOSS_PCT")
+            fault_label="d${DELAY_MS}_l${LOSS_PCT}"
+          elif ! [[ "$DELAY_MS" =~ $zero && "$LOSS_PCT" =~ $zero ]]; then
+            fail "$SCENARIO는 통신 장애(delay_ms)를 쓰지 않는 시나리오다. delay_ms·loss_pct는 0으로 둔다"
+          fi
+          if [ "$KILL_ROBOT" != none ]; then
+            has_param kill_robot || fail "$SCENARIO는 로봇 장애(kill_robot)를 쓰지 않는 시나리오다"
+            [[ "$KILL_ROBOT" =~ ^amr_0[1-5]$ && "$KILL_ROBOT_AT_S" =~ $num ]] \
+              || fail "kill_robot은 amr_01~05, kill_robot_at_s는 0 이상 숫자"
+            args+=(--set "kill_robot=$KILL_ROBOT" --set "kill_robot_at_s=$KILL_ROBOT_AT_S")
+            # 로봇 장애 실행이 장애 없는 실행과 같은 묶음으로 요약되지 않게 기본 라벨에 붙인다
+            fault_label="${fault_label:+${fault_label}_}kill_${KILL_ROBOT}"
+          fi
+
+          # params: 이름=값을 공백으로 나눈다. 값에는 공백·따옴표·$를 못 쓴다 (경로·목록 [0.0,1.5,0.0]은 된다)
+          kv='^([a-z_][a-z0-9_]*)=([][A-Za-z0-9_.:/,+-]+)$'
+          read -ra items <<< "$PARAMS"
+          conditions=0
+          for item in "${items[@]}"; do
+            [[ "$item" =~ $kv ]] || fail "params는 이름=값 (값에 공백·따옴표·\$ 불가): $item"
+            key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
+            case "$key" in
+              delay_ms|loss_pct|kill_robot|kill_robot_at_s) fail "$key는 params가 아니라 같은 이름의 입력에 넣는다" ;;
+              # 빌드할 패키지 (docker_run.sh HARNESS_PACKAGES). 실험 조건이 아니라 라벨을 요구하지 않는다
+              packages)
+                [[ "$value" =~ ^[a-z0-9_,]+$ ]] || fail "packages는 패키지 이름을 쉼표로: $value"
+                export HARNESS_PACKAGES="${value//,/ }"
+                continue ;;
+            esac
+            has_param "$key" || fail "$key는 $scenario_file params에 없다. 있는 이름: $(tr '\n' ' ' <<< "$scenario_params")"
+            args+=(--set "$key=$value")
+            conditions=$((conditions + 1))
+          done
+
+          if [ -n "$LABEL" ]; then
+            label="$LABEL"
+          elif (( conditions > 0 )); then
+            fail "params로 조건을 바꿀 때는 label을 직접 정한다 (요약·index.csv에서 조건을 구분하는 이름, 예: teb_obstacle)"
+          else
+            label="${fault_label:-default}"
+          fi
+          [[ "$label" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "label은 영문·숫자·_.-만: $label"
+          args+=(--label "$label")
           # 업로드 경로(runs/<시나리오>-<라벨>/)에 쓴다
           echo "RESULTS_PREFIX=runs/${SCENARIO}-${label}" >> "$GITHUB_ENV"
-          args=("$SCENARIO" -n "$REPEATS" --label "$label" --out "results/$(basename "$RUN_DIR")"
-                --set "delay_ms=$DELAY_MS" --set "loss_pct=$LOSS_PCT")
-          if [ "$KILL_ROBOT" != none ]; then
-            [[ "$KILL_ROBOT" =~ ^amr_0[1-5]$ && "$KILL_ROBOT_AT_S" =~ $num ]] \
-              || { echo "::error::kill_robot은 amr_01~05, kill_robot_at_s는 0 이상 숫자"; exit 1; }
-            args+=(--set "kill_robot=$KILL_ROBOT" --set "kill_robot_at_s=$KILL_ROBOT_AT_S")
-          fi
-          if [ -n "$DURATION_S" ]; then
-            [[ "$DURATION_S" =~ ^[0-9]+$ ]] || { echo "::error::duration_s는 정수"; exit 1; }
-            args+=(--set "duration_s=$DURATION_S")
-          fi
+          echo "하네스: ${args[*]} (HARNESS_FRESH=$HARNESS_FRESH, HARNESS_PACKAGES=${HARNESS_PACKAGES:-기본})"
           bash tools/harness/docker_run.sh "${args[@]}"
 
       # 반복이 전부 실패했으면 job을 실패로 둔다 (run.py는 실패한 반복이 있어도 0으로 끝난다)
