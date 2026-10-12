@@ -453,10 +453,33 @@ def test_curve_summary():
     s = curve_summary(steps, values, final_frac=0.25, threshold=0.8)
     assert s['auc'] == pytest.approx(0.58)
     assert s['final'] == pytest.approx(0.7)          # 마지막 25% 구간 = 스텝 4·5
-    assert s['peak'] == pytest.approx(0.9)
-    assert s['drop'] == pytest.approx(0.2)           # 최고 뒤 무너진 정도
+    assert s['best'] == pytest.approx(0.9)
+    assert s['worsen'] == pytest.approx(0.2)         # 최고 뒤 무너진 정도
     assert s['steps_to'] == 3
-    assert curve_summary(steps, [0.1] * 5)['steps_to'] is None
+    assert curve_summary(steps, [0.1] * 5, threshold=0.8)['steps_to'] is None
+    assert curve_summary(steps, values)['steps_to'] is None   # 기준값이 없으면 도달 스텝도 없다
+
+
+def test_curve_summary_lower_is_better():
+    # 충돌률처럼 낮을수록 좋은 지표: 가장 좋은 값은 최저, 나빠진 양은 최종 − 최저
+    from payload_nav.curves import curve_summary
+    s = curve_summary([1, 2, 3, 4, 5], [0.4, 0.2, 0.05, 0.1, 0.1], higher_is_better=False, threshold=0.1)
+    assert s['best'] == pytest.approx(0.05)
+    assert s['worsen'] == pytest.approx(0.05)
+    assert s['steps_to'] == 3                        # 처음 0.1 이하
+
+
+def test_curve_summary_until_uses_same_window():
+    # 학습량이 다른 두 실행은 공통 스텝까지 잘라야 "최종"이 같은 구간의 평균이 된다
+    from payload_nav.curves import common_horizon, curve_summary
+    long_run = ([1, 2, 3, 4, 5, 6, 7, 8], [0.1, 0.5, 0.8, 0.9, 0.9, 0.6, 0.6, 0.6])
+    short_run = ([1, 2, 3, 4], [0.2, 0.6, 0.8, 0.9])
+    h = common_horizon([long_run, short_run])
+    assert h == 4
+    s = curve_summary(*long_run, until=h)
+    assert s['last_step'] == 4 and s['points'] == 4
+    assert s['final'] == pytest.approx(0.9)          # 잘라내지 않으면 0.6
+    assert curve_summary(*long_run)['final'] == pytest.approx(0.6)
 
 
 def test_mean_band_uses_common_range():
