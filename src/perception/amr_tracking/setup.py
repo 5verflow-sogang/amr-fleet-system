@@ -25,6 +25,7 @@ setup(
         'console_scripts': [
             'tracking_node = amr_tracking.tracking_node:main',
             'synthetic_obstacles_node = amr_tracking.synthetic_obstacles_node:main',
+            'tracking_eval = amr_tracking.tracking_eval_node:main',
         ],
     },
 )
