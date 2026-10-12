@@ -264,3 +264,110 @@ controller_server:
       dynamic_obstacle_safety_margin: 0.2
       dynamic_obstacle_influence_radius: 1.0
       dynamic_weight: 0.3
+
+# --- TEB (DWA 비교 대상, #110 underlay·(10) 작업) ---
+# 원 명세 "DWA 직접구현 vs TEB" 비교. teb_local_planner는 apt에 없어 /opt/teb_ws에 소스로
+# 빌드해 얹는다(Dockerfile) - Humble 포트가 2022년 이후 유지보수가 끊겨 있다는 점은 감안한다.
+# 값은 teb_local_planner/params/teb_params.yaml(설치된 예시, turtlebot3 기준)을 우리 로봇
+# 스펙(최대 2.0 m/s, 1.5 rad/s, 가속 1.0 m/s²·3.2 rad/s²)과 goal_checker(0.25 m)에 맞춰 바꿨다.
+# costmap_converter_plugin은 CostmapToDynamicObstacles - costmap 변화로 움직이는 장애물을
+# 추적해 속도까지 추정한다(배경 차분 + 다중 추적, 우리 DWA의 predict_dynamic_obstacles와
+# 같은 역할이지만 perception/obstacles 대신 costmap만 보고 직접 추정한다는 차이가 있다 -
+# navigation.md 6절 비교 결과에 적는다).
+    teb:
+      plugin: "teb_local_planner::TebLocalPlannerROS"
+
+      teb_autosize: 1.0
+      dt_ref: 0.3
+      dt_hysteresis: 0.1
+      max_samples: 500
+      global_plan_overwrite_orientation: True
+      allow_init_with_backwards_motion: False
+      max_global_plan_lookahead_dist: 3.0
+      global_plan_viapoint_sep: -1.0
+      global_plan_prune_distance: 1.0
+      exact_arc_length: False
+      feasibility_check_no_poses: 5
+      publish_feedback: False
+
+      # Robot (DWA·FollowPath와 같은 로봇 스펙)
+      max_vel_x: 2.0
+      max_vel_x_backwards: 0.2
+      max_vel_theta: 1.5
+      acc_lim_x: 1.0
+      acc_lim_theta: 3.2
+      min_turning_radius: 0.0   # 차동 구동 - 제자리 회전 가능
+
+      footprint_model:
+        type: "polygon"
+        vertices: "[[0.3, 0.2], [0.3, -0.2], [-0.3, -0.2], [-0.3, 0.2]]"
+
+      # GoalTolerance (general_goal_checker와 같은 값 - 서로 다른 기준으로 "도착"을 판정하면 어긋난다)
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.25
+      free_goal_vel: False
+
+      # Obstacles
+      min_obstacle_dist: 0.25
+      inflation_dist: 0.5
+      include_costmap_obstacles: True
+      costmap_obstacles_behind_robot_dist: 1.0
+      obstacle_poses_affected: 15
+      dynamic_obstacle_inflation_dist: 0.6
+      include_dynamic_obstacles: True
+      costmap_converter_plugin: "costmap_converter::CostmapToDynamicObstacles"
+      costmap_converter_spin_thread: True
+      costmap_converter_rate: 5.0
+
+      # Optimization (예시 기본값 - 2주차 이후 실측 비교로 재조정)
+      no_inner_iterations: 5
+      no_outer_iterations: 4
+      optimization_activate: True
+      optimization_verbose: False
+      penalty_epsilon: 0.1
+      obstacle_cost_exponent: 4.0
+      weight_max_vel_x: 0.5
+      weight_max_vel_theta: 0.5
+      weight_acc_lim_x: 0.5
+      weight_acc_lim_theta: 10.5
+      weight_kinematics_nh: 1000.0
+      weight_kinematics_forward_drive: 3.0
+      weight_kinematics_turning_radius: 1.0
+      weight_optimaltime: 1.0
+      weight_shortest_path: 0.0
+      weight_obstacle: 100.0
+      weight_inflation: 0.2
+      weight_dynamic_obstacle: 10.0
+      weight_dynamic_obstacle_inflation: 0.2
+      weight_viapoint: 50.0
+      weight_adapt_factor: 2.0
+
+      # Homotopy Class Planner
+      enable_homotopy_class_planning: True
+      enable_multithreading: True
+      max_number_classes: 4
+      selection_cost_hysteresis: 5.0
+      selection_prefer_initial_plan: 1.0
+      selection_obst_cost_scale: 1.0
+      selection_alternative_time_cost: True
+      roadmap_graph_no_samples: 15
+      roadmap_graph_area_width: 5.0
+      roadmap_graph_area_length_scale: 1.0
+      h_signature_prescaler: 0.5
+      h_signature_threshold: 0.1
+      obstacle_heading_threshold: 0.45
+      switching_blocking_period: 0.0
+      viapoints_all_candidates: True
+      delete_detours_backwards: True
+      max_ratio_detours_duration_best_duration: 3.0
+      visualize_hc_graph: False
+      visualize_with_time_as_z_axis_scale: 0.0
+
+      # Recovery
+      shrink_horizon_backup: True
+      shrink_horizon_min_duration: 10.0
+      oscillation_recovery: True
+      oscillation_v_eps: 0.1
+      oscillation_omega_eps: 0.1
+      oscillation_recovery_min_duration: 10.0
+      oscillation_filter_duration: 10.0
