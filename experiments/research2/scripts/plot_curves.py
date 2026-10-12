@@ -21,12 +21,13 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from payload_nav.curves import curve_summary, mean_band  # noqa: E402
+from payload_nav.curves import common_horizon, curve_summary, mean_band  # noqa: E402
 
-# (TensorBoard 태그, 그래프 제목, 요약에 쓸 기준값). 없는 태그는 건너뛴다 (예전 실행에는 timeout이 없다)
-PANELS = [('eval/success_rate', '검증 성공률', 0.8),
-          ('eval/collision_rate', '검증 충돌률', None),
-          ('eval/timeout_rate', '검증 시간 초과율', None)]
+# (TensorBoard 태그, 그래프 제목, 도달 기준값, 높을수록 좋은지). 없는 태그는 건너뛴다 (예전 실행에는 timeout이 없다).
+# 충돌률·시간 초과율은 낮을수록 좋아서 "가장 좋은 값"이 최저, "나빠진 양"은 최종 − 최저다
+PANELS = [('eval/success_rate', '검증 성공률', 0.8, True),
+          ('eval/collision_rate', '검증 충돌률', None, False),
+          ('eval/timeout_rate', '검증 시간 초과율', None, False)]
 COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#8a63d2', '#c9a227', '#d6457a']
 
 
@@ -38,7 +39,7 @@ def read_run(run: Path) -> dict:
     ea.Reload()
     tags = set(ea.Tags()['scalars'])
     return {tag: ([e.step for e in ea.Scalars(tag)], [e.value for e in ea.Scalars(tag)])
-            for tag, _, _ in PANELS if tag in tags}
+            for tag, *_ in PANELS if tag in tags}
 
 
 # 한글 글꼴 파일 (Windows·WSL, Linux, macOS 순). 이름만으로는 matplotlib이 못 찾는 경우가 있어 파일을 등록한다
@@ -61,6 +62,8 @@ def main():
     p.add_argument('--group', nargs='+', action='append', required=True, metavar=('NAME', 'RUN'),
                    help='후보 이름과 실행 폴더들 (여러 번)')
     p.add_argument('--out', type=Path, required=True)
+    p.add_argument('--until', type=float, default=None,
+                   help='요약에 쓸 마지막 스텝 (백만 단위). 기본은 모든 실행에 공통으로 있는 마지막 스텝. 0이면 실행마다 전체')
     args = p.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -68,12 +71,21 @@ def main():
     data = {name: {run.name: read_run(run) for run in runs} for name, runs in groups.items()}
     panels = [pn for pn in PANELS if any(pn[0] in d for runs in data.values() for d in runs.values())]
 
+    # 실행마다 학습량이 다르면 "최종"이 서로 다른 구간의 평균이 된다. 요약은 공통 스텝까지로 자른다
+    horizons = {}
+    for tag, *_ in panels:
+        curves = [d[tag] for runs in data.values() for d in runs.values() if tag in d]
+        if args.until is None:
+            horizons[tag] = common_horizon(curves)
+        else:
+            horizons[tag] = None if args.until == 0 else args.until * 1e6
+
     use_korean_font()
     fig, axes = plt.subplots(1, len(panels), figsize=(5.2 * len(panels), 4.2), squeeze=False)
     rows, summary = [], []
     for gi, (name, runs) in enumerate(data.items()):
         color = COLORS[gi % len(COLORS)]
-        for ax, (tag, title, threshold) in zip(axes[0], panels):
+        for ax, (tag, title, _, _) in zip(axes[0], panels):
             curves = [(np.asarray(d[tag][0]) / 1e6, d[tag][1]) for d in runs.values() if tag in d]
             if not curves:
                 continue
@@ -84,15 +96,17 @@ def main():
             ax.plot(grid, mean, color=color, lw=2.2, label=f'{name} (시드 {len(curves)}개)')
             ax.set_title(title)
         for run_name, d in runs.items():
-            for tag, title, threshold in panels:
+            for tag, title, threshold, higher in panels:
                 if tag not in d:
                     continue
                 for step, value in zip(*d[tag]):
                     rows.append({'group': name, 'run': run_name, 'tag': tag, 'step': step, 'value': value})
-                sm = curve_summary(*d[tag], threshold=threshold if threshold else 1.01)
-                summary.append({'group': name, 'run': run_name, 'tag': tag, **sm})
+                sm = curve_summary(*d[tag], threshold=threshold, higher_is_better=higher, until=horizons[tag])
+                summary.append({'group': name, 'run': run_name, 'tag': tag, 'higher_is_better': higher, **sm})
 
-    for ax in axes[0]:
+    for ax, (tag, *_) in zip(axes[0], panels):
+        if horizons[tag] is not None:   # 요약에 쓴 구간의 끝
+            ax.axvline(horizons[tag] / 1e6, color='#888888', lw=1, ls='--')
         ax.set_xlabel('학습 스텝 (백만)')
         ax.set_ylim(0, 1)
         ax.grid(alpha=0.3)
@@ -104,19 +118,24 @@ def main():
         w = csv.DictWriter(f, fieldnames=['group', 'run', 'tag', 'step', 'value'])
         w.writeheader()
         w.writerows(rows)
-    keys = ['group', 'run', 'tag', 'points', 'last_step', 'auc', 'final', 'peak', 'drop', 'steps_to']
+    keys = ['group', 'run', 'tag', 'higher_is_better', 'points', 'last_step', 'auc', 'final', 'best', 'worsen',
+            'steps_to']
     with open(args.out / 'summary.csv', 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=keys)
         w.writeheader()
         w.writerows(summary)
 
     pct = lambda x: '-' if x is None else f'{100 * x:.0f}%'  # noqa: E731
-    print(f'{"후보":6s} {"실행":34s} {"지표":22s} {"점":>3s} {"끝(M)":>6s} {"AUC":>5s} {"최종":>5s} {"최고":>5s} '
-          f'{"하락":>5s} {"80%도달(M)":>9s}')
+    for tag, *_ in panels:
+        h = horizons[tag]
+        print(f'{tag}: 요약 구간 ' + ('실행마다 전체' if h is None else f'~{h / 1e6:.2f}M 스텝 (공통)'))
+    print(f'{"후보":6s} {"실행":34s} {"지표":22s} {"점":>3s} {"끝(M)":>6s} {"AUC":>5s} {"최종":>5s} '
+          f'{"최고/최저":>7s} {"나빠짐":>6s} {"80%도달(M)":>9s}')
     for r in summary:
         to = '-' if r['steps_to'] is None else f'{r["steps_to"] / 1e6:.2f}'
+        best = ('최고 ' if r['higher_is_better'] else '최저 ') + pct(r['best'])
         print(f'{r["group"]:6s} {r["run"]:34s} {r["tag"]:22s} {r["points"]:3d} {r["last_step"] / 1e6:6.2f} '
-              f'{pct(r["auc"]):>5s} {pct(r["final"]):>5s} {pct(r["peak"]):>5s} {pct(r["drop"]):>5s} {to:>9s}')
+              f'{pct(r["auc"]):>5s} {pct(r["final"]):>5s} {best:>7s} {pct(r["worsen"]):>6s} {to:>9s}')
     print(f'저장: {args.out}/curves.png, curves.csv, summary.csv')
 
 
