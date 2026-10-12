@@ -1,10 +1,15 @@
-"""안전 노드. 로봇 네임스페이스 안에서 띄운다 (예: ros2 launch amr_safety safety.launch.py namespace:=amr_01)."""
+"""안전 노드와 RViz2 E-Stop 버튼. 로봇 네임스페이스 안에서 띄운다 (예: ros2 launch amr_safety safety.launch.py namespace:=amr_01).
+
+E-Stop 버튼(estop_button)은 기본으로 함께 뜬다. 원 명세 7장의 필수 기능이고, 클릭하기 전에는 마커만 내므로
+비용이 작다. RViz를 쓰지 않는 헤드리스 실험에서는 estop_button:=false로 끈다.
+"""
 
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -17,6 +22,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'cmd_vel_in_topic', default_value='cmd_vel_zone_limited',
             description='게이트 입력. 구역 허가 없이 시험할 때는 cmd_vel_nav나 teleop 토픽'),
+        DeclareLaunchArgument(
+            'estop_button', default_value='true',
+            description='RViz2 E-Stop 버튼(interactive marker)을 함께 띄울지'),
         Node(
             package='amr_safety', executable='safety_node', name='safety',
             namespace=LaunchConfiguration('namespace'),
@@ -24,5 +32,11 @@ def generate_launch_description():
                 'use_sim_time': LaunchConfiguration('use_sim_time'),
                 'cmd_vel_in_topic': LaunchConfiguration('cmd_vel_in_topic'),
             }],
+            output='screen'),
+        Node(
+            package='amr_safety', executable='estop_button', name='estop_button',
+            namespace=LaunchConfiguration('namespace'),
+            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
+            condition=IfCondition(LaunchConfiguration('estop_button')),
             output='screen'),
     ])

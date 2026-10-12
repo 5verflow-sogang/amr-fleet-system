@@ -63,6 +63,23 @@ Visualization Manager:
       Color Transformer: FlatColor
       Color: 0; 255; 0
       Decay Time: 0
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Safety (amr_safety)
+      Enabled: true
+      Topic:
+        Value: /amr_01/safety/markers
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/InteractiveMarkers
+      Name: E-Stop button
+      Enabled: true
+      Interactive Markers Namespace: /amr_01/estop_button
+      Show Descriptions: false
+      Show Axes: false
+      Show Visual Aids: false
+      Enable Transparency: true
   Global Options:
     Fixed Frame: amr_01/odom
     Background Color: 48; 48; 48

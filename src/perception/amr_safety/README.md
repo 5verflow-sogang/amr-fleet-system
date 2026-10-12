@@ -22,6 +22,14 @@
 | Publish | `safety/markers` | `visualization_msgs/msg/MarkerArray` | 차체, 0.3 m 경계(단계 색), 1.5 m 경계, 상태 글자 (RViz 확인용) |
 | Service | `safety/estop` | `std_srvs/srv/SetBool` | `true` 걸기, `false` 해제 요청 |
 
+`estop_button` 노드 (RViz2 E-Stop 버튼, 아래 절):
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `safety/status` | `amr_msgs/msg/SafetyStatus` | ESTOP 여부로 다음 요청과 버튼 모양을 정한다 |
+| Client | `safety/estop` | `std_srvs/srv/SetBool` | 클릭 시 토글 요청 |
+| Interactive marker 서버 | `estop_button` | `estop_button/update`·`feedback` 토픽, `estop_button/get_interactive_markers` 서비스 | RViz2 InteractiveMarkers 디스플레이가 붙는다 |
+
 cmd_vel 체인: `cmd_vel_nav` (Nav2·`amr_control`) → `amr_zone_client` → `cmd_vel_zone_limited` → **`amr_safety`** → `cmd_vel`
 
 ## 판정 규칙
@@ -56,6 +64,30 @@ ros2 launch amr_safety safety.launch.py cmd_vel_in_topic:=cmd_vel_nav     # 구�
 ros2 service call /amr_01/safety/estop std_srvs/srv/SetBool "{data: true}"
 ros2 topic echo /amr_01/safety/status
 ```
+
+launch는 안전 노드와 함께 E-Stop 버튼 노드(`estop_button`)도 띄운다. RViz를 쓰지 않는 헤드리스 실험에서는 `estop_button:=false`로 끈다.
+
+## E-Stop 버튼 (RViz2)
+
+원 명세 7장 "비상 정지(E-Stop) 버튼을 누르면 로봇이 즉시 물리적으로 정지해야 한다"의 버튼이다. `estop_button` 노드가 로봇 차체(`<ns>/base_footprint`) 위 0.8 m(파라미터 `height`)에 interactive marker 상자를 띄우고, 클릭하면 `safety/estop`을 부른다. 판단 규칙은 [`estop_button.py`](amr_safety/estop_button.py)(ROS 비의존)에 있다.
+
+1. GUI를 띄운다: `docker compose --profile gui up -d` → 브라우저 `http://localhost:6080/vnc.html` (비밀번호 `ros`. [runbook](../../../docs/runbook.md) GUI 절)
+2. 화면 안 터미널에서 `rviz2 -d $(ros2 pkg prefix amr_description)/share/amr_description/rviz/amr.rviz`를 실행한다. 이 설정에 `E-Stop button`(InteractiveMarkers, `/amr_01/estop_button`)과 `Safety (amr_safety)`(MarkerArray, `/amr_01/safety/markers`) 디스플레이가 들어 있다
+3. 툴바에서 Interact 도구를 고른 상태로 차체 위 상자를 클릭한다
+
+| 버튼 | 뜻 | 클릭하면 |
+| --- | --- | --- |
+| 빨강 `E-STOP` | 정상 (ESTOP 아님) | `{data: true}` 걸기 |
+| 노랑 `E-STOP ON - click to release` | ESTOP 걸림 | `{data: false}` 해제 |
+| 회색 `E-STOP (no safety status)` | `safety/status`를 1 s 넘게 못 받음 | `{data: true}` 걸기 (모를 때는 멈추는 쪽) |
+
+글자 끝의 `...`는 응답을 기다리는 중이라는 뜻이고, 그동안의 클릭은 무시한다. 서비스가 없거나 실패·거부하면 노드 로그에 남긴다. 글자는 RViz 글꼴에 한글이 없어 영어로 쓴다.
+
+누르면 일어나는 일:
+
+- 안전 노드는 요청을 받는 즉시 단계를 다시 판정해 ESTOP(`speed_limit` 0.0)으로 올리고 `cmd_vel`에 0을 낸다. 회전도 막고, 입력이 없어도 10 Hz로 0을 계속 낸다 (게이트 절)
+- 해제 요청 전까지 ESTOP을 유지한다. 해제하면 0.5 s 뒤 다시 판정해 그때 조건에 맞는 단계로 내려온다 (장애물이 있으면 CRITICAL·WARNING)
+- 버튼은 로봇마다 하나다. 여러 대면 로봇마다 launch(`namespace:=amr_0X`)가 버튼 노드를 띄우고, RViz에는 로봇마다 InteractiveMarkers 디스플레이(`/amr_0X/estop_button`)를 추가한다. 기본 설정은 `amr_01`만 담는다
 
 ## 테스트
 
