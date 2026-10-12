@@ -10,7 +10,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harness.runner import fault_meta, render  # noqa: E402
-from harness.summary import fleet_metrics, kpi_verdict, nav_metrics, summarize, to_markdown  # noqa: E402
+from harness.summary import (fleet_metrics, kidnap_metrics, kpi_verdict, nav_metrics, summarize,  # noqa: E402
+                             to_markdown)
 
 
 def make_run(root: Path, name: str, scenario='loc_basic', label='', outcome='completed', rmse=0.02):
@@ -132,3 +133,24 @@ def test_nav_metrics(tmp_path):
                     path_length_m=1.0)
     assert nav_metrics(bad) == {'nav.success': 0.0, 'nav.min_obstacle_m': 0.12, 'nav.path_length_m': 1.0}
     assert nav_metrics(tmp_path / 'none') == {}
+
+
+def test_kidnap_metrics_success_rate(tmp_path):
+    def trial(name, **k):
+        run = tmp_path / name
+        (run / 'kidnap').mkdir(parents=True)
+        (run / 'meta.json').write_text(json.dumps({'scenario': 'kidnap', 'label': 'near', 'outcome': 'completed'}))
+        (run / 'kidnap' / 'kidnap.json').write_text(json.dumps(k))
+        return run
+
+    ok = dict(error=None, success=True, detected=True, recovered=True, detect_s=1.5, recover_s=9.5, false_alarms=0)
+    lost = dict(error=None, success=False, detected=True, recovered=False, detect_s=2.0, recover_s=None, false_alarms=0)
+    runs = [trial('r0', **ok), trial('r1', **ok), trial('r2', **lost), trial('r3', error='set_pose 실패')]
+    assert kidnap_metrics(runs[0]) == {'kidnap.success': 1.0, 'kidnap.detected': 1.0, 'kidnap.recovered': 1.0,
+                                       'kidnap.false_alarms': 0.0, 'kidnap.detect_s': 1.5, 'kidnap.recover_s': 9.5}
+    assert 'kidnap.recover_s' not in kidnap_metrics(runs[2])
+    assert kidnap_metrics(runs[3]) == {}   # 시험이 안 된 실행은 성공률 분모에서 뺀다
+    m = summarize(runs)['kidnap/near']['metrics']
+    assert m['kidnap.success']['n'] == 3
+    assert m['kidnap.success']['mean'] == pytest.approx(2 / 3)
+    assert m['kidnap.recover_s']['n'] == 2

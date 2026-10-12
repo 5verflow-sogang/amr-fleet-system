@@ -59,6 +59,7 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 | 이름 | 내용 | 주요 결과 |
 | --- | --- | --- |
 | `loc_basic` | 로봇 1대, 지도 v0. 정지 → 직진 3 m → 한 바퀴 → 반 바퀴 → 복귀 직진 → 정지. 약 1분 | `eval_ekf/`·`eval_amcl/`의 `localization.csv`·궤적 |
+| `kidnap` | 로봇 1대, 지도 v1. 직진 3 m 후 정지하면 Gazebo `set_pose`로 순간 이동, 복구 노드(`kidnap_recovery`)가 감지·복구. `--set mode=far`면 다른 통로로 옮긴다. 약 2분 | `kidnap/kidnap.json`(판정), `kidnap_samples.csv`(진행·옆·방향 오차), `kidnap_states.csv`, `events.csv`. 요약 `kidnap.success` 평균 = 성공률 |
 | `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분. `kill_robot`으로 로봇 장애 | `fleet_latency.csv`, `response_time.csv`(Ack), `task_outcomes.csv`, `recovery.csv`(로봇 장애 시), `tasks.json`, `assignments.csv`, `fault_events.csv` |
 | `nav_compare` | 로봇 1대, 지도 v1, Nav2 데모 + 목표 1곳. `--set controller=dwa\|teb --set scenario=clear\|obstacle`. 약 1분. `HARNESS_PACKAGES="amr_bringup amr_nav2_plugins"` 필요 | `nav_result.json`(성공·도착 시간·최소 장애물 거리·경로 길이·CTE, GT), `nav_series.csv` ([experiments/teb_compare](../../experiments/teb_compare/README.md)) |
 

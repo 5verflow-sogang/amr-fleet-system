@@ -5,6 +5,7 @@
     python3 drive.py '{"mode": "command", "cmd": "python3 measure.py --out /tmp/x.json"}'
 
 segments: [선속도 m/s, 각속도 rad/s, 시간 s]를 차례로 보낸다. 구간 사이에 정지 명령을 보낸다.
+          then_wait_s가 있으면 끝나고 아무것도 보내지 않으며 그만큼 더 기다린다 (복구 노드가 cmd_vel을 쓰는 시나리오).
 command: 셸 명령 하나를 끝날 때까지 돌린다(예: Nav2 목표를 보내고 결과를 재는 스크립트). 그동안 시계를
 돌려 rtf를 잰다. 명령이 0이 아닌 코드로 끝나거나 timeout_s(실제 시간)를 넘기면 주행 실패로 본다.
 명령은 자기 프로세스 그룹으로 띄워 끝·시간 초과 때 그룹째 정리한다(proc.py) - runner는 시간 초과 때 이
@@ -60,6 +61,7 @@ def main(argv):
                 pub.publish(Twist())
                 rclpy.spin_once(node, timeout_sec=0.02)
             print(f'구간 끝: v={v} w={w} {duration}s', file=sys.stderr, flush=True)
+        spin_for(float(spec.get('then_wait_s', 0.0)))
     elif mode == 'wait':
         spin_for(float(spec['duration_s']))
     elif mode == 'command':
