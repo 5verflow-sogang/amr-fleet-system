@@ -2,12 +2,16 @@
 
     python3 drive.py '{"mode": "segments", "topic": "/amr_01/cmd_vel", "segments": [[0.5, 0.0, 6.0]]}'
     python3 drive.py '{"mode": "wait", "duration_s": 600, "use_sim_time": false}'
+    python3 drive.py '{"mode": "command", "cmd": "python3 measure.py --out /tmp/x.json"}'
 
 segments: [선속도 m/s, 각속도 rad/s, 시간 s]를 차례로 보낸다. 구간 사이에 정지 명령을 보낸다.
+command: 셸 명령 하나를 끝날 때까지 돌린다(예: Nav2 목표를 보내고 결과를 재는 스크립트). 그동안 시계를
+돌려 rtf를 잰다. 명령이 0이 아닌 코드로 끝나면 주행 실패로 본다.
 마지막 줄에 {"sim_s", "wall_s", "rtf"} JSON을 출력한다.
 """
 
 import json
+import subprocess
 import sys
 import time
 
@@ -55,6 +59,15 @@ def main(argv):
             print(f'구간 끝: v={v} w={w} {duration}s', file=sys.stderr, flush=True)
     elif mode == 'wait':
         spin_for(float(spec['duration_s']))
+    elif mode == 'command':
+        # 명령의 출력은 이 프로세스의 stderr(drive.log)로 보낸다. stdout은 마지막 JSON 한 줄만 쓴다
+        proc = subprocess.Popen(spec['cmd'], shell=True, executable='/bin/bash', stdout=sys.stderr,
+                                stderr=sys.stderr)
+        while proc.poll() is None:
+            rclpy.spin_once(node, timeout_sec=0.1)
+        if proc.returncode != 0:
+            print(f'명령 실패 (종료 코드 {proc.returncode}): {spec["cmd"]}', file=sys.stderr)
+            return 1
     else:
         print(f'알 수 없는 mode: {mode}', file=sys.stderr)
         return 2

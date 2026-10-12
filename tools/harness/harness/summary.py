@@ -102,9 +102,25 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
     return out
 
 
+def nav_metrics(run_dir: Path) -> dict[str, float]:
+    """nav_result.json(목표 1회 주행 결과, experiments/teb_compare/nav_measure.py) → nav.* 지표.
+
+    nav.success는 성공 1·실패 0이라 평균이 성공률이다. 도착 시간은 성공한 실행만 센다.
+    값이 없는 지표(장애물 없는 시나리오의 최소 장애물 거리 등)는 빼서 평균에 0이 섞이지 않게 한다.
+    """
+    out = {}
+    for path in sorted(run_dir.glob('**/nav_result.json')):
+        r = json.loads(path.read_text(encoding='utf-8'))
+        out['nav.success'] = 1.0 if r.get('success') else 0.0
+        for key in ('arrival_s', 'min_obstacle_m', 'path_length_m', 'cte_mean_m', 'cte_max_m'):
+            if isinstance(r.get(key), (int, float)):
+                out[f'nav.{key}'] = float(r[key])
+    return out
+
+
 def run_metrics(run_dir: Path) -> dict[str, float]:
     meta = load_meta(run_dir)
-    out = {**localization_metrics(run_dir), **fleet_metrics(run_dir)}
+    out = {**localization_metrics(run_dir), **fleet_metrics(run_dir), **nav_metrics(run_dir)}
     rtf = meta.get('real_time_factor')
     if isinstance(rtf, (int, float)):
         out['run.real_time_factor'] = float(rtf)

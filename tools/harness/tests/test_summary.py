@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harness.runner import fault_meta, render  # noqa: E402
-from harness.summary import fleet_metrics, kpi_verdict, summarize, to_markdown  # noqa: E402
+from harness.summary import fleet_metrics, kpi_verdict, nav_metrics, summarize, to_markdown  # noqa: E402
 
 
 def make_run(root: Path, name: str, scenario='loc_basic', label='', outcome='completed', rmse=0.02):
@@ -103,3 +103,22 @@ def test_fleet_task_and_recovery_metrics(tmp_path):
                                       'amr_03,15,,,,,\n')       # 놀던 로봇이 죽음
     m = fleet_metrics(run)
     assert m['fleet.reclaimed_tasks'] == 0 and 'fleet.recovery_s.mean' not in m
+
+
+
+def test_nav_metrics(tmp_path):
+    # 목표 주행 1회 결과(nav_result.json): 성공은 1/0, 값이 없는 지표(장애물 없는 시나리오)는 뺀다
+    ok = tmp_path / 'ok'
+    ok.mkdir()
+    (ok / 'nav_result.json').write_text(json.dumps({
+        'success': True, 'arrival_s': 12.5, 'min_obstacle_m': None, 'path_length_m': 3.4,
+        'cte_mean_m': 0.02, 'cte_max_m': 0.08}))
+    m = nav_metrics(ok)
+    assert m == {'nav.success': 1.0, 'nav.arrival_s': 12.5, 'nav.path_length_m': 3.4,
+                 'nav.cte_mean_m': 0.02, 'nav.cte_max_m': 0.08}
+    bad = tmp_path / 'bad'
+    bad.mkdir()
+    (bad / 'nav_result.json').write_text(json.dumps({
+        'success': False, 'arrival_s': None, 'min_obstacle_m': 0.12, 'path_length_m': 1.0}))
+    assert nav_metrics(bad) == {'nav.success': 0.0, 'nav.min_obstacle_m': 0.12, 'nav.path_length_m': 1.0}
+    assert nav_metrics(tmp_path / 'none') == {}

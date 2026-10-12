@@ -1,0 +1,51 @@
+# 로컬 컨트롤러 비교 ((10) DWA vs TEB, 이진). 로봇 1대, 지도 warehouse_v1, Nav2(NavFn + 고른 컨트롤러).
+# 목표 1곳(map (0,0) -> (3.0, 1.5))을 1회 주행하고 nav_result.json에 GT 지표를 남긴다
+# (experiments/teb_compare/README.md, docs/algorithms/navigation.md 6절).
+#
+#   HARNESS_FRESH=1 HARNESS_PACKAGES="amr_bringup amr_nav2_plugins" \
+#     tools/harness/docker_run.sh nav_compare -n 3 --set controller=teb --set scenario=obstacle --label teb_obstacle
+#
+# controller: dwa | teb. scenario: clear(장애물 없음) | obstacle(경로를 가로지르는 동적 장애물 1개,
+# 0.5 m/s, experiments/teb_compare/obstacle.yaml). 위치추정은 켜지 않는다(map->odom 항등, DiffDrive odom) -
+# 컨트롤러끼리 비교가 목적이라 두 컨트롤러가 같은 조건이면 된다.
+name: nav_compare
+num_robots: 1
+use_sim_time: true
+seed_base: 1
+timeout_s: 600
+params:
+  controller: dwa
+  scenario: clear
+processes:
+  - name: nav
+    cmd: >-
+      ros2 launch amr_bringup nav2_dwa_demo.launch.py gui:=false send_goal:=false controller:={controller}
+    ready_topic: /amr_01/ground_truth/odom
+    ready_timeout_s: 300
+    # 컨트롤러·플래너·BT가 active여야 목표를 받는다. lifecycle 응답이 가끔 유실되면 기동 실패로 다시 시도한다
+    ready_cmds:
+      - ros2 lifecycle get /amr_01/controller_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/planner_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/bt_navigator | grep -q '^active'
+      - ros2 lifecycle get /map_server | grep -q '^active'
+    settle_s: 3
+  - name: obstacle
+    # obstacle 시나리오에서만 장애물을 띄운다. clear면 아무것도 안 하는 프로세스로 둔다
+    cmd: >-
+      if [ "{scenario}" = obstacle ];
+      then exec ros2 launch amr_gazebo dynamic_obstacles.launch.py
+      config:=/repo/experiments/teb_compare/obstacle.yaml seed:={seed} use_sim_time:=true;
+      else exec sleep infinity; fi
+    ready_cmds:
+      - '[ "{scenario}" != obstacle ] || timeout 5 ros2 topic echo --once /dynamic_obstacles/crosser/ground_truth/odom'
+    ready_timeout_s: 120
+    settle_s: 2
+driver:
+  mode: command
+  use_sim_time: true
+  cmd: >-
+    python3 /repo/experiments/teb_compare/nav_measure.py --controller {controller} --scenario {scenario}
+    --out {run_dir}/nav_result.json
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
