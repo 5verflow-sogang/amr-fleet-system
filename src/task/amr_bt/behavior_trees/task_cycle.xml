@@ -2,12 +2,15 @@
 <!--
   작업 1건 수행 사이클 (architecture.md 5-1절). 끝나면 처음으로 돌아가 다음 작업을 기다린다.
 
-  배송: move_to_pickup → loading → move_to_dropoff → unloading → COMPLETED
-  충전·복귀: move_to_dropoff → COMPLETED
-  어느 단계든 실패·취소면 FailTask가 FAILED를 보낸다.
+  배송: move_to_pickup → docking → loading → move_to_dropoff → docking → unloading → COMPLETED
+  충전: move_to_dropoff → docking → charging(배터리가 charge_target까지) → COMPLETED
+  복귀: move_to_dropoff → COMPLETED
+  어느 단계든 실패·취소면 FailTask가 FAILED(단계 + 원인 코드)를 보낸다.
 
-  MoveTo·Dwell은 지금 자리채움(정해진 시간만 기다림)이다. 작업 9에서 Nav2 navigate_to_pose와
-  docking/dock(Dock.action, 3회 재시도)으로 바꾼다.
+  MoveTo는 Nav2 navigate_to_pose, Dock은 docking/dock(Dock.action, 한 번 호출에 한 번 시도)이다.
+  도킹은 DockWithRetry가 3번까지 시도하고, 3번 다 실패하면 마지막 Dock.action 코드(900번대)로 FAILED를
+  보낸다. 서버는 FAILED 작업을 다른 로봇에 다시 할당한다(대체 작업, amr_fleet_manager failed_retries).
+  use_nav2·use_docking이 false면 같은 트리를 시간만 흘리는 자리채움으로 돈다 (amr_bt.yaml).
 -->
 <root main_tree_to_execute="TaskCycle">
   <BehaviorTree ID="TaskCycle">
@@ -17,28 +20,56 @@
         <Sequence name="run_task">
           <IfThenElse name="pickup_if_delivery">
             <IsDelivery/>
-            <Sequence name="pickup">
-              <ReportPhase phase="move_to_pickup"/>
-              <MoveTo goal="pickup"/>
-              <ReportPhase phase="loading"/>
-              <Dwell/>
-            </Sequence>
+            <SubTreePlus ID="VisitStation" station="pickup" move_phase="move_to_pickup" work_phase="loading"/>
             <AlwaysSuccess/>
           </IfThenElse>
-          <ReportPhase phase="move_to_dropoff"/>
-          <MoveTo goal="dropoff"/>
-          <IfThenElse name="unload_if_delivery">
+          <IfThenElse name="dropoff">
             <IsDelivery/>
-            <Sequence name="unload">
-              <ReportPhase phase="unloading"/>
-              <Dwell/>
+            <SubTreePlus ID="VisitStation" station="dropoff" move_phase="move_to_dropoff" work_phase="unloading"/>
+            <Sequence name="charge_or_return">
+              <ReportPhase phase="move_to_dropoff"/>
+              <MoveTo goal="dropoff"/>
+              <IfThenElse name="charge_if_charge">
+                <IsCharge/>
+                <Sequence name="charge">
+                  <SubTreePlus ID="DockWithRetry" station="dropoff"/>
+                  <ReportPhase phase="charging"/>
+                  <Charge/>
+                </Sequence>
+                <AlwaysSuccess/>
+              </IfThenElse>
             </Sequence>
-            <AlwaysSuccess/>
           </IfThenElse>
           <FinishTask/>
         </Sequence>
         <FailTask/>
       </Fallback>
     </Sequence>
+  </BehaviorTree>
+
+  <!-- 스테이션 한 곳: 이동 → 도킹 → 싣기·내리기 (station: pickup·dropoff) -->
+  <BehaviorTree ID="VisitStation">
+    <Sequence name="visit">
+      <ReportPhase phase="{move_phase}"/>
+      <MoveTo goal="{station}"/>
+      <SubTreePlus ID="DockWithRetry" station="{station}"/>
+      <ReportPhase phase="{work_phase}"/>
+      <Dwell/>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- 도킹 3회 시도 (명세 "ArUco 도킹, 3회 실패 시 대체 작업"). 실패 코드는 Dock이 ctx.fail로 남긴다.
+       스테이션 이름 없이 자세만 받은 작업은 도킹할 곳이 없어 건너뛴다 -->
+  <BehaviorTree ID="DockWithRetry">
+    <IfThenElse name="dock_if_station">
+      <HasStation station="{station}"/>
+      <Sequence name="docking">
+        <ReportPhase phase="docking"/>
+        <RetryUntilSuccessful num_attempts="3">
+          <Dock station="{station}"/>
+        </RetryUntilSuccessful>
+      </Sequence>
+      <AlwaysSuccess/>
+    </IfThenElse>
   </BehaviorTree>
 </root>

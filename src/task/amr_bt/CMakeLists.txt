@@ -11,7 +11,11 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(amr_msgs REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav2_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 
@@ -20,12 +24,12 @@ add_library(amr_bt_nodes src/bt_nodes.cpp)
 target_include_directories(amr_bt_nodes PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-ament_target_dependencies(amr_bt_nodes amr_msgs behaviortree_cpp_v3)
+ament_target_dependencies(amr_bt_nodes amr_msgs behaviortree_cpp_v3 geometry_msgs)
 
 add_executable(amr_bt_node src/amr_bt_node.cpp)
 target_link_libraries(amr_bt_node amr_bt_nodes)
 ament_target_dependencies(amr_bt_node
-  ament_index_cpp amr_msgs behaviortree_cpp_v3 rclcpp tf2 tf2_ros)
+  ament_index_cpp amr_msgs behaviortree_cpp_v3 nav2_msgs rclcpp rclcpp_action std_msgs tf2 tf2_ros)
 
 install(TARGETS amr_bt_nodes
   ARCHIVE DESTINATION lib
@@ -48,6 +52,10 @@ if(BUILD_TESTING)
   target_link_libraries(test_task_cycle amr_bt_nodes)
   target_compile_definitions(test_task_cycle PRIVATE
     TREE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/behavior_trees/task_cycle.xml")
+
+  # 가짜 Nav2·Dock 액션 서버로 실제 노드 한 사이클 (launch_testing)
+  find_package(launch_testing_ament_cmake REQUIRED)
+  add_launch_test(test/test_bt_actions.launch.py TIMEOUT 120)
 endif()
 
 ament_package()

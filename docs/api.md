@@ -340,7 +340,11 @@ cmd_vel 체인: 최종 `cmd_vel`을 가로채는 건 안전 노드(`amr_safety`)
 | Subscribe | `<prefix>/heartbeat` | `amr_msgs/msg/FleetHeartbeat` | `epoch`가 바뀌면 명령 번호 기준 초기화 |
 | Publish | `/fleet/task_assignment_acks` | `amr_msgs/msg/TaskAssignmentAck` | 할당·취소마다. 재전송이면 같은 Ack |
 | Publish | `/fleet/task_status` | `amr_msgs/msg/TaskStatus` | PENDING → IN_PROGRESS(단계마다) → COMPLETED / FAILED |
-| Publish | `/fleet/robot_states` | `amr_msgs/msg/RobotState` | 2 Hz. 수락 즉시 `current_task_id`를 채운다 |
+| Publish | `/fleet/robot_states` | `amr_msgs/msg/RobotState` | 2 Hz. 수락 즉시 `current_task_id`를 채운다. 가상 배터리, 충전 중 `MODE_CHARGING`, zone_client `failed`면 `MODE_ERROR` |
+| Subscribe | `zone_client/state` | `std_msgs/msg/String` | `waiting`·`blocked`·`backing`이면 Nav2 목표를 멈추고, `failed`면 작업 FAILED(`TRAFFIC_REVOKED`) |
+| Subscribe | `kidnap_recovery/state` | `std_msgs/msg/String` | `tracking`이 아니면 Nav2 목표를 멈춘다 |
+| Action client | `navigate_to_pose` | `nav2_msgs/action/NavigateToPose` | `use_nav2:=true`일 때. 실패하면 2번 다시 보낸다 |
+| Action client | `docking/dock` | `amr_msgs/action/Dock` | `use_docking:=true`일 때. BT가 3번까지 시도 |
 
 <!-- TODO: 나머지 패키지 섹션을 같은 형식으로 추가 -->
 

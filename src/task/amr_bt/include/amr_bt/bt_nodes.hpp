@@ -1,7 +1,9 @@
 // amr_bt의 BehaviorTree.CPP(v3) 노드. 트리는 behavior_trees/task_cycle.xml.
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "amr_bt/task_context.hpp"
@@ -39,6 +41,35 @@ private:
   std::shared_ptr<TaskContext> ctx_;
 };
 
+// 충전 작업인지. 충전은 목적지(충전소)에서 도킹한다
+class IsCharge : public BT::ConditionNode
+{
+public:
+  IsCharge(const std::string & name, const BT::NodeConfiguration & config,
+    std::shared_ptr<TaskContext> ctx);
+  static BT::PortsList providedPorts() {return {};}
+  BT::NodeStatus tick() override;
+
+private:
+  std::shared_ptr<TaskContext> ctx_;
+};
+
+// 작업에 그 스테이션 이름(pickup_station_id·dropoff_station_id)이 있는지. 없으면 도킹을 건너뛴다
+class HasStation : public BT::ConditionNode
+{
+public:
+  HasStation(const std::string & name, const BT::NodeConfiguration & config,
+    std::shared_ptr<TaskContext> ctx);
+  static BT::PortsList providedPorts()
+  {
+    return {BT::InputPort<std::string>("station", "pickup 또는 dropoff")};
+  }
+  BT::NodeStatus tick() override;
+
+private:
+  std::shared_ptr<TaskContext> ctx_;
+};
+
 // TaskStatus(IN_PROGRESS, phase)를 발행한다. 작업이 없으면(취소·종료 뒤) 보고하지 않고 FAILURE
 class ReportPhase : public BT::SyncActionNode
 {
@@ -55,18 +86,84 @@ private:
   std::shared_ptr<TaskContext> ctx_;
 };
 
-// 자리채움: seconds 동안 RUNNING 뒤 SUCCESS. 작업이 없어지면 FAILURE.
-// MoveTo(이동)·Dwell(싣기·내리기)이 이 동작을 쓴다. Nav2 navigate_to_pose·docking/dock을 붙이면 바꾼다
-class StubWait : public BT::StatefulActionNode
+// 이동을 멈춰야 하는지. 구역(zone_client/state)과 위치 복구(kidnap_recovery/state) 상태로 정한다.
+// pause면 Nav2 목표를 취소하고 기다린다. abort면 기다려도 안 풀리는 상태라 바로 실패한다
+struct PauseReason
+{
+  bool pause = false;
+  bool abort = false;
+  uint16_t code = 0;    // 오래 멈추거나(abort면 바로) 실패할 때의 ErrorInfo 코드
+  std::string why;      // 로그·실패 설명
+};
+PauseReason pause_reason(const TaskContext & ctx);
+
+// 작업의 pickup_pose 또는 dropoff_pose로 Nav2 이동 (ctx.nav).
+// - 멈춤 상태(pause_reason)면 목표를 취소하고 RUNNING으로 기다린다. 진행 상태가 resume_hold_s 이어지면
+//   같은 목표를 다시 보낸다 (Nav2가 지금 위치에서 경로를 다시 짠다)
+// - Nav2가 실패하면 nav_retries번 다시 보낸다. 그래도 실패하면 Nav2가 준 코드로 FAILURE
+// - 멈춘 시간을 뺀 이동 시간이 nav_timeout_s를 넘으면 NAV_TIMEOUT, 한 번 멈춘 채 pause_timeout_s를 넘으면
+//   멈춘 이유의 코드(구역 TRAFFIC_LEASE_TIMEOUT, 위치 NAV_TIMEOUT)로 FAILURE
+class MoveTo : public BT::StatefulActionNode
 {
 public:
-  StubWait(const std::string & name, const BT::NodeConfiguration & config,
-    std::shared_ptr<TaskContext> ctx, double TaskContext::* default_seconds);
+  MoveTo(const std::string & name, const BT::NodeConfiguration & config,
+    std::shared_ptr<TaskContext> ctx);
   static BT::PortsList providedPorts()
   {
-    return {
-      BT::InputPort<std::string>("goal", "", "pickup 또는 dropoff (MoveTo만, 로그용)"),
-      BT::InputPort<double>("seconds", "걸리는 시간 [s]. 비우면 stub_move_s / stub_dwell_s")};
+    return {BT::InputPort<std::string>("goal", "pickup 또는 dropoff")};
+  }
+  BT::NodeStatus onStart() override;
+  BT::NodeStatus onRunning() override;
+  void onHalted() override;
+
+private:
+  BT::NodeStatus fail(uint16_t code, const std::string & message);
+  void send(double now);
+
+  std::shared_ptr<TaskContext> ctx_;
+  std::string goal_name_;
+  geometry_msgs::msg::Pose goal_;
+  bool active_ = false;           // Nav2에 목표가 나가 있음. false면 멈춤
+  int retries_ = 0;
+  double moving_s_ = 0.0;         // 지난 진행 구간 시간 합
+  double active_since_ = 0.0;
+  double paused_since_ = 0.0;
+  std::optional<double> go_since_;   // 멈춤 중 진행 상태가 시작된 시각
+};
+
+// 작업의 pickup_station_id 또는 dropoff_station_id에 한 번 도킹한다 (ctx.dock, Dock.action).
+// 재시도는 트리의 RetryUntilSuccessful이 한다. 스테이션 이름이 비면 도킹할 곳이 없어 바로 SUCCESS
+class Dock : public BT::StatefulActionNode
+{
+public:
+  Dock(const std::string & name, const BT::NodeConfiguration & config,
+    std::shared_ptr<TaskContext> ctx);
+  static BT::PortsList providedPorts()
+  {
+    return {BT::InputPort<std::string>("station", "pickup 또는 dropoff")};
+  }
+  BT::NodeStatus onStart() override;
+  BT::NodeStatus onRunning() override;
+  void onHalted() override;
+
+private:
+  std::shared_ptr<TaskContext> ctx_;
+  std::string station_id_;
+  std::string attempt_key_;   // 작업·스테이션이 바뀌면 시도 횟수를 새로 센다
+  int attempt_ = 0;
+  bool active_ = false;
+};
+
+// seconds(비우면 ctx.dwell_s) 동안 RUNNING 뒤 SUCCESS. 작업이 없어지면 FAILURE.
+// 싣기·내리기는 명세상 도킹 뒤 가상 적재·하역 이벤트라 시간만 흘린다
+class Dwell : public BT::StatefulActionNode
+{
+public:
+  Dwell(const std::string & name, const BT::NodeConfiguration & config,
+    std::shared_ptr<TaskContext> ctx);
+  static BT::PortsList providedPorts()
+  {
+    return {BT::InputPort<double>("seconds", "걸리는 시간 [s]. 비우면 dwell_s")};
   }
   BT::NodeStatus onStart() override;
   BT::NodeStatus onRunning() override;
@@ -74,8 +171,24 @@ public:
 
 private:
   std::shared_ptr<TaskContext> ctx_;
-  double TaskContext::* default_seconds_;
   double until_ = 0.0;
+};
+
+// 충전소에 도킹한 뒤 배터리가 charge_target까지 찰 때까지 RUNNING (ctx.charging을 켠다).
+// charge_timeout_s를 넘으면 FAILURE
+class Charge : public BT::StatefulActionNode
+{
+public:
+  Charge(const std::string & name, const BT::NodeConfiguration & config,
+    std::shared_ptr<TaskContext> ctx);
+  static BT::PortsList providedPorts() {return {};}
+  BT::NodeStatus onStart() override;
+  BT::NodeStatus onRunning() override;
+  void onHalted() override;
+
+private:
+  std::shared_ptr<TaskContext> ctx_;
+  double since_ = 0.0;
 };
 
 // COMPLETED를 발행하고 작업을 비운다
@@ -105,7 +218,7 @@ private:
   std::shared_ptr<TaskContext> ctx_;
 };
 
-// 위 노드를 factory에 등록한다 (MoveTo, Dwell은 StubWait)
+// 위 노드를 factory에 등록한다
 void register_nodes(BT::BehaviorTreeFactory & factory, std::shared_ptr<TaskContext> ctx);
 
 // 하던 작업(task_id)을 그 자리에서 취소한다: 트리를 멈추고 FAILED(error)를 보내고 작업을 비운다.

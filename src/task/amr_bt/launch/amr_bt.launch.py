@@ -2,6 +2,7 @@
 
     ros2 launch amr_bt amr_bt.launch.py namespace:=amr_01
     ros2 launch amr_bt amr_bt.launch.py relayed:=true   # 장애 주입기 중계본(/<ns>/fleet/...) 구독
+    ros2 launch amr_bt amr_bt.launch.py use_nav2:=true use_docking:=true   # 실제 이동·도킹 액션
 
 서버 → 로봇: <prefix>/task_assignments, <prefix>/heartbeat (prefix: /fleet, relayed면 fleet)
 로봇 → 서버: /fleet/task_assignment_acks, /fleet/task_status, /fleet/robot_states
@@ -22,6 +23,8 @@ def _bt(context):
     config = os.path.join(get_package_share_directory('amr_bt'), 'config', 'amr_bt.yaml')
     overrides = {
         'use_sim_time': LaunchConfiguration('use_sim_time').perform(context).lower() == 'true',
+        'use_nav2': LaunchConfiguration('use_nav2').perform(context).lower() == 'true',
+        'use_docking': LaunchConfiguration('use_docking').perform(context).lower() == 'true',
     }
     if relayed:
         overrides['server_topic_prefix'] = 'fleet'
@@ -44,5 +47,11 @@ def generate_launch_description():
             'relayed', default_value='false',
             description='true면 장애 주입기 중계본(/<ns>/fleet/...)을 구독한다'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
+        DeclareLaunchArgument(
+            'use_nav2', default_value='false',
+            description='true면 MoveTo가 Nav2 navigate_to_pose를 호출한다. false면 자리채움'),
+        DeclareLaunchArgument(
+            'use_docking', default_value='false',
+            description='true면 Dock이 docking/dock(Dock.action)을 호출한다. false면 자리채움'),
         OpaqueFunction(function=_bt),
     ])
