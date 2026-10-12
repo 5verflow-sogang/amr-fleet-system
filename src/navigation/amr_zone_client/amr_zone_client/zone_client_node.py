@@ -78,7 +78,7 @@ class ZoneClientNode(Node):
             zones=zones,
             trigger_distance_m=p('trigger_distance_m', 3.0).value,
             stop_margin_m=p('stop_margin_m', 0.5).value,
-            waiting_margin_m=p('waiting_margin_m', 0.5).value,
+            waiting_margin_m=p('waiting_margin_m', 0.15).value,
             decel_mps2=p('decel_mps2', 1.0).value,
             resend_period_s=p('resend_period_s', 1.0).value,
             retry_period_s=p('retry_period_s', 5.0).value,
@@ -86,8 +86,8 @@ class ZoneClientNode(Node):
             max_linear_velocity_mps=p('max_linear_velocity_mps', 2.0).value,
             backing_speed_mps=p('backing_speed_mps', 0.15).value,
             backing_margin_m=p('backing_margin_m', 0.3).value,
-            backing_max_distance_m=p('backing_max_distance_m', 5.0).value,
-            backing_timeout_s=p('backing_timeout_s', 25.0).value,
+            backing_max_distance_m=p('backing_max_distance_m', 6.0).value,
+            backing_timeout_s=p('backing_timeout_s', 45.0).value,
         ))
 
         self._path_xy: List[tuple] = []

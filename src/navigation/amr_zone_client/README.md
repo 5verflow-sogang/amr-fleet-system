@@ -38,7 +38,8 @@
 | `BLOCKED` | `retry_period_s` 경과, 경로에 구역이 남아 있음 | `APPROACHING` | `TYPE_ACCESS` (새 `request_id`) |
 | `BLOCKED` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 | `IDLE` | (반납 없음 — 서버가 쥔 적이 없다) |
 | `INSIDE` | 위치가 구역 밖으로 나감 | `IDLE` | `TYPE_RELEASE` |
-| `APPROACHING` | `GRANT_REVOKED` 응답(교착 해소) | `BLOCKED` | `TYPE_RELEASE` (다음 틱) |
+| `APPROACHING` | `GRANT_REVOKED` 응답(교착 해소), 응답 시점에 아직 구역 밖 | `BLOCKED` | `TYPE_RELEASE` (다음 틱) |
+| `APPROACHING` | `GRANT_REVOKED` 응답(교착 해소), 응답 시점에 이미 구역 안 | `BACKING` | — |
 | `INSIDE` | `GRANT_REVOKED` 응답(교착 해소) | `BACKING` | — |
 | `BACKING` | 구역 밖 + `backing_margin_m` 이상 후진 | `IDLE` | `TYPE_RELEASE` |
 | `BACKING` | `backing_max_distance_m`·`backing_timeout_s` 중 하나라도 초과 | `FAILED` | (없음 — 반납하지 않는다) |
@@ -71,11 +72,20 @@
 - **INSIDE → IDLE**: 위치가 구역을 벗어나면 그 즉시 `TYPE_RELEASE`를 보내고 상태를 초기화한다.
 - **`GRANT_REVOKED`(교착 해소, 10/11 결정)**: 서버가 교착을 풀려고 우선순위 낮은 로봇의 허가를
   회수할 때 쓴다(`REASON_DEADLOCK_RESOLUTION`).
-  - `APPROACHING`(아직 구역 밖)이면 들어가지 않고 `BLOCKED`로 간다 — `REJECTED`와 달리 이미 허가를
-    쥐고 있었으므로 다음 틱에 `TYPE_RELEASE`를 한 번 보낸 뒤, `BLOCKED`와 같은 규칙(`retry_period_s`
-    뒤 새 `request_id`로 재시도)을 따른다.
+  - `APPROACHING`인데 **응답 시점에 아직 구역 밖**이면 들어가지 않고 `BLOCKED`로 간다 — `REJECTED`와
+    달리 이미 허가를 쥐고 있었으므로 다음 틱에 `TYPE_RELEASE`를 한 번 보낸 뒤, `BLOCKED`와 같은
+    규칙(`retry_period_s` 뒤 새 `request_id`로 재시도)을 따른다.
+  - `APPROACHING`인데 **응답 시점에 이미 구역 안**이면(요청을 보내고 응답이 오기까지 한 틱 사이에
+    경계를 넘어선 경우) `BLOCKED`가 아니라 `BACKING`으로 간다(#137 하연 두 번째 리뷰) — 반납하고
+    재시도해도 이미 구역 안에 있어서 의미가 없다. "이미 구역 안"인지는 가장 최근 `update()` 틱의
+    위치로 판단한다(`on_grant`는 위치를 따로 받지 않는다).
   - `INSIDE`(이미 구역 안)면 `BACKING`으로 가서 **`cmd_vel_nav`를 완전히 무시**하고 `cmd_vel_zone_limited`로
     직접 후진 명령을 낸다 — 아래 'BACKING(교착 해소)' 절 참고.
+  - **다른 구역 잠금(#137 하연 두 번째 리뷰)**: 위 세 경우 모두, 그 구역이 복구를 마치고 다시
+    `IDLE`로 돌아갈 때까지 **다른 구역**은 전부 건드리지 않는다 — 대기 중이던 요청(`APPROACHING`·
+    `BLOCKED`·`INSIDE`)은 그 즉시 반납(`TYPE_RELEASE`)하고 `IDLE`로 돌리며, `IDLE`인 구역은 새로
+    트리거하지 않는다. 교착 해소 하나에 집중하고, 복구가 끝나면(그 구역이 `IDLE`로 돌아오면) 평소처럼
+    다른 구역도 다시 본다.
 - `ZoneGrant`는 전체 로봇에 방송되므로 `robot_id`가 다르면 무시한다. 추가로, 지금 기다리는
   `request_id`와 다른 응답(늦게 온 지난 요청의 응답 등)도 무시한다 — 메시지 규약에는 없는, 장애 주입기의
   지연·재배열을 견디기 위한 구현 선택이다.
@@ -86,10 +96,13 @@
 
 `zone_client/state`는 구역마다 따로 도는 상태 기계를 로봇 하나의 요약 문자열 하나로 합친 것이다.
 `waiting`은 `Phase`가 아니라 `APPROACHING` 중 일부만 가리키는 라벨이다 — **허가가 없고 경계까지
-남은 거리가 `stop_margin_m + waiting_margin_m`(기본 0.5 + 0.5 = 1.0 m) 이하**일 때만 `waiting`이고,
+남은 거리가 `stop_margin_m + waiting_margin_m`(기본 0.5 + 0.15 = 0.65 m) 이하**일 때만 `waiting`이고,
 그보다 멀면 (속도 상한만 걸린) `approaching`이다(#137 지수 리뷰 — 원래는 `trigger_distance_m`(3 m)
 요청을 보내는 순간부터 바로 `waiting`으로 보였는데, 실제로는 아직 멀어서 속도만 깎이는 중이라
-"멈춰 기다리는 중"이라는 라벨이 너무 일찍 뜬 것이었다).
+"멈춰 기다리는 중"이라는 라벨이 너무 일찍 뜬 것이었다). `waiting_margin_m`은 처음 0.5였는데 지수의
+두 번째 리뷰로 0.15까지 더 줄였다 — `waiting`이 뜨는 지점(`speed_cap_for_stop(stop_margin_m +
+waiting_margin_m, stop_margin_m, decel_mps2)`)의 속도 상한이 거의 0(≈0.55 m/s, 기존 1.0 m/s보다
+훨씬 낮다)이어야 "멈춰 기다리는 중"이라는 라벨에 맞다고 봤다.
 
 구역이 여러 개면(두 구역이 겹치는 구간 등) 가장 "급한"(멈추거나 멈춰 있는) 것 하나로 요약하고,
 우선순위는 다음과 같다(`core.ZoneClientCore._STATE_PRIORITY`):
@@ -109,13 +122,22 @@ failed > backing > blocked > waiting > inside > approaching > idle
 된다(`speed_cap_for_stop`을 "남은 후진 거리"에 재사용). 그 지점에 닿으면 정지 → `TYPE_RELEASE` →
 `IDLE`로 돌아가고, 그 뒤로는 평소처럼(새 `request_id`로) 다시 접근한다.
 
-안전장치(fail-closed): `backing_max_distance_m`(총 후진 거리, 기본 5 m) 또는 `backing_timeout_s`
-(경과 시간, 기본 25 s)를 넘으면 그 순간 속도를 0으로 묶고 ERROR 로그를 한 번 남긴 뒤 `FAILED`로
+**재전송(#137 하연 두 번째 리뷰)**: `BACKING`·`FAILED` 중에도 `resend_period_s`(기본 1 s)마다 같은
+`request_id`로 `TYPE_ACCESS`를 계속 보낸다 — 서버가 `last_seen`을 갱신해 구역을 다른 로봇에게 넘기지
+않게 한다. 서버는 어차피 같은 `GRANT_REVOKED`로 답할 뿐이고, 그 응답은 `on_grant`가 `phase`
+(`BACKING`·`FAILED`는 `APPROACHING`/`INSIDE`가 아니다)로 걸러 그냥 무시하므로 상태·속도에는
+아무 영향이 없다.
+
+안전장치(fail-closed): `backing_max_distance_m`(총 후진 거리, 기본 6 m) 또는 `backing_timeout_s`
+(경과 시간, 기본 45 s)를 넘으면 그 순간 속도를 0으로 묶고 ERROR 로그를 한 번 남긴 뒤 `FAILED`로
 바뀐다(`zone_client/state`에 `failed`로 드러난다, #137 지수 리뷰). 그 뒤로는 반납·재시도 없이 그대로
-멈춰 선다 — 계속 후진하다 더 큰 사고로 이어지는 것보다, 서버가 자리를 계속 쥐고 있더라도 멈춰서
-수동 확인을 받는 쪽이 안전하다. `backing_timeout_s`는 서버 `release_timeout_s`(`amr_fleet_manager.yaml`
-기본 30 s)보다 작게 둔다 — 서버가 "반납이 안 온다"고 보고 구역을 다른 로봇에게 넘기기 전에, 이
-로봇의 ERROR가 먼저 뜨게 하려고다.
+멈춰 선다(위 재전송은 계속한다) — 계속 후진하다 더 큰 사고로 이어지는 것보다, 서버가 자리를 계속
+쥐고 있더라도 멈춰서 수동 확인을 받는 쪽이 안전하다. 두 기본값은 `zones.yaml`에서 가장 긴 구역
+(`narrow_02`, 길이 5.0 m)을 기준으로 뒀다(#137 하연 두 번째 리뷰) — 거리는 그 길이를 다 빠져나오고
+`backing_margin_m`(0.3 m)까지 나갈 여유를 더한 6.0 m, 시간은 그 길이를 `backing_speed_mps`
+(0.15 m/s)로 다 빠져나오는 데 걸리는 시간(5.0 / 0.15 ≈ 33.3 s)에 여유를 더한 45 s다. 위 재전송
+덕분에 더는 서버 `release_timeout_s`(`amr_fleet_manager.yaml` 기본 30 s)보다 작아야 할 필요가
+없다 — 재전송이 `last_seen`을 계속 갱신하므로 서버가 "반납이 안 온다"고 구역을 넘겨버릴 일이 없다.
 
 TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BACKING` 중에도 그 순간 0을 낸다(`core`
 상태는 그대로 두고 그 틱만 건너뛴다 — TF가 돌아오면 이어서 재개한다).
@@ -146,14 +168,14 @@ TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BAC
 | `update_rate_hz` | `10.0` | TF 조회·구역 판단 주기 |
 | `trigger_distance_m` | `3.0` | 경계 앞 요청 거리 (이진, 10/5) |
 | `stop_margin_m` | `0.5` | 허가 전 정지 여유 (이진, 10/5) |
-| `waiting_margin_m` | `0.5` | `zone_client/state`의 `waiting` 판정 여유. 경계까지 `stop_margin_m + waiting_margin_m` 이내일 때만 `waiting`, 그 전엔 `approaching` (#137 지수 리뷰) |
+| `waiting_margin_m` | `0.15` | `zone_client/state`의 `waiting` 판정 여유. 경계까지 `stop_margin_m + waiting_margin_m`(0.65 m) 이내일 때만 `waiting`, 그 전엔 `approaching` (#137 지수 리뷰, 두 번째 리뷰로 0.5 → 0.15) |
 | `decel_mps2` | `1.0` | 정지 속도 프로파일 기준 감속 |
 | `resend_period_s` | `1.0` | 재전송(연장) 주기 |
 | `retry_period_s` | `5.0` | `BLOCKED`(REJECTED·REVOKED) 뒤 재시도까지 기다리는 시간 |
 | `backing_speed_mps` | `0.15` | `BACKING` 후진 속도 (10/11 결정) |
 | `backing_margin_m` | `0.3` | 구역 경계를 벗어난 뒤 이만큼 더 나가면 정지·반납 |
-| `backing_max_distance_m` | `5.0` | `BACKING` 안전장치: 총 후진 거리 한도(fail-closed) |
-| `backing_timeout_s` | `25.0` | `BACKING` 안전장치: 경과 시간 한도(fail-closed). 서버 `release_timeout_s`(30 s)보다 작게 |
+| `backing_max_distance_m` | `6.0` | `BACKING` 안전장치: 총 후진 거리 한도(fail-closed). 가장 긴 구역(`narrow_02`, 5.0 m) + `backing_margin_m` 여유 (#137 하연 두 번째 리뷰) |
+| `backing_timeout_s` | `45.0` | `BACKING` 안전장치: 경과 시간 한도(fail-closed). 가장 긴 구역을 `backing_speed_mps`로 빠져나오는 시간(≈33.3 s) + 여유 (#137 하연 두 번째 리뷰). `BACKING` 중 재전송 덕분에 서버 `release_timeout_s`보다 작아야 할 필요는 없다 |
 | `lookahead_m` | `0.0` (= `trigger_distance_m + 2.0`) | 아직 안 건드린 구역을 로봇 앞 이 거리까지만 찾는다. `0.0`이면 `trigger_distance_m`에 여유를 더해 자동으로 정한다 |
 | `zone_requests_topic` | `/fleet/zone_requests` | 로봇 → 서버 토픽. 다른 파라미터처럼 `declare_parameter`로 선언돼 있지만, 장애 주입기가 중계하지 않는 절대 토픽이라 네임스페이스와 상관없이 항상 같은 기본값을 쓴다(`fleet_manager_node.py`) — 보통 바꿀 일이 없다 |
 | `safety_status_topic` | `safety/status` | `SafetyStatus` 상대 이름 ('SafetyStatus 연동' 절 참고) |
@@ -229,3 +251,7 @@ colcon test --packages-select amr_zone_client
   않았다 - `zone_client/state`가 `backing`이면 로봇이 자기 의지와 무관하게 후진 중이라는 뜻이고,
   `failed`면 안전 한도를 넘어 멈춰 선 채 수동 확인을 기다리는 중(반납·재시도 없음)이라는 뜻이라,
   BT 쪽에서도 참고할 수 있다.
+- `backing_margin_m`(0.3 m)은 구역 경계에서 딱 그만큼만 나가고 멈춘다 - 로봇 앞끝(풋프린트)이
+  경계에 거의 닿은 채로 서 있을 수 있어서, 양보받은 로봇(`holder_robot_id`)이 지나가는 길을 다시
+  막는 경우가 생길 수 있다. margin을 키울지 BT가 옆으로 비켜서게 할지는 10/12 회의에서 정하기로
+  했다(#137 하연 두 번째 리뷰 지적 - 아직 `backing_margin_m` 자체는 그대로 뒀다).

@@ -13,8 +13,12 @@
   새 request_id로 다시 요청한다(영원히 막힌 채로 두지 않는다). 경로가 바뀌어 그 구역을 더는 지나지
   않으면 IDLE로 돌아간다.
 - REVOKED(교착 해소, 10/11 결정)면: APPROACHING(아직 구역 밖)이면 들어가지 않고 그대로 정지점에
-  멈춘 채 반납하고, BLOCKED처럼 retry_period_s 뒤 새 request_id로 재시도한다. INSIDE(이미 구역
-  안)면 BACKING으로 가서 cmd_vel_nav를 무시하고 직접 후진 명령을 낸다 - 아래 'BACKING' 참고.
+  멈춘 채 반납하고, BLOCKED처럼 retry_period_s 뒤 새 request_id로 재시도한다. 단 응답이 오기까지
+  한 틱 사이에 이미 경계를 넘어섰으면(APPROACHING인데 실제로는 구역 안) BLOCKED 대신 BACKING으로
+  간다(#137 하연 두 번째 리뷰 - 반납하고 재시도해도 이미 안에 있으니 의미가 없다). INSIDE(이미
+  구역 안)면 BACKING으로 가서 cmd_vel_nav를 무시하고 직접 후진 명령을 낸다 - 아래 'BACKING' 참고.
+  둘 중 어느 쪽이든, 그 구역이 복구를 마치고 IDLE로 돌아갈 때까지 다른 구역의 대기 중 요청은
+  반납하고 새 요청도 보내지 않는다(#137 하연 두 번째 리뷰 - 교착 해소에 집중한다).
 - 전역 경로가 바뀌어 대기·통과 허가 중인 구역이 경로에서 빠지고 로봇도 그 구역 밖이면, 서버가 자리를
   계속 쥐고 있지 않도록 반납(TYPE_RELEASE)하고 IDLE로 돌아간다.
 - 남은 거리는 경로의 시작점이 아니라 로봇과 가장 가까운 경로 점부터 잰다(경로가 로봇 뒤쪽 점도
@@ -134,8 +138,11 @@ class ZoneClientConfig:
     # state_label의 'waiting' 판정 여유(#137 지수 리뷰): 허가 없이 APPROACHING이어도 경계까지
     # stop_margin_m + waiting_margin_m보다 멀면 아직 'approaching'이다(속도 상한만 걸림, 실제로
     # 멈춰 기다리는 중이 아니다) - 요청을 보낸 trigger_distance_m 순간부터 바로 waiting으로 보이던
-    # 것을 정지점 근처로 좁힌다.
-    waiting_margin_m: float = 0.5
+    # 것을 정지점 근처로 좁힌다. 0.5 → 0.15로 더 좁혔다(#137 지수 두 번째 리뷰) - waiting이 뜰 때는
+    # speed_cap_for_stop(remaining, stop_margin_m, decel_mps2) 기준으로 remaining이 stop_margin_m에
+    # 거의 다 와야 속도도 거의 0이다 - 여유가 너무 크면 "waiting"인데도 아직 꽤 빠르게 달리는
+    # 중일 수 있었다.
+    waiting_margin_m: float = 0.15
     decel_mps2: float = 1.0
     resend_period_s: float = 1.0
     # REJECTED 뒤, 경로에 구역이 남아 있으면 이 시간 뒤 새 request_id로 재시도한다 (#66).
@@ -149,13 +156,17 @@ class ZoneClientConfig:
     backing_speed_mps: float = 0.15
     # 구역 경계를 벗어난 뒤 이만큼 더 나가면(이 지점에서 속도가 decel_mps2로 0이 된다) 정지·반납한다.
     backing_margin_m: float = 0.3
-    # 안전장치(fail-closed): 후진 시작 위치에서 이 거리를 넘으면 멈추고 ERROR. 가장 큰 구역도
-    # 충분히 빠져나올 수 있는 여유(수 m)를 둔다 - zones.yaml 구역 크기에 맞춰 조정한다.
-    backing_max_distance_m: float = 5.0
-    # 안전장치(fail-closed): 후진을 시작한 뒤 이 시간을 넘으면 멈추고 ERROR. 서버
-    # release_timeout_s(#124 fleet_manager.yaml 기본 30 s)보다 작게 둔다 - 그래야 서버가
-    # 구역을 다른 로봇에게 넘기기 전에 이 로봇의 ERROR가 먼저 뜬다.
-    backing_timeout_s: float = 25.0
+    # 안전장치(fail-closed): 후진 시작 위치에서 이 거리를 넘으면 멈추고 ERROR. 가장 긴 구역
+    # (zones.yaml narrow_02, 길이 5.0 m)을 완전히 빠져나오고 backing_margin_m(0.3 m)까지 나갈
+    # 여유를 더해 6.0 m로 둔다(#137 하연 두 번째 리뷰 - zones.yaml 구역 크기에 맞춰 조정한다).
+    backing_max_distance_m: float = 6.0
+    # 안전장치(fail-closed): 후진을 시작한 뒤 이 시간을 넘으면 멈추고 ERROR. 가장 긴 구역
+    # (narrow_02, 5.0 m)을 backing_speed_mps(0.15 m/s)로 다 빠져나오는 데 걸리는 시간
+    # (5.0 / 0.15 ≈ 33.3 s)에 여유를 더해 45 s로 둔다(#137 하연 두 번째 리뷰) - BACKING·FAILED
+    # 중에도 resend_period_s마다 ACCESS를 보내 서버 last_seen을 갱신하므로(아래 '재전송' 참고),
+    # 더는 서버 release_timeout_s(#124 fleet_manager.yaml 기본 30 s)보다 작아야 할 필요가 없다
+    # (서버가 "반납이 안 온다"고 구역을 넘겨버릴 일이 없다).
+    backing_timeout_s: float = 45.0
 
 
 class ZoneClientCore:
@@ -172,6 +183,14 @@ class ZoneClientCore:
         # 넘기면 그 틱은 제한 없음으로 다룬다 - update()의 safety_speed_limit_mps 참고.
         self._safety_cap_effective: Optional[float] = None
         self._safety_cap_last_t: Optional[float] = None
+        # 가장 최근 update() 틱의 robot_xy (#137 하연 리뷰) - on_grant는 위치를 안 받는데,
+        # APPROACHING 중 REVOKED를 받은 그 틱에 이미 구역 안인지(BLOCKED 대신 BACKING으로 가야
+        # 하는지) 판단하려면 필요하다. on_grant가 호출되는 시점은 보통 바로 앞 update() 틱과
+        # 거의 같은 시각이라 이 값으로 충분하다.
+        self._last_robot_xy: Optional[Point] = None
+        # REVOKED를 받은 구역의 id (#137 하연 리뷰) - 복구가 끝나 그 구역이 다시 IDLE이 될 때까지,
+        # 다른 구역의 대기 중 요청은 전부 반납하고 새 요청도 안 보낸다(state_label 참고).
+        self._revoked_zone_id: Optional[str] = None
 
     @property
     def zone_ids(self) -> List[str]:
@@ -240,7 +259,12 @@ class ZoneClientCore:
         safety_cap을 구역 루프보다 먼저 구하는 건 _update_backing이 그 틱의 값을 바로 써야
         해서다(루프 뒤에 구하면 한 틱 늦은 값을 쓰게 된다) - 이 값 자체는 구역 상태와 무관하므로
         순서를 바꿔도 안전하다.
+
+        REVOKED 복구 중(_revoked_zone_id, #137 하연 두 번째 리뷰)이면 그 구역이 아닌 다른 구역은
+        전부 건드리지 않는다 - 대기 중이던 요청은 반납하고 IDLE로 되돌리며(최초 1회), IDLE인
+        구역은 새로 트리거하지 않는다. 그 구역이 복구를 마치고 다시 IDLE이 되면 풀린다.
         """
+        self._last_robot_xy = robot_xy  # on_grant가 다음 REVOKED에서 쓴다 (#137 하연 두 번째 리뷰)
         if safety_speed_limit_mps is not None and math.isinf(safety_speed_limit_mps):
             safety_speed_limit_mps = None  # LEVEL_NORMAL(inf) == 제한 없음
         dt = 0.0 if self._safety_cap_last_t is None else max(0.0, now - self._safety_cap_last_t)
@@ -251,11 +275,23 @@ class ZoneClientCore:
         self._safety_cap_last_t = now
 
         outgoing: List[OutgoingRequest] = []
+        revoked_zone = self._revoked_zone_id
+        if revoked_zone is not None:
+            for other_id, other_state in self._state.items():
+                if other_id == revoked_zone or other_state.phase is Phase.IDLE:
+                    continue
+                # 다른 구역에서 REVOKED 복구 중 - 대기 중이던 요청은 반납하고 IDLE로 (#137 하연
+                # 두 번째 리뷰). 다음 틱에는 이미 IDLE이라 이 분기를 다시 안 탄다(한 번만 보낸다).
+                outgoing.append(OutgoingRequest(other_id, other_state.request_id, TYPE_RELEASE))
+                self._state[other_id] = _ZoneState()
+
         speed_cap: Optional[float] = None
         backing_linear_x: Optional[float] = None
         errors: List[str] = []
         for zone_id, spec in self._zones.items():
             state = self._state[zone_id]
+            if revoked_zone is not None and zone_id != revoked_zone and state.phase is Phase.IDLE:
+                continue  # REVOKED 복구 중엔 다른 구역에 새로 안 들어간다 (#137 하연 두 번째 리뷰)
             # lookahead_m은 "아직 안 건드린 구역을 얼마나 멀리까지 찾아볼지"만 제한한다(#66) - 이미
             # APPROACHING/BLOCKED/INSIDE로 다루고 있는 구역은 경로가 바뀌어 멀어 보여도(재계획 등)
             # 끝까지 정확히 추적해야 하므로 거리를 안 끊는다.
@@ -270,12 +306,25 @@ class ZoneClientCore:
             if zone_backing is not None:
                 backing_linear_x = zone_backing  # 동시에 여러 구역이 BACKING일 일은 실제로 없다
 
+        if revoked_zone is not None and self._state[revoked_zone].phase is Phase.IDLE:
+            self._revoked_zone_id = None  # 복구가 끝났다 - 평소처럼 다른 구역도 다시 본다
+
         return outgoing, combine_caps(speed_cap, safety_cap), backing_linear_x, errors
 
     def _has_valid_grant(self, state: _ZoneState, now: float) -> bool:
         """GRANTED이고 lease_expiry가 아직 안 지났는지. INSIDE 전환·정지 상한 해제 둘 다 이 기준을 쓴다."""
         return (state.grant == GRANT_GRANTED and state.lease_expiry is not None
                 and now < state.lease_expiry)
+
+    def _resend_access(self, zone_id: str, state: _ZoneState, now: float) -> List[OutgoingRequest]:
+        """BACKING·FAILED 중에도 resend_period_s마다 같은 request_id로 ACCESS를 보낸다(#137 하연
+        리뷰) - 서버가 last_seen을 갱신해 구역을 다른 로봇에게 넘기지 않게 한다. 서버는 똑같이
+        REVOKED로 답할 뿐이고, 그 응답은 on_grant가 phase(BACKING·FAILED는 APPROACHING/INSIDE가
+        아니다)로 걸러 무시하므로 상태는 안 바뀐다."""
+        if now - state.last_sent >= self._config.resend_period_s:
+            state.last_sent = now
+            return [OutgoingRequest(zone_id, state.request_id, TYPE_ACCESS)]
+        return []
 
     def _update_zone(self, zone_id: str, spec: ZoneConfig, state: _ZoneState, now: float,
                       remaining: Optional[float], robot_xy: Point, safety_cap: Optional[float]):
@@ -341,8 +390,9 @@ class ZoneClientCore:
             return self._update_backing(zone_id, state, now, inside, robot_xy, safety_cap)
 
         elif state.phase is Phase.FAILED:
-            # 안전 한도를 넘어 멈춰 세운 뒤 - 반납·재시도 없이 계속 0만 낸다 (fail-closed, 수동 확인 필요)
-            return [], None, 0.0, []
+            # 안전 한도를 넘어 멈춰 세운 뒤 - 반납·재시도는 없지만(fail-closed, 수동 확인 필요),
+            # ACCESS는 계속 재전송한다(#137 하연 리뷰 - _resend_access 참고)
+            return self._resend_access(zone_id, state, now), None, 0.0, []
 
         speed_cap = None
         if state.phase in (Phase.APPROACHING, Phase.BLOCKED) and not self._has_valid_grant(state, now) \
@@ -374,7 +424,7 @@ class ZoneClientCore:
             # FAILED로 바뀌면 다음 틱부터 _update_zone의 FAILED 분기가 돌아 이 메시지는 한 번만 난다
             # (#137 지수 리뷰 - state_label에도 'failed'로 드러난다).
             state.phase = Phase.FAILED
-            return [], None, 0.0, [
+            return self._resend_access(zone_id, state, now), None, 0.0, [
                 f'구역 {zone_id} 후진 안전 한도 초과(이동 {total_backed:.2f} m, 경과 {elapsed:.1f} s) '
                 '- 정지 (fail-closed, 수동 확인 필요)']
 
@@ -398,7 +448,7 @@ class ZoneClientCore:
         state.backing_speed_effective = ramp_speed(
             state.backing_speed_effective, target, dt, self._config.decel_mps2)
         state.backing_last_t = now
-        return [], None, -state.backing_speed_effective, []
+        return self._resend_access(zone_id, state, now), None, -state.backing_speed_effective, []
 
     def on_grant(self, now: float, robot_id: str, zone_id: str, request_id: int, grant: int,
                  lease_expiry: Optional[float], reason: int, holder_robot_id: str) -> Optional[str]:
@@ -425,7 +475,19 @@ class ZoneClientCore:
         if grant == GRANT_REVOKED:
             # holder_robot_id는 REVOKED에서 "양보받는 로봇"이다(REJECTED의 "점유 중인 로봇"과 다른
             # 뜻, amr_fleet_core README '구역 허가' 절) - yield_to로 적어 혼동하지 않게 한다.
+            # 복구가 끝나 이 구역이 다시 IDLE이 될 때까지 다른 구역은 건드리지 않는다(#137 하연
+            # 두 번째 리뷰) - update()가 이 값을 보고 다른 구역의 대기 중 요청을 반납·억제한다.
+            self._revoked_zone_id = zone_id
             if state.phase is Phase.APPROACHING:
+                # 응답이 오기까지 한 틱 사이에 로봇이 이미 경계를 넘어섰을 수 있다 - 그러면
+                # BLOCKED(반납 후 재시도)가 아니라 BACKING으로 가야 한다(#137 하연 두 번째 리뷰).
+                # self._last_robot_xy는 update()가 매 틱 채워 두는 가장 최근 위치다.
+                already_inside = (self._last_robot_xy is not None
+                                   and point_in_rect(self._last_robot_xy, self._zones[zone_id].area))
+                if already_inside:
+                    state.phase = Phase.BACKING
+                    return (f'구역 {zone_id} 허가 회수(교착 해소, reason={reason}, '
+                            f'yield_to={holder_robot_id or "-"}) → 응답 전에 이미 구역 안 - 후진 시작')
                 state.phase = Phase.BLOCKED
                 state.last_sent = now
                 state.pending_release = True
