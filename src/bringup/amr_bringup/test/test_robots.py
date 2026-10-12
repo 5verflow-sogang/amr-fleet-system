@@ -7,7 +7,7 @@ import pytest
 
 import yaml
 
-from amr_bringup.robots import encoder_seed, load_robots, obstacle_clearance, world_to_map
+from amr_bringup.robots import cmd_vel_chain, encoder_seed, load_robots, obstacle_clearance, world_to_map
 
 ROBOTS = str(Path(__file__).resolve().parents[1] / 'config' / 'robots.yaml')
 # 같은 저장소의 amr_gazebo 동적 장애물 설정 (src/bringup/amr_bringup/test → src/simulation/amr_gazebo)
@@ -67,3 +67,31 @@ def test_spawns_clear_of_dynamic_obstacles():
         for obstacle in obstacles:
             clearance = obstacle_clearance(robot.x, robot.y, obstacle)
             assert clearance >= CLEARANCE_M, (robot.name, obstacle['id'], round(clearance, 2))
+
+
+@pytest.mark.parametrize('zone_client, safety, expected', [
+    # 둘 다 없으면 Nav2가 Gazebo로 바로 낸다
+    (False, False, ('cmd_vel', 'cmd_vel', 'cmd_vel_nav')),
+    # 구역 클라이언트만: 마지막 단계라 cmd_vel을 낸다 (2단계)
+    (True, False, ('cmd_vel_nav', 'cmd_vel', 'cmd_vel_zone_limited')),
+    # 안전 노드만: Nav2 출력을 안전 노드가 받는다
+    (False, True, ('cmd_vel_nav', 'cmd_vel_zone_limited', 'cmd_vel_nav')),
+    # 전부 (3단계): 최종 cmd_vel은 안전 노드만 낸다
+    (True, True, ('cmd_vel_nav', 'cmd_vel_zone_limited', 'cmd_vel_zone_limited')),
+])
+def test_cmd_vel_chain(zone_client, safety, expected):
+    chain = cmd_vel_chain(zone_client, safety)
+    assert (chain['nav_out'], chain['zone_out'], chain['safety_in']) == expected
+
+
+def test_cmd_vel_chain_has_single_final_publisher():
+    # 어떤 조합이든 /cmd_vel을 내는 노드는 하나다 (Nav2 · 구역 클라이언트 · 안전 노드 중 마지막 단계)
+    for zone_client in (False, True):
+        for safety in (False, True):
+            chain = cmd_vel_chain(zone_client, safety)
+            outputs = [chain['nav_out']]
+            if zone_client:
+                outputs.append(chain['zone_out'])
+            if safety:
+                outputs.append('cmd_vel')
+            assert outputs.count('cmd_vel') == 1, (zone_client, safety, outputs)

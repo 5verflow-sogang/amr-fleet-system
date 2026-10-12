@@ -71,3 +71,16 @@ def obstacle_clearance(x: float, y: float, obstacle: dict) -> float:
     if len(points) == 1:
         return math.hypot(x - points[0][0], y - points[0][1])
     return min(_segment_distance((x, y), a, b) for a, b in zip(points, points[1:]))
+
+
+def cmd_vel_chain(zone_client: bool, safety: bool) -> dict:
+    """켜진 단계만 이어서 마지막 출력이 항상 cmd_vel(Gazebo 브리지)이 되게 하는 속도 토픽 이름.
+
+    체인: cmd_vel_nav(Nav2) → 구역 클라이언트 → cmd_vel_zone_limited → 안전 노드 → cmd_vel.
+    안전 노드가 최종 cmd_vel을 내는 것이 원칙이다 (9/28 회의). 둘 다 없으면 Nav2가 cmd_vel을 바로 낸다.
+    """
+    return {
+        'nav_out': 'cmd_vel_nav' if (zone_client or safety) else 'cmd_vel',
+        'zone_out': 'cmd_vel_zone_limited' if safety else 'cmd_vel',
+        'safety_in': 'cmd_vel_zone_limited' if zone_client else 'cmd_vel_nav',
+    }

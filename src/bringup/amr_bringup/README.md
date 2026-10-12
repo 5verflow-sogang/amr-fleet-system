@@ -12,6 +12,15 @@
 ros2 launch amr_bringup system.launch.py                             # 로봇 5대, 화면 없이, 카메라 끔
 ros2 launch amr_bringup system.launch.py num_robots:=3 gui:=true
 ros2 launch amr_bringup system.launch.py delay_ms:=200.0 loss_pct:=5.0 seed:=3 dynamic_obstacles:=true
+
+# 2단계: Nav2 + 구역 클라이언트
+ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true
+# 3단계: 추적 + 안전 노드까지 (동적 장애물 앞 감속·정지 확인)
+ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true tracking:=true safety:=true dynamic_obstacles:=true
+
+# 로봇 하나에 목표 보내기 (map 기준)
+ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose \
+  "{pose: {header: {frame_id: map}, pose: {position: {x: 3.0, y: 1.5, z: 0.0}, orientation: {w: 1.0}}}}"
 ```
 
 ## 단계
@@ -19,10 +28,11 @@ ros2 launch amr_bringup system.launch.py delay_ms:=200.0 loss_pct:=5.0 seed:=3 d
 | 단계 | 포함 | 상태 |
 | --- | --- | --- |
 | **1단계** | 월드, 로봇 N대 스폰, 오도메트리·센서 필터, 위치추정(AMCL+EKF), BT(작업 수신·Ack·상태 보고), Fleet 서버, 장애 주입기, 동적 장애물(선택) | 이 launch |
-| 2단계 | Nav2(경로 계획·주행), BT → Nav2 연결 | Nav2 설정·launch(이진), BT의 이동 노드(지수) 필요 |
-| 3단계 | 구역 클라이언트, 추적, 안전 노드(최종 `cmd_vel`) | `amr_safety`(연우), 구역 클라이언트 프레임 접두어(이진) 필요 |
+| **2단계** | Nav2(경로 계획·주행), 구역 클라이언트 | `nav2:=true zone_client:=true` (`nav2.launch.py`). 목표는 `navigate_to_pose`로 보낸다 |
+| **3단계** | 추적, 안전 노드(최종 `cmd_vel`), 인식(카메라) | `tracking:=true safety:=true` (`detection:=true`는 `enable_camera:=true`도 필요) |
+| BT → Nav2 | `amr_bt`의 이동이 Nav2를 부르는 것 | `amr_bt`의 `use_nav2`(지수, #141). 이게 켜지면 Fleet 작업이 실제로 로봇을 움직인다 |
 
-1단계에서는 BT의 이동이 가짜(stub)라 로봇이 실제로 움직이지 않는다. 그래서 **응답 시간 KPI(명령 → 첫 움직임)는 2단계부터** 잴 수 있다. 1단계로 볼 수 있는 것: 5대 동시 위치추정, Fleet 할당 → BT → 완료 보고 흐름, 5대 CPU 사용률(KPI 80%), RTF.
+세 인자 모두 기본 꺼짐이라 기본 실행은 1단계와 같다. 1단계와 BT가 가짜인 동안에는 로봇이 작업으로는 움직이지 않는다. 그래서 **응답 시간 KPI(명령 → 첫 움직임)는 BT → Nav2가 켜진 뒤부터** 잴 수 있다. 1단계로 볼 수 있는 것: 5대 동시 위치추정, Fleet 할당 → BT → 완료 보고 흐름, 5대 CPU 사용률(KPI 80%), RTF.
 
 ## 로봇마다 뜨는 것 (`<ns>` = `config/robots.yaml`의 이름)
 
@@ -33,6 +43,25 @@ ros2 launch amr_bringup system.launch.py delay_ms:=200.0 loss_pct:=5.0 seed:=3 d
 | `amr_odometry sensor_filters` | `/<ns>/scan`, `/<ns>/imu/data` | — |
 | `amr_localization localization` | AMCL + EKF 두 개 | 초기 위치(스폰 자세를 map 좌표로), 지도 서버는 첫 로봇에서 한 번 |
 | `amr_bt amr_bt` | Fleet 작업 수신 | `fleet:=true`면 `relayed:=true`(장애 주입기 중계본) |
+| `amr_bringup nav2` | planner·controller·behavior·bt_navigator | `nav2:=true`. 프레임 접두어, 스캔 절대 이름, 속도 출력 `cmd_vel_nav` |
+| `amr_zone_client` | 좁은 통로 진입 허가·속도 제한 | `zone_client:=true`. 서버와 같은 `zones.yaml`, `base_frame=<ns>/base_footprint`, `use_sim_time` |
+| `amr_tracking` | LiDAR 장애물 추적, TTC | `tracking:=true` |
+| `amr_detection` | YOLO 인식 | `detection:=true` (카메라 필요) |
+| `amr_safety` | 최종 `cmd_vel` | `safety:=true` |
+
+### 속도 명령 체인
+
+켜진 단계만 이어서 마지막이 항상 `/<ns>/cmd_vel`(Gazebo 브리지)이 된다 (`robots.cmd_vel_chain`).
+
+| 켠 것 | 체인 |
+| --- | --- |
+| nav2만 | Nav2 → `cmd_vel` |
+| nav2 + zone_client | Nav2 → `cmd_vel_nav` → 구역 클라이언트 → `cmd_vel` (2단계) |
+| nav2 + zone_client + safety | Nav2 → `cmd_vel_nav` → 구역 클라이언트 → `cmd_vel_zone_limited` → 안전 노드 → `cmd_vel` (3단계) |
+
+최종 `cmd_vel`을 내는 것은 안전 노드 하나라는 원칙(9/28 회의)은 3단계에서 지켜진다. 안전 노드가 없는 2단계에서는 구역 클라이언트가 임시로 `cmd_vel`을 낸다.
+
+Nav2는 `nav2_params.yaml`의 DWA를 `FollowPath` 이름으로 등록해 쓴다(bt_navigator 기본 트리가 그 이름을 부른다). 컨트롤러가 속도를 읽는 odom은 `odometry/local`(EKF, 50 Hz)이다.
 
 전역: `amr_gazebo world`(`/clock`), `dynamic_obstacles`(선택), Fleet 서버(`use_sim_time:=true`, 구역 lease를 로봇과 같은 시계로), 장애 주입기(로봇 목록을 `robots.yaml`에서 넘김).
 
@@ -55,6 +84,11 @@ ros2 launch amr_bringup system.launch.py delay_ms:=200.0 loss_pct:=5.0 seed:=3 d
 | `map_origin_in_world` | `[0.0, 1.5, 0.0]` | world에서 본 map 원점. 지도가 바뀌면 그 지도의 매핑 시작 자세 |
 | `use_imu` | `true` | EKF에 IMU |
 | `bt` | `true` | `amr_bt` |
+| `nav2` | `false` | Nav2. `localization:=true`가 필요하다 (map → odom TF) |
+| `zone_client` | `false` | 구역 클라이언트 |
+| `tracking` | `false` | 장애물 추적·TTC |
+| `safety` | `false` | 안전 노드 |
+| `detection` | `false` | YOLO 인식. `enable_camera:=true` 필요 |
 | `fleet` | `true` | Fleet 서버 + 장애 주입기 |
 | `algorithm`, `delay_ms`, `loss_pct`, `relay_auction` | `nearest`, `100.0`, `0.0`, `false` | Fleet·장애 조건 ([amr_fleet_manager](../../fleet/amr_fleet_manager/README.md), [amr_fault_injector](../../fleet/amr_fault_injector/README.md)) |
 | `assignments_csv`, `epoch_file`, `kill_at_s`, `restart_after_s`, `fault_events_file` | | 하네스용 Fleet 서버 인자 |
@@ -74,4 +108,5 @@ colcon test --packages-select amr_bringup
 | --- | --- |
 | compose `robots` 서비스 | #73(compose `fleet`)과 같은 파일이라 그 뒤에 이 launch로 연결한다 |
 | 7·10대 | `robots.yaml`에 자세를 더하면 된다. RTF가 1을 유지하는지 먼저 재야 한다(연구 1 대수 조건) |
-| 2·3단계 | 위 "단계" 표의 담당 작업 뒤 인자로 붙인다 |
+| 실주행 확인 | 2·3단계 launch는 구조 테스트만 했다. Gazebo에서 5대가 목표에 도착하는지, RTF·CPU는 GCP에서 확인한다 (하연 4주차) |
+| Nav2 컨트롤러 | DWA 하나만 쓴다. TEB 선택 인자는 DWA·TEB 비교(#145) 뒤 |

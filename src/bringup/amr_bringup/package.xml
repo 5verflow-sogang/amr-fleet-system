@@ -31,6 +31,10 @@
   <depend>amr_bt</depend>
   <depend>amr_fleet_manager</depend>
   <depend>amr_fault_injector</depend>
+  <exec_depend>amr_zone_client</exec_depend>
+  <exec_depend>amr_tracking</exec_depend>
+  <exec_depend>amr_safety</exec_depend>
+  <exec_depend>amr_detection</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
   <test_depend>launch</test_depend>

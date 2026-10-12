@@ -1,11 +1,14 @@
-"""전체 시스템 (1단계): Gazebo 월드 + 로봇 N대(스폰·오도메트리·센서 필터·위치추정·BT) + Fleet 서버·장애 주입기.
+"""전체 시스템: Gazebo 월드 + 로봇 N대(스폰·오도메트리·센서 필터·위치추정·BT) + Fleet 서버·장애 주입기.
+인자로 Nav2(2단계), 구역 클라이언트·추적·안전 노드(3단계)를 켠다.
 
-    ros2 launch amr_bringup system.launch.py                              # 로봇 5대, 화면 없이, 카메라 끔
+    ros2 launch amr_bringup system.launch.py                              # 1단계: 로봇 5대, 화면 없이, 카메라 끔
     ros2 launch amr_bringup system.launch.py num_robots:=3 gui:=true
     ros2 launch amr_bringup system.launch.py delay_ms:=200.0 loss_pct:=5.0 seed:=3 dynamic_obstacles:=true
+    ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true                         # 2단계
+    ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true tracking:=true safety:=true  # 3단계
 
-1단계에는 주행(Nav2), 구역 클라이언트, 인지·안전이 없다. BT의 이동은 아직 가짜(stub)라 로봇이 움직이지 않는다.
-각 패키지가 준비되면 인자로 켜는 방식으로 붙인다 (README "단계").
+기본은 1단계라 BT의 이동이 가짜(stub)여서 로봇이 움직이지 않는다. nav2 등은 꺼 둔 채로 시작해, 패키지가 준비되는 대로 인자로 켠다 (README "단계").
+BT가 Nav2로 이동하는 것(amr_bt use_nav2)은 amr_bt 쪽 인자다. Nav2에 목표를 보내려면 `ros2 action send_goal /<ns>/navigate_to_pose ...`.
 
 로봇마다 (<ns> = robots.yaml의 이름):
     amr_gazebo spawn_robot      스폰, ROS ↔ Gazebo 브리지. odom TF는 EKF가 내므로 끈다
@@ -13,6 +16,12 @@
     amr_odometry sensor_filters /<ns>/scan, /<ns>/imu/data
     amr_localization            AMCL + EKF 두 개. map → <ns>/odom → <ns>/base_footprint. 지도 서버는 첫 로봇에서 한 번
     amr_bt                      Fleet 작업 수신·Ack·상태 보고. fleet:=true면 장애 주입기 중계본을 구독한다
+    nav2.launch.py              (nav2:=true) planner·controller·behavior·bt_navigator. 속도는 cmd_vel_nav로
+    amr_zone_client             (zone_client:=true) 좁은 통로 진입 허가·속도 제한. cmd_vel_nav → cmd_vel_zone_limited
+    amr_tracking                (tracking:=true) LiDAR 장애물 추적, TTC
+    amr_safety                  (safety:=true) 최종 cmd_vel. 입력 cmd_vel_zone_limited(구역 클라이언트가 없으면 cmd_vel_nav)
+    amr_detection               (detection:=true, 카메라 필요) YOLO 인식
+cmd_vel 체인: cmd_vel_nav(Nav2) → 구역 클라이언트 → cmd_vel_zone_limited → 안전 노드 → cmd_vel(Gazebo). 빠진 단계는 건너뛰어 이어진다.
 전역:
     amr_gazebo world            월드, /clock
     amr_gazebo dynamic_obstacles  (dynamic_obstacles:=true)
@@ -30,7 +39,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from amr_bringup.robots import encoder_seed, load_robots, world_to_map
+from amr_bringup.robots import cmd_vel_chain, encoder_seed, load_robots, world_to_map
 
 
 def _launch(package, name, **arguments):
@@ -53,6 +62,16 @@ def _system(context):
     seed = int(arg('seed'))
     localization = flag('localization')
     fleet = flag('fleet')
+    nav2 = flag('nav2')
+    zone_client = flag('zone_client')
+    safety = flag('safety')
+    if nav2 and not localization:
+        raise RuntimeError('nav2:=true는 map → odom TF를 내는 위치추정이 필요하다 (localization:=true)')
+    if flag('detection') and not flag('enable_camera'):
+        raise RuntimeError('detection:=true는 카메라가 필요하다 (enable_camera:=true)')
+    chain = cmd_vel_chain(zone_client, safety)
+    nav_out, zone_out, safety_in = chain['nav_out'], chain['zone_out'], chain['safety_in']
+    zones_file = os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', 'zones.yaml')
     interval = float(arg('spawn_interval_s'))
 
     actions = [_launch('amr_gazebo', 'world.launch.py', gui=arg('gui'))]
@@ -80,6 +99,22 @@ def _system(context):
         if flag('bt'):
             stack.append(_launch('amr_bt', 'amr_bt.launch.py',
                                  namespace=ns, relayed='true' if fleet else 'false', use_sim_time='true'))
+        if nav2:
+            stack.append(_launch('amr_bringup', 'nav2.launch.py',
+                                 namespace=ns, cmd_vel_topic=nav_out, use_sim_time='true'))
+        if zone_client:
+            # 서버와 같은 구역 목록. 시뮬레이션 프레임은 <ns>/base_footprint라 접두어를 넘긴다
+            stack.append(_launch('amr_zone_client', 'zone_client.launch.py',
+                                 namespace=ns, robot_id=ns, zones_file=zones_file,
+                                 base_frame=f'{ns}/base_footprint', cmd_vel_out_topic=zone_out,
+                                 use_sim_time='true'))
+        if flag('tracking'):
+            stack.append(_launch('amr_tracking', 'tracking.launch.py', namespace=ns, use_sim_time='true'))
+        if flag('detection'):
+            stack.append(_launch('amr_detection', 'detection.launch.py', namespace=ns, use_sim_time='true'))
+        if safety:
+            stack.append(_launch('amr_safety', 'safety.launch.py',
+                                 namespace=ns, cmd_vel_in_topic=safety_in, use_sim_time='true'))
         # 한꺼번에 스폰하면 Gazebo가 수십 초 동안 크게 느려진다(명세서 11-3절 측정). 로봇마다 시차를 둔다
         actions.append(TimerAction(period=i * interval, actions=[GroupAction(stack)]))
 
@@ -129,7 +164,13 @@ def generate_launch_description():
         ('map_origin_in_world', '[0.0, 1.5, 0.0]', 'world에서 본 map 원점 [x, y, yaw]. AMCL 초기 위치 계산'),
         ('use_imu', 'true', 'EKF에 IMU를 넣을지'),
         # 작업 수행
-        ('bt', 'true', 'amr_bt (Fleet 작업 수신). 이동은 아직 가짜'),
+        ('bt', 'true', 'amr_bt (Fleet 작업 수신). 이동은 amr_bt 쪽 use_nav2를 켜기 전까지 가짜'),
+        # 2·3단계 (꺼 두면 1단계와 같다)
+        ('nav2', 'false', 'Nav2 (경로 계획·주행). localization:=true 필요'),
+        ('zone_client', 'false', '구역 클라이언트 (좁은 통로 진입 허가·속도 제한)'),
+        ('tracking', 'false', 'LiDAR 장애물 추적·TTC'),
+        ('safety', 'false', '안전 노드 (최종 cmd_vel)'),
+        ('detection', 'false', 'YOLO 인식. enable_camera:=true가 필요하다 (CPU 렌더링 RTF 0.37)'),
         # Fleet
         ('fleet', 'true', 'Fleet 서버 + 장애 주입기'),
         ('algorithm', 'nearest', '할당 알고리즘'),
