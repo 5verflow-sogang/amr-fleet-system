@@ -15,6 +15,7 @@ cmd_vel_zone_limited로 낸다 - README '동작 규칙' 절, core.py 모듈 설�
 
 from __future__ import annotations
 
+import signal
 from typing import List, Optional
 
 import rclpy
@@ -102,6 +103,10 @@ class ZoneClientNode(Node):
         self._backing_linear_x: Optional[float] = None
         self._last_state_label: Optional[str] = None
         self._last_state_pub_t: Optional[float] = None
+        # 종료 중 콜백이 이미 닫히는 중인 컨텍스트(clock·TF·publisher)를 안 쓰게 막는 플래그
+        # (#146 CI - test_zone_client_launch 간헐적 segfault). main()의 종료 처리가 destroy_node()
+        # 전에 켠다 - prepare_shutdown() 참고.
+        self._shutting_down = False
 
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -114,7 +119,7 @@ class ZoneClientNode(Node):
         self.create_subscription(Path, plan_topic, self._on_path, 10)
         self.create_subscription(Twist, cmd_vel_in_topic, self._on_cmd_vel, 10)
         self.create_subscription(SafetyStatus, safety_status_topic, self._on_safety_status, 10)
-        self.create_timer(1.0 / update_rate_hz, self._update)
+        self._update_timer = self.create_timer(1.0 / update_rate_hz, self._update)
 
         self.get_logger().info(
             f'zone_client({self._robot_id}): 구역 {zones and [z.zone_id for z in zones] or "없음"}, '
@@ -122,9 +127,13 @@ class ZoneClientNode(Node):
             f'(speed_limit) · 발행 {zone_requests_topic}, {_STATE_TOPIC} (상태)')
 
     def _on_path(self, msg: Path):
+        if self._shutting_down:
+            return
         self._path_xy = [(pose.pose.position.x, pose.pose.position.y) for pose in msg.poses]
 
     def _on_grant(self, msg: ZoneGrant):
+        if self._shutting_down:
+            return
         lease_expiry = None
         if msg.grant == ZoneGrant.GRANT_GRANTED:
             lease_expiry = Time.from_msg(msg.lease_expiry).nanoseconds * 1e-9
@@ -136,10 +145,14 @@ class ZoneClientNode(Node):
             self.get_logger().warn(warning)
 
     def _on_safety_status(self, msg: SafetyStatus):
+        if self._shutting_down:
+            return
         self._safety_speed_limit = msg.speed_limit
         self._safety_status_last_t = self.get_clock().now().nanoseconds * 1e-9
 
     def _on_cmd_vel(self, msg: Twist):
+        if self._shutting_down:
+            return
         if self._backing_linear_x is not None:
             return  # BACKING 중에는 cmd_vel_nav를 무시한다(10/11 결정) - _update가 직접 낸다
         out = Twist()
@@ -165,6 +178,8 @@ class ZoneClientNode(Node):
         return (tf.transform.translation.x, tf.transform.translation.y)
 
     def _update(self):
+        if self._shutting_down:
+            return
         robot_xy = self._lookup_robot_xy()
         if robot_xy is None:
             # 위치를 모르면 fail-closed: 상한을 0으로 묶어 멈춰 세운다. 경고는 TF 조회 쪽에서
@@ -213,6 +228,15 @@ class ZoneClientNode(Node):
         self._last_state_label = label
         self._last_state_pub_t = now
 
+    def prepare_shutdown(self):
+        """destroy_node() 전에 콜백이 더는 clock·TF·publisher를 안 쓰게 막는다 (#146 CI -
+        test_zone_client_launch 간헐적 segfault). 타이머를 먼저 지워 _update()가 더는 안 불리게
+        하고, 플래그를 켜서 그사이 들어온(구독 콜백 큐에 남아 있던) 호출도 바로 반환하게 한다."""
+        self._shutting_down = True
+        if self._update_timer is not None:
+            self.destroy_timer(self._update_timer)
+            self._update_timer = None
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -222,5 +246,11 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        # Ctrl+C는 터미널과 launch에서 SIGINT가 두 번 온다. 정리 중에 끊기지 않게 이후 신호는
+        # 무시한다(amr_fleet_decentralized task_auction_node와 같은 방식, #146 CI)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        node.prepare_shutdown()
         node.destroy_node()
+        # ok() 확인과 shutdown() 사이에 SIGINT 처리기가 먼저 종료하면 "already called" 예외로
+        # 종료 코드 1이 난다 - try_shutdown은 이미 종료됐으면 그냥 넘어간다
         rclpy.try_shutdown()
