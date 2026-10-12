@@ -282,3 +282,188 @@ LiDAR는 위치·속도가 정확하지만 무엇인지 모르고, 카메라(YOL
 - 로봇 회전은 무시한다(등속 직선 상대 운동). 로봇 위치는 스캔 촬영 시각 TF, 속도는 `odom`(0.5 s보다 오래되면 0으로 보고 경고).
 - 이미 겹쳐 있으면 **가까워지는 중일 때만** 0, 아니면 inf.
 - 처음에는 로봇을 외접원(반지름 0.36 m)으로 본 닫힌 식을 썼다. 원은 옆쪽이 실제보다 0.16 m 커서 0.6 m 통로의 벽과 늘 겹쳤고, 겹치면 멀어져도 TTC가 0이라 CRITICAL이 풀리지 않았다(Gazebo, 벽 조각 트랙).
+
+## 4. YOLO 인식과 3D 변환
+
+원 명세 6장 "YOLOv8 객체 인식, 커스텀 메시지 + RViz2 마커, Pinhole 2D→3D(map frame)"에 해당한다.
+학습 목표 "Pinhole Camera Model 기반 2D→3D 변환 원리"의 설명 절이다 ([project-spec.md](../project-spec.md) 학습 목표 대응 문서).
+노드는 `amr_detection/detection_node.py`, 변환 식은 ROS 비의존 모듈 `amr_perception_core`(`camera_model.py`, `depth_sampling.py`, `projection.py`)에 있다.
+파라미터 값은 `amr_detection/config/detection.yaml`.
+
+```
+camera/color/image_raw + camera/depth/image_raw (같은 촬영 시각, 픽셀 1:1)
+  → 최신 짝 하나만 보관, 타이머가 처리                         detection_node.on_images / process_latest
+  → YOLO 검출 + 클래스 이름 바꾸기 (model → 팀 클래스)          detector.py
+  → bbox 중심 ROI에서 대표 깊이 z                               depth_sampling.sample_bbox_depth
+  → bbox 중심 (u, v) + z → optical frame 위치·공분산 (Pinhole)  projection.backproject_with_covariance
+  → 촬영 시각 TF로 target_frame(기본 map)에 옮김                 projection.transform_with_covariance
+  → perception/objects (DetectedObject3DArray), perception/markers (MarkerArray)  messages.py
+```
+
+### 4-1. 입력과 YOLO 검출
+
+| 입력 | 내용 |
+| --- | --- |
+| `camera/color/image_raw` | RGB 640×480, 30 Hz, frame `<ns>/camera_optical_frame` (docs/api.md 5절 amr_gazebo) |
+| `camera/depth/image_raw` | Depth `32FC1`(m), RGB와 같은 `rgbd_camera` 센서라 촬영 시각이 같고 픽셀이 1:1이다 (`amr_description/config/sensors.yaml`) |
+| `camera/camera_info` | 내부 파라미터 K. 처음 받은 값 하나로 `PinholeCamera.from_k`를 만든다 |
+
+- RGB와 Depth는 `message_filters.TimeSynchronizer`(큐 5)로 촬영 시각이 같은 짝만 받는다.
+- 추론이 카메라 주기(30 Hz)보다 느리므로 최신 짝 하나만 보관한다. 처리하지 못한 이전 짝은 버린다. 밀린 프레임을 차례로 처리하면 결과가 점점 과거 장면이 된다.
+- 타이머(`max_rate` 30 Hz)가 새 짝이 있는지 보고 처리한다. 실제 FPS는 추론 속도가 정한다.
+- K를 받기 전에는 처리하지 않는다.
+
+검출은 ultralytics YOLO(`model_path`, 기본 COCO 사전학습 `yolov8n.pt`)로 한다 (`detector.YoloDetector`).
+
+| 단계 | 방법 | 파라미터 |
+| --- | --- | --- |
+| 입력 | RGB를 `bgr8`로 바꿔 넘긴다 (ultralytics는 numpy 영상을 BGR로 본다) | `image_size` 640 px |
+| 클래스 거르기 | 매핑에 있는 모델 클래스 번호만 추론에 넘긴다 (`classes` 인자) | `model_classes` |
+| confidence | 이보다 낮은 검출은 버린다 | `confidence_threshold` 0.5 |
+| NMS | 겹친 상자 제거 | `iou_threshold` 0.45 |
+| 클래스 이름 바꾸기 | 모델 클래스 이름 → 팀 클래스 이름(docs/api.md 4-3절 `class_name`). 매핑에 없으면 버린다 | `model_classes` → `output_classes` |
+
+- 매핑은 두 목록을 같은 순서로 짝짓는다 (`build_class_map`). 길이가 다르거나, 비었거나, `model_classes`에 중복이 있으면 시작할 때 `ValueError`를 낸다. 모델에 없는 클래스 이름이 있어도 `ValueError`다.
+- 기본 매핑은 `person → person`, `stop sign → sign`이다. COCO에는 화물이 없어 지금 모델로는 `cargo`가 나오지 않는다. 화물·표지판을 학습한 모델로 바꾸면 이 두 목록만 바꾼다.
+- 검출 하나는 `Detection(class_name, class_id, confidence, xyxy)`다. `xyxy`는 YOLO 출력 그대로의 픽셀 경계 관례 bbox다 (4-2절).
+- 시작할 때 빈 영상으로 한 번 추론해 둔다. 첫 추론은 모델 준비로 오래 걸려(`detector.py` 주석: Docker CPU 약 13 s) 첫 카메라 프레임이 그만큼 늦어지는 것을 막는다.
+- `num_threads` 4: 컨테이너에서 torch 기본 스레드가 1개로 잡혀 CPU 추론이 느렸다(`detection.yaml` 주석: 640 입력 141 ms → 스레드 4에서 약 99 ms, Gazebo 없이).
+
+### 4-2. Pinhole 카메라 모델
+
+좌표는 ROS camera optical frame 관례를 따른다 (`camera_model.py`).
+
+| 좌표 | 원점 | 축 |
+| --- | --- | --- |
+| optical frame (X, Y, Z) [m] | 카메라 광학 중심 | Z 전방(광축), X 오른쪽, Y 아래 |
+| 픽셀 (u, v) [px] | 영상 왼쪽 위 | u 오른쪽, v 아래 |
+
+내부 파라미터는 CameraInfo K에서 읽는다 (`PinholeCamera.from_k`, 행 우선 9개 또는 3x3).
+
+```math
+K = \begin{bmatrix} f_x & 0 & c_x \\ 0 & f_y & c_y \\ 0 & 0 & 1 \end{bmatrix}
+```
+
+$f_x, f_y$는 픽셀 단위 초점거리, $(c_x, c_y)$는 주점(광축이 영상과 만나는 픽셀)이다. 초점거리가 0 이하이거나 값이 유한하지 않으면 `ValueError`다.
+
+**투영 (3D → 2D, `PinholeCamera.project`).** 카메라 앞($Z > 0$)의 점을 닮은 삼각형으로 영상면에 옮긴다.
+
+```math
+u = f_x \frac{X}{Z} + c_x, \qquad v = f_y \frac{Y}{Z} + c_y
+```
+
+**역투영 (2D → 3D, `PinholeCamera.backproject`).** 픽셀 하나는 광학 중심에서 나가는 반직선 하나에 대응해, 영상만으로는 거리를 알 수 없다.
+깊이 $z$(광축 방향 거리)를 depth 영상에서 얻어 반직선 위의 한 점을 고른다. 위 식을 $X, Y$에 대해 푼 것이다.
+
+```math
+X = \frac{(u - c_x)\, z}{f_x}, \qquad Y = \frac{(v - c_y)\, z}{f_y}, \qquad Z = z
+```
+
+- $z$는 광축 방향 거리(depth 영상 값)이고 직선거리가 아니다. 직선거리는 $\lVert (X, Y, Z) \rVert$이고 메시지의 `distance`에 넣는다 (4-6절).
+- $z \le 0$이면 `ValueError`다. 왜곡이 보정된(rectified) 영상을 가정하고 왜곡 계수 D는 쓰지 않는다.
+- 640×480, 수평 FOV 87°(`sensors.yaml`)면 $f_x = 320 / \tan 43.5^\circ \approx 337$ px다. 단위 테스트가 이 값으로 영상 오른쪽 끝(u = 640)이 43.5° 방향으로 역투영되는지, 투영과 역투영이 서로 되돌리는지 확인한다 (`test_camera_model.py`).
+
+**픽셀 중심 관례.** YOLO bbox는 픽셀 경계 관례로 픽셀 i가 [i, i+1)을 덮고 중심이 i + 0.5다. K는 픽셀 i의 중심을 i로 본다.
+그래서 bbox 중심을 역투영할 때는 0.5 px를 뺀다 (`depth_sampling.bbox_center_to_pixel`). 빼지 않으면 u, v가 0.5 px씩 밀린다.
+
+```math
+u = \frac{x_1 + x_2}{2} - 0.5, \qquad v = \frac{y_1 + y_2}{2} - 0.5
+```
+
+### 4-3. bbox 대표 깊이
+
+bbox 안의 depth 값으로 객체 깊이 $z$ 하나를 정한다 (`depth_sampling.sample_bbox_depth`).
+
+1. **ROI 줄이기:** bbox 중심은 그대로 두고 폭·높이를 `roi_scale`(0.5)배로 줄인다. bbox 가장자리에는 배경이 섞인다.
+2. **픽셀 고르기:** 줄인 ROI에 걸친 픽셀을 모두 포함하고(floor·ceil) 영상 밖 부분은 잘라낸다.
+3. **유효 깊이:** NaN·inf·0 이하 값과 [`min_depth` 0.3, `max_depth` 10.0] m 밖의 값은 뺀다. 0.3 m는 `sensors.yaml` `range_min`, 10 m는 명세 depth 최대 거리다.
+4. **유효 비율:** 유효 픽셀 / ROI 픽셀이 `min_valid_ratio`(0.1)보다 낮으면 실패로 본다.
+5. **대표값 (`nearest_cluster`):** 유효 깊이의 하위 10백분위를 전경 기준으로 잡고, 기준 + 0.3 m 안의 픽셀(전경)의 중앙값을 쓴다.
+
+| 방식 | 대표 깊이 | 쓰는 이유 / 한계 |
+| --- | --- | --- |
+| **`nearest_cluster` (기본)** | 하위 `near_percentile`(10) 백분위 + `foreground_band`(0.3 m) 안 픽셀의 중앙값 | 기둥·표지판처럼 가는 물체는 ROI 안에서도 배경이 더 많다. 전체 중앙값은 배경 깊이를 고른다. 최솟값 대신 백분위를 써 깊이 잡음으로 튄 픽셀 하나에 좌우되지 않는다 |
+| `median` | 유효 깊이 전체의 중앙값 | 물체가 ROI의 절반 이상일 때만 물체 깊이가 나온다 |
+
+- 노드가 YAML에서 읽는 값은 `roi_scale`, `min_depth`, `max_depth`, `min_valid_ratio`다. `method`, `near_percentile`, `foreground_band`, `depth_scale`(1.0, `32FC1` m)은 `DepthSamplingConfig` 기본값을 쓴다.
+- 실패(`EMPTY_ROI` ROI가 영상 밖, `NO_VALID_DEPTH` 유효 깊이 없음, `LOW_VALID_RATIO` 비율 부족)는 예외가 아니라 상태로 알린다. 노드는 그 검출을 빼고 "깊이 없어 뺀 검출" 수로 센다. 깊이가 없으면 3D 위치를 낼 수 없다.
+- RGB와 depth 영상 크기가 다르면 `ValueError`다. 두 영상은 픽셀이 1:1이어야 한다.
+- 단위 테스트(`test_depth_sampling.py`)로 확인한 동작: 느슨한 bbox 안 배경 무시, 가는 물체에서 `median`은 배경을, `nearest_cluster`는 물체를 고름, 소수의 가까운 튀는 픽셀 무시, 영상 밖 bbox 잘라내기.
+
+### 4-4. 측정 공분산
+
+같은 픽셀 오차도 멀수록 큰 위치 오차가 된다. bbox 중심 오차 $\sigma_{px}$와 깊이 오차 $\sigma_z$를 야코비안으로 위치에 전파한다 (`projection.backproject_with_covariance`).
+$u, v, z$의 오차는 서로 독립이라고 가정한다.
+
+```math
+J = \frac{\partial (X, Y, Z)}{\partial (u, v, z)} =
+\begin{bmatrix}
+z / f_x & 0 & (u - c_x) / f_x \\
+0 & z / f_y & (v - c_y) / f_y \\
+0 & 0 & 1
+\end{bmatrix}
+```
+
+```math
+\Sigma_{cam} = J \, \mathrm{diag}(\sigma_{px}^2,\ \sigma_{px}^2,\ \sigma_z^2) \, J^\top
+```
+
+| 파라미터 | 값 | 근거 |
+| --- | --- | --- |
+| `pixel_noise_std` ($\sigma_{px}$) | 5.0 px | bbox 중심 오차 가정. GT 비교(NEES)로 다시 정한다 (`detection.yaml`) |
+| `depth_noise_std` ($\sigma_z$) | 0.02 m | `sensors.yaml` `depth_noise` stddev |
+
+- 광축 위($u = c_x$)에서는 옆 방향 $\sigma_X = \sigma_{px} \cdot z / f_x$이고 깊이 오차가 옆으로 새지 않는다. 5 px, 5 m면 약 7.4 cm다 (`test_projection.py`, $f_x \approx 337$).
+- 영상 가장자리에서는 $(u - c_x)/f_x$ 항 때문에 깊이 오차가 옆 방향으로도 퍼져 X·Z가 상관을 갖는다. 단위 테스트가 표본 2만 개 몬테카를로 공분산과 비교해 대각 5%, X·Z 공분산 10% 안으로 맞는지 확인한다.
+- 이 공분산이 `DetectedObject3D.pose.covariance`가 되고, 카메라 연관(1-6절)에서 마할라노비스 거리에 쓰인다.
+
+### 4-5. 목표 좌표계로 변환
+
+optical frame 위치를 `target_frame`(기본 `map`)으로 옮긴다.
+
+- TF는 **영상 촬영 시각**(`rgb.header.stamp`)의 `camera_optical_frame → target_frame`을 찾는다 (`tf_timeout` 0.1 s). 추론에 걸린 시간만큼 로봇이 움직였어도 영상을 찍은 순간의 카메라 자세로 옮긴다.
+- optical frame과 `camera_link`의 축 차이(rpy (−π/2, 0, −π/2))는 TF 트리가 처리한다. 노드는 영상의 `frame_id`를 그대로 쓴다.
+- TF 회전 쿼터니언은 정규화해 회전 행렬 $R$로 바꾼다 (`quaternion_to_matrix`). TF 메시지 값이 정확히 단위 길이가 아닐 수 있다.
+
+```math
+p' = R\,p + t, \qquad \Sigma' = R\,\Sigma_{cam}\,R^\top
+```
+
+- 이동 $t$는 공분산을 바꾸지 않고 회전은 축만 돌린다 (`transform_with_covariance`).
+- TF를 찾지 못하면 그 프레임은 발행하지 않고 "TF 실패" 수로 센다.
+- 위치 추정(`map → odom`) 없이 시험할 때는 `target_frame:=amr_01/odom`으로 띄운다.
+
+### 4-6. 발행 메시지와 RViz 마커
+
+`perception/objects` (`amr_msgs/msg/DetectedObject3DArray`)
+
+| 필드 | 값 |
+| --- | --- |
+| `header.stamp` | 영상 촬영 시각 (추론이 끝난 시각이 아님, docs/api.md 4-3절) |
+| `header.frame_id` | `target_frame` |
+| `objects[].class_name`, `class_id`, `confidence` | 팀 클래스 이름, 모델 클래스 번호, YOLO confidence 원본 |
+| `objects[].bbox_center_x/y`, `bbox_width/height` | 픽셀 경계 관례 bbox의 중심과 크기 (0.5 px 보정 전 값) |
+| `objects[].pose.pose.position` | 4-5절 $p'$ |
+| `objects[].pose.pose.orientation` | (0, 0, 0, 1). 방향은 추정하지 않는다 |
+| `objects[].pose.covariance` | 6x6 행 우선. 위치 3x3 블록은 $\Sigma'$, 회전 대각은 `1e6` (docs/api.md 4-3절) |
+| `objects[].distance` | 카메라에서 객체까지 직선거리 $\lVert p \rVert$ (optical frame) |
+
+- 검출이 없어도 빈 배열을 발행한다 (docs/api.md 4-3절).
+
+`perception/markers` (`visualization_msgs/msg/MarkerArray`, `messages.to_markers`)
+
+- 맨 앞 `DELETEALL`로 지난 프레임 마커를 지운다.
+- 객체마다 상자(`CUBE`, ns `objects`, 한 변 `marker_size` 0.4 m, 클래스별 색)와 그 위 텍스트(`TEXT_VIEW_FACING`, ns `labels`, 글자 높이 0.2 m)를 둔다.
+- 텍스트는 원 명세 결과 예시 형식 `Class: <class>, Conf: <conf>, Dist: <dist>m`이다 (confidence 소수 둘째 자리, 거리 첫째 자리. 예: `Class: cargo, Conf: 0.92, Dist: 1.5m`, `test_detection.py`).
+- 마커 수명은 1 s다. 노드가 발행을 멈추면(TF 끊김 등) 마커가 화면에 남지 않는다.
+
+| 클래스 | 상자 색 (r, g, b) |
+| --- | --- |
+| `cargo` | (0.9, 0.2, 0.1) |
+| `person` | (1.0, 0.6, 0.0) |
+| `sign` | (0.1, 0.4, 1.0) |
+| `forklift` | (0.9, 0.9, 0.1) |
+| `robot` | (0.3, 0.8, 0.3) |
+| 그 밖 | (0.7, 0.7, 0.7) |
+
+- 노드는 `stats_period`(5 s)마다 처리 FPS, 평균 추론 시간, 촬영→발행 지연, 객체 수, 깊이 없어 뺀 검출 수, TF 실패 프레임 수를 로그로 남긴다. 원 명세 KPI(CPU 10 FPS) 측정용이다.

@@ -23,7 +23,7 @@
     max_depth: 10.0            # m. 원 명세 depth 카메라 최대 거리
     min_valid_ratio: 0.1
 
-    # 3D 측정 공분산 (amr_perception_core projection). 추적 KF의 R로 쓰인다
+    # 3D 측정 공분산 (amr_perception_core projection). 카메라 연관의 마할라노비스 게이트에 쓰인다 (perception.md 1-6절)
     pixel_noise_std: 5.0       # px. bbox 중심 오차 가정. GT 비교(NEES)로 다시 정한다
     depth_noise_std: 0.02      # m. sensors.yaml depth_noise stddev
 

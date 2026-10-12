@@ -153,7 +153,7 @@
 | 차동 구동 순기구학 수식, 오도메트리 누적 오차 원인과 보완 | 로봇 기초 / 드리프트 리포트 | 지수 |
 | EKF 예측-업데이트 단계, 센서별 공분산 설정 근거 | 위치 추정 | 민지 |
 | A*·DWA 동작 원리, 환경별 파라미터 튜닝 | 경로 계획 | 이진 |
-| Pinhole Camera Model 기반 2D→3D 변환 원리 | AI 인지 | 연우 |
+| Pinhole Camera Model 기반 2D→3D 변환 원리 | AI 인지 ([perception.md 4절](algorithms/perception.md#4-yolo-인식과-3d-변환)) | 연우 |
 | **Behavior Tree vs FSM 비교(장단점)** | 작업 수행 | 지수 |
 | 다중 로봇 교착 유형과 해결 전략 | Fleet Management | 하연 |
 

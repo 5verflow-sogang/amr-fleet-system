@@ -211,8 +211,11 @@ dot -Tpng frames_*.gv -o tf_tree.png
 
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
-| Subscribe | | | |
-| Publish | `perception/objects` | `amr_msgs/msg/DetectedObject3DArray` | 카메라 프레임별 인식 결과와 3D 위치 |
+| Subscribe | `camera/color/image_raw` | `sensor_msgs/msg/Image` | RGB (rgb8). Depth와 촬영 시각이 같은 짝만 쓴다 |
+| Subscribe | `camera/depth/image_raw` | `sensor_msgs/msg/Image` | Depth (32FC1, m) |
+| Subscribe | `camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 내부 파라미터 K (처음 받은 값) |
+| Publish | `perception/objects` | `amr_msgs/msg/DetectedObject3DArray` | 카메라 프레임별 인식 결과와 3D 위치·공분산 ([perception.md 4절](algorithms/perception.md#4-yolo-인식과-3d-변환)) |
+| Publish | `perception/markers` | `visualization_msgs/msg/MarkerArray` | 인식 결과 RViz 마커 (상자·글자) |
 
 ### amr_gazebo (로봇별, `<ns>` = `amr_01` …)
 
