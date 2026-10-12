@@ -29,6 +29,8 @@ INCLUDED = [
     ('amr_tracking', 'tracking.launch.py'),
     ('amr_safety', 'safety.launch.py'),
     ('amr_detection', 'detection.launch.py'),
+    ('amr_docking', 'docking.launch.py'),
+    ('amr_docking', 'aruco_markers.launch.py'),
 ]
 
 
@@ -126,3 +128,33 @@ def test_nav2_launch_description_builds():
     spec.loader.exec_module(module)
     names = {a.name for a in module.generate_launch_description().get_launch_arguments()}
     assert {'namespace', 'use_sim_time', 'params_file', 'odom_topic', 'cmd_vel_topic'} <= names
+
+
+def _bt_arguments(actions):
+    """첫 로봇 스택에서 amr_bt include가 받은 launch 인자."""
+    timers = [a for a in actions if isinstance(a, TimerAction)]
+    for group in timers[0].actions[0].get_sub_entities():
+        include = group.get_sub_entities()[0]
+        if str(include.launch_description_source.location).endswith('amr_bt.launch.py'):
+            return {k: perform_substitutions(launch.LaunchContext(), v) for k, v in include.launch_arguments}
+    raise AssertionError('amr_bt include 없음')
+
+
+def test_bt_follows_nav2_and_docking_flags():
+    module = load_module()
+    off = _bt_arguments(module._system(context_with_defaults(module)))
+    assert (off['use_nav2'], off['use_docking']) == ('false', 'false')
+    nav = _bt_arguments(module._system(context_with_defaults(module, nav2=True)))
+    assert (nav['use_nav2'], nav['use_docking']) == ('true', 'false')
+    dock = _bt_arguments(module._system(context_with_defaults(module, nav2=True, docking=True, enable_camera=True)))
+    assert (dock['use_nav2'], dock['use_docking']) == ('true', 'true')
+
+
+def test_docking_needs_camera_and_spawns_markers_once():
+    module = load_module()
+    with pytest.raises(RuntimeError, match='enable_camera'):
+        module._system(context_with_defaults(module, docking=True))
+    actions = module._system(context_with_defaults(module, num_robots=3, docking=True, enable_camera=True))
+    # 로봇마다 TimerAction 1 + 마커판 TimerAction 1
+    assert sum(isinstance(a, TimerAction) for a in actions) == 3 + 1
+    assert all('docking.launch.py' in _robot_stack(actions, i) for i in range(3))

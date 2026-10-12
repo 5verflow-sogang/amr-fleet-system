@@ -30,9 +30,10 @@ ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose \
 | **1단계** | 월드, 로봇 N대 스폰, 오도메트리·센서 필터, 위치추정(AMCL+EKF), BT(작업 수신·Ack·상태 보고), Fleet 서버, 장애 주입기, 동적 장애물(선택) | 이 launch |
 | **2단계** | Nav2(경로 계획·주행), 구역 클라이언트 | `nav2:=true zone_client:=true` (`nav2.launch.py`). 목표는 `navigate_to_pose`로 보낸다 |
 | **3단계** | 추적, 안전 노드(최종 `cmd_vel`), 인식(카메라) | `tracking:=true safety:=true` (`detection:=true`는 `enable_camera:=true`도 필요) |
-| BT → Nav2 | `amr_bt`의 이동이 Nav2를 부르는 것 | `amr_bt`의 `use_nav2`(지수, #141). 이게 켜지면 Fleet 작업이 실제로 로봇을 움직인다 |
+| BT → Nav2 | `amr_bt`의 이동이 Nav2를 부르는 것 | `nav2:=true`가 `amr_bt use_nav2`도 켠다(#141). Fleet 작업이 실제로 로봇을 움직인다 |
+| 도킹 | ArUco 도킹 서버 + 마커판, BT 도킹 | `docking:=true`(`enable_camera:=true` 필요)가 도킹 서버, 마커판 스폰, `use_docking`을 켠다 |
 
-세 인자 모두 기본 꺼짐이라 기본 실행은 1단계와 같다. 1단계와 BT가 가짜인 동안에는 로봇이 작업으로는 움직이지 않는다. 그래서 **응답 시간 KPI(명령 → 첫 움직임)는 BT → Nav2가 켜진 뒤부터** 잴 수 있다. 1단계로 볼 수 있는 것: 5대 동시 위치추정, Fleet 할당 → BT → 완료 보고 흐름, 5대 CPU 사용률(KPI 80%), RTF.
+세 인자 모두 기본 꺼짐이라 기본 실행은 1단계와 같다. `nav2:=true`가 아니면 BT의 이동이 가짜라 로봇이 작업으로 움직이지 않는다. **응답 시간 KPI(명령 → 첫 움직임)는 `nav2:=true`로 잰다.** 1단계로 볼 수 있는 것: 5대 동시 위치추정, Fleet 할당 → BT → 완료 보고 흐름, 5대 CPU 사용률(KPI 80%), RTF.
 
 ## 로봇마다 뜨는 것 (`<ns>` = `config/robots.yaml`의 이름)
 
@@ -47,6 +48,7 @@ ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose \
 | `amr_zone_client` | 좁은 통로 진입 허가·속도 제한 | `zone_client:=true`. 서버와 같은 `zones.yaml`, `base_frame=<ns>/base_footprint`, `use_sim_time` |
 | `amr_tracking` | LiDAR 장애물 추적, TTC | `tracking:=true` |
 | `amr_detection` | YOLO 인식 | `detection:=true` (카메라 필요) |
+| `amr_docking` | ArUco 도킹 서버 (마커판은 월드에 한 번) | `docking:=true` (카메라 필요). 속도는 Nav2와 같은 `cmd_vel_nav` 자리 |
 | `amr_safety` | 최종 `cmd_vel` | `safety:=true` |
 
 ### 속도 명령 체인
@@ -89,6 +91,7 @@ Nav2는 `nav2_params.yaml`의 DWA를 `FollowPath` 이름으로 등록해 쓴다(
 | `tracking` | `false` | 장애물 추적·TTC |
 | `safety` | `false` | 안전 노드 |
 | `detection` | `false` | YOLO 인식. `enable_camera:=true` 필요 |
+| `docking` | `false` | 도킹 서버 + 마커판. `enable_camera:=true` 필요 |
 | `fleet` | `true` | Fleet 서버 + 장애 주입기 |
 | `algorithm`, `delay_ms`, `loss_pct`, `relay_auction` | `nearest`, `100.0`, `0.0`, `false` | Fleet·장애 조건 ([amr_fleet_manager](../../fleet/amr_fleet_manager/README.md), [amr_fault_injector](../../fleet/amr_fault_injector/README.md)) |
 | `assignments_csv`, `epoch_file`, `kill_at_s`, `restart_after_s`, `fault_events_file` | | 하네스용 Fleet 서버 인자 |

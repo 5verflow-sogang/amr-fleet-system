@@ -8,7 +8,8 @@
     ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true tracking:=true safety:=true  # 3단계
 
 기본은 1단계라 BT의 이동이 가짜(stub)여서 로봇이 움직이지 않는다. nav2 등은 꺼 둔 채로 시작해, 패키지가 준비되는 대로 인자로 켠다 (README "단계").
-BT가 Nav2로 이동하는 것(amr_bt use_nav2)은 amr_bt 쪽 인자다. Nav2에 목표를 보내려면 `ros2 action send_goal /<ns>/navigate_to_pose ...`.
+nav2:=true면 BT의 이동(MoveTo)도 Nav2를 부르고(amr_bt use_nav2), docking:=true면 도킹(Dock)이 도킹 서버를 부른다(use_docking).
+Nav2에 직접 목표를 보내려면 `ros2 action send_goal /<ns>/navigate_to_pose ...`.
 
 로봇마다 (<ns> = robots.yaml의 이름):
     amr_gazebo spawn_robot      스폰, ROS ↔ Gazebo 브리지. odom TF는 EKF가 내므로 끈다
@@ -21,6 +22,7 @@ BT가 Nav2로 이동하는 것(amr_bt use_nav2)은 amr_bt 쪽 인자다. Nav2에
     amr_tracking                (tracking:=true) LiDAR 장애물 추적, TTC
     amr_safety                  (safety:=true) 최종 cmd_vel. 입력 cmd_vel_zone_limited(구역 클라이언트가 없으면 cmd_vel_nav)
     amr_detection               (detection:=true, 카메라 필요) YOLO 인식
+    amr_docking                 (docking:=true, 카메라 필요) ArUco 도킹 서버. 마커판은 월드에 한 번 스폰
 cmd_vel 체인: cmd_vel_nav(Nav2) → 구역 클라이언트 → cmd_vel_zone_limited → 안전 노드 → cmd_vel(Gazebo). 빠진 단계는 건너뛰어 이어진다.
 전역:
     amr_gazebo world            월드, /clock
@@ -67,8 +69,9 @@ def _system(context):
     safety = flag('safety')
     if nav2 and not localization:
         raise RuntimeError('nav2:=true는 map → odom TF를 내는 위치추정이 필요하다 (localization:=true)')
-    if flag('detection') and not flag('enable_camera'):
-        raise RuntimeError('detection:=true는 카메라가 필요하다 (enable_camera:=true)')
+    for name in ('detection', 'docking'):
+        if flag(name) and not flag('enable_camera'):
+            raise RuntimeError(f'{name}:=true는 카메라가 필요하다 (enable_camera:=true)')
     chain = cmd_vel_chain(zone_client, safety)
     nav_out, zone_out, safety_in = chain['nav_out'], chain['zone_out'], chain['safety_in']
     zones_file = os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', 'zones.yaml')
@@ -98,7 +101,9 @@ def _system(context):
                 use_imu=arg('use_imu'), initial_x=mx, initial_y=my, initial_yaw=myaw, use_sim_time='true'))
         if flag('bt'):
             stack.append(_launch('amr_bt', 'amr_bt.launch.py',
-                                 namespace=ns, relayed='true' if fleet else 'false', use_sim_time='true'))
+                                 namespace=ns, relayed='true' if fleet else 'false', use_sim_time='true',
+                                 use_nav2='true' if nav2 else 'false',
+                                 use_docking='true' if flag('docking') else 'false'))
         if nav2:
             stack.append(_launch('amr_bringup', 'nav2.launch.py',
                                  namespace=ns, cmd_vel_topic=nav_out, use_sim_time='true'))
@@ -108,6 +113,10 @@ def _system(context):
                                  namespace=ns, robot_id=ns, zones_file=zones_file,
                                  base_frame=f'{ns}/base_footprint', cmd_vel_out_topic=zone_out,
                                  use_sim_time='true'))
+        if flag('docking'):
+            # 도킹 서버는 Nav2 컨트롤러 자리로 속도를 낸다 (같은 cmd_vel 체인)
+            stack.append(_launch('amr_docking', 'docking.launch.py',
+                                 namespace=ns, cmd_vel_topic=nav_out, use_sim_time='true'))
         if flag('tracking'):
             stack.append(_launch('amr_tracking', 'tracking.launch.py', namespace=ns, use_sim_time='true'))
         if flag('detection'):
@@ -117,6 +126,10 @@ def _system(context):
                                  namespace=ns, cmd_vel_in_topic=safety_in, use_sim_time='true'))
         # 한꺼번에 스폰하면 Gazebo가 수십 초 동안 크게 느려진다(명세서 11-3절 측정). 로봇마다 시차를 둔다
         actions.append(TimerAction(period=i * interval, actions=[GroupAction(stack)]))
+
+    if flag('docking'):
+        # (로봇 TimerAction 뒤에 둔다. 테스트가 로봇 순서로 센다) 스테이션 28곳의 ArUco 마커판. 월드가 뜬 뒤 한 번만 스폰한다
+        actions.append(TimerAction(period=interval, actions=[_launch('amr_docking', 'aruco_markers.launch.py')]))
 
     if fleet:
         actions.append(_launch(
@@ -164,13 +177,14 @@ def generate_launch_description():
         ('map_origin_in_world', '[0.0, 1.5, 0.0]', 'world에서 본 map 원점 [x, y, yaw]. AMCL 초기 위치 계산'),
         ('use_imu', 'true', 'EKF에 IMU를 넣을지'),
         # 작업 수행
-        ('bt', 'true', 'amr_bt (Fleet 작업 수신). 이동은 amr_bt 쪽 use_nav2를 켜기 전까지 가짜'),
+        ('bt', 'true', 'amr_bt (Fleet 작업 수신). nav2:=true면 이동도 Nav2, 아니면 자리채움'),
         # 2·3단계 (꺼 두면 1단계와 같다)
         ('nav2', 'false', 'Nav2 (경로 계획·주행). localization:=true 필요'),
         ('zone_client', 'false', '구역 클라이언트 (좁은 통로 진입 허가·속도 제한)'),
         ('tracking', 'false', 'LiDAR 장애물 추적·TTC'),
         ('safety', 'false', '안전 노드 (최종 cmd_vel)'),
         ('detection', 'false', 'YOLO 인식. enable_camera:=true가 필요하다 (CPU 렌더링 RTF 0.37)'),
+        ('docking', 'false', 'ArUco 도킹 서버 + 마커판. BT 도킹이 이걸 부른다. enable_camera:=true가 필요하다'),
         # Fleet
         ('fleet', 'true', 'Fleet 서버 + 장애 주입기'),
         ('algorithm', 'nearest', '할당 알고리즘'),
