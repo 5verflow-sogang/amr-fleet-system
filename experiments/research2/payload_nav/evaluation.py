@@ -33,12 +33,18 @@ def time_to_collision(env) -> float:
 
 def run_episode(model, vecnorm, env, seed: int, options=None) -> dict:
     """결정적 정책(평균 행동)으로 한 에피소드를 돌린다. vecnorm은 학습 때 저장한 VecNormalize."""
+    return run_policy_episode(
+        lambda obs: model.predict(vecnorm.normalize_obs(obs), deterministic=True)[0],
+        env, seed, options)
+
+
+def run_policy_episode(act, env, seed: int, options=None) -> dict:
+    """act(obs) → 행동으로 한 에피소드를 돌린다. 규칙 정책은 obs 대신 env 상태를 읽는다."""
     obs, info = env.reset(seed=seed, options=options)
     speeds, min_clear, min_ttc = [info['v']], math.inf, math.inf
     x0 = env.state.x
     while True:
-        action, _ = model.predict(vecnorm.normalize_obs(obs), deterministic=True)
-        obs, _, terminated, truncated, info = env.step(action)
+        obs, _, terminated, truncated, info = env.step(act(obs))
         speeds.append(info['v'])
         min_clear = min(min_clear, info['min_clearance'])
         min_ttc = min(min_ttc, time_to_collision(env))
