@@ -6,7 +6,8 @@
 데모(nav2_dwa_demo.launch.py send_goal:=false)가 떠 있는 상태에서:
   1. NavigateToPose로 목표(map (3.0, 1.5), 데모 기본값)를 보내고 결과(succeeded/aborted/...)를 받는다.
   2. 지표는 전부 GT(ground_truth/odom)로 잰다 (docs/algorithms/navigation.md 7-3절).
-     - 도착 시간: 목표 수락 → SUCCEEDED (시뮬레이션 시간). Nav2가 목표에 닿은 실행만(충돌과 따로)
+     - 도착 시간: 목표 수락 → SUCCEEDED (시뮬레이션 시간). reached_s는 Nav2가 목표에 닿은 실행 모두(충돌 포함),
+       arrival_s는 성공(충돌 없음)한 실행만
      - 경로 길이: 목표 수락부터 결과까지 GT 위치 증분의 합
      - CTE: GT 위치를 그 시각의 전역 경로(/<ns>/plan, map)에 투영한 거리의 평균·최대
      - 최소 장애물 거리(obstacle만): 사각 풋프린트(0.6 x 0.4 m, GT yaw 반영)와 장애물 원(반지름
@@ -152,8 +153,9 @@ class NavMeasure(Node):
         return cond()
 
     def run(self) -> dict:
-        record = {'scenario': self.scenario, 'result': None, 'success': False, 'collision': False, 'arrival_s': None,
-                  'arrival_wall_s': None, 'min_obstacle_m': None, 'path_length_m': None,
+        record = {'scenario': self.scenario, 'result': None, 'success': False, 'collision': False,
+                  'arrival_s': None, 'reached_s': None, 'reached_wall_s': None,
+                  'min_obstacle_m': None, 'path_length_m': None,
                   'cte_mean_m': None, 'cte_max_m': None}
         # 시계·로봇 GT·(장애물 시나리오면) 장애물 GT가 들어온 뒤 시작한다
         ready = self.spin_until(
@@ -199,9 +201,11 @@ class NavMeasure(Node):
         record['collision'] = self.min_obstacle < COLLISION_GAP_M
         record['success'] = record['result'] == 'succeeded' and not record['collision']
         if record['result'] == 'succeeded':
-            # 도착 시간은 Nav2가 목표에 닿았으면 남긴다 (충돌 여부는 collision으로 따로 본다)
-            record['arrival_s'] = round(self.now() - t0_sim, 3)
-            record['arrival_wall_s'] = round(time.monotonic() - t0_wall, 3)
+            # reached_s: Nav2가 목표에 닿은 시각 (충돌 포함). arrival_s: 성공(충돌 없음)일 때만 (#145 민지 리뷰)
+            record['reached_s'] = round(self.now() - t0_sim, 3)
+            record['reached_wall_s'] = round(time.monotonic() - t0_wall, 3)
+            if record['success']:
+                record['arrival_s'] = record['reached_s']
         record['path_length_m'] = round(self.path_length, 4)
         if self.cte:
             record['cte_mean_m'] = round(sum(self.cte) / len(self.cte), 4)
