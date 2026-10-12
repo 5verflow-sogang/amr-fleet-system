@@ -319,6 +319,14 @@ cmd_vel 체인: 최종 `cmd_vel`을 가로채는 건 안전 노드(`amr_safety`)
 | Subscribe | `odom` | `nav_msgs/msg/Odometry` | 선속도, 경로 프레임이 odom 프레임과 같으면 자세도. 다르면 자세는 TF(경로 프레임 ← `base_frame`) |
 | Publish | `cmd_vel_nav` | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 (→ `amr_zone_client`). Nav2 `controller_server`와 같은 토픽이라 둘을 같이 띄우지 않는다. 경로 끝·경로 없음·odom 끊김이면 0을 한 번 내고 멈춘다 |
 
+### amr_docking (로봇별)
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Action | `docking/dock` | `amr_msgs/action/Dock` | 스테이션(`config/dock_stations.yaml`)의 ArUco 마커판을 보고 도킹. 한 번 호출에 한 번 시도 |
+| Subscribe | `camera/color/image_raw`, `camera/camera_info` | `sensor_msgs/msg/Image`, `CameraInfo` | 도킹 중에만 처리 |
+| Publish | `cmd_vel_nav` | `geometry_msgs/msg/Twist` | Nav2 컨트롤러와 같은 자리 (도킹 중에는 Nav2 목표가 없다) |
+
 ### amr_bt (로봇별)
 
 `<prefix>` = `server_topic_prefix`: `/fleet`(서버 원본, 기본), 장애 주입기 중계본이면 `fleet`(→ `/<ns>/fleet/...`).

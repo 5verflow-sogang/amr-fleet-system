@@ -1,0 +1,22 @@
+# 도킹 액션 서버 (docking_server) 파라미터
+/**:
+  ros__parameters:
+    # 비우면 share/amr_docking/config/dock_stations.yaml
+    stations_file: ""
+    # 비우면 <네임스페이스>/base_footprint
+    base_frame: ""
+    image_topic: camera/color/image_raw
+    camera_info_topic: camera/camera_info
+    # Nav2 컨트롤러와 같은 자리. 구역(amr_zone_client)·안전(amr_safety) 노드를 그대로 거친다
+    cmd_vel_topic: cmd_vel_nav
+    control_hz: 20.0
+    # 이보다 오래된 마커 측정은 안 쓴다 [s] (안 보이는 것으로 본다)
+    max_age_s: 0.3
+    v_max: 0.12                # m/s
+    w_max: 0.4                 # rad/s
+    # 성공 판정 (명세 KPI: 도킹 2 cm·1도). 멈춘 채 verify_samples번 잰 평균으로 본다
+    position_tol: 0.02         # m
+    yaw_tol_deg: 1.0
+    verify_samples: 15
+    # 한 번 시도의 전체 시간 [s]. 넘으면 FAILED_TO_CONTROL
+    timeout_s: 90.0
