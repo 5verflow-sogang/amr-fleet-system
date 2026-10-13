@@ -14,7 +14,7 @@ import message_filters
 import numpy as np
 import rclpy
 from rclpy.duration import Duration
-from rclpy.executors import ExternalShutdownException
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
@@ -160,13 +160,30 @@ class DetectionNode(Node):
         self._reset_stats()
 
 
+def make_executor(node: Node) -> MultiThreadedExecutor:
+    """TF를 콜백과 다른 스레드에서 받는 executor.
+
+    단일 스레드(rclpy.spin)면 /tf 수신이 콜백과 같은 줄에 서서, 콜백이 무겁거나 lookup_transform(timeout=)으로
+    기다리는 동안 TF가 쌓여 버퍼가 뒤처진다 (Mac Docker에서 0.35~0.6 s, "TF 없음" 반복).
+    TransformListener는 /tf 구독을 Reentrant 그룹에 두므로 두 번째 스레드가 받는다. 이 노드의 콜백은 기본
+    그룹(MutuallyExclusive)이라 지금처럼 하나씩 실행되어 공유 상태에 락이 필요 없다.
+    TransformListener(spin_thread=True)는 같은 노드를 다른 executor에 붙였다가 rclpy.spin이 도로 가져가서
+    (노드 하나 = executor 하나) Humble에서 효과가 없다.
+    """
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
+    return executor
+
+
 def main(args=None):
     rclpy.init(args=args)
     node = DetectionNode()
+    executor = make_executor(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
+        executor.shutdown()
         node.destroy_node()
