@@ -30,7 +30,7 @@ def generate_launch_description():
             'stations_file', default_value=os.path.join(config, 'stations.yaml'),
             description='스테이션 자세 (world 좌표)'),
         DeclareLaunchArgument(
-            'map_origin_in_world', default_value='[-0.0571, 1.5167, 0.00013]',
+            'map_origin_in_world', default_value='[-0.0562, 1.5317, 0.00009]',
             description='world에서 본 map 원점 [x, y, yaw] (실수로 적는다). 지도가 바뀌면 그 지도의 매핑 시작 자세'),
         DeclareLaunchArgument(
             'server_node', default_value='fleet_manager',

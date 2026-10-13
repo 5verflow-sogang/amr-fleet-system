@@ -29,7 +29,7 @@ class TaskGenerator(Node):
         tasks_file = self.declare_parameter('tasks_file', '').value
         seed = self.declare_parameter('seed', 0).value
         stations_file = self.declare_parameter('stations_file', '').value
-        self._origin = list(self.declare_parameter('map_origin_in_world', [-0.0571, 1.5167, 0.00013]).value)
+        self._origin = list(self.declare_parameter('map_origin_in_world', [-0.0562, 1.5317, 0.00009]).value)
         schedule_out = self.declare_parameter('schedule_out', '').value
         tick_s = self.declare_parameter('tick_s', 0.1).value
         # 이 이름의 노드가 /fleet/task_requests를 구독해야 일정을 시작한다. 비우면 아무 구독자나

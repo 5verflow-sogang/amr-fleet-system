@@ -39,14 +39,14 @@ ros2 launch amr_localization localization.launch.py odom_topic:=wheel/odom   # D
 | 인자 | 기본값 | 설명 |
 | --- | --- | --- |
 | `namespace` | `amr_01` | 로봇. TF 프레임 접두어로도 쓴다 |
-| `map` | `amr_mapping/maps/warehouse_v1.yaml` | 지도 v1 0.05 m. 0.025 m(`warehouse_v1_0025.yaml`)로 바꿀지는 아직 미정(localization.md 3-1절 최종 측정). 바꾸면 초기 위치·`map_origin_in_world`도 그 지도의 정렬값으로 |
+| `map` | `amr_mapping/maps/warehouse_v1_0025.yaml` | 지도 v1 0.025 m (10/12 회의, localization.md 3-1절 최종 측정). 0.05 m는 `warehouse_v1.yaml` |
 | `start_map_server` | `true` | 로봇 여러 대면 한 번만 `true` |
 | `odom_topic` | `odom` | 휠 오도메트리 토픽 |
 | `use_imu` | `true` | IMU가 없는 환경에서는 `false` |
-| `initial_x`·`initial_y`·`initial_yaw` | `0.0571`·`-0.0167`·`0.0` | AMCL 초기 위치 (map 기준). 기본 스폰 world (0, 1.5, 0)을 아래 정렬 원점으로 바꾼 값. 다른 지도·스폰이면 같이 바꾼다 |
+| `initial_x`·`initial_y`·`initial_yaw` | `0.0562`·`-0.0317`·`0.0` | AMCL 초기 위치 (map 기준). 기본 스폰 world (0, 1.5, 0)을 아래 정렬 원점으로 바꾼 값. 다른 지도·스폰이면 같이 바꾼다 |
 
 - 함께 띄워야 하는 것: 시뮬레이터와 로봇(`amr_gazebo`), 휠 오도메트리·센서 필터(`amr_odometry`). D4에 따라 `amr_odometry`는 `publish_tf:=false`(기본), DiffDrive는 `publish_odom_tf:=false`로 띄운다.
-- 위치 오차는 `eval_node`(아래)로 잰다: 추정 `odometry/filtered`, `map_origin_in_world: [-0.0571, 1.5167, 0.00013]`.
+- 위치 오차는 `eval_node`(아래)로 잰다: 추정 `odometry/filtered`, `map_origin_in_world: [-0.0562, 1.5317, 0.00009]`.
 
 ## 정확도 평가 모듈 (`amr_localization.eval`)
 
@@ -77,7 +77,7 @@ print(kpi_check(summaries))                 # 구간별 통과 여부 (정지 3c
 ```bash
 ros2 run amr_localization eval_node --ros-args -r __ns:=/amr_01 \
   --params-file $(ros2 pkg prefix amr_localization)/share/amr_localization/config/eval.yaml \
-  -p map_origin_in_world:="[-0.0571, 1.5167, 0.00013]"
+  -p map_origin_in_world:="[-0.0562, 1.5317, 0.00009]"
 ros2 service call /amr_01/localization_eval/save std_srvs/srv/Trigger   # 중간 저장 (종료할 때도 자동 저장)
 ```
 
@@ -87,7 +87,7 @@ ros2 service call /amr_01/localization_eval/save std_srvs/srv/Trigger   # 중간
 | Subscribe | `odometry/filtered` | `nav_msgs/msg/Odometry` | 추정, map 기준. `estimate_type:=pose`면 `geometry_msgs/msg/PoseWithCovarianceStamped` (예: `amcl_pose`) |
 | Service | `~/save` | `std_srvs/srv/Trigger` | 지금까지 기록 저장, 응답에 구간별 요약 |
 
-- `map_origin_in_world`: world에서 본 map 원점 `[x, y, yaw]`. 기본값은 지도 v1 0.05 m의 지도↔월드 정렬값 `[-0.0571, 1.5167, 0.00013]`(10/12 회의 B안, [amr_mapping README](../amr_mapping/README.md) "지도 정렬"). 0.025 m는 `[-0.0562, 1.5317, 0.00009]`, 정렬 없이 매핑 시작 자세(A안)는 `[0.0, 1.5, 0.0]`, sandbox 미로(TurtleBot4)는 `[0.0, 0.0, 0.0]` ([amr_gazebo README](../../simulation/amr_gazebo/README.md) "GT 사용 시 주의"). 틀리면 그만큼 RMSE에 더해진다.
+- `map_origin_in_world`: world에서 본 map 원점 `[x, y, yaw]`. 기본값은 지도 v1 0.025 m의 지도↔월드 정렬값 `[-0.0562, 1.5317, 0.00009]`(10/12 회의 B안, [amr_mapping README](../amr_mapping/README.md) "지도 정렬"). 0.05 m는 `[-0.0571, 1.5167, 0.00013]`, 정렬 없이 매핑 시작 자세(A안)는 `[0.0, 1.5, 0.0]`, sandbox 미로(TurtleBot4)는 `[0.0, 0.0, 0.0]` ([amr_gazebo README](../../simulation/amr_gazebo/README.md) "GT 사용 시 주의"). 틀리면 그만큼 RMSE에 더해진다.
 - 정답은 추정 시각으로 **선형 보간**해 짝짓는다. 두 토픽의 발행 시각이 어긋나서 생기는 오차를 없애기 위해서다.
 - 저장 위치: `output_dir` (비우면 `/tmp/amr_eval/<robot>_<시각>`). `localization.csv`, `localization_summary.json`, `trajectories/<robot>_gt.tum`·`_est.tum`
 - 궤적(원자료)은 받는 즉시 `trajectories/`에 이어 쓴다(약 1초마다 디스크로 내보냄). 오차 CSV·요약은 종료할 때 계산한다. 강제 종료돼 원자료만 남았으면 다시 계산한다:
