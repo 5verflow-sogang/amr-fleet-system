@@ -112,6 +112,7 @@ class TestBtActions(unittest.TestCase):
         cls.node.create_subscription(RobotState, '/fleet/robot_states', cls.states.append, qos)
         cls.assign_pub = cls.node.create_publisher(TaskAssignment, '/fleet/task_assignments', qos)
         cls.zone_pub = cls.node.create_publisher(String, f'/{ROBOT}/zone_client/state', 10)
+        cls.kidnap_pub = cls.node.create_publisher(String, f'/{ROBOT}/kidnap_recovery/state', 10)
         cls.executor = MultiThreadedExecutor(num_threads=4)
         cls.executor.add_node(cls.node)
         cls.spin = threading.Thread(target=cls.executor.spin, daemon=True)
@@ -215,6 +216,28 @@ class TestBtActions(unittest.TestCase):
         ack = [a for a in self.acks if a.assignment_id == ack_id][0]
         self.assertEqual(ack.result, TaskAssignmentAck.RESULT_REJECTED)
         self.assertEqual(ack.error.code, ErrorInfo.TRAFFIC_REVOKED)
+
+    # 위치 복구가 failed인 동안도 MODE_ERROR·할당 거부, tracking으로 돌아오면 다시 받는다 (#148)
+    def test_5_kidnap_failed_rejects_until_tracking(self):
+        self.zone_pub.publish(String(data='idle'))        # 앞 테스트의 zone failed 풀기
+        self.kidnap_pub.publish(String(data='failed'))
+        self.assertTrue(self.wait_until(
+            lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_ERROR, 5.0))
+        self.assign('t5', Task.TYPE_RETURN, '', 'wait_1', dropoff_xy=(1.0, 0.0))
+        ack_id = self.last_assignment_id
+        self.assertTrue(self.wait_until(lambda: any(a.assignment_id == ack_id for a in self.acks), 5.0))
+        ack = [a for a in self.acks if a.assignment_id == ack_id][0]
+        self.assertEqual(ack.result, TaskAssignmentAck.RESULT_REJECTED)
+        self.assertEqual(ack.error.code, ErrorInfo.NAV_TIMEOUT)
+        self.assertIn('localization', ack.error.message)
+
+        self.kidnap_pub.publish(String(data='tracking'))
+        self.assertTrue(self.wait_until(
+            lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_IDLE, 5.0))
+        with self.servers.lock:
+            self.servers.nav_duration = 0.3
+        self.assign('t6', Task.TYPE_RETURN, '', 'wait_1', dropoff_xy=(1.0, 0.0))
+        self.assertEqual(self.final('t6', 15.0).state, TaskStatus.STATE_COMPLETED)
 
 
 @launch_testing.post_shutdown_test()

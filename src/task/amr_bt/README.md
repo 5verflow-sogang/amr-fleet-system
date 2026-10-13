@@ -84,6 +84,7 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 - 상태 토픽을 내는 노드가 없으면 기본값(`idle`, `tracking`) = 진행이다
 - 후진(`backing`)은 zone_client가 `cmd_vel_zone_limited`로 직접 낸다. BT는 Nav2 목표만 멈춘다 (#137)
 - `zone_client/state` = `failed`인 동안은 `RobotState.mode`를 `MODE_ERROR`로 내고 새 할당을 `RESULT_REJECTED` + `TRAFFIC_REVOKED`로 거부한다. 서버가 멈춘 로봇에 작업을 계속 줘서 바로 실패하는 일을 되풀이하지 않게 한다
+- `kidnap_recovery/state` = `failed`인 동안도 같다 (`NAV_TIMEOUT`, "localization lost"). 복구 노드가 `failed`에서도 수렴해 `tracking`으로 돌아오면 다시 `MODE_IDLE`로 할당을 받는다 (#148). 위치 잃음용 ErrorInfo 코드가 생기면 바꾼다
 
 ### 가상 배터리 (`include/amr_bt/battery.hpp`)
 
@@ -192,3 +193,4 @@ colcon test --packages-select amr_bt
   - 도킹이 늘 실패하는 스테이션: Dock.action 3번 호출 뒤 FAILED(`FAILED_TO_DETECT_DOCK` 904)
   - 이동 중 `zone_client/state` = waiting → Nav2 목표 취소, approaching → 다시 보내고 COMPLETED
   - `zone_client/state` = failed → `MODE_ERROR`, 새 할당 거부(`TRAFFIC_REVOKED`)
+  - `kidnap_recovery/state` = failed → `MODE_ERROR`, 새 할당 거부(`NAV_TIMEOUT`), tracking으로 돌아오면 다시 받아 COMPLETED

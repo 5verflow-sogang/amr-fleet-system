@@ -334,7 +334,22 @@ private:
       use_docking ? dock_action.c_str() : "자리채움");
   }
 
-  bool zone_failed() const {return ctx_->zone_state == "failed";}
+  // 작업을 받아도 움직일 수 없는 상태: 이유(오류 코드, 설명). 없으면 nullopt.
+  // 받으면 MoveTo가 멈춘 채 기다리다 FAILED를 내고, 서버가 IDLE로 돌아온 로봇에 또 할당하는 것을 되풀이한다.
+  // 그래서 이 동안은 RobotState.mode를 MODE_ERROR로 내고(서버는 MODE_IDLE에만 할당) 새 할당을 거부한다
+  std::optional<std::pair<uint16_t, std::string>> unable_reason() const
+  {
+    if (ctx_->zone_state == "failed") {
+      // zone_client가 후진 안전 한도로 멈춰 선 상태(#137): 사람이 확인하기 전엔 움직일 수 없다
+      return std::make_pair(ErrorInfo::TRAFFIC_REVOKED, std::string("zone_client failed, manual check needed"));
+    }
+    if (ctx_->kidnap_state == "failed") {
+      // 위치 복구가 실패한 상태(#79). 복구 노드가 failed에서도 수렴하면 tracking으로 돌아오고 그때 다시 받는다.
+      // 위치 잃음용 ErrorInfo 코드가 없어 MoveTo 멈춤 초과와 같은 NAV_TIMEOUT을 쓴다 (#148)
+      return std::make_pair(ErrorInfo::NAV_TIMEOUT, std::string("localization lost (kidnap_recovery failed)"));
+    }
+    return std::nullopt;
+  }
 
   void on_state(const char * source, std::string & slot, const std::string & value)
   {
@@ -391,12 +406,10 @@ private:
       reply.error_message = "battery " + std::to_string(static_cast<int>(battery_.percent())) + " %";
       return reply;
     }
-    if (zone_failed()) {
-      // zone_client가 후진 안전 한도로 멈춰 선 상태(#137 failed): 사람이 확인하기 전엔 움직일 수 없다.
-      // 받으면 MoveTo가 바로 FAILED를 내고 서버가 또 할당하는 것을 되풀이하므로 거부한다
+    if (const auto unable = unable_reason()) {
       reply.result = TaskAssignmentAck::RESULT_REJECTED;
-      reply.error_code = ErrorInfo::TRAFFIC_REVOKED;
-      reply.error_message = "zone_client failed, manual check needed";
+      reply.error_code = unable->first;
+      reply.error_message = unable->second;
       return reply;
     }
     if (ctx_->busy()) {
@@ -519,7 +532,7 @@ private:
       msg.mode = RobotState::MODE_BUSY;
       msg.current_task_id = ctx_->task->task_id;
       msg.item_type = ctx_->task->item_type;
-    } else if (zone_failed()) {
+    } else if (unable_reason()) {
       msg.mode = RobotState::MODE_ERROR;   // 서버는 MODE_IDLE에만 할당한다
     } else {
       msg.mode = RobotState::MODE_IDLE;
