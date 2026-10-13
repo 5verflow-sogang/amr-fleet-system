@@ -66,6 +66,13 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 
 시나리오 파일은 `processes`(띄울 명령, `ready_topic`으로 준비 확인, `stop_first`·`wait_files`로 기록 노드를 먼저 끝냄), `driver`(`segments`: `cmd_vel` 구간 / `wait`: 시간만 기다림 / `command`: 셸 명령이 끝날 때까지, 0이 아닌 종료 코드면 주행 실패), `postprocess`(예: `fleet_metrics`), `cleanup`으로 이루어진다. 명령 안의 `{run_dir}`, `{seed}`, `params` 이름은 실행마다 채워진다.
 
+**그림과 녹화** (`loc_basic`, `nav_kpi`)
+
+- 실행이 끝나면 `postprocess`가 `plot_run.py`로 `plots/*.png`를 남긴다. 위치추정: `loc_traj.png`(지도 위 GT·EKF·AMCL 궤적), `loc_error.png`(시간에 따른 오차, 구간 색, KPI 점선). Nav KPI: `nav_map.png`(지도 위 계획 경로·GT 궤적·성공/실패 목표), `nav_time.png`(예측·실제 주행시간). 그림이 실패해도 실행 결과는 그대로다(늘 0으로 끝남). 지난 결과도 `python3 tools/harness/plot_run.py <실행 폴더> --map <지도 yaml>`로 다시 그린다 (ROS 불필요)
+- `rosbag/`에 가벼운 토픽만 녹화한다: `/map`, `/tf`, `/tf_static`, `amcl_pose`, GT (`nav_kpi`는 `plan`·`cmd_vel` 추가). 스캔·카메라는 뺀다. Foxglove·Lichtblick에 `rosbag_0.db3`를 끌어다 놓으면 열린다. 이미지에 mcap 저장 플러그인이 없어 sqlite3로 남긴다
+- 크기: `loc_basic` 1회 약 9 MB(0.025 m 지도 4 MB + GT). `nav_kpi`는 50쌍이면 수백 MB라 기본으로 끄고, 실패한 쌍을 볼 때 `--set record=true`. `--set record=false`로 끈다
+- 추천 흐름: N회 돌린 뒤 `plots/`로 이상한 실행을 고르고, 그 실행의 bag을 열어 자세히 본다
+
 **seed 규칙** (하연 제안, 10/6)
 
 1. 하네스는 seed를 항상 직접 넘기고 1부터 시작한다. N회 반복이면 1, 2, …, N. 0은 넘기지 않는다(`--seed-base`가 1 미만이면 거부).
