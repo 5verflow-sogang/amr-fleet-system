@@ -169,8 +169,9 @@ jobs:
           fi
           if [ "$KILL_ROBOT" != none ]; then
             has_param kill_robot || fail "$SCENARIO는 로봇 장애(kill_robot)를 쓰지 않는 시나리오다"
-            [[ "$KILL_ROBOT" =~ ^amr_0[1-5]$ && "$KILL_ROBOT_AT_S" =~ $num ]] \
-              || fail "kill_robot은 amr_01~05, kill_robot_at_s는 0 이상 숫자"
+            # 가짜 로봇은 10대까지 (fake_robots.yaml). 실제 대수보다 큰 번호는 시나리오가 띄우지 않은 로봇이라 죽일 게 없다
+            [[ "$KILL_ROBOT" =~ ^amr_(0[1-9]|10)$ && "$KILL_ROBOT_AT_S" =~ $num ]] \
+              || fail "kill_robot은 amr_01~10, kill_robot_at_s는 0 이상 숫자"
             args+=(--set "kill_robot=$KILL_ROBOT" --set "kill_robot_at_s=$KILL_ROBOT_AT_S")
             # 로봇 장애 실행이 장애 없는 실행과 같은 묶음으로 요약되지 않게 기본 라벨에 붙인다
             fault_label="${fault_label:+${fault_label}_}kill_${KILL_ROBOT}"
