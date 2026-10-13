@@ -1,4 +1,5 @@
 # 가짜 로봇 파라미터. 공통 값은 /**, 시작 위치는 로봇별로 둔다 (map 좌표, m).
+# 시작 위치가 있는 로봇 수가 fake_robots.launch.py count의 최댓값이다 (지금 10대).
 /**:
   ros__parameters:
     speed_mps: 1.0
@@ -23,3 +24,19 @@
 /amr_05/fake_robot:
   ros__parameters:
     start_xy: [10.0, 2.0]
+# 6~10번: 연구 1 규모 곡선(3/5/7/10대)용. 같은 줄에 2 m 간격으로 잇는다
+/amr_06/fake_robot:
+  ros__parameters:
+    start_xy: [12.0, 2.0]
+/amr_07/fake_robot:
+  ros__parameters:
+    start_xy: [14.0, 2.0]
+/amr_08/fake_robot:
+  ros__parameters:
+    start_xy: [16.0, 2.0]
+/amr_09/fake_robot:
+  ros__parameters:
+    start_xy: [18.0, 2.0]
+/amr_10/fake_robot:
+  ros__parameters:
+    start_xy: [20.0, 2.0]
