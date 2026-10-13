@@ -1,9 +1,12 @@
 # 구역 진입 처리 노드 파라미터 (zone_client_node)
 /**/zone_client:
   ros__parameters:
-    # 좌표계 이름 (TF map_frame → base_frame, zones.yaml area_world도 이 프레임 기준으로 본다).
-    # 지금은 Gazebo world와 map 원점이 같다고 본다. 지도 v1(10/9) 인계 뒤 틀어지면 이 값만 바꾸면 된다
+    # 좌표계 이름 (TF map_frame → base_frame).
     map_frame: map
+    # zones.yaml area_world의 좌표계 (10/13 수정). area_world는 Gazebo world 좌표인데 지도 원점은 world (0, 1.5)라,
+    # map 좌표로 그대로 쓰면 구역이 1.5 m 어긋난다. 'world'면 TF map ← world(amr_bringup system.launch가 발행)로 바꿔 쓴다.
+    # 비우면 map 좌표로 그대로 본다 (TF 없는 단위·launch 테스트). launch 인자 zones_frame으로 준다
+    zones_frame: ''
     base_frame: base_footprint
     # Nav2 전역 계획 경로. amr_bringup이 붙이는 상대 이름 (/<ns>/plan)
     plan_topic: plan

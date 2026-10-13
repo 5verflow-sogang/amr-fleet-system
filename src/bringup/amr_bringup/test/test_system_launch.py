@@ -52,15 +52,21 @@ def test_included_launch_files_exist():
 def test_actions_per_robot(num_robots):
     module = load_module()
     actions = module._system(context_with_defaults(module, num_robots=num_robots))
-    # 월드 1 + 로봇마다 TimerAction 1 + Fleet 서버 include 1 + 장애 주입기 Node 1
-    assert len(actions) == 1 + num_robots + 2
+    # 월드 1 + world → map TF Node 1 + 로봇마다 TimerAction 1 + Fleet 서버 include 1 + 장애 주입기 Node 1
+    assert len(actions) == 1 + 1 + num_robots + 2
     assert sum(isinstance(a, TimerAction) for a in actions) == num_robots
-    assert sum(isinstance(a, Node) for a in actions) == 1
+    assert sum(isinstance(a, Node) for a in actions) == 2
 
 
 def test_options_off():
     module = load_module()
     actions = module._system(context_with_defaults(module, num_robots=2, fleet='false', dynamic_obstacles='true'))
-    # 월드 + 동적 장애물 + 로봇 2대, Fleet 없음
-    assert len(actions) == 1 + 1 + 2
+    # 월드 + world → map TF + 동적 장애물 + 로봇 2대, Fleet 없음 (Node는 TF 하나)
+    assert len(actions) == 1 + 1 + 1 + 2
+    assert sum(isinstance(a, Node) for a in actions) == 1
+
+
+def test_world_to_map_tf_only_with_localization():
+    module = load_module()
+    actions = module._system(context_with_defaults(module, num_robots=1, fleet='false', localization='false'))
     assert not any(isinstance(a, Node) for a in actions)

@@ -19,6 +19,9 @@ def generate_launch_description():
         DeclareLaunchArgument('robot_id', default_value='amr_01', description='ZoneRequest.robot_id'),
         DeclareLaunchArgument(
             'zones_file', default_value='', description='zones.yaml 경로 (서버와 같은 파일)'),
+        DeclareLaunchArgument(
+            'zones_frame', default_value='',
+            description='zones.yaml area_world의 좌표계. 시뮬레이션은 world (TF map ← world로 바꿔 쓴다). 비우면 map 그대로'),
         Node(
             package='amr_zone_client',
             executable='zone_client_node',
@@ -27,6 +30,7 @@ def generate_launch_description():
             parameters=[config, {
                 'robot_id': LaunchConfiguration('robot_id'),
                 'zones_file': LaunchConfiguration('zones_file'),
+                'zones_frame': LaunchConfiguration('zones_frame'),
             }],
             output='screen',
         ),

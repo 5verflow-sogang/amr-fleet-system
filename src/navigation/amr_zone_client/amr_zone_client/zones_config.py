@@ -6,8 +6,9 @@ area_world만 쓴다 (좌표계 이름은 노드 파라미터로 따로 둔다. 
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
-from typing import List
+from typing import List, Sequence
 
 import yaml
 
@@ -24,3 +25,19 @@ def load_zone_configs(path: str) -> List[ZoneConfig]:
         x_min, x_max, y_min, y_max = (float(v) for v in zone['area_world'])
         configs.append(ZoneConfig(str(zone['id']), (x_min, x_max, y_min, y_max)))
     return configs
+
+
+def transform_zones(configs: Sequence[ZoneConfig], tx: float, ty: float, yaw: float) -> List[ZoneConfig]:
+    """구역 범위를 다른 좌표계로 옮긴다. p' = R(yaw)·p + (tx, ty). 회전하면 네 모서리를 감싸는 축 정렬 사각형.
+
+    zones.yaml의 area_world는 Gazebo world 좌표라, map 좌표로 판단하는 로봇은 world → map 변환
+    (TF map ← world)을 거쳐야 한다. 지도 원점이 world (0, 1.5)라 변환하지 않으면 구역이 1.5 m 어긋난다.
+    """
+    c, s = math.cos(yaw), math.sin(yaw)
+    out = []
+    for z in configs:
+        x_min, x_max, y_min, y_max = z.area
+        corners = [(c * x - s * y + tx, s * x + c * y + ty) for x in (x_min, x_max) for y in (y_min, y_max)]
+        xs, ys = [p[0] for p in corners], [p[1] for p in corners]
+        out.append(ZoneConfig(z.zone_id, (min(xs), max(xs), min(ys), max(ys))))
+    return out
