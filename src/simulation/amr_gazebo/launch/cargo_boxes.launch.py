@@ -3,7 +3,8 @@
     ros2 launch amr_gazebo cargo_boxes.launch.py                 # yaml의 상자 전부
     ros2 launch amr_gazebo sim.launch.py cargo:=true             # sim과 같이
 
-상자는 static 모델 하나(cargo_boxes)의 링크로 들어간다. 위치는 yaml 좌표 그대로라 GT 라벨로 쓴다.
+상자마다 static 모델 하나(이름 = 상자 id)로 스폰한다. 라벨 카메라가 모델 단위로 상자를 내기 때문이다.
+위치는 yaml 좌표 그대로라 GT 라벨로도 쓸 수 있다.
 """
 
 import os
@@ -14,7 +15,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from amr_gazebo.cargo import cargo_sdf, check_lidar_clearance, load_boxes
+from amr_gazebo.cargo import cargo_model_sdf, check_lidar_clearance, load_boxes
 
 
 def _spawn(context):
@@ -27,9 +28,9 @@ def _spawn(context):
     return [Node(
         package='ros_gz_sim',
         executable='create',
-        arguments=['-string', cargo_sdf(boxes), '-name', 'cargo_boxes'],
+        arguments=['-string', cargo_model_sdf(b), '-name', b.id],
         output='screen',
-    )]
+    ) for b in boxes]
 
 
 def generate_launch_description():

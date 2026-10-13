@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'detection_node = amr_detection.detection_node:main',
+            'collect_dataset = amr_detection.dataset_collector:main',
         ],
     },
 )
