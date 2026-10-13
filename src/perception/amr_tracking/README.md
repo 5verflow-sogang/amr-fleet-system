@@ -63,3 +63,6 @@ ros2 topic echo /perception/obstacles
 ```bash
 colcon test --packages-select amr_tracking
 ```
+
+- `test_tracking.py`: 노드 없이 변환·마커·TTC 함수
+- `test_tracking_launch.py` (I13, `launch_testing`): `tracking_node`를 띄우고 합성 LiDAR 스캔(다리 두 개가 1.0 m/s로 가로지름 + 벽 + 기둥)을 넣어, 사람만 동적 트랙 하나로 참값 근처(위치 0.3 m·속력 0.3 m/s)에 잡히는지 본다
