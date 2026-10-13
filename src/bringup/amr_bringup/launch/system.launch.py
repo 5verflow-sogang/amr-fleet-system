@@ -30,7 +30,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from amr_bringup.robots import encoder_seed, load_robots, world_to_map
+from amr_bringup.robots import encoder_seed, load_robots, world_to_map, world_to_map_tf_args
 
 
 def _launch(package, name, **arguments):
@@ -56,6 +56,12 @@ def _system(context):
     interval = float(arg('spawn_interval_s'))
 
     actions = [_launch('amr_gazebo', 'world.launch.py', gui=arg('gui'))]
+    if localization:
+        # world → map 정적 TF. 지도 원점(map_origin_in_world)을 여기 한 곳에서만 발행하고, world 좌표 설정
+        # (zones.yaml 등)을 쓰는 노드는 이 TF로 바꾼다. 원점 값을 노드마다 복사하지 않기 위해서다
+        actions.append(Node(
+            package='tf2_ros', executable='static_transform_publisher', name='world_to_map',
+            arguments=world_to_map_tf_args(origin), parameters=[{'use_sim_time': True}], output='screen'))
     if flag('dynamic_obstacles'):
         actions.append(_launch('amr_gazebo', 'dynamic_obstacles.launch.py', seed=seed, use_sim_time='true'))
 

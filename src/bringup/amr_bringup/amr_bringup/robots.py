@@ -71,3 +71,13 @@ def obstacle_clearance(x: float, y: float, obstacle: dict) -> float:
     if len(points) == 1:
         return math.hypot(x - points[0][0], y - points[0][1])
     return min(_segment_distance((x, y), a, b) for a, b in zip(points, points[1:]))
+
+
+def world_to_map_tf_args(map_origin_in_world: Sequence[float]) -> list[str]:
+    """static_transform_publisher 인자: world → map (map 원점이 world의 어디인지).
+
+    zones.yaml처럼 world 좌표로 적은 설정을 map 좌표로 바꿀 때, 각자 원점 값을 복사하지 않고 이 TF를 조회하게 한다.
+    """
+    x, y, yaw = (float(v) for v in map_origin_in_world)
+    return ['--x', repr(x), '--y', repr(y), '--z', '0.0', '--yaw', repr(yaw),
+            '--frame-id', 'world', '--child-frame-id', 'map']

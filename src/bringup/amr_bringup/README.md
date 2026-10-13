@@ -34,7 +34,7 @@ ros2 launch amr_bringup system.launch.py delay_ms:=200.0 loss_pct:=5.0 seed:=3 d
 | `amr_localization localization` | AMCL + EKF 두 개 | 초기 위치(스폰 자세를 map 좌표로), 지도 서버는 첫 로봇에서 한 번 |
 | `amr_bt amr_bt` | Fleet 작업 수신 | `fleet:=true`면 `relayed:=true`(장애 주입기 중계본) |
 
-전역: `amr_gazebo world`(`/clock`), `dynamic_obstacles`(선택), Fleet 서버(`use_sim_time:=true`, 구역 lease를 로봇과 같은 시계로), 장애 주입기(로봇 목록을 `robots.yaml`에서 넘김).
+전역: `world → map` 정적 TF(지도 원점 `map_origin_in_world`를 한 곳에서 발행, 위치추정을 켤 때. world 좌표 설정을 쓰는 노드는 이 TF로 바꾼다), `amr_gazebo world`(`/clock`), `dynamic_obstacles`(선택), Fleet 서버(`use_sim_time:=true`, 구역 lease를 로봇과 같은 시계로), 장애 주입기(로봇 목록을 `robots.yaml`에서 넘김).
 
 로봇은 `spawn_interval_s`(3초) 간격으로 차례로 띄운다. 한꺼번에 스폰하면 Gazebo RTF가 수십 초 동안 크게 떨어진다(명세서 11-3절).
 

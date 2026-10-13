@@ -41,10 +41,14 @@ map
 
 | TF | 발행 노드 | 입력 | 끄는 설정 |
 | --- | --- | --- | --- |
+| `world → map` | `amr_bringup system.launch.py` (`static_transform_publisher`, 10/13) | `map_origin_in_world` | `localization:=false`면 안 띄움 |
 | `map → odom` | `ekf_global` (민지) | `odom`, `imu/data`, `amcl_pose` | AMCL `tf_broadcast: false` |
 | `odom → base_footprint` | `ekf_local` (민지) | `odom`, `imu/data` (전역 입력 없음) | `amr_odometry` `publish_tf: false`, Gazebo DiffDrive `publish_odom_tf:=false` |
 
 - EKF의 `base_link_frame`은 `base_footprint`로 둔다 (위 TF 트리 기준).
+- `world → map`은 지도 원점(Gazebo world에서 본 `map` 원점)을 TF 하나로 내는 것이다. world 좌표로 적은 설정(`zones.yaml`
+  등)을 쓰는 노드는 원점 값을 복사하지 말고 이 TF를 조회한다 (구역 클라이언트 `zones_frame:=world`). `world`는 TF 트리의 새
+  뿌리가 되고, Gazebo 정답 토픽(`ground_truth/odom`)의 `frame_id`와 같은 이름이다.
 - `amr_odometry`의 `publish_tf`는 기본 `false`다. EKF 없이 오도메트리만 단독으로 시험할 때만 `true`로 켠다.
 - EKF 없이 sim만 띄우면 Gazebo DiffDrive가 `odom → base_footprint`를 발행한다 (`publish_odom_tf` 기본 `true`). EKF를 띄울 때는 `sim.launch.py publish_odom_tf:=false`로 끈다.
 
