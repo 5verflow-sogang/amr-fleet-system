@@ -11,7 +11,12 @@
      (Nav2 BT도 1 Hz로 다시 계획하지만 그 시간을 밖에서 볼 수 없어서 같은 planner_server를 직접 부른다)
   3. 예측 주행시간 = 계획 경로 길이를 순항 속도·가속도의 사다리꼴로 간 시간. 실제 = 목표 수락 → 결과 (시뮬레이션 시간)
   4. CTE: GT 위치(world → map)를 그 시각의 전역 경로(/<ns>/plan, BT가 1 Hz로 다시 계획)에 투영.
-     투영점의 경로 곡률이 curve_kappa 넘으면 곡선. KPI 평균은 도착한 쌍만 (#145 nav_measure.py와 같은 기준)
+     투영점의 경로 곡률이 curve_kappa 넘으면 곡선. 평균은 도착한 쌍만, 복구 동작(spin·backup·wait) 중과 끝난 뒤
+     recovery_grace_s는 뺀다. DWA CTE는 참고 지표다 (CTE KPI는 5장 모션 제어 = path_tracker, 이진 10/13)
+  5. 복구 동작: NavigateToPose 피드백의 number_of_recoveries. 예측 오차는 도착한 쌍 전체와 복구 없이 도착한 쌍을 따로 낸다
+--controller pp: Nav2 주행 대신 path_tracker(Pure Pursuit, amr_control)가 따라간다. 이 스크립트가 계획을 요청하면
+planner_server가 /<ns>/plan을 내고 path_tracker가 그 경로를 따른다(1초마다 다시 계획). GT가 목표에서 goal_tol_m 안에
+들어오면 도착. CTE KPI(5장 모션 제어)는 이 방식으로 판정한다 (--cte-kpi)
 계획이 실패하면 주행하지 않고 다음 쌍으로 간다(출발은 그대로). 도착 못 하면(aborted·시간 초과) 그 자리에서 다음 쌍.
 
 출력 (out-dir): nav_pairs.csv(쌍마다), replan.csv, cte.csv, paths.csv(쌍마다 처음 계획한 경로, map),
@@ -30,9 +35,10 @@ from pathlib import Path
 
 import rclpy
 import yaml
-from action_msgs.msg import GoalStatus
+from action_msgs.msg import GoalStatus, GoalStatusArray
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
+from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry, Path as PathMsg
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -62,6 +68,16 @@ class NavKpi(Node):
         self.create_subscription(Odometry, f'/{ns}/ground_truth/odom', self._on_gt, qos_profile_sensor_data)
         self.plan_now = None   # (경로, 누적 길이, 곡률) - 지금 따라가는 전역 경로
         self.create_subscription(PathMsg, f'/{ns}/plan', self._on_plan, 10)
+        # 복구 동작이 도는 중인지 (behavior_server 액션 상태). CTE에서 그 구간을 뺀다
+        self.behaviors_active = {}
+        self.last_behavior_end = -1e9
+        for name in ('spin', 'backup', 'wait'):
+            self.create_subscription(GoalStatusArray, f'/{ns}/{name}/_action/status',
+                                     lambda m, n=name: self._on_behavior(n, m), 10)
+        self.recoveries = 0
+        # pp 방식: 멈출 때 빈 경로와 정지 명령을 낸다
+        self.plan_pub = self.create_publisher(PathMsg, f'/{ns}/plan', 10)
+        self.stop_pub = self.create_publisher(Twist, f'/{ns}/cmd_vel', 10)
 
     def _on_gt(self, msg):
         p = msg.pose.pose.position
@@ -71,6 +87,18 @@ class NavKpi(Node):
         path = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
         if len(path) >= 2:
             self.plan_now = (path, cumulative(path), curvature(path, self.args.kappa_window_m))
+
+    def _on_behavior(self, name, msg):
+        active = any(st.status in (GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING) for st in msg.status_list)
+        if self.behaviors_active.get(name) and not active:
+            self.last_behavior_end = self.now()
+        self.behaviors_active[name] = active
+
+    def in_recovery(self, t):
+        return any(self.behaviors_active.values()) or t - self.last_behavior_end < self.args.recovery_grace_s
+
+    def _on_feedback(self, msg):
+        self.recoveries = max(self.recoveries, msg.feedback.number_of_recoveries)
 
     def now(self):
         return self.get_clock().now().nanoseconds * 1e-9
@@ -116,6 +144,52 @@ class NavKpi(Node):
         path = [(p.pose.position.x, p.pose.position.y) for p in res.result.path.poses]
         return True, pt.sec * 1000 + pt.nanosec * 1e-6, wall_ms, path
 
+    def stop_robot(self):
+        empty = PathMsg()
+        empty.header.frame_id = 'map'
+        empty.header.stamp = self.get_clock().now().to_msg()
+        self.plan_pub.publish(empty)
+        for _ in range(5):
+            self.stop_pub.publish(Twist())
+            rclpy.spin_once(self, timeout_sec=0.02)
+
+    def drive_pp(self, i, goal, mx, my, yaw, pred, replans, replan_rows):
+        """path_tracker로 한 쌍을 간다. (결과, 걸린 시간, 재계획 수, CTE 샘플)."""
+        a = self.args
+        t0 = self.now()
+        timeout_s = max(a.min_timeout_s, a.timeout_factor * pred)
+        next_replan = t0 + a.replan_period_s
+        next_cte = t0
+        n_replan = 0
+        pair_cte = []
+        result = 'timeout'
+        while True:
+            rclpy.spin_once(self, timeout_sec=0.02)
+            t = self.now()
+            gm = self.to_map(*self.gt)
+            if math.hypot(gm[0] - mx, gm[1] - my) <= a.goal_tol_m:
+                result = 'succeeded'
+                break
+            if t - t0 > timeout_s:
+                break
+            if t >= next_cte and self.plan_now is not None:
+                next_cte = t + 1.0 / a.cte_hz
+                cur, cur_cum, cur_kappa = self.plan_now
+                pr = project(gm, cur, cur_cum, 0, search=120)
+                if pr is not None:
+                    seg = 'curve' if cur_kappa[pr.index] > a.curve_kappa else 'straight'
+                    pair_cte.append((round(t, 3), i, round(pr.distance, 4), seg, round(cur_cum[-1] - pr.s, 3)))
+            if t >= next_replan:
+                next_replan = t + a.replan_period_s
+                r_ok, r_ms, r_wall, _ = self.compute_path(self.goal_pose(mx, my, yaw))
+                replan_rows.append((round(t, 3), i, int(r_ok), round(r_ms, 1), round(r_wall, 1)))
+                if r_ok:
+                    replans.append(r_ms)
+                n_replan += 1
+        actual = self.now() - t0
+        self.stop_robot()
+        return result, actual, n_replan, pair_cte
+
     def run(self):
         a = self.args
         wps = yaml.safe_load(Path(a.waypoints).read_text())['waypoints']
@@ -152,9 +226,21 @@ class NavKpi(Node):
             path_rows += [(i, round(x, 3), round(y, 3), round(k, 3)) for (x, y), k in zip(path, kappa)]
             self.plan_now = None
 
+            if a.controller == 'pp':
+                result, actual, n_replan, pair_cte = self.drive_pp(i, goal, mx, my, yaw, pred, replans, replan_rows)
+                success = result == 'succeeded'
+                cte_rows += [(*r, int(success)) for r in pair_cte]
+                err = prediction_error(actual, pred) if success else None
+                row.update(result=result, nav_success=int(success), actual_s=round(actual, 2) if success else '',
+                           pred_err=round(err, 4) if err is not None else '', replan_n=n_replan, recoveries=0)
+                pairs.append({**row, 'nav_success': success, 'plan_ok': True, 'pred_err': err})
+                print(f'[{i}/{n_pairs}] pp {result} 길이 {length:.1f} m 예측 {pred:.1f} s 실제 {actual:.1f} s',
+                      file=sys.stderr, flush=True)
+                continue
             req = NavigateToPose.Goal()
             req.pose = goal
-            fut = self.nav.send_goal_async(req)
+            self.recoveries = 0
+            fut = self.nav.send_goal_async(req, feedback_callback=self._on_feedback)
             self.spin_until(fut.done, 10.0)
             handle = fut.result() if fut.done() else None
             if handle is None or not handle.accepted:
@@ -175,7 +261,7 @@ class NavKpi(Node):
                     handle.cancel_goal_async()
                     self.spin_until(res_fut.done, 5.0)
                     break
-                if t >= next_cte and self.gt is not None and self.plan_now is not None:
+                if t >= next_cte and self.gt is not None and self.plan_now is not None and not self.in_recovery(t):
                     next_cte = t + 1.0 / a.cte_hz
                     # 전역 경로는 계획 순간의 로봇 위치에서 시작하므로 앞 3 m(선분 120개)만 찾는다
                     cur, cur_cum, cur_kappa = self.plan_now
@@ -198,13 +284,14 @@ class NavKpi(Node):
             cte_rows += [(*r, int(success)) for r in pair_cte]
             err = prediction_error(actual, pred) if success else None
             row.update(result=result, nav_success=int(success), actual_s=round(actual, 2) if success else '',
-                       pred_err=round(err, 4) if err is not None else '', replan_n=n_replan)
+                       pred_err=round(err, 4) if err is not None else '', replan_n=n_replan,
+                       recoveries=self.recoveries)
             pairs.append({**row, 'nav_success': success, 'plan_ok': True, 'pred_err': err})
-            print(f'[{i}/{n_pairs}] {result} 길이 {length:.1f} m 예측 {pred:.1f} s 실제 {actual:.1f} s',
+            print(f'[{i}/{n_pairs}] {result} 길이 {length:.1f} m 예측 {pred:.1f} s 실제 {actual:.1f} s 복구 {self.recoveries}',
                   file=sys.stderr, flush=True)
 
         fields = ['pair', 'start_x', 'start_y', 'goal_x', 'goal_y', 'narrow', 'plan_ok', 'plan_ms', 'plan_wall_ms',
-                  'path_len_m', 'predicted_s', 'result', 'nav_success', 'actual_s', 'pred_err', 'replan_n']
+                  'path_len_m', 'predicted_s', 'result', 'nav_success', 'actual_s', 'pred_err', 'replan_n', 'recoveries']
         with (out / 'nav_pairs.csv').open('w', newline='') as f:
             w = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
             w.writeheader()
@@ -218,9 +305,10 @@ class NavKpi(Node):
         with (out / 'cte.csv').open('w', newline='') as f:
             csv.writer(f).writerows([('time', 'pair', 'cte_m', 'segment', 'remaining_m', 'pair_success'), *cte_rows])
         # CTE 판정은 도착한 쌍만 (못 간 쌍은 성공률로 따로 본다)
-        summary = summarize(pairs, replans, [(r[2], r[3]) for r in cte_rows if r[5]])
+        summary = summarize(pairs, replans, [(r[2], r[3]) for r in cte_rows if r[5]], cte_kpi=a.cte_kpi)
         summary['definition'] = {k: getattr(a, k) for k in (
-            'cruise_mps', 'accel_mps2', 'curve_kappa', 'kappa_window_m', 'replan_period_s', 'planner_id')}
+            'cruise_mps', 'accel_mps2', 'curve_kappa', 'kappa_window_m', 'replan_period_s', 'planner_id',
+            'recovery_grace_s', 'cte_kpi', 'controller')}
         tmp = out / 'nav_kpi.json.tmp'
         tmp.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
         os.replace(tmp, out / 'nav_kpi.json')
@@ -237,7 +325,8 @@ def main():
                     default=[-0.0562, 1.5317, 0.00009], help='map_origin_in_world [x, y, yaw]')
     ap.add_argument('--pairs', type=int, default=0, help='앞에서부터 이만큼만 (0이면 전부)')
     ap.add_argument('--planner-id', default='GridBased')
-    ap.add_argument('--cruise-mps', type=float, default=0.5, help='예측 주행시간의 순항 속도')
+    ap.add_argument('--cruise-mps', type=float, default=0.5,
+                    help='예측 주행시간의 순항 속도. 컨트롤러 최고 속도와 같게 둔다 (시나리오가 DWA max_v를 이 값으로 맞춤)')
     ap.add_argument('--accel-mps2', type=float, default=1.0, help='예측 주행시간의 가감속')
     ap.add_argument('--curve-kappa', type=float, default=0.2, help='이 곡률 [1/m] 넘으면 곡선 구간')
     ap.add_argument('--kappa-window-m', type=float, default=1.0,
@@ -246,7 +335,15 @@ def main():
     ap.add_argument('--cte-hz', type=float, default=10.0)
     ap.add_argument('--timeout-factor', type=float, default=3.0, help='쌍 시간 제한 = 예측 × 이 값 (최소 아래 값)')
     ap.add_argument('--min-timeout-s', type=float, default=60.0)
+    ap.add_argument('--recovery-grace-s', type=float, default=2.0, help='복구 동작이 끝난 뒤 CTE에서 더 뺄 시간')
+    ap.add_argument('--controller', choices=['nav2', 'pp'], default='nav2',
+                    help='nav2: NavigateToPose(DWA) / pp: path_tracker가 계획 경로를 따라감')
+    ap.add_argument('--goal-tol-m', type=float, default=0.25, help='pp 방식 도착 판정 (Nav2 xy_goal_tolerance와 같게)')
+    ap.add_argument('--cte-kpi', action=argparse.BooleanOptionalAction, default=None,
+                    help='CTE를 KPI로 판정할지. 기본: pp면 판정, nav2(DWA)면 참고 지표로만')
     args = ap.parse_args()
+    if args.cte_kpi is None:
+        args.cte_kpi = args.controller == 'pp'
     rclpy.init()
     node = NavKpi(args)
     try:

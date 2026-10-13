@@ -68,3 +68,14 @@ def test_summarize_kpi_verdicts():
     assert s['replan_p95_ms'] == 100.0 and s['replan_max_ms'] == 600.0
     assert s['verdict'] == {'plan_success_rate': 'PASS', 'replan_p95_ms': 'PASS', 'pred_err_mean': 'PASS',
                             'cte_straight_mean_m': 'PASS', 'cte_curve_mean_m': 'FAIL'}
+
+
+def test_summarize_separates_recovery_pairs_and_cte_reference():
+    pairs = [{'plan_ok': True, 'nav_success': True, 'pred_err': 0.05, 'recoveries': 0}] * 3 + \
+            [{'plan_ok': True, 'nav_success': True, 'pred_err': 0.65, 'recoveries': 2}]
+    s = summarize(pairs, [10.0], [(0.08, 'straight')], cte_kpi=False)
+    assert s['pred_err_mean'] == pytest.approx(0.2)
+    assert s['pred_err_median'] == pytest.approx(0.05)
+    assert s['pred_err_no_recovery_mean'] == pytest.approx(0.05) and s['pred_err_no_recovery_n'] == 3
+    # DWA CTE는 참고: 값은 남기되 판정하지 않는다
+    assert s['cte_straight_mean_m'] == pytest.approx(0.08) and 'cte_straight_mean_m' not in s['verdict']

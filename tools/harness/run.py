@@ -21,7 +21,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness.runner import ConfigOverrides, dds_domain, dds_reset, run_once  # noqa: E402
+from harness.runner import ConfigOverrides, dds_domain, dds_reset, installed_path, patch_yaml, run_once  # noqa: E402
 from harness.notify import notify  # noqa: E402
 from harness.summary import summarize, to_markdown  # noqa: E402
 
@@ -88,7 +88,13 @@ def main(argv=None) -> int:
     if isolate:
         dds_reset()  # 이전 작업이 남긴 흔적부터 지우고 시작한다
     attempts = args.repeat_offset
-    with ConfigOverrides(args.config) as overrides:
+    # 시나리오 config_patch: 설치된 설정 파일에서 몇 값만 바꾼 사본을 실행 동안 끼운다 (--config와 같은 방식, meta에 해시)
+    configs = list(args.config)
+    for target, sets in (scenario.get('config_patch') or {}).items():
+        dest = out / f'_config_{tag}_{stamp}' / Path(target).name
+        patch_yaml(installed_path(target), sets, dest)
+        configs.append(f'{target}={dest}')
+    with ConfigOverrides(configs) as overrides:
         for i in range(args.repeat_offset, args.repeat_offset + args.repeats):
             run_dir = out / f'{tag}_{stamp}_{i:02d}'
             run_params = {**params, 'repeat': i, 'seed': seed_base + i}

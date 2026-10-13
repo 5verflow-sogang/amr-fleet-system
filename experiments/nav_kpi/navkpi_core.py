@@ -102,18 +102,30 @@ def p95(values: Sequence[float]) -> float:
     return v[min(len(v) - 1, max(0, math.ceil(0.95 * len(v)) - 1))]
 
 
+def median(values: Sequence[float]) -> float:
+    if not values:
+        return math.nan
+    v = sorted(values)
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+
+
 def mean(values: Sequence[float]) -> float:
     return sum(values) / len(values) if values else math.nan
 
 
-def summarize(pairs: Sequence[dict], replans_ms: Sequence[float], cte: Sequence[tuple[float, str]]) -> dict:
+def summarize(pairs: Sequence[dict], replans_ms: Sequence[float], cte: Sequence[tuple[float, str]],
+              cte_kpi: bool = True) -> dict:
     """쌍 결과·재계획 시간·CTE 샘플 → 실행 하나의 KPI 값과 판정.
 
-    pairs: plan_ok(bool), nav_success(bool), pred_err(float 또는 None; 도착한 쌍만)
+    pairs: plan_ok(bool), nav_success(bool), pred_err(float 또는 None; 도착한 쌍만), recoveries(int, 없으면 0)
     cte: (거리, 'straight' | 'curve')
+    cte_kpi: False면 CTE는 판정하지 않는다 (DWA로 잰 값은 참고 지표, CTE KPI는 path_tracker)
     """
     n = len(pairs)
-    errs = [p['pred_err'] for p in pairs if p.get('pred_err') is not None and not math.isnan(p['pred_err'])]
+    arrived = [p for p in pairs if p.get('pred_err') is not None and not math.isnan(p['pred_err'])]
+    errs = [p['pred_err'] for p in arrived]
+    clean = [p['pred_err'] for p in arrived if not p.get('recoveries')]
     out = {
         'pairs': n,
         'plan_success_rate': sum(bool(p['plan_ok']) for p in pairs) / n if n else math.nan,
@@ -123,6 +135,9 @@ def summarize(pairs: Sequence[dict], replans_ms: Sequence[float], cte: Sequence[
         'replan_max_ms': max(replans_ms) if replans_ms else math.nan,
         'pred_err_mean': mean(errs),
         'pred_err_within_15pct': sum(e <= 0.15 for e in errs) / len(errs) if errs else math.nan,
+        'pred_err_median': median(errs),
+        'pred_err_no_recovery_mean': mean(clean),
+        'pred_err_no_recovery_n': len(clean),
         'cte_straight_mean_m': mean([d for d, seg in cte if seg == 'straight']),
         'cte_curve_mean_m': mean([d for d, seg in cte if seg == 'curve']),
         'cte_straight_max_m': max((d for d, seg in cte if seg == 'straight'), default=math.nan),
@@ -130,6 +145,8 @@ def summarize(pairs: Sequence[dict], replans_ms: Sequence[float], cte: Sequence[
     }
     verdict = {}
     for key, (threshold, kind) in KPI.items():
+        if key.startswith('cte_') and not cte_kpi:
+            continue
         v = out[key]
         if v is None or math.isnan(v):
             continue
