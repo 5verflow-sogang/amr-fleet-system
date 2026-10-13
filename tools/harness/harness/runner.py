@@ -263,7 +263,9 @@ def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[Co
         'run_id': run_dir.name, 'scenario': scenario['name'], 'label': params.get('label', ''),
         'repeat': params['repeat'], 'seed': params['seed'], 'git_sha': git_sha(),
         'params': {k: v for k, v in params.items() if k not in ('run_dir',)},
-        'num_robots': scenario.get('num_robots', 1), 'use_sim_time': scenario.get('use_sim_time', True),
+        # --set num_robots로 대수를 바꾸는 시나리오(fleet_fake)는 params 값이 실제 대수다
+        'num_robots': int(params.get('num_robots', scenario.get('num_robots', 1))),
+        'use_sim_time': scenario.get('use_sim_time', True),
         'fault': fault_meta(params), 'host': host_info(),
         'versions': {'ros_distro': os.environ.get('ROS_DISTRO', ''), 'image': os.environ.get('HARNESS_IMAGE', ''),
                      'rmw_implementation': os.environ.get('RMW_IMPLEMENTATION', 'rmw_fastrtps_cpp (기본)'),

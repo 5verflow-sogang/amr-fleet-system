@@ -41,6 +41,7 @@
 | 이름 | 기본값 | 위치 | 설명 |
 | --- | --- | --- | --- |
 | `robot_ids` | `[amr_01, ..., amr_05]` | `config/fault_injector.yaml` | 중계할 로봇 |
+| `num_robots` | (비움) | launch 인자 | 주면 `robot_ids`를 `amr_01`부터 그 수만큼으로 바꾼다. 가짜 로봇을 6대 이상 띄울 때 같은 수로 준다 (10대: `num_robots:=10`). 안 맞추면 6번 이후 로봇은 중계본을 못 받는다 |
 | `topics` | 위 4개 | `config/fault_injector.yaml` | 중계할 토픽 (`/fleet/` 뒤 이름) |
 | `tick_ms` | `1.0` | `config/fault_injector.yaml` | 지연 큐 확인 주기. 주입 지연 오차가 최대 이만큼 |
 | `delay_ms` | `100.0` | launch 인자 | 고정 지연 (ms). 명세 범위 0~500 밖이면 노드가 시작하지 않는다 |

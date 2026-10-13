@@ -238,6 +238,13 @@ ros2 launch amr_fault_injector fault_injector.launch.py delay_ms:=200.0 loss_pct
 ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 relayed:=true
 ```
 
+가짜 로봇은 10대까지 띄울 수 있다(`config/fake_robots.yaml`에 시작 위치가 있는 수). 6대 이상이면 장애 주입기도 같은 수로 띄워야 6번 이후 로봇에 중계본이 간다.
+
+```bash
+ros2 launch amr_fault_injector fault_injector.launch.py num_robots:=10
+ros2 launch amr_fleet_manager fake_robots.launch.py count:=10 relayed:=true
+```
+
 하네스는 이 상태에서 `/fleet/*`, `/<robot>/fleet/*`를 rosbag2로 녹화하면 `response_time.csv`(Ack 컬럼)·`fleet_latency.csv`의 원자료가 된다. 가짜 로봇은 `/<robot>/odom`을 내지 않으므로 응답 시간(`response_time`) 자체는 실제 로봇 스택에서만 잰다.
 
 ### Fleet 지표 변환 (`fleet_metrics`)
