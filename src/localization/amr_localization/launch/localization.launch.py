@@ -82,8 +82,8 @@ def _localization(context):
                 'use_sim_time': use_sim_time,
                 'base_frame_id': prefix + 'base_footprint',
                 'odom_frame_id': prefix + 'odom',
-                # 초기 위치는 map 기준. 지도 v0은 world (0, 1.5)에서 매핑을 시작해
-                # 기본 스폰 위치 world (0, 1.5)가 map (0, 0)이다 (amr_mapping maps/warehouse_v1.yaml, v0과 같다)
+                # 초기 위치는 map 기준. 기본값은 기본 스폰 위치 world (0, 1.5, 0)을 지도 v1 0.025 m의
+                # 정렬 원점 map_origin_in_world [-0.0562, 1.5317, 0.00009]로 바꾼 값이다 (10/12 회의 B안, #98)
                 'initial_pose.x': float(LaunchConfiguration('initial_x').perform(context)),
                 'initial_pose.y': float(LaunchConfiguration('initial_y').perform(context)),
                 'initial_pose.yaw': float(LaunchConfiguration('initial_yaw').perform(context)),
@@ -129,7 +129,7 @@ def _localization(context):
 
 def generate_launch_description():
     default_map = os.path.join(
-        get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v1.yaml')
+        get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v1_0025.yaml')
     return LaunchDescription([
         DeclareLaunchArgument('namespace', default_value='amr_01', description='로봇 네임스페이스'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
@@ -144,8 +144,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_imu', default_value='true',
             description='EKF에 IMU를 넣을지. IMU가 없는 환경(센서 플러그인 전, sandbox)에서는 false'),
-        DeclareLaunchArgument('initial_x', default_value='0.0', description='AMCL 초기 위치 x (map 기준) [m]'),
-        DeclareLaunchArgument('initial_y', default_value='0.0', description='AMCL 초기 위치 y (map 기준) [m]'),
+        DeclareLaunchArgument('initial_x', default_value='0.0562', description='AMCL 초기 위치 x (map 기준) [m]'),
+        DeclareLaunchArgument('initial_y', default_value='-0.0317', description='AMCL 초기 위치 y (map 기준) [m]'),
         DeclareLaunchArgument('initial_yaw', default_value='0.0', description='AMCL 초기 방향 (map 기준) [rad]'),
         OpaqueFunction(function=_localization),
     ])
