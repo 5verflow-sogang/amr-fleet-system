@@ -32,6 +32,8 @@
 `amr_bringup/config/nav2_params.yaml`의 `controller_server.DWA` 섹션. 값은
 `amr_planning_core::DwaConfig` 기본값과 같다(각 필드 근거는
 [amr_planning_core README](../amr_planning_core/README.md#amr_planning_coredwaplanner-dwahpp)).
+단, 좁은 통로(폭 0.6 m) 진입을 위해 `lethal_cost_threshold`는 `254`(기본 `253`),
+`lookahead_distance`는 `0.5` m(기본 `1.5` m)로 둔다(이유는 yaml 주석).
 추가로:
 
 | 파라미터 | 기본값 | 설명 |

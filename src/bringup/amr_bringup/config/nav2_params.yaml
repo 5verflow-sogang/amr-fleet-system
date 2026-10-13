@@ -246,14 +246,18 @@ controller_server:
       # 로봇 풋프린트 반폭(사각형, 600x400mm) - global/local costmap의 footprint와 동일
       footprint_half_length: 0.3
       footprint_half_width: 0.2
-      lethal_cost_threshold: 253
+      # 254(실제 장애물 셀)만 충돌로 본다. 253(내접 팽창)까지 막으면 폭 0.6 m 좁은 통로(로봇 폭 0.4 m)의
+      # 가운데 셀까지 막혀 진입 궤적이 하나도 안 남는다. 풋프린트 전체를 검사하므로 실제 충돌은 그대로 걸러진다.
+      lethal_cost_threshold: 254
       # 비용 함수 가중치(docs/algorithms/navigation.md 4-3절 근거)
       heading_weight: 0.8
       clearance_weight: 0.1
       velocity_weight: 0.1
       goal_tolerance: 0.15
-      # 전역 경로에서 이 거리(m) 앞의 점을 "다음 지점" 목표로 추종한다(Pure Pursuit류)
-      lookahead_distance: 1.5
+      # 전역 경로에서 이 거리(m) 앞의 점을 "다음 지점" 목표로 추종한다(Pure Pursuit류).
+      # 1.5면 꺾이는 통로 입구에서 목표점이 모서리 너머에 잡혀 모서리를 질러 가다 랙에 막힌다.
+      # 0.5로 줄여 경로를 가깝게 따라가게 한다 (통로 ② 진입·넓은 곳 주행 Gazebo 확인).
+      lookahead_distance: 0.5
       # 최종 접근(제자리 회전) 전환 기준. general_goal_checker의 xy_goal_tolerance·
       # yaw_goal_tolerance와 같은 값으로 둔다 - 다르면 이 플러그인과 goal_checker가
       # "도착했다"를 서로 다른 기준으로 판정해 어긋난다.
