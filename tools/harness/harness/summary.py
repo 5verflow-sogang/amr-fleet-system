@@ -19,6 +19,8 @@ from .stats import percentile, summarize_runs
 LOCALIZATION_KPI = {'stationary': 0.03, 'straight': 0.05, 'rotation': 0.08}
 # 원 명세서 응답 시간 KPI [ms]
 RESPONSE_KPI_MS = 200.0
+# 원 명세서 CPU 사용률 KPI [%]. 실행한 컨테이너가 쓸 수 있는 코어 기준 (기준 기기는 docker --cpus로 맞춘다)
+CPU_KPI_PCT = 80.0
 
 
 def load_meta(run_dir: Path) -> dict:
@@ -102,6 +104,37 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
     return out
 
 
+def cpu_metrics(run_dir: Path) -> dict[str, float]:
+    """cpu.csv(cpu_monitor.py) → sys.* 지표. 사용 코어 수는 기기와 덜 상관있어 기준 기기를 바꿔 판정할 때 쓴다."""
+    rows = _read_csv(run_dir / 'cpu.csv')
+    out: dict[str, float] = {}
+    cores = sorted(_floats(rows, 'cores'))
+    if not cores:
+        return out
+    out['sys.cpu_cores.mean'] = sum(cores) / len(cores)
+    out['sys.cpu_cores.p95'] = percentile(cores, 0.95)
+    out['sys.cpu_cores.max'] = cores[-1]
+    pct = _floats(rows, 'cpu_pct')
+    out['sys.cpu_pct.mean'] = sum(pct) / len(pct)
+    out['sys.cpu_pct.max'] = max(pct)
+    allowed = _floats(rows, 'allowed_cores')
+    out['sys.allowed_cores'] = allowed[-1]
+    host = _floats(rows, 'host_cpu_pct')
+    if host:
+        out['sys.host_cpu_pct.mean'] = sum(host) / len(host)
+    sim = _floats(rows, 'cores_sim')
+    if len(sim) == len(cores):
+        # 시뮬레이터를 뺀 코어 수 (실제 로봇에서 도는 소프트웨어 몫의 근사)
+        no_sim = [float(r['cores']) - float(r['cores_sim']) for r in rows if r.get('cores') and r.get('cores_sim')]
+        out['sys.cpu_cores_no_sim.mean'] = sum(no_sim) / len(no_sim)
+    for group in ('sim', 'nav2', 'localization', 'fleet', 'perception', 'other'):
+        values = _floats(rows, f'cores_{group}')
+        if values:
+            out[f'sys.cpu_cores.{group}.mean'] = sum(values) / len(values)
+    out['sys.cpu_samples'] = len(cores)
+    return out
+
+
 def nav_metrics(run_dir: Path) -> dict[str, float]:
     """nav_result.json(목표 1회 주행 결과, experiments/teb_compare/nav_measure.py) → nav.* 지표.
 
@@ -156,7 +189,7 @@ def kidnap_metrics(run_dir: Path) -> dict[str, float]:
 def run_metrics(run_dir: Path) -> dict[str, float]:
     meta = load_meta(run_dir)
     out = {**localization_metrics(run_dir), **fleet_metrics(run_dir), **nav_metrics(run_dir),
-           **kidnap_metrics(run_dir)}
+           **kidnap_metrics(run_dir), **cpu_metrics(run_dir)}
     rtf = meta.get('real_time_factor')
     if isinstance(rtf, (int, float)):
         out['run.real_time_factor'] = float(rtf)
@@ -177,6 +210,8 @@ def kpi_verdict(metric: str, mean: float, ci_high: Optional[float]) -> Optional[
         threshold = LOCALIZATION_KPI.get(parts[-2])
     elif metric == 'fleet.response_ms.mean':
         threshold = RESPONSE_KPI_MS
+    elif metric == 'sys.cpu_pct.mean':
+        threshold = CPU_KPI_PCT
     if threshold is None:
         return None
     if ci_high is not None and ci_high <= threshold:
