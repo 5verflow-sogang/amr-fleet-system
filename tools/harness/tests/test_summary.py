@@ -157,3 +157,43 @@ def test_kidnap_metrics_success_rate(tmp_path):
     assert m['kidnap.success']['n'] == 3
     assert m['kidnap.success']['mean'] == pytest.approx(2 / 3)
     assert m['kidnap.recover_s']['n'] == 2
+
+
+def _csv(path, header, rows):
+    with path.open('w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(rows)
+
+
+def test_fleet_stack_metrics(tmp_path):
+    # 응답 시간 두 기준, 작업 시간·이동 거리, 구역 대기·교착, 정체 (fleet_stack 시나리오의 지표 파일)
+    _csv(tmp_path / 'response_time.csv',
+         ['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms', 'assignment_id',
+          'ack_time', 'ack_rtt_ms', 'resends', 'recv_time', 'latency_recv_ms'],
+         [['1.0', '1.3', '300.0', 'amr_01', 't1', '', '1', '1.2', '200.0', '0', '1.1', '200.0'],
+          ['2.0', '2.25', '250.0', 'amr_02', 't2', '', '2', '2.2', '200.0', '0', '2.1', '150.0']])
+    _csv(tmp_path / 'task_outcomes.csv',
+         ['task_id', 'request_time', 'first_assign_time', 'robots', 'final_state', 'end_time', 'task_time_s',
+          'distance_m'],
+         [['t1', '0', '1', 'amr_01', 'COMPLETED', '100', '100.0', '40.0'],
+          ['t2', '0', '2', 'amr_02', 'COMPLETED', '60', '60.0', '20.0'],
+          ['t3', '0', '', '', '', '', '', '']])
+    _csv(tmp_path / 'zone_waits.csv',
+         ['robot', 'zone', 'request_id', 'request_time', 'grant_time', 'wait_s', 'outcome', 'release_time'],
+         [['amr_01', 'narrow_01', '1', '0', '5', '5.0', 'granted', '20'],
+          ['amr_02', 'narrow_01', '1', '0', '', '45.0', 'waiting', ''],
+          ['amr_03', 'narrow_02', '1', '0', '', '0.0', 'rejected', ''],
+          ['amr_04', 'narrow_02', '2', '0', '1', '0.0', 'revoked', '9']])
+    _csv(tmp_path / 'stalls.csv', ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s'], [])
+    m = fleet_metrics(tmp_path)
+    assert m['fleet.response_ms.mean'] == pytest.approx(275.0)
+    assert m['fleet.response_recv_ms.mean'] == pytest.approx(175.0)
+    assert (m['fleet.task_time_s.mean'], m['fleet.distance_m.total']) == (pytest.approx(80.0), pytest.approx(60.0))
+    assert (m['fleet.zone_requests'], m['fleet.zone_long_waits']) == (4, 1)
+    assert (m['fleet.deadlock_rejects'], m['fleet.deadlock_revokes']) == (1, 1)
+    assert m['fleet.stalls'] == 0 and 'fleet.stall_s.max' not in m
+    # KPI: 수신 기준 200 ms 안, 장기 대기 1건은 FAIL, 정체 0건은 PASS
+    assert kpi_verdict('fleet.response_recv_ms.mean', 175.0, 190.0) == 'PASS'
+    assert kpi_verdict('fleet.zone_long_waits', 1.0, 1.0) == 'FAIL'
+    assert kpi_verdict('fleet.stalls', 0.0, 0.0) == 'PASS'

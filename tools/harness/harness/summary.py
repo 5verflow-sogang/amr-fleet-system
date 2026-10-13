@@ -21,6 +21,10 @@ LOCALIZATION_KPI = {'stationary': 0.03, 'straight': 0.05, 'rotation': 0.08}
 RESPONSE_KPI_MS = 200.0
 # 원 명세서 CPU 사용률 KPI [%]. 실행한 컨테이너가 쓸 수 있는 코어 기준 (기준 기기는 docker --cpus로 맞춘다)
 CPU_KPI_PCT = 80.0
+# 교착 판정 (4주차 10/13 결정): 구역 허가 장기 대기·이동 중 정체가 0건이어야 "5대 교착 없이 수행"
+# 장기 대기 기준은 amr_fleet_manager fleet_metrics.ZONE_LONG_WAIT_S와 같다 (서버 release_timeout_s)
+ZONE_LONG_WAIT_S = 30.0
+COUNT_ZERO_KPI = ('fleet.zone_long_waits', 'fleet.stalls')
 
 
 def load_meta(run_dir: Path) -> dict:
@@ -84,6 +88,12 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
             out['fleet.response_ms.mean'] = sum(resp) / len(resp)
             out['fleet.response_ms.max'] = resp[-1]
             out['fleet.response_ms.n'] = len(resp)
+        # 수신 기준 (로봇이 받은 시각 → 첫 움직임). 원 명세 성능 요구사항 "명령 수신 ~ 로봇 반응"
+        recv = sorted(_floats(resp_rows, 'latency_recv_ms'))
+        if recv:
+            out['fleet.response_recv_ms.mean'] = sum(recv) / len(recv)
+            out['fleet.response_recv_ms.max'] = recv[-1]
+            out['fleet.response_recv_ms.n'] = len(recv)
     # 작업 결과. 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로, 완료율은 같은 seed(같은 작업 일정)끼리 비교한다
     tasks = _read_csv(run_dir / 'task_outcomes.csv')
     if tasks:
@@ -91,6 +101,33 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
         out['fleet.tasks_requested'] = len(tasks)
         out['fleet.tasks_completed'] = done
         out['fleet.task_completion_rate'] = done / len(tasks)
+        # 할당 최적성 (원 명세 9장: 총 이동 거리, 작업 완료 시간). 완료한 작업만
+        completed = [r for r in tasks if r['final_state'] == 'COMPLETED']
+        times = _floats(completed, 'task_time_s')
+        if times:
+            out['fleet.task_time_s.mean'] = sum(times) / len(times)
+        dist = _floats(completed, 'distance_m')
+        if dist:
+            out['fleet.distance_m.total'] = sum(dist)
+            out['fleet.distance_m.mean'] = sum(dist) / len(dist)
+    # 구역 허가 대기와 교착 해소 (구역을 쓰는 시나리오만 파일이 있다)
+    if (run_dir / 'zone_waits.csv').exists():
+        zones = _read_csv(run_dir / 'zone_waits.csv')
+        waits = _floats(zones, 'wait_s')
+        out['fleet.zone_requests'] = len(zones)
+        out['fleet.zone_long_waits'] = sum(
+            float(r['wait_s']) > ZONE_LONG_WAIT_S for r in zones if r['outcome'] in ('granted', 'waiting'))
+        out['fleet.deadlock_revokes'] = sum(r['outcome'] == 'revoked' for r in zones)
+        out['fleet.deadlock_rejects'] = sum(r['outcome'] == 'rejected' for r in zones)
+        if waits:
+            out['fleet.zone_wait_s.mean'] = sum(waits) / len(waits)
+            out['fleet.zone_wait_s.max'] = max(waits)
+    # 이동 중 정체 (로봇 odom을 녹화한 시나리오만 파일이 있다)
+    if (run_dir / 'stalls.csv').exists():
+        stalled = _read_csv(run_dir / 'stalls.csv')
+        out['fleet.stalls'] = len(stalled)
+        if stalled:
+            out['fleet.stall_s.max'] = max(_floats(stalled, 'duration_s'))
     # 로봇 장애 회수 (fault_events.csv에 robot_kill이 있을 때만 파일이 있다)
     reclaimed = [r for r in _read_csv(run_dir / 'recovery.csv') if r.get('task_id')]
     if (run_dir / 'recovery.csv').exists():
@@ -208,8 +245,10 @@ def kpi_verdict(metric: str, mean: float, ci_high: Optional[float]) -> Optional[
     parts = metric.split('.')
     if parts[0] == 'loc' and parts[-1] == 'rmse':
         threshold = LOCALIZATION_KPI.get(parts[-2])
-    elif metric == 'fleet.response_ms.mean':
+    elif metric in ('fleet.response_ms.mean', 'fleet.response_recv_ms.mean'):
         threshold = RESPONSE_KPI_MS
+    elif metric in COUNT_ZERO_KPI:
+        threshold = 0.0
     elif metric == 'sys.cpu_pct.mean':
         threshold = CPU_KPI_PCT
     if threshold is None:

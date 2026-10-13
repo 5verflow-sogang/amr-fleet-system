@@ -19,13 +19,14 @@ from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 
 from .fleet_metrics import (ACKS_TOPIC, ASSIGNMENTS_TOPIC, ODOM_TOPIC, RELAY_TOPIC, RELAYED_KEYS, REQUESTS_TOPIC,
-                            STATUS_TOPIC, Record, convert, robot_ids)
+                            STATUS_TOPIC, ZONE_REQUESTS_TOPIC, Record, convert, robot_ids)
 
 ORIGINAL_TOPIC = re.compile(r'^/fleet/(' + '|'.join(RELAYED_KEYS) + r')$')
 
 
 def wanted(topic: str) -> bool:
-    return bool(topic in (ASSIGNMENTS_TOPIC, ACKS_TOPIC, REQUESTS_TOPIC, STATUS_TOPIC) or ORIGINAL_TOPIC.match(topic)
+    return bool(topic in (ASSIGNMENTS_TOPIC, ACKS_TOPIC, REQUESTS_TOPIC, STATUS_TOPIC, ZONE_REQUESTS_TOPIC)
+                or ORIGINAL_TOPIC.match(topic)
                 or RELAY_TOPIC.match(topic) or ODOM_TOPIC.match(topic))
 
 

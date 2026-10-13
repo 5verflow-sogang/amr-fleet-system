@@ -48,16 +48,37 @@ STATE_COMPLETED = 2
 STATE_FAILED = 3
 STATE_NAMES = {STATE_COMPLETED: 'COMPLETED', STATE_FAILED: 'FAILED'}
 ACTION_ASSIGN = 0  # TaskAssignment.ACTION_ASSIGN
+STATE_IN_PROGRESS = 1
+ZONE_REQUESTS_TOPIC = '/fleet/zone_requests'
+ZONE_GRANTS_TOPIC = '/fleet/zone_grants'
+# ZoneRequest.TYPE_*, ZoneGrant.GRANT_*·REASON_*
+ZONE_TYPE_ACCESS = 0
+ZONE_TYPE_RELEASE = 1
+GRANT_GRANTED = 0
+GRANT_REJECTED = 2
+GRANT_REVOKED = 3
+REASON_DEADLOCK_RESOLUTION = 3
+
+# 교착 판정 (4주차 하연, 10/13 결정. 측정 뒤 조정할 수 있는 제안값)
+# 구역 허가를 이 시간 넘게 못 받으면 "장기 대기". 서버 release_timeout_s(30 s)와 같다
+ZONE_LONG_WAIT_S = 30.0
+# 이동 단계(phase move_*)인데 이 시간 넘게 멈춰 있으면 "정체". 구역 정상 대기(5 m 통로 약 10 s)보다 넉넉하게
+STALL_S = 60.0
 
 # 응답 판정 임계값 (tools/harness/README.md response_time.csv, 초안)
 LINEAR_THRESHOLD = 0.01   # m/s
 ANGULAR_THRESHOLD = 0.05  # rad/s
 
 FLEET_LATENCY_HEADER = ['topic', 'robot', 'key', 'send_time', 'recv_time', 'latency_ms', 'delivered']
-TASK_OUTCOMES_HEADER = ['task_id', 'request_time', 'first_assign_time', 'robots', 'final_state', 'end_time']
+TASK_OUTCOMES_HEADER = ['task_id', 'request_time', 'first_assign_time', 'robots', 'final_state', 'end_time',
+                        'task_time_s', 'distance_m']
+ZONE_WAITS_HEADER = ['robot', 'zone', 'request_id', 'request_time', 'grant_time', 'wait_s', 'outcome', 'release_time']
+STALLS_HEADER = ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s']
 RECOVERY_HEADER = ['robot', 'kill_time', 'task_id', 'reassign_time', 'reassigned_robot', 'recovery_s', 'completed']
+# latency_ms: 서버 발행 → 첫 움직임 (원 명세 측정 표 "작업 명령 발행"). 통신 지연 포함
+# latency_recv_ms: 로봇 수신(중계본 도착) → 첫 움직임 (원 명세 성능 요구사항 "명령 수신 ~ 로봇 반응"). 통신 지연 제외
 RESPONSE_TIME_HEADER = ['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms',
-                        'assignment_id', 'ack_time', 'ack_rtt_ms', 'resends']
+                        'assignment_id', 'ack_time', 'ack_rtt_ms', 'resends', 'recv_time', 'latency_recv_ms']
 
 
 @dataclass(frozen=True)
@@ -181,8 +202,15 @@ def response_time(records: Sequence[Record], cutoff: Cutoff) -> list[list]:
     """
     commands: dict[tuple[str, int, int], dict] = {}
     acks: dict[tuple[str, int, int], float] = {}
+    # 로봇이 받은 시각: 그 로봇 앞으로 중계된 같은 명령의 첫 도착 (장애 주입기를 안 거치면 없다)
+    received: dict[tuple[str, int, int], float] = {}
     odom: dict[str, list[Record]] = defaultdict(list)
     for r in records:
+        relay = RELAY_TOPIC.match(r.topic)
+        if relay and relay['topic'] == 'task_assignments' and r.msg.robot_id == relay['robot']:
+            ident = (r.msg.robot_id, r.msg.assignment_id, _stamp_ns(r.msg.header.stamp))
+            received[ident] = min(received.get(ident, math.inf), r.t)
+            continue
         if r.topic == ASSIGNMENTS_TOPIC:
             if r.msg.action != ACTION_ASSIGN:
                 continue
@@ -216,9 +244,12 @@ def response_time(records: Sequence[Record], cutoff: Cutoff) -> list[list]:
                 break
         ack = acks.get((robot, assignment_id, stamp_ns))
         ack_rtt = None if ack is None else (ack - cmd_time) * 1000.0
+        recv = received.get((robot, assignment_id, stamp_ns))
+        latency_recv = None if recv is None or response is None else (response - recv) * 1000.0
         rows.append([
             _fmt(cmd_time), _fmt(response), _fmt(latency, 3), robot, cmd['msg'].task.task_id,
             _fmt(latency_sim, 3), assignment_id, _fmt(ack), _fmt(ack_rtt, 3), cmd['count'] - 1,
+            _fmt(recv), _fmt(latency_recv, 3),
         ])
     return rows
 
@@ -251,17 +282,93 @@ def task_outcomes(records: Sequence[Record]) -> list[list]:
     (실행이 끝날 때 아직 하는 중이거나, FAILED 뒤 다시 할당됐거나, 맡은 로봇이 죽었다).
     """
     requests, assigns, finishes = _task_events(records)
+    # 끝 보고의 이동 거리 (TaskStatus.distance_traveled, #141)
+    distance = {(r.msg.task_id, r.msg.robot_id, r.t): r.msg.distance_traveled
+                for r in records if r.topic == STATUS_TOPIC and r.msg.state in STATE_NAMES}
     rows = []
     for task_id in sorted(set(requests) | set(assigns), key=lambda t: (requests.get(t, math.inf), t)):
         series = assigns.get(task_id, [])
         last_assign = series[-1] if series else None
-        final = end = None
+        final = end = dist = None
         for t, robot, state in finishes.get(task_id, []):
             if last_assign is not None and t >= last_assign[0] and robot == last_assign[1]:
-                final, end = STATE_NAMES[state], t
+                final, end, dist = STATE_NAMES[state], t, distance.get((task_id, robot, t))
                 break
-        rows.append([task_id, _fmt(requests.get(task_id)), _fmt(series[0][0] if series else None),
-                     ' '.join(robot for _, robot in series), final or '', _fmt(end)])
+        request = requests.get(task_id)
+        task_time = None if end is None or request is None else end - request
+        rows.append([task_id, _fmt(request), _fmt(series[0][0] if series else None),
+                     ' '.join(robot for _, robot in series), final or '', _fmt(end),
+                     _fmt(task_time, 3), _fmt(None if dist is None else float(dist), 3)])
+    return rows
+
+
+def zone_waits(records: Sequence[Record], end: float) -> list[list]:
+    """zone_waits.csv 행. 구역 진입 요청(robot, zone, request_id) 1건마다 1행.
+
+    wait_s: 첫 요청 → 첫 GRANTED. 허가를 끝내 못 받았으면 실행 끝(end)까지 기다린 시간.
+    outcome: granted / rejected(교착 회피) / revoked(교착 회수) / waiting(끝까지 대기) / released(받기 전 반납).
+    """
+    episodes: dict[tuple[str, str, int], dict] = {}
+    for r in sorted(records, key=lambda r: r.t):
+        if r.topic == ZONE_REQUESTS_TOPIC:
+            key = (r.msg.robot_id, r.msg.zone_id, r.msg.request_id)
+            if r.msg.type == ZONE_TYPE_ACCESS:
+                episodes.setdefault(key, {'request': r.t, 'grant': None, 'outcome': None, 'release': None})
+            elif r.msg.type == ZONE_TYPE_RELEASE and key in episodes and episodes[key]['release'] is None:
+                episodes[key]['release'] = r.t
+        elif r.topic == ZONE_GRANTS_TOPIC:
+            ep = episodes.get((r.msg.robot_id, r.msg.zone_id, r.msg.request_id))
+            if ep is None:
+                continue
+            if r.msg.grant == GRANT_GRANTED and ep['grant'] is None:
+                ep['grant'] = r.t
+            elif r.msg.grant == GRANT_REJECTED and ep['outcome'] is None:
+                ep['outcome'] = 'rejected'
+            elif r.msg.grant == GRANT_REVOKED:
+                ep['outcome'] = 'revoked'
+    rows = []
+    for (robot, zone, request_id), ep in sorted(episodes.items(), key=lambda kv: kv[1]['request']):
+        outcome = ep['outcome'] or ('granted' if ep['grant'] is not None
+                                    else 'released' if ep['release'] is not None else 'waiting')
+        until = ep['grant'] if ep['grant'] is not None else (ep['release'] if ep['release'] is not None else end)
+        rows.append([robot, zone, request_id, _fmt(ep['request']), _fmt(ep['grant']),
+                     _fmt(until - ep['request'], 3), outcome, _fmt(ep['release'])])
+    return rows
+
+
+def stalls(records: Sequence[Record], min_s: float = STALL_S) -> list[list]:
+    """stalls.csv 행. 작업 이동 단계(IN_PROGRESS, phase move_*)인데 min_s 넘게 멈춘 구간 1개마다 1행.
+
+    구역 안팎 어디서 생긴 교착이든 로봇이 못 움직이는 것으로 잡는다. 판정은 /<robot>/odom 속도(_moving).
+    """
+    status: dict[str, list[tuple[float, int, str, str]]] = defaultdict(list)
+    odom: dict[str, list[Record]] = defaultdict(list)
+    for r in records:
+        if r.topic == STATUS_TOPIC:
+            status[r.msg.robot_id].append((r.t, r.msg.state, r.msg.phase, r.msg.task_id))
+        else:
+            m = ODOM_TOPIC.match(r.topic)
+            if m:
+                odom[m['robot']].append(r)
+    rows = []
+    for robot, series in sorted(odom.items()):
+        events = sorted(status.get(robot, []))
+        times = [e[0] for e in events]
+        series.sort(key=lambda r: r.t)
+        start = current = None
+        for r in series:
+            i = bisect.bisect_right(times, r.t) - 1
+            moving_phase = i >= 0 and events[i][1] == STATE_IN_PROGRESS and events[i][2].startswith('move_')
+            stalled = moving_phase and not _moving(r.msg)
+            if stalled and start is None:
+                start, current = r.t, events[i]
+            elif not stalled and start is not None:
+                if r.t - start >= min_s:
+                    rows.append([robot, current[3], current[2], _fmt(start), _fmt(r.t), _fmt(r.t - start, 3)])
+                start = None
+        if start is not None and series[-1].t - start >= min_s:
+            rows.append([robot, current[3], current[2], _fmt(start), _fmt(series[-1].t),
+                         _fmt(series[-1].t - start, 3)])
     return rows
 
 
@@ -334,6 +441,11 @@ def convert(records: Sequence[Record], out_dir: Path, delay_ms: float, grace_s: 
     write_csv(out_dir / 'fleet_latency.csv', FLEET_LATENCY_HEADER, fleet_latency(records, cutoff, robots))
     write_csv(out_dir / 'response_time.csv', RESPONSE_TIME_HEADER, response_time(records, cutoff))
     write_csv(out_dir / 'task_outcomes.csv', TASK_OUTCOMES_HEADER, task_outcomes(records))
+    # 구역 기록이 있을 때만 (가짜 로봇 시나리오는 구역을 요청하지 않는다)
+    if any(r.topic == ZONE_REQUESTS_TOPIC for r in records):
+        write_csv(out_dir / 'zone_waits.csv', ZONE_WAITS_HEADER, zone_waits(records, cutoff.end))
+    if any(ODOM_TOPIC.match(r.topic) for r in records):
+        write_csv(out_dir / 'stalls.csv', STALLS_HEADER, stalls(records))
     kills = read_kill_events(fault_events or out_dir / 'fault_events.csv')
     if kills:
         write_csv(out_dir / 'recovery.csv', RECOVERY_HEADER, recovery(records, kills))
