@@ -1,7 +1,7 @@
 """정답(GT) 대비 위치추정 오차를 기록하는 노드.
 
     ros2 run amr_localization eval_node --ros-args -r __ns:=/amr_01 -p use_sim_time:=true \
-        -p map_origin_in_world:="[-0.0562, 1.5317, 0.00009]"
+        -p map_origin_in_world:="[-0.0571, 1.5167, 0.00013]"
 
 구독 (상대 이름, 네임스페이스는 실행 시 부여):
     ground_truth/odom   nav_msgs/Odometry   정답, world 기준 (amr_gazebo)
@@ -46,7 +46,7 @@ class EvalNode(Node):
         self.declare_parameter('gt_topic', 'ground_truth/odom')
         self.declare_parameter('estimate_topic', 'odometry/filtered')
         self.declare_parameter('estimate_type', 'odometry')
-        self.declare_parameter('map_origin_in_world', [-0.0562, 1.5317, 0.00009])
+        self.declare_parameter('map_origin_in_world', [-0.0571, 1.5167, 0.00013])
         self.declare_parameter('output_dir', '')
         self.declare_parameter('max_gap', 0.05)
         self.declare_parameter('moving_v', 0.01)

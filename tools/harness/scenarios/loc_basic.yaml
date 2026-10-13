@@ -1,4 +1,4 @@
-# 위치추정 KPI 기본 시나리오 (민지). 로봇 1대, 창고 월드, 지도 v1 0.025 m + 지도 정렬 원점 (10/12 회의 B안).
+# 위치추정 KPI 기본 시나리오 (민지). 로봇 1대, 창고 월드, 지도 v1 0.05 m + 지도 정렬 원점 (10/12 회의 B안).
 # 정지 → 직진 3 m → 제자리 한 바퀴 → 반 바퀴 → 돌아오는 직진 3 m → 정지 (0.5 m/s, 0.5 rad/s)
 # 정지·직선·회전 구간이 각각 100개 시점 이상 나온다 (EKF 50 Hz).
 name: loc_basic
@@ -8,12 +8,12 @@ use_sim_time: true
 seed_base: 1
 timeout_s: 300
 params:
-  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1_0025.yaml
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1.yaml
   # world에서 본 map 원점. 지도↔월드 정렬값 (amr_mapping README "지도 정렬", #98)
-  map_origin: "[-0.0562, 1.5317, 0.00009]"
+  map_origin: "[-0.0571, 1.5167, 0.00013]"
   # AMCL 초기 위치 (map 좌표). 스폰 자세 world (0, 1.5, 0)을 map_origin 기준으로 바꾼 값
-  initial_x: "0.0562"
-  initial_y: "-0.0317"
+  initial_x: "0.0571"
+  initial_y: "-0.0167"
   # 동적 장애물 (amr_gazebo #58). 켜면 obstacle_seed로 같은 seed를 쓴다
   dynamic_obstacles: "false"
 processes:
