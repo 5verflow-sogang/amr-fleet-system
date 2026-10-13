@@ -16,7 +16,7 @@ params:
   initial_y: "-0.0317"
   # 동적 장애물 (amr_gazebo #58). 켜면 obstacle_seed로 같은 seed를 쓴다
   dynamic_obstacles: "false"
-  # 녹화 (rosbag/, 그림은 plots/)
+  # 녹화 (rosbag/, 1회 약 8 MB: 0.025 m 지도 4 MB + GT). 추정 자세는 /tf에 있다. 그림은 plots/
   record: "true"
 processes:
   - name: sim
@@ -44,7 +44,7 @@ processes:
   - name: rosbag
     cmd: >-
       if [ "{record}" = true ];
-      then exec ros2 bag record -o {run_dir}/rosbag /map /tf /tf_static /amr_01/amcl_pose /amr_01/odometry/filtered /amr_01/odometry/local /amr_01/ground_truth/odom;
+      then exec ros2 bag record -o {run_dir}/rosbag /map /tf /tf_static /amr_01/amcl_pose /amr_01/ground_truth/odom;
       else exec sleep infinity; fi
     stop_first: true
   - name: eval_ekf

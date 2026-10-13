@@ -18,8 +18,8 @@ params:
   cruise_mps: "0.5"
   curve_kappa: "0.2"
   map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1_0025.yaml
-  # 녹화 (rosbag/, 46분이면 수십 MB). 그림은 plots/
-  record: "true"
+  # 녹화는 기본 끔: 50쌍(46분)이면 GT·plan만으로 수백 MB다. 실패한 쌍을 Foxglove로 볼 때 --set record=true
+  record: "false"
 processes:
   - name: system
     # 로봇 1대 + 위치추정 + Nav2만 (Fleet·BT·구역 클라이언트 끔: Nav2가 바로 cmd_vel을 낸다, amr_bringup README)
@@ -49,7 +49,7 @@ processes:
   - name: rosbag
     cmd: >-
       if [ "{record}" = true ];
-      then exec ros2 bag record -o {run_dir}/rosbag /map /tf /tf_static /amr_01/amcl_pose /amr_01/odometry/filtered /amr_01/odometry/local /amr_01/ground_truth/odom /amr_01/plan /amr_01/cmd_vel;
+      then exec ros2 bag record -o {run_dir}/rosbag /map /tf /tf_static /amr_01/amcl_pose /amr_01/ground_truth/odom /amr_01/plan /amr_01/cmd_vel;
       else exec sleep infinity; fi
     stop_first: true
 config_patch:
