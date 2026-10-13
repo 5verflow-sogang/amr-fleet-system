@@ -109,8 +109,8 @@ def _system(context):
 
 def generate_launch_description():
     share = get_package_share_directory('amr_bringup')
-    # 지도 v1 0.025 m + 지도↔월드 정렬 원점 (10/12 회의 B안, #98·#157). 0.05 m보다 정지 오차가 작다
-    # (GCP 10회: 정지 2.09 vs 2.84 cm, localization.md 3-1절)
+    # 지도 v1 0.025 m(10/13 결정) + 지도↔월드 정렬 원점(10/12 회의 B안, #98·#157). 0.05 m보다 정지 오차가 작다
+    # (GCP 10회: 정지 2.09 vs 2.84 cm, localization.md 3-1절). Nav2 경로 계획이 느리면 Nav2만 0.05 m 지도로 나눈다
     default_map = os.path.join(get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v1_0025.yaml')
 
     args = [

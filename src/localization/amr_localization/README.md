@@ -39,7 +39,7 @@ ros2 launch amr_localization localization.launch.py odom_topic:=wheel/odom   # D
 | 인자 | 기본값 | 설명 |
 | --- | --- | --- |
 | `namespace` | `amr_01` | 로봇. TF 프레임 접두어로도 쓴다 |
-| `map` | `amr_mapping/maps/warehouse_v1_0025.yaml` | 지도 v1 0.025 m (10/12 회의, localization.md 3-1절 최종 측정). 0.05 m는 `warehouse_v1.yaml` |
+| `map` | `amr_mapping/maps/warehouse_v1_0025.yaml` | 지도 v1 0.025 m (10/13 결정, localization.md 3-1절 최종 측정). 0.05 m는 `warehouse_v1.yaml` |
 | `start_map_server` | `true` | 로봇 여러 대면 한 번만 `true` |
 | `odom_topic` | `odom` | 휠 오도메트리 토픽 |
 | `use_imu` | `true` | IMU가 없는 환경에서는 `false` |
