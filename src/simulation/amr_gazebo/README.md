@@ -273,16 +273,17 @@ OpenRobotics "Male visitor" ([Gazebo Fuel](https://app.gazebosim.org/OpenRobotic
 ros2 launch amr_gazebo rl_eval.launch.py payload_mass:=25.0 episodes:=10 policy:=brake csv:=/tmp/rl/25kg.csv
 ros2 launch amr_gazebo rl_eval.launch.py payload_mass:=10.0 eval_list:=3 scenarios:=S1
 ros2 launch amr_gazebo rl_eval.launch.py policy:=my_pkg.ppo:act      # 학습한 정책 (obs dict → v, ω)
+ros2 launch amr_gazebo rl_eval.launch.py mode:=brake_sweep payload_mass:=10.0 csv:=/tmp/rl/brake.csv   # 속도별 급정지 제동 거리·지연
 ```
 
 | 항목 | 2D (payload_nav) | Gazebo (여기) |
 | --- | --- | --- |
 | 시나리오 | `sample_scenario(np_random(seed))` | 같은 함수·같은 난수 생성기 (`rl_eval.scenario_for`). 테스트가 2D 환경과 값이 같은지 본다 |
 | 평가 시드 | `seeds.eval_seed(목록 k, 에피소드)` | 같음 (`eval_list`, `start_episode`, `episodes`) |
-| 통로 | 폭 1.2~2.0 m, 중심선 y = 0 | 에피소드마다 벽 두 개 스폰 (높이 1 m) |
-| 출발 | x = 0에서 1~2 m/s | x < 0 가속 구간에서 출발 속도까지 올려 x = 0을 지날 때 시작 (실측 출발 속도를 CSV에) |
-| 돌발 장애물 | 로봇 중심이 trigger_x를 지나면 로봇 앞면 + gap에 생김 | 트리거 1.5 m 앞에서 그 자리로 옮겨 두고, trigger_x를 지나는 순간(GT 100 Hz) 움직이기 시작. 실제 간격을 CSV에 (`popout_gap_actual`) |
-| 동역학 | 바퀴 토크 3 N·m 한계, 질량 의존 | URDF `payload_mass` + DiffDrive 가속 상한을 풀어(`max_linear_acceleration` 10) 바퀴 조인트 토크 한계가 정한다 (#55: 상한 1.0이면 질량과 무관) |
+| 통로 | 폭 1.2–2.0 m, 중심선 y = 0 | 에피소드마다 벽 두 개 스폰 (높이 1 m) |
+| 출발 | x = 0에서 1–2 m/s | x < 0 가속 구간에서 출발 속도까지 올려 x = 0을 지날 때 시작 (실측 출발 속도를 CSV에) |
+| 돌발 장애물 | 로봇 중심이 trigger_x를 지나면 로봇 앞면 + gap에 생김 | 트리거 1.5 m 앞에서 그 자리로 옮겨 두고, trigger_x를 지나는 순간(GT 100 Hz) 움직이기 시작. 실제 간격을 CSV에 (`popout_gap_actual`). 그 순간 장애물 GT가 옮길 자리에서 3 cm(`place_tol_m`) 넘게 떨어져 있으면 무효(`valid` False)로 보고 2번(`max_retries`)까지 다시 한다 (`popout_place_error`, `attempts`) |
+| 동역학 | 바퀴 토크 3 N·m 한계, 질량 의존 | URDF `payload_mass` + DiffDrive 가속 상한을 풀어(`max_linear_acceleration` 10) 바퀴 조인트 토크 한계가 정한다 (#55: 상한 1.0이면 질량과 무관). 바퀴 회전 관성 때문에 감속이 2D보다 2.5–5 % 약하고, 명령 지연이 10–30 ms 있다 (`mode:=brake_sweep`, [비교 결과](../../../experiments/rl_gazebo_eval/README.md)) |
 | 충돌·도착 판정 | 몸체 사각형·원 장애물, 0.2 m·0.1 m/s 정지 | 같은 함수(`dynamics.footprint_clearance`)로 GT 자세에 적용 |
 | 지표 | `evaluation.run_episode` | 같은 열 이름 (`rl_eval.EpisodeTracker.metrics`) + Gazebo 실측 열 |
 
@@ -305,7 +306,7 @@ launch 파일과 인자:
 | --- | --- | --- |
 | `world.launch.py` | `world` (`warehouse.sdf`), `gui` (`true`), `verbosity` (`2`) | 월드만. `gui:=false`면 서버만 |
 | `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `label_camera` (`false`), `max_linear_acceleration` (`1.0`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
-| `rl_eval.launch.py` | `payload_mass` (`0.0`), `eval_list` (`0`), `episodes` (`5`), `start_episode` (`0`), `scenarios` (`S1,S2`), `policy` (`brake`), `csv`, `research2_dir`, `gui` (`false`) | 연구 2 RL 평가: 빈 월드 + 로봇 1대 + 에피소드 실행 (위 절) |
+| `rl_eval.launch.py` | `payload_mass` (`0.0`), `eval_list` (`0`), `episodes` (`5`), `start_episode` (`0`), `scenarios` (`S1,S2`), `policy` (`brake`), `csv`, `research2_dir`, `gui` (`false`), `mode` (`episodes`), `sweep_speeds` (`0.5,1.0,1.5,2.0`), `sweep_repeats` (`3`) | 연구 2 RL 평가: 빈 월드 + 로봇 1대 + 에피소드 실행 (위 절). `mode:=brake_sweep`이면 속도별 급정지 |
 | `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `label_camera` (`false`), `dynamic_obstacles` (`false`), `obstacle_seed` (`0`), `cargo` (`false`) | 월드 + 로봇 1대 + RViz (+ 동적 장애물, 화물 상자) |
 | `dynamic_obstacles.launch.py` | `config` (`config/dynamic_obstacles.yaml`), `only` (전부, 쉼표로 id), `seed` (`0`), `use_sim_time` (`true`) | 실행 중인 Gazebo에 동적 장애물 스폰 + 브리지 + 이동 노드 |
 | `cargo_boxes.launch.py` | `config` (`config/cargo_boxes.yaml`) | 실행 중인 Gazebo에 화물 상자 스폰 (LiDAR 높이에 걸리면 실패) |
@@ -336,4 +337,6 @@ colcon test --packages-select amr_gazebo
 바닥 상자가 랙·기둥과 겹치지 않고 랙 면에 붙어 있는지, 도크 상자가 플랫폼 위에 있는지, 좁은 통로·동적 장애물 경로를 피하는지, SDF 링크 위치를 확인한다.
 
 `test/test_rl_eval.py`: 평가 시드 규칙과 시나리오가 2D 환경과 같은지(gymnasium이 있으면 2D 환경과 직접 비교), 가속 구간·벽·장애물 배치,
-에피소드 판정(도착·지나침·벽 충돌·장애물 정지 여유·충돌), 시험 정책, 외부 정책 불러오기를 확인한다.
+에피소드 판정(도착·지나침·벽 충돌·장애물 정지 여유·충돌), 급정지 지표(`brake_metrics`), 시험 정책, 외부 정책 불러오기를 확인한다.
+ROS 이미지에는 gymnasium이 없어 2D 환경 직접 비교는 건너뛴다. CI `rl-env.yml`이 연구 2 uv 환경에서 `RL_EVAL_REQUIRE_2D=1`로 이 파일을 돌려
+건너뛰지 않고 확인한다 (연구 2 시나리오가 바뀌면 여기서 걸린다).

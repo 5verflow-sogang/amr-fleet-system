@@ -336,6 +336,35 @@ class EpisodeTracker:
         }
 
 
+def brake_metrics(trace, t_cmd: float, x_cmd: float, v_cmd: float, accel: float, dv: float = 0.05) -> dict:
+    """급정지 한 번의 GT 표본 [(stamp, x, y, theta, v, w)]으로 제동 거리·지연·감속을 잰다 (rl_eval_node brake_sweep).
+
+    - 모델 제동 거리 = v²/(2a): 2D dynamics.step이 명령 순간부터 토크 한계 a로 감속할 때
+    - 지연 = 속도가 dv 떨어진 시각 − 명령 시각 − dv/a (모델대로 감속했다면 걸렸을 시간을 뺀다)
+    - 감속 = 속도가 80 %~20 %인 구간의 v(t) 기울기 (최소제곱)
+    """
+    last = trace[-1] if trace else (t_cmd, x_cmd, 0.0, 0.0, v_cmd, 0.0)
+    model = v_cmd * v_cmd / (2.0 * accel)
+    stop = last[1] - x_cmd
+    t_drop = next((s[0] for s in trace if s[4] <= v_cmd - dv), None)
+    t_stop = next((s[0] for s in trace if abs(s[4]) < 0.005), last[0])
+    mid = [(s[0], s[4]) for s in trace if 0.2 * v_cmd < s[4] < 0.8 * v_cmd]
+    decel = None
+    if len(mid) >= 3:
+        ts, vs = np.array([m[0] for m in mid]), np.array([m[1] for m in mid])
+        decel = float(-np.polyfit(ts, vs, 1)[0])
+    return {
+        'v_cmd': round(v_cmd, 4),
+        'stop_dist': round(stop, 4),
+        'model_dist': round(model, 4),
+        'excess': round(stop - model, 4),
+        'dead_time_s': None if t_drop is None else round(t_drop - t_cmd - dv / accel, 4),
+        'decel_fit': None if decel is None else round(decel, 3),
+        'decel_model': round(accel, 3),
+        'stop_time_s': round(t_stop - t_cmd, 3),
+    }
+
+
 def policy_obs(s: Sample, scenario, layout: Layout, payload_kg: float, obstacles: Sequence[dict]) -> dict:
     """정책에 넘기는 관측 (dict). 2D 관측 48차원은 이 값들로 만들 수 있다 (env._observe 참고).
     obstacles: 나타난 장애물만 [{x, y, vx, vy, radius}] (2D처럼 나타나기 전에는 안 보인다)."""

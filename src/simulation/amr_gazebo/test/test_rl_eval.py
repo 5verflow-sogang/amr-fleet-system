@@ -1,6 +1,7 @@
 """RL 평가 환경 (rl_eval.py, rl_policies.py). 연우 2D 환경(experiments/research2)과 같은 시나리오·지표인지 본다.
 
 2D 환경 자체와 비교하는 테스트는 gymnasium이 있을 때만 돈다 (ROS 이미지에는 없다).
+RL_EVAL_REQUIRE_2D=1이면 건너뛰지 않고 실패한다 (CI rl-env.yml: 연우 시나리오가 바뀌면 여기서 잡는다).
 """
 import importlib.util
 import math
@@ -10,13 +11,14 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from amr_gazebo.rl_eval import (
-    EpisodeTracker, Sample, eval_seed, layout_for, load_research2, obstacle_sdf, obstacle_spot,
+    EpisodeTracker, Sample, brake_metrics, eval_seed, layout_for, load_research2, obstacle_sdf, obstacle_spot,
     policy_obs, scenario_for, walls_sdf)
 from amr_gazebo.rl_policies import brake, cruise, load_policy, max_accel
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 R2_DIR = os.path.normpath(os.path.join(HERE, '..', '..', '..', '..', 'experiments', 'research2'))
-needs_r2 = pytest.mark.skipif(not os.path.isdir(R2_DIR), reason='experiments/research2 없음')
+REQUIRE_2D = os.environ.get('RL_EVAL_REQUIRE_2D') == '1'
+needs_r2 = pytest.mark.skipif(not REQUIRE_2D and not os.path.isdir(R2_DIR), reason='experiments/research2 없음')
 
 
 @pytest.fixture(scope='module')
@@ -50,7 +52,8 @@ def test_scenario_is_deterministic(r2):
 
 @needs_r2
 def test_scenario_matches_2d_env(r2):
-    pytest.importorskip('gymnasium')
+    if not REQUIRE_2D:
+        pytest.importorskip('gymnasium')
     import sys
     # 패키지 __init__(tomllib, Python 3.11)을 거치지 않고 env.py만 load_research2와 같은 이름 공간에 읽는다
     name = 'payload_nav_gz.env'
@@ -233,3 +236,29 @@ def test_policy_obs_hides_obstacle_until_seen(r2):
     lay = layout_for(r2, sc, 0.0)
     obs = policy_obs(Sample(1.0, 2.0, 0.0, 0.0, 1.0, 0.0), sc, lay, 0.0, [])
     assert obs['obstacles'] == [] and obs['remaining_s'] == pytest.approx(29.0)
+
+
+def test_brake_metrics_model_brake():
+    """모델대로(지연 없이 토크 한계 a) 서면 차 0, 지연 0, 감속 a. 지연 τ를 넣으면 차 ≈ v·τ."""
+    a, v0, dt = 2.0, 1.5, 0.01
+
+    def trace(delay):
+        out, t, x, v = [], 0.0, 0.0, v0
+        while t < 2.0:
+            t += dt
+            x += v * dt if t <= delay else 0.0
+            if t > delay:
+                v_new = max(0.0, v - a * dt)
+                x += 0.5 * (v + v_new) * dt
+                v = v_new
+            out.append((t, x, 0.0, 0.0, v, 0.0))
+        return out
+
+    m = brake_metrics(trace(0.0), 0.0, 0.0, v0, a)
+    assert m['model_dist'] == pytest.approx(v0 ** 2 / (2 * a))
+    assert m['excess'] == pytest.approx(0.0, abs=0.01)
+    assert m['dead_time_s'] == pytest.approx(0.0, abs=dt)
+    assert m['decel_fit'] == pytest.approx(a, rel=0.01)
+    m = brake_metrics(trace(0.1), 0.0, 0.0, v0, a)
+    assert m['excess'] == pytest.approx(v0 * 0.1, abs=0.01)
+    assert m['dead_time_s'] == pytest.approx(0.1, abs=dt)

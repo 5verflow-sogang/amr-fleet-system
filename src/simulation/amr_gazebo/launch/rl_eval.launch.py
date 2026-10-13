@@ -3,6 +3,7 @@
     ros2 launch amr_gazebo rl_eval.launch.py payload_mass:=25.0 episodes:=10 policy:=brake
     ros2 launch amr_gazebo rl_eval.launch.py payload_mass:=10.0 eval_list:=3 scenarios:=S1 csv:=/tmp/rl/list3.csv
     ros2 launch amr_gazebo rl_eval.launch.py policy:=my_pkg.ppo_policy:act   # 학습한 정책 (obs dict → v, ω)
+    ros2 launch amr_gazebo rl_eval.launch.py mode:=brake_sweep payload_mass:=10.0 csv:=/tmp/rl/brake.csv   # 속도별 급정지
 
 - 시나리오는 experiments/research2 (연우 2D 환경)와 같다: 같은 eval_list·에피소드 번호면 같은 통로·장애물
 - 질량은 스폰할 때 URDF에 들어가므로 질량마다 다시 띄운다
@@ -34,6 +35,9 @@ def generate_launch_description():
         DeclareLaunchArgument('csv', default_value='/tmp/rl_eval/episodes.csv'),
         DeclareLaunchArgument('research2_dir', default_value='', description='비우면 찾는다 (AMR_RESEARCH2_DIR 등)'),
         DeclareLaunchArgument('gui', default_value='false'),
+        DeclareLaunchArgument('mode', default_value='episodes', description='episodes 또는 brake_sweep (속도별 급정지)'),
+        DeclareLaunchArgument('sweep_speeds', default_value='0.5,1.0,1.5,2.0', description='brake_sweep 속도 [m/s]'),
+        DeclareLaunchArgument('sweep_repeats', default_value='3', description='brake_sweep 속도마다 횟수'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(launch_dir, 'world.launch.py')),
             launch_arguments={'world': 'rl_eval.sdf', 'gui': arg('gui'), 'verbosity': '1'}.items(),
@@ -58,7 +62,8 @@ def generate_launch_description():
                 'use_sim_time': True, 'payload_kg': arg('payload_mass'), 'eval_list': arg('eval_list'),
                 'episodes': arg('episodes'), 'start_episode': arg('start_episode'),
                 'scenarios': arg('scenarios'), 'policy': arg('policy'), 'csv': arg('csv'),
-                'research2_dir': arg('research2_dir'),
+                'research2_dir': arg('research2_dir'), 'mode': arg('mode'),
+                'sweep_speeds': arg('sweep_speeds'), 'sweep_repeats': arg('sweep_repeats'),
             }],
         )]),
     ])
