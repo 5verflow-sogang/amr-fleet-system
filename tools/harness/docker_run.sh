@@ -8,6 +8,7 @@
 #
 # HARNESS_IMAGE: 이미지 (기본 amr-fleet-system:latest)
 # HARNESS_PREP:  빌드 전에 컨테이너에서 실행할 명령 (예: 이미지에 없는 apt 패키지 설치)
+# HARNESS_PACKAGES: 빌드할 패키지 목록 (기본: loc_basic·fleet_fake에 필요한 것)
 # HARNESS_DISCORD_WEBHOOK: 있으면 끝나고 요약을 Discord로 보낸다. 값은 명령줄에 안 남게 이름만 넘긴다
 # HARNESS_FRESH: 1이면 반복 하나마다 컨테이너를 새로 띄운다. 기본(한 컨테이너)도 시도마다 DDS 도메인을 바꾸고
 #                흔적을 지우지만, 그래도 뒤 반복으로 갈수록 결과가 달라지는지 확인할 때 쓴다.
@@ -15,7 +16,8 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 IMAGE="${HARNESS_IMAGE:-amr-fleet-system:latest}"
-PACKAGES="amr_gazebo amr_odometry amr_localization amr_fleet_manager amr_fault_injector"
+# HARNESS_PACKAGES: 빌드할 패키지(--packages-up-to). 시나리오가 다른 패키지를 쓰면 덮어쓴다 (예: nav_compare)
+PACKAGES="${HARNESS_PACKAGES:-amr_gazebo amr_odometry amr_localization amr_fleet_manager amr_fault_injector}"
 
 # $1: 추가 docker 인자(공백 구분), 나머지: run.py 인자
 run_container() {
@@ -25,7 +27,11 @@ run_container() {
   docker run --rm --init -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-}" -e HARNESS_DISCORD_WEBHOOK $extra \
     -v "$REPO:/repo" -w /repo "$IMAGE" bash -c "
       set -e
-      source /opt/ros/\${ROS_DISTRO:-humble}/setup.bash
+      # 이미지의 가장 위 underlay를 source한다 (/opt/teb_ws → /opt/tracing_ws → /opt/ros, Dockerfile 체인).
+      # /opt/ros만 source하면 TEB(teb_local_planner)와 LTTng tracetools가 안 보인다
+      for s in /opt/teb_ws/install/setup.bash /opt/tracing_ws/install/setup.bash /opt/ros/\${ROS_DISTRO:-humble}/setup.bash; do
+        if [ -f \$s ]; then source \$s; break; fi
+      done
       # 레포 주인(호스트 사용자)과 컨테이너 사용자(root)가 달라 git이 거부하면 meta.json git_sha가 unknown이 된다
       git config --global --add safe.directory /repo 2>/dev/null || true
       if [ -n \"\$HARNESS_PREP\" ]; then bash -c \"\$HARNESS_PREP\"; fi

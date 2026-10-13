@@ -230,7 +230,7 @@ OpenRobotics "Male visitor" ([Gazebo Fuel](https://app.gazebosim.org/OpenRobotic
 
 - **위치는 `config/cargo_boxes.yaml` 고정 좌표다** (static). 상자 중심 = (x, y, z + 높이/2), world 기준이라 GT 라벨로 바로 쓴다
 - 겉모습: 진한 골판지색 몸체 + 윗면 테이프 + 양쪽 긴 면 흰 송장 라벨 (`amr_gazebo/cargo.py`). 밝은 골판지색은 조명에 하얗게 날아가 바닥과 구분이 안 돼서 진하게 했다
-- 모두 static 모델 하나(`cargo_boxes`)의 링크로 넣어 `create` 한 번으로 스폰한다. 충돌체가 있어 로봇과 부딪힌다
+- 상자마다 static 모델 하나(이름 = 상자 id)로 스폰한다. 라벨 카메라가 모델 단위로 상자를 내서, 한 모델에 링크로 묶으면 떨어진 상자들이 큰 상자 하나로 합쳐진다(아래 "라벨 카메라"). 충돌체가 있어 로봇과 부딪힌다
 
 **지도·위치추정에 영향을 주지 않게 놓았다.** 지도 v1에 없는 물체가 스캔에 찍히면 AMCL 일치율과 `map_quality`가 어긋나기 때문이다.
 
@@ -241,6 +241,21 @@ OpenRobotics "Male visitor" ([Gazebo Fuel](https://app.gazebosim.org/OpenRobotic
 
 카메라 확인 (지면 0.43 m = base_link 0.18 + camera 0.25, `cargo:=true`): 출발점 (0, 1.5)에서 A–B 통로 양쪽 상자, B–C 통로 (−1, −4)에서 B·C열 상자,
 도크 정차 구역 (−25, 13.5) 서쪽 방향에서 플랫폼 위 상자가 보인다. 바닥 상자는 통로 중앙에서 약 1.3~8 m, 도크 상자는 정차 구역에서 1.5~4.5 m다.
+
+### 라벨 카메라 (YOLO 학습 데이터 수집, 연우)
+
+`label_camera:=true`면 로봇의 RGBD 카메라와 같은 자리·화각(87°)·해상도(640×480)에 Gazebo `boundingbox_camera`를 하나 더 단다. Label 플러그인이 붙은 모델마다 **화면에 보이는 부분의 2D 상자**를 `/<ns>/camera/labels`(`vision_msgs/Detection2DArray`, 10 Hz)로 낸다. 렌더링 부담이 있어 기본은 꺼져 있고, 수집 노드는 [amr_detection `collect_dataset`](../../perception/amr_detection/README.md)이다.
+
+| 라벨 번호 | YOLO 클래스 | 붙인 모델 |
+| --- | --- | --- |
+| 1 | person | `dynamic_worker` |
+| 2 | cargo | 화물 상자 (`cargo.py`, 상자마다 모델) |
+| 3 | sign | `sign_*` 5종 |
+
+- 지게차·다른 로봇·랙·벽은 라벨이 없다. 상자는 안 나오지만 앞에 있으면 뒤 물체를 가린다.
+- 상자는 **모델 단위로 하나**다. 링크·visual에 따로 라벨을 붙여도 한 모델이면 합쳐진다 (10/11 시험).
+- 가려진 부분은 상자에서 빠진다(보이는 픽셀 기준). 완전히 가려지면 상자가 없다.
+- 확인 (10/11, 시험 월드): 표지판·화물 상자가 각각 나오고, 라벨 없는 물체는 나오지 않는다. 뒤 상자가 앞 상자에 일부 가려지면 보이는 부분만 상자가 된다.
 
 센서 시스템(`Sensors`, `Imu`)은 월드에 있다. `Sensors`는 LiDAR·카메라를 렌더링(ogre2)으로 만든다.
 화면(DISPLAY)이 없는 dev 컨테이너에서도 ogre2가 headless 모드로 바꿔 동작한다
@@ -289,9 +304,9 @@ launch 파일과 인자:
 | launch | 인자 (기본값) | 설명 |
 | --- | --- | --- |
 | `world.launch.py` | `world` (`warehouse.sdf`), `gui` (`true`), `verbosity` (`2`) | 월드만. `gui:=false`면 서버만 |
-| `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `max_linear_acceleration` (`1.0`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
+| `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `label_camera` (`false`), `max_linear_acceleration` (`1.0`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
 | `rl_eval.launch.py` | `payload_mass` (`0.0`), `eval_list` (`0`), `episodes` (`5`), `start_episode` (`0`), `scenarios` (`S1,S2`), `policy` (`brake`), `csv`, `research2_dir`, `gui` (`false`) | 연구 2 RL 평가: 빈 월드 + 로봇 1대 + 에피소드 실행 (위 절) |
-| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `dynamic_obstacles` (`false`), `obstacle_seed` (`0`), `cargo` (`false`) | 월드 + 로봇 1대 + RViz (+ 동적 장애물, 화물 상자) |
+| `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `label_camera` (`false`), `dynamic_obstacles` (`false`), `obstacle_seed` (`0`), `cargo` (`false`) | 월드 + 로봇 1대 + RViz (+ 동적 장애물, 화물 상자) |
 | `dynamic_obstacles.launch.py` | `config` (`config/dynamic_obstacles.yaml`), `only` (전부, 쉼표로 id), `seed` (`0`), `use_sim_time` (`true`) | 실행 중인 Gazebo에 동적 장애물 스폰 + 브리지 + 이동 노드 |
 | `cargo_boxes.launch.py` | `config` (`config/cargo_boxes.yaml`) | 실행 중인 Gazebo에 화물 상자 스폰 (LiDAR 높이에 걸리면 실패) |
 

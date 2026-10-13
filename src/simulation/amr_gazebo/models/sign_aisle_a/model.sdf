@@ -49,5 +49,10 @@
         <material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse><specular>0.1 0.1 0.1 1</specular></material>
       </visual>
     </link>
+    <!-- YOLO 학습 라벨 번호 (amr_gazebo README "라벨 카메라"): 1 사람, 2 화물, 3 표지판.
+         라벨 카메라(label_camera:=true)가 이 번호로 화면 속 상자를 낸다 -->
+    <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+      <label>3</label>
+    </plugin>
   </model>
 </sdf>

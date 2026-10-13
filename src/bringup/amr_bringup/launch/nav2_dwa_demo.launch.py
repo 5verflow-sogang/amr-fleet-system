@@ -1,4 +1,5 @@
-"""amr_nav2_plugins::DwaController 증명용 데모: Gazebo 월드 v0에서 목표점 1곳으로 주행.
+"""amr_nav2_plugins::DwaController 증명용 데모: Gazebo 월드에서 목표점 1곳으로 주행.
+controller:=teb로 TEB와도 바꿔 띌 수 있다 ((10) DWA vs TEB 비교, navigation.md 7절).
 
 로봇 1대(네임스페이스 amr_01). nav2_params.yaml은 네임스페이스를 가정하지 않으므로
 (CONTRIBUTING 4-5절), TF 프레임 이름이 들어가는 파라미터(costmap의 robot_base_frame,
@@ -9,22 +10,24 @@ local costmap의 global_frame=odom)는 nav2_common.launch.RewrittenYaml로 덮�
 한 파일로 둘 다 맞추려 하면 global_costmap(map, 공유)과 local_costmap(odom, 로봇별)이
 충돌한다.
 
-지도 v0(warehouse_v0.yaml)과 DiffDrive 이상적 odom을 그대로 쓰고, map->odom은 AMCL/EKF
-없이 정지 변환(항등)으로 둔다 - 지도 원점이 스폰 위치와 같아서(amr_mapping/maps/warehouse_v0.yaml)
-짧은 데모에는 충분하고, AMCL/EKF 없이 컨트롤러 플러그인 자체를 빨리 검증할 수 있다.
-LiDAR 스캔 필터(amr_odometry/sensor_filters)도 띄운다 - 안 띄우고 scan_raw를 바로
-obstacle_layer에 물렸더니 로봇을 2x2m 네모 모양의 lethal/inscribed 셀이 거의 완전히
-둘러싸 어느 쪽으로도 못 나가는 현상이 있었다(global_costmap에서 확인, local_costmap도
-같은 raw 토픽을 보니 DWA가 "Failed to make progress"로 멈추는 원인도 같았다). 아웃라이어
-제거(scan_filter) 뒤의 /<ns>/scan을 구독하면 없어진다 - scan_topic 참고.
+지도 v1(warehouse_v1.yaml, #103 민지 제안)과 DiffDrive 이상적 odom을 그대로 쓰고,
+map->odom은 AMCL/EKF 없이 정지 변환(항등)으로 둔다 - 지도 원점이 스폰 위치와 같아서
+(v0과 매핑 시작 자세가 같아 map_origin_in_world [0, 1.5, 0]은 그대로다, amr_mapping
+README) 짧은 데모에는 충분하고, AMCL/EKF 없이 컨트롤러 플러그인 자체를 빨리 검증할 수
+있다. LiDAR 스캔 필터(amr_odometry/sensor_filters)도 띄운다 - 안 띄우고 scan_raw를
+바로 obstacle_layer에 물렸더니 로봇을 2x2m 네모 모양의 lethal/inscribed 셀이 거의
+완전히 둘러싸 어느 쪽으로도 못 나가는 현상이 있었다(global_costmap에서 확인,
+local_costmap도 같은 raw 토픽을 보니 DWA가 "Failed to make progress"로 멈추는 원인도
+같았다). 아웃라이어 제거(scan_filter) 뒤의 /<ns>/scan을 구독하면 없어진다 - scan_topic 참고.
 
-global costmap은 지도 v0(warehouse_v0.yaml) static_layer를 그대로 쓴다. 한때 "NavFn이
-큰 지도(60x40m)에서 멈춘다"고 보고 로봇 중심 rolling_window로 바꿔봤었는데, 진짜 원인은
-그게 아니라 obstacle_layer가 구독하는 토픽 이름이 실제 LiDAR 토픽과 달라 costmap이 영영
-준비되지 않던 것이었다(scan_topic 참고) - 고치고 나니 static_layer로도 바로 된다. 자세한
-경위는 docs/algorithms/navigation.md "DWA·Nav2 연결" 절 참고.
+global costmap은 지도 static_layer를 그대로 쓴다. 한때 "NavFn이 큰 지도(60x40m)에서
+멈춘다"고 보고 로봇 중심 rolling_window로 바꿔봤었는데, 진짜 원인은 그게 아니라
+obstacle_layer가 구독하는 토픽 이름이 실제 LiDAR 토픽과 달라 costmap이 영영 준비되지
+않던 것이었다(scan_topic 참고) - 고치고 나니 static_layer로도 바로 된다. 자세한 경위는
+docs/algorithms/navigation.md "DWA·Nav2 연결" 절 참고.
 
     ros2 launch amr_bringup nav2_dwa_demo.launch.py
+    ros2 launch amr_bringup nav2_dwa_demo.launch.py controller:=teb
     ros2 launch amr_bringup nav2_dwa_demo.launch.py gui:=true goal_x:=3.0 goal_y:=1.5
     ros2 launch amr_bringup nav2_dwa_demo.launch.py goal_yaw:=90.0
 """
@@ -39,6 +42,7 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, OpaqueFunction, TimerAction,
 )
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -50,25 +54,32 @@ def _launch_setup(context, *args, **kwargs):
     gazebo_launch_dir = os.path.join(get_package_share_directory('amr_gazebo'), 'launch')
     odometry_launch_dir = os.path.join(get_package_share_directory('amr_odometry'), 'launch')
     map_yaml = os.path.join(
-        get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v0.yaml')
+        get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v1.yaml')
     nav2_params = os.path.join(bringup_share, 'config', 'nav2_params.yaml')
 
     ns = 'amr_01'
     base_footprint = f'{ns}/base_footprint'
     odom_frame = f'{ns}/odom'
 
+    # controller:=dwa(기본)|teb - (10) DWA vs TEB 비교. nav2_params.yaml의 컨트롤러 이름
+    # ("DWA"·"teb")별 설정 블록 키 - 아래에서 그 블록 하나를 고른다.
+    controller = LaunchConfiguration('controller').perform(context)
+    controller_key = {'dwa': 'DWA', 'teb': 'teb'}.get(controller)
+    if controller_key is None:
+        raise ValueError(f"controller는 'dwa' 또는 'teb'여야 한다: {controller!r}")
+
     # bt_navigator 기본 BT(커스텀 xml을 안 줬다)는 컨트롤러를 "FollowPath"라는 이름으로
-    # 부른다(하드코딩) - nav2_params.yaml에는 "FollowPath"(DWB)·"DWA" 둘 다 있지만, 이
-    # 데모는 DWA만 올리려고 controller_plugins를 ['DWA']로 좁혔었다. 그러면 BT가 찾는
+    # 부른다(하드코딩) - nav2_params.yaml에는 "FollowPath"(DWB)·"DWA"·"teb" 다 있지만, 이
+    # 데모는 고른 것 하나만 올리려고 controller_plugins를 좁힌다. 그러면 BT가 찾는
     # "FollowPath"가 목록에서 사라져 매번 "FollowPath ... does not exist. Available
-    # controllers are: DWA."로 바로 Aborting된다. DWB(dwb_core 추가 의존성)는 안 띄우려는
-    # 의도를 유지하면서, nav2_params.yaml의 DWA 설정을 "FollowPath"라는 이름으로도 등록해
+    # controllers are: DWA."로 바로 Aborting된다. DWB(dwb_core 추가 의존성)·다른 쪽은 안
+    # 띄우려는 의도를 유지하면서, 고른 컨트롤러 설정을 "FollowPath"라는 이름으로도 등록해
     # BT가 그대로 찾게 한다.
     with open(nav2_params) as f:
-        dwa_config = yaml.safe_load(f)['controller_server']['ros__parameters']['DWA']
+        chosen_config = yaml.safe_load(f)['controller_server']['ros__parameters'][controller_key]
     controller_overrides = {ns: {'controller_server': {'ros__parameters': {
         'controller_plugins': ['FollowPath'],
-        'FollowPath': dwa_config,
+        'FollowPath': chosen_config,
     }}}}
     controller_overrides_file = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
     yaml.dump(controller_overrides, controller_overrides_file)
@@ -121,7 +132,12 @@ def _launch_setup(context, *args, **kwargs):
 
     lifecycle_nodes_nav = ['planner_server', 'controller_server', 'behavior_server', 'bt_navigator']
 
-    send_goal = ExecuteProcess(
+    # send_goal:=false로 끄면 이 launch는 목표를 안 보낸다 - (10) 실험 스크립트가 액션
+    # 클라이언트로 직접 보내 구조화된 결과(성공·시각)를 받을 때 쓴다(로그 문자열 grep 대신).
+    # condition은 TimerAction이 아니라 안쪽 ExecuteProcess에 건다 - TimerAction(condition=...)은
+    # 타이머 자체가 조건과 상관없이 등록되고 나중에 안쪽 action들을 조건 없이 실행해 버려서
+    # send_goal:=false로도 목표가 나가는 문제가 있었다(실험 중 발견, (10) 작업).
+    send_goal = TimerAction(period=15.0, actions=[ExecuteProcess(
         cmd=[
             'ros2', 'action', 'send_goal', f'/{ns}/navigate_to_pose',
             'nav2_msgs/action/NavigateToPose',
@@ -132,7 +148,8 @@ def _launch_setup(context, *args, **kwargs):
             ],
         ],
         output='screen',
-    )
+        condition=IfCondition(LaunchConfiguration('send_goal')),
+    )])
 
     return [
         IncludeLaunchDescription(
@@ -214,17 +231,24 @@ def _launch_setup(context, *args, **kwargs):
             output='screen'),
 
         # Gazebo·map_server·Nav2 lifecycle이 active로 올라올 시간을 준 뒤 목표를 한 번 보낸다
-        TimerAction(period=15.0, actions=[send_goal]),
+        send_goal,
     ]
 
 
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('gui', default_value='false', description='Gazebo GUI 실행 여부'),
+        DeclareLaunchArgument(
+            'controller', default_value='dwa',
+            description="로컬 컨트롤러 'dwa' 또는 'teb' ((10) DWA vs TEB 비교)"),
         DeclareLaunchArgument('goal_x', default_value='3.0', description='목표 x [m] (map 기준)'),
         DeclareLaunchArgument('goal_y', default_value='1.5', description='목표 y [m] (map 기준)'),
         DeclareLaunchArgument(
             'goal_yaw', default_value='0.0',
             description='목표 각도 [도]. 최종 접근(제자리 회전) 확인용'),
+        DeclareLaunchArgument(
+            'send_goal', default_value='true',
+            description='15초 뒤 목표를 이 launch가 보낼지. false면 (10) 실험 스크립트처럼 '
+                        '액션 클라이언트로 직접 보내는 쪽이 대신 보낸다'),
         OpaqueFunction(function=_launch_setup),
     ])

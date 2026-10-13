@@ -14,6 +14,7 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>vision_msgs</exec_depend>  <!-- 라벨 카메라 브리지 (camera/labels) -->
   <exec_depend>python3-yaml</exec_depend>
   <!-- 연구 2 RL 평가 환경 (rl_eval.py: 2D 시나리오 난수 생성기) -->
   <exec_depend>python3-numpy</exec_depend>

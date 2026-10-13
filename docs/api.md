@@ -123,7 +123,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | --- | --- | --- | --- | --- | --- | --- |
 | 인식 | `perception/objects` | 토픽 | `amr_msgs/msg/DetectedObject3DArray` | `amr_detection` | `amr_tracking`, Costmap, `amr_bt` | 카메라 프레임마다 |
 | 추적 | `perception/obstacles` | 토픽 | `amr_msgs/msg/TrackedObstacleArray` | `amr_tracking` | `amr_safety`, DWA | 추적 주기마다 |
-| 추적 | `perception/collision_risks` | 토픽 | `amr_msgs/msg/CollisionRiskArray` | `amr_tracking` | `amr_safety` | 추적 주기마다 |
+| 추적 | `perception/collision_risks` | 토픽 | `amr_msgs/msg/CollisionRiskArray` | `amr_tracking` | `amr_safety`, DWA(`amr_nav2_plugins`, 회피 모드 예정) | 추적 주기마다 |
 | 안전 | `safety/status` | 토픽 | `amr_msgs/msg/SafetyStatus` | `amr_safety` | `amr_control`, `amr_bt`, `amr_fleet_manager`, 대시보드 | 바뀌면 즉시, 그 외 10 Hz |
 | 안전 | `safety/estop` | 서비스 | `std_srvs/srv/SetBool` | `amr_safety` | 대시보드, 운영자 | 요청 시 |
 | Fleet | `/fleet/task_requests` | 토픽 | `amr_msgs/msg/Task` | 작업 생성기(`amr_fleet_manager` `task_generator`), 대시보드 | `amr_fleet_manager` | 요청 시 |
@@ -176,7 +176,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 
 | 대주제 | 쟁점 | 결정 |
 | --- | --- | --- |
-| 추적 | TTC를 `TrackedObstacle`에 둘지 | 분리. `CollisionRisk`로 뺀다 (장애물의 성질이 아니라 이 로봇과의 관계). DWA는 TTC를 쓰지 않는다 |
+| 추적 | TTC를 `TrackedObstacle`에 둘지 | 분리. `CollisionRisk`로 뺀다 (장애물의 성질이 아니라 이 로봇과의 관계). DWA는 TTC를 쓰지 않는다 → **10/11 변경**: DWA는 TTC를 계산하지 않고 `collision_risks`의 TTC를 회피 모드 트리거(3 s 미만)로만 쓴다 ([명세서 8장](project-spec.md) 역할 분담) |
 | 추적 | 장애물 크기를 원으로 할지 사각형으로 할지 | 원(`radius`)으로 시작, 필요하면 확장 |
 | 안전 | 감속·정지를 누가 실행하나 | 안전 노드가 `cmd_vel`을 직접 막는다. 제어는 `speed_limit`을 참고해 부드럽게 감속한다 |
 | 안전 | `speed_limit`의 "제한 없음" 값과 제어 쪽 적용 | 제한 없음은 `inf`, WARNING은 `0.6`, 정지는 `0.0`, 음수 없음. WARNING 0.6 m/s는 반응 지연 0.2 s + 감속 1.0 m/s²로 긴급정지 거리 0.3 m 안에 서는 최대 속도다 (0.6×0.2 + 0.6²/2 = 0.30 m). 제어(`amr_control`)는 마지막 단계에서 명령 선속도를 `min(v, speed_limit)`으로 자른다 (DWA·Pure Pursuit 공통, 10/6 이진·연우) |
@@ -211,8 +211,11 @@ dot -Tpng frames_*.gv -o tf_tree.png
 
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
-| Subscribe | | | |
-| Publish | `perception/objects` | `amr_msgs/msg/DetectedObject3DArray` | 카메라 프레임별 인식 결과와 3D 위치 |
+| Subscribe | `camera/color/image_raw` | `sensor_msgs/msg/Image` | RGB (rgb8). Depth와 촬영 시각이 같은 짝만 쓴다 |
+| Subscribe | `camera/depth/image_raw` | `sensor_msgs/msg/Image` | Depth (32FC1, m) |
+| Subscribe | `camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 내부 파라미터 K (처음 받은 값) |
+| Publish | `perception/objects` | `amr_msgs/msg/DetectedObject3DArray` | 카메라 프레임별 인식 결과와 3D 위치·공분산 ([perception.md 4절](algorithms/perception.md#4-yolo-인식과-3d-변환)) |
+| Publish | `perception/markers` | `visualization_msgs/msg/MarkerArray` | 인식 결과 RViz 마커 (상자·글자) |
 
 ### amr_gazebo (로봇별, `<ns>` = `amr_01` …)
 
@@ -319,6 +322,14 @@ cmd_vel 체인: 최종 `cmd_vel`을 가로채는 건 안전 노드(`amr_safety`)
 | Subscribe | `odom` | `nav_msgs/msg/Odometry` | 선속도, 경로 프레임이 odom 프레임과 같으면 자세도. 다르면 자세는 TF(경로 프레임 ← `base_frame`) |
 | Publish | `cmd_vel_nav` | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 (→ `amr_zone_client`). Nav2 `controller_server`와 같은 토픽이라 둘을 같이 띄우지 않는다. 경로 끝·경로 없음·odom 끊김이면 0을 한 번 내고 멈춘다 |
 
+### amr_docking (로봇별)
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Action | `docking/dock` | `amr_msgs/action/Dock` | 스테이션(`config/dock_stations.yaml`)의 ArUco 마커판을 보고 도킹. 한 번 호출에 한 번 시도 |
+| Subscribe | `camera/color/image_raw`, `camera/camera_info` | `sensor_msgs/msg/Image`, `CameraInfo` | 도킹 중에만 처리 |
+| Publish | `cmd_vel_nav` | `geometry_msgs/msg/Twist` | Nav2 컨트롤러와 같은 자리 (도킹 중에는 Nav2 목표가 없다) |
+
 ### amr_bt (로봇별)
 
 `<prefix>` = `server_topic_prefix`: `/fleet`(서버 원본, 기본), 장애 주입기 중계본이면 `fleet`(→ `/<ns>/fleet/...`).
@@ -329,7 +340,11 @@ cmd_vel 체인: 최종 `cmd_vel`을 가로채는 건 안전 노드(`amr_safety`)
 | Subscribe | `<prefix>/heartbeat` | `amr_msgs/msg/FleetHeartbeat` | `epoch`가 바뀌면 명령 번호 기준 초기화 |
 | Publish | `/fleet/task_assignment_acks` | `amr_msgs/msg/TaskAssignmentAck` | 할당·취소마다. 재전송이면 같은 Ack |
 | Publish | `/fleet/task_status` | `amr_msgs/msg/TaskStatus` | PENDING → IN_PROGRESS(단계마다) → COMPLETED / FAILED |
-| Publish | `/fleet/robot_states` | `amr_msgs/msg/RobotState` | 2 Hz. 수락 즉시 `current_task_id`를 채운다 |
+| Publish | `/fleet/robot_states` | `amr_msgs/msg/RobotState` | 2 Hz. 수락 즉시 `current_task_id`를 채운다. 가상 배터리, 충전 중 `MODE_CHARGING`, zone_client `failed`면 `MODE_ERROR` |
+| Subscribe | `zone_client/state` | `std_msgs/msg/String` | `waiting`·`blocked`·`backing`이면 Nav2 목표를 멈추고, `failed`면 작업 FAILED(`TRAFFIC_REVOKED`) |
+| Subscribe | `kidnap_recovery/state` | `std_msgs/msg/String` | `tracking`이 아니면 Nav2 목표를 멈춘다 |
+| Action client | `navigate_to_pose` | `nav2_msgs/action/NavigateToPose` | `use_nav2:=true`일 때. 실패하면 2번 다시 보낸다 |
+| Action client | `docking/dock` | `amr_msgs/action/Dock` | `use_docking:=true`일 때. BT가 3번까지 시도 |
 
 <!-- TODO: 나머지 패키지 섹션을 같은 형식으로 추가 -->
 

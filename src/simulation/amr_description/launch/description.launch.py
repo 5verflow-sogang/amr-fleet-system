@@ -28,6 +28,7 @@ def generate_launch_description():
             ' gt_rate:=', LaunchConfiguration('gt_rate'),
             ' enable_camera:=', LaunchConfiguration('enable_camera'),
             ' max_linear_acceleration:=', LaunchConfiguration('max_linear_acceleration'),
+            ' label_camera:=', LaunchConfiguration('label_camera'),
         ]),
         value_type=str)
 
@@ -47,6 +48,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'max_linear_acceleration', default_value='1.0',
             description='DiffDrive 선가속 상한 [m/s²]. 크게 주면 바퀴 토크 한계가 질량에 따라 가감속을 정한다'),
+        DeclareLaunchArgument(
+            'label_camera', default_value='false',
+            description='라벨 카메라(YOLO 학습 데이터 수집 전용)를 만들지'),
         DeclareLaunchArgument(
             'use_sim_time', default_value='true',
             description='Gazebo /clock 사용 여부'),

@@ -25,6 +25,8 @@ LIDAR_MARGIN = 0.05
 BODY_COLOR = (0.50, 0.34, 0.18)    # 진한 골판지. 밝은 바닥·랙(주황 0.85 0.45 0.10)·기둥(회색)과 구분 (밝은 색은 조명에 하얗게 날아감)
 TAPE_COLOR = (0.22, 0.15, 0.08)
 LABEL_COLOR = (0.95, 0.95, 0.93)
+# YOLO 학습 라벨 번호 (Label 플러그인). 1 사람, 2 화물, 3 표지판 (README "라벨 카메라")
+YOLO_LABEL = 2
 
 
 @dataclass(frozen=True)
@@ -97,10 +99,16 @@ def _link(b: CargoBox) -> str:
     return ''.join(parts)
 
 
-def cargo_sdf(boxes: List[CargoBox], name: str = 'cargo_boxes') -> str:
-    """상자 전부를 static 모델 하나로 묶은 SDF 문자열 (ros_gz_sim create -string)."""
-    links = ''.join(_link(b) for b in boxes)
-    return f'<?xml version="1.0"?><sdf version="1.8"><model name="{name}"><static>true</static>{links}</model></sdf>'
+def cargo_model_sdf(b: CargoBox) -> str:
+    """상자 하나를 static 모델 하나로 만든 SDF 문자열 (ros_gz_sim create -string, 모델 이름 = 상자 id).
+
+    상자마다 모델을 따로 둔다. 라벨 카메라는 모델 단위로 상자를 하나 내서, 한 모델에 상자 여러 개를
+    링크로 넣으면 떨어진 상자들이 큰 상자 하나로 합쳐진다.
+    """
+    label = ('<plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">'
+             f'<label>{YOLO_LABEL}</label></plugin>')
+    return (f'<?xml version="1.0"?><sdf version="1.8"><model name="{b.id}"><static>true</static>'
+            f'{_link(b)}{label}</model></sdf>')
 
 
 def footprint(b: CargoBox):

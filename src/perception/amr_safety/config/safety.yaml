@@ -18,9 +18,10 @@
     decel: 1.0               # amr_description DiffDrive 감속 제한
     path_horizon_min: 0.5
     # TTC 임계 [s]. CRITICAL: 0.6 m/s에서 반응 0.2 s + 1.0 m/s² 정지 0.6 s ≈ 0.8 s에 여유.
-    # WARNING: 2.0 m/s에서 0.6 m/s까지 줄이는 시간(반응 0.2 s + 1.4 s ≈ 1.6 s)에 여유
+    # WARNING: 2.0 m/s에서 0.6 m/s까지 줄이는 시간(반응 0.2 s + 1.4 s ≈ 1.6 s)에 여유.
+    # TTC 3 s 미만은 DWA가 먼저 회피 모드로 피한다 (명세서 8장). 같은 3 s에 감속까지 걸면 회피 기동이 잘려 2 s로 둔다
     ttc_critical: 1.0
-    ttc_warning: 3.0
+    ttc_warning: 2.0
     # TTC 규칙과 아래 근접 규칙은 움직이는 트랙에만 건다 (정적 장애물은 진행 경로 판정이 맡는다)
     # 움직이는 트랙이 차체에서 이 거리 [m] 안이면 WARNING
     dynamic_warning_distance: 1.5

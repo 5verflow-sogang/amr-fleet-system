@@ -13,6 +13,7 @@ ROS 토픽 (<ns> = namespace):
     /<ns>/camera/depth/image_raw   sensor_msgs/Image        Gazebo → ROS (32FC1, m, 30 Hz)
     /<ns>/camera/camera_info       sensor_msgs/CameraInfo   Gazebo → ROS (RGB·Depth 공통)
                         (camera/*는 enable_camera:=true일 때만)
+    /<ns>/camera/labels            vision_msgs/Detection2DArray  Gazebo → ROS (라벨 카메라, label_camera:=true일 때만)
     /tf                 <ns>/odom → <ns>/base_footprint (publish_odom_tf:=true일 때)
 """
 
@@ -31,6 +32,7 @@ def _spawn(context):
     topic_ns = f'/{ns}' if ns else ''
     use_sim_time = LaunchConfiguration('use_sim_time').perform(context)
     enable_camera = LaunchConfiguration('enable_camera').perform(context).lower()
+    label_camera = LaunchConfiguration('label_camera').perform(context).lower()
 
     bridge_args = [
         f'{topic_ns}/cmd_vel@geometry_msgs/msg/Twist]ignition.msgs.Twist',
@@ -54,6 +56,10 @@ def _spawn(context):
             (f'{topic_ns}/camera/image', f'{topic_ns}/camera/color/image_raw'),
             (f'{topic_ns}/camera/depth_image', f'{topic_ns}/camera/depth/image_raw'),
         ]
+    if label_camera == 'true':
+        # 라벨 카메라: 화면 속 물체 상자 (YOLO 학습 데이터 수집, experiments/yolo)
+        bridge_args.append(
+            f'{topic_ns}/camera/labels@vision_msgs/msg/Detection2DArray[ignition.msgs.AnnotatedAxisAligned2DBox_V')
     if LaunchConfiguration('publish_odom_tf').perform(context).lower() == 'true':
         # DiffDrive가 내는 odom → base_footprint를 전역 /tf로 합친다 (프레임 이름에 네임스페이스가 붙어 있다)
         bridge_args.append(f'{topic_ns}/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V')
@@ -69,6 +75,7 @@ def _spawn(context):
                 'gt_rate': LaunchConfiguration('gt_rate'),
                 'enable_camera': enable_camera,
                 'max_linear_acceleration': LaunchConfiguration('max_linear_acceleration'),
+                'label_camera': label_camera,
                 'use_sim_time': use_sim_time,
             }.items(),
         ),
@@ -117,5 +124,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_camera', default_value='true',
             description='RGBD 카메라 센서와 브리지를 만들지. CPU sim에서 여러 대를 띄울 때 false'),
+        DeclareLaunchArgument(
+            'label_camera', default_value='false',
+            description='라벨 카메라(YOLO 학습 데이터 수집 전용)와 브리지를 만들지'),
         OpaqueFunction(function=_spawn),
     ])

@@ -20,6 +20,13 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
+  <!-- collect_dataset (YOLO 학습 데이터 수집, 시뮬 전용): 라벨 카메라·화물 위치·지도 -->
+  <exec_depend>vision_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>amr_gazebo</exec_depend>
+  <exec_depend>amr_mapping</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <!-- ultralytics(YOLO)·torch는 rosdep 키가 없어 docker/Dockerfile에서 pip로 설치한다 -->
 
   <test_depend>python3-pytest</test_depend>

@@ -6,13 +6,16 @@ from amr_fleet_decentralized.auction import (
     Bid,
     RobotInfo,
     TaskInfo,
+    TaskRetryLedger,
     award_exhausted,
+    can_reclaim,
     can_retry_failed_task,
     can_withdraw,
     compute_bid_cost,
     decide_bid,
     decide_winner,
     should_resend_award,
+    winner_lost,
 )
 
 
@@ -163,3 +166,57 @@ def test_can_retry_failed_task_skips_canceled():
     assert can_retry_failed_task(failures=0, failed_retries=1, error_code=ErrorInfo.ASSIGN_CANCELED) is False
     assert can_retry_failed_task(failures=0, failed_retries=1, error_code=ErrorInfo.NONE) is True
     assert can_retry_failed_task(failures=1, failed_retries=1, error_code=ErrorInfo.NONE) is False
+
+
+
+# --- 낙찰 로봇 장애 회수 (중앙 #132와 같은 규칙: RobotState 5초 끊김, FAILED와 따로, 상한 없음) ---
+
+
+def test_auction_params_default_reclaim_matches_central():
+    assert AuctionParams().reclaim_timeout_s == 5.0
+    assert AuctionParams().max_reclaims < 0
+
+
+def test_winner_lost_after_state_gap_reclaims():
+    # 10초에 수락·마지막 상태, 그 뒤 끊김 -> 5초째에 회수
+    assert winner_lost(last_seen=10.0, accepted_at=10.0, now_s=14.9, reclaim_timeout_s=5.0) is False
+    assert winner_lost(last_seen=10.0, accepted_at=10.0, now_s=15.0, reclaim_timeout_s=5.0) is True
+
+
+def test_winner_back_within_timeout_not_reclaimed():
+    # 10초부터 끊겼다가 4초 뒤(14초) 상태가 다시 오면 회수하지 않는다 - 기준이 14초로 다시 잡힌다
+    assert winner_lost(last_seen=14.0, accepted_at=10.0, now_s=15.0, reclaim_timeout_s=5.0) is False
+    assert winner_lost(last_seen=14.0, accepted_at=10.0, now_s=18.9, reclaim_timeout_s=5.0) is False
+    assert winner_lost(last_seen=14.0, accepted_at=10.0, now_s=19.0, reclaim_timeout_s=5.0) is True
+
+
+def test_winner_lost_uses_accept_time_and_can_be_disabled():
+    # 상태를 한 번도 못 받은 낙찰 로봇은 ACCEPT 시각부터 잰다 (수락하자마자 회수하지 않음)
+    assert winner_lost(last_seen=None, accepted_at=10.0, now_s=12.0, reclaim_timeout_s=5.0) is False
+    assert winner_lost(last_seen=None, accepted_at=10.0, now_s=15.0, reclaim_timeout_s=5.0) is True
+    # 수락 전 상태는 ACCEPT 시각에 가려진다
+    assert winner_lost(last_seen=1.0, accepted_at=10.0, now_s=14.0, reclaim_timeout_s=5.0) is False
+    # 0이면 끈다
+    assert winner_lost(last_seen=0.0, accepted_at=0.0, now_s=100.0, reclaim_timeout_s=0.0) is False
+
+
+def test_reclaim_not_counted_in_failures():
+    ledger = TaskRetryLedger(failed_retries=1)
+    # 회수는 상한 없이(기본) 몇 번이든 재경매하고, FAILED 재시도 횟수를 쓰지 않는다
+    assert ledger.on_winner_lost('task_1') is True
+    assert ledger.on_winner_lost('task_1') is True
+    assert ledger.reclaims('task_1') == 2
+    assert ledger.failures('task_1') == 0
+    # 그래서 FAILED 1회 재경매는 그대로 남아 있다
+    assert ledger.on_failed('task_1') is True
+    assert ledger.on_failed('task_1') is False
+    assert ledger.reclaims('task_1') == 2
+
+
+def test_reclaim_limit_parameter():
+    assert can_reclaim(reclaims=100, max_reclaims=-1) is True
+    assert can_reclaim(reclaims=0, max_reclaims=1) is True
+    assert can_reclaim(reclaims=1, max_reclaims=1) is False
+    ledger = TaskRetryLedger(failed_retries=1, max_reclaims=1)
+    assert ledger.on_winner_lost('task_1') is True
+    assert ledger.on_winner_lost('task_1') is False

@@ -1,0 +1,25 @@
+# (10) DWA vs TEB 비교: 데모 로봇 경로를 가로지르는 동적 장애물 1개.
+#
+# amr_gazebo/config/dynamic_obstacles.yaml(이진 작성, 5개짜리 Fleet 기본 장애물)과 같은
+# 형식이지만 이 실험 전용으로 obstacle 1개만 둔다 - 5개를 다 띄우면 비교 시나리오가
+# "장애물 있음/없음" 둘로 깔끔히 안 나뉜다.
+#
+# 모델은 dynamic_worker(실린더 충돌, 반경 0.25 m - models/dynamic_worker/model.sdf)를
+# 그대로 쓴다. 명세(0.5 m/s, 반경 0.3 m)의 반경은 기존 모델 중 가장 가까운 값이라 그대로
+# 썼다 - 자세한 설명은 README "장애물·측정 방식" 절.
+#
+# 경로: map 기준 x=1.5(로봇 경로 (0,0)->(3.0,1.5)의 중점과 같은 x)에서 y 2.25<->-0.75로
+# 등속(0.5 m/s, speed_range 양끝을 같게 둬서 고정) 왕복 - experiments/dwa_dynamic_obstacle의
+# 가짜 장애물과 같은 교차점·속도를 실제 Gazebo 물체로 재현한다. world = map + (0, 1.5)
+# (amr_mapping/maps/warehouse_v1.yaml 주석, nav2_dwa_demo.launch.py와 동일 관계)라
+# spawn/waypoints는 world 좌표로 적는다.
+obstacles:
+  - id: crosser
+    type: worker
+    pattern: straight
+    speed_range_mps: [0.5, 0.5]
+    spawn: {x: 1.5, y: 3.75, yaw: -1.5708}
+    waypoints:
+      - {x: 1.5, y: 3.75}
+      - {x: 1.5, y: 0.75}
+    note: "map (1.5, 0.75) - 로봇 경로 (0,0)->(3.0,1.5) 중점 - 을 N-S로 반복 왕복 교차"
