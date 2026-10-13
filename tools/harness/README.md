@@ -34,6 +34,7 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 | `--set 이름=값` | 시나리오 `params` 덮어쓰기 (지연·손실, 지도 경로 등) |
 | `--config <패키지>/<share 경로>=<파일>` | 설치된 설정 파일을 실행 동안만 바꿔 끼운다 (튜닝 후보 비교). 파일 해시를 `meta.json`의 `config_overrides`에 남기고 끝나면 되돌린다 |
 | `--max-attempts` | 기동 단계 실패(lifecycle 응답 유실 등) 때 같은 반복을 다시 시도하는 최대 횟수 (기본 3). 실패한 시도는 `_failN` 폴더로 남는다 |
+| `HARNESS_PACKAGES` (환경 변수) | `docker_run.sh`가 빌드할 패키지(`--packages-up-to`). 기본은 `loc_basic`·`fleet_fake`에 필요한 것 |
 | `--no-dds-isolation` | 아래 DDS 격리를 끈다. 지금 셸의 `ROS_DOMAIN_ID`를 그대로 쓴다 |
 | `--repeat-offset`, `--stamp` | 반복을 나눠 부를 때 반복 번호·seed 시작과 결과 폴더 시각을 맞춘다. 같은 `--stamp`면 요약이 그동안의 반복을 모두 묶는다 (`HARNESS_FRESH`가 쓴다) |
 
@@ -56,10 +57,11 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 | --- | --- | --- |
 | `loc_basic` | 로봇 1대, 지도 v0. 정지 → 직진 3 m → 한 바퀴 → 반 바퀴 → 복귀 직진 → 정지. 약 1분 | `eval_ekf/`·`eval_amcl/`의 `localization.csv`·궤적 |
 | `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분. `kill_robot`으로 로봇 장애 | `fleet_latency.csv`, `response_time.csv`(Ack), `task_outcomes.csv`, `recovery.csv`(로봇 장애 시), `tasks.json`, `assignments.csv`, `fault_events.csv` |
+| `nav_compare` | 로봇 1대, 지도 v1, Nav2 데모 + 목표 1곳. `--set controller=dwa\|teb --set scenario=clear\|obstacle`. 약 1분. `HARNESS_PACKAGES="amr_bringup amr_nav2_plugins"` 필요 | `nav_result.json`(성공·도착 시간·최소 장애물 거리·경로 길이·CTE, GT), `nav_series.csv` ([experiments/teb_compare](../../experiments/teb_compare/README.md)) |
 
 `fleet_fake`는 Fleet 계층(지연·손실·Ack)만 잰다. 가짜 로봇은 `odom`을 내지 않아 응답 시간 KPI(200 ms)는 비어 있으므로, 그 Before 데이터는 실제 로봇 스택 시나리오가 따로 필요하다. 서버 강제종료 `kill_at_s`는 서버 launch 시작 기준이라 작업 시작보다 약 10초 빠르다.
 
-시나리오 파일은 `processes`(띄울 명령, `ready_topic`으로 준비 확인, `stop_first`·`wait_files`로 기록 노드를 먼저 끝냄), `driver`(`segments`: `cmd_vel` 구간 / `wait`: 시간만 기다림), `postprocess`(예: `fleet_metrics`), `cleanup`으로 이루어진다. 명령 안의 `{run_dir}`, `{seed}`, `params` 이름은 실행마다 채워진다.
+시나리오 파일은 `processes`(띄울 명령, `ready_topic`으로 준비 확인, `stop_first`·`wait_files`로 기록 노드를 먼저 끝냄), `driver`(`segments`: `cmd_vel` 구간 / `wait`: 시간만 기다림 / `command`: 셸 명령이 끝날 때까지, 0이 아닌 종료 코드면 주행 실패), `postprocess`(예: `fleet_metrics`), `cleanup`으로 이루어진다. 명령 안의 `{run_dir}`, `{seed}`, `params` 이름은 실행마다 채워진다.
 
 **seed 규칙** (하연 제안, 10/6)
 
