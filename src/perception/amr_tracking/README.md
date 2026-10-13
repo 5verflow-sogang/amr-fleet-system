@@ -37,6 +37,7 @@
 | --- | --- | --- |
 | `tracking_node` | `tracking` | 스캔(또는 위치 측정) → 다중 장애물 KF 추적 → `perception/obstacles`, `perception/collision_risks`, `perception/obstacle_markers`. 5초마다 프레임당 후보·트랙·동적 수, 단계별 처리 시간, 카메라 연관 수 로그 |
 | `synthetic_obstacles_node` | `synthetic_obstacles` | 시험용 측정 발행기. 장애물 2개(sin 왕복 최대 1.0 m/s, 원 궤도 0.8 m/s)에 잡음 σ 0.05 m |
+| `tracking_eval` | `tracking_eval` | **평가 전용.** 트랙을 Gazebo GT(`/dynamic_obstacles/<id>/ground_truth/odom`, 로봇 `ground_truth/odom`)와 비교해 위치·속도 오차, +1·+2 s 예측 오차, NEES, ID 전환, 동적 판정 지연, 가짜 동적 트랙을 `out_dir`에 저장 (CSV·JSON). 지표·실행은 [perception.md](../../../docs/algorithms/perception.md) 1-7절 |
 
 ## 파라미터
 
