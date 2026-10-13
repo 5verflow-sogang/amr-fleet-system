@@ -17,6 +17,9 @@ params:
   controller: nav2
   cruise_mps: "0.5"
   curve_kappa: "0.2"
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1_0025.yaml
+  # 녹화 (rosbag/, 46분이면 수십 MB). 그림은 plots/
+  record: "true"
 processes:
   - name: system
     # 로봇 1대 + 위치추정 + Nav2만 (Fleet·BT·구역 클라이언트 끔: Nav2가 바로 cmd_vel을 낸다, amr_bringup README)
@@ -41,6 +44,14 @@ processes:
       -r odom:=odometry/local --params-file $(ros2 pkg prefix amr_control)/share/amr_control/config/path_tracker.yaml
       -p use_sim_time:=true;
       else exec sleep infinity; fi
+  # 가벼운 토픽만 녹화 (Foxglove·Lichtblick으로 열어 보기용, 하연 10/14 제안). 스캔·카메라는 뺀다.
+  # 이미지에 mcap 저장 플러그인이 없어 sqlite3(.db3)로 남긴다. record=false면 녹화하지 않는다
+  - name: rosbag
+    cmd: >-
+      if [ "{record}" = true ];
+      then exec ros2 bag record -o {run_dir}/rosbag /map /tf /tf_static /amr_01/amcl_pose /amr_01/odometry/filtered /amr_01/odometry/local /amr_01/ground_truth/odom /amr_01/plan /amr_01/cmd_vel;
+      else exec sleep infinity; fi
+    stop_first: true
 config_patch:
   amr_bringup/config/nav2_params.yaml:
     controller_server.ros__parameters.DWA.max_v: 0.5
@@ -52,6 +63,10 @@ driver:
   cmd: >-
     python3 /repo/experiments/nav_kpi/nav_kpi.py --out-dir {run_dir}/nav_kpi --pairs {pairs}
     --controller {controller} --cruise-mps {cruise_mps} --curve-kappa {curve_kappa}
+# plots/nav_map.png(지도 위 계획 경로·GT 궤적·성공/실패 목표), plots/nav_time.png(예측·실제 주행시간)
+postprocess:
+  - name: plot
+    cmd: python3 /repo/tools/harness/plot_run.py {run_dir} --map {map}
 cleanup:
   - pkill -9 -f "[i]gn gazebo" || true
   - pkill -9 -f "[p]arameter_bridge" || true

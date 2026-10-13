@@ -19,7 +19,7 @@ planner_server가 /<ns>/plan을 내고 path_tracker가 그 경로를 따른다(1
 들어오면 도착. CTE KPI(5장 모션 제어)는 이 방식으로 판정한다 (--cte-kpi)
 계획이 실패하면 주행하지 않고 다음 쌍으로 간다(출발은 그대로). 도착 못 하면(aborted·시간 초과) 그 자리에서 다음 쌍.
 
-출력 (out-dir): nav_pairs.csv(쌍마다), replan.csv, cte.csv, paths.csv(쌍마다 처음 계획한 경로, map),
+출력 (out-dir): nav_pairs.csv(쌍마다), replan.csv, cte.csv, paths.csv(쌍마다 처음 계획한 경로, map), gt_track.csv(GT 궤적, map),
 nav_kpi.json(요약·KPI 판정, 하네스 요약이 읽는다).
 정의는 docs/algorithms/navigation.md에 맞춘다 (이진 판정, 4주차 민지 작업 2).
 """
@@ -75,6 +75,8 @@ class NavKpi(Node):
             self.create_subscription(GoalStatusArray, f'/{ns}/{name}/_action/status',
                                      lambda m, n=name: self._on_behavior(n, m), 10)
         self.recoveries = 0
+        self.track = []   # (t, 쌍, GT x, y) map, 그림용 (tools/harness/plot_run.py)
+        self.pair = 0
         # pp 방식: 멈출 때 빈 경로와 정지 명령을 낸다
         self.plan_pub = self.create_publisher(PathMsg, f'/{ns}/plan', 10)
         self.stop_pub = self.create_publisher(Twist, f'/{ns}/cmd_vel', 10)
@@ -82,6 +84,10 @@ class NavKpi(Node):
     def _on_gt(self, msg):
         p = msg.pose.pose.position
         self.gt = (p.x, p.y)
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self.pair and (not self.track or t - self.track[-1][0] >= 0.2):
+            mx, my = self.to_map(p.x, p.y)
+            self.track.append((round(t, 2), self.pair, round(mx, 3), round(my, 3)))
 
     def _on_plan(self, msg):
         path = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
@@ -210,6 +216,7 @@ class NavKpi(Node):
             mx, my = self.to_map(gx, gy)
             yaw = math.atan2(gy - py, gx - px)
             goal = self.goal_pose(mx, my, yaw)
+            self.pair = i
             row = {'pair': i, 'start_x': round(self.gt[0], 3), 'start_y': round(self.gt[1], 3),
                    'goal_x': gx, 'goal_y': gy, 'narrow': int(i in narrow)}
             ok, plan_ms, plan_wall_ms, path = self.compute_path(goal)
@@ -300,6 +307,8 @@ class NavKpi(Node):
                             'pred_err': '' if p['pred_err'] is None else round(p['pred_err'], 4)})
         with (out / 'replan.csv').open('w', newline='') as f:
             csv.writer(f).writerows([('time', 'pair', 'ok', 'planning_ms', 'wall_ms'), *replan_rows])
+        with (out / 'gt_track.csv').open('w', newline='') as f:
+            csv.writer(f).writerows([('time', 'pair', 'x', 'y'), *self.track])
         with (out / 'paths.csv').open('w', newline='') as f:
             csv.writer(f).writerows([('pair', 'x', 'y', 'kappa'), *path_rows])
         with (out / 'cte.csv').open('w', newline='') as f:

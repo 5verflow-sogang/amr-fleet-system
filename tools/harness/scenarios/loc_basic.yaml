@@ -16,6 +16,8 @@ params:
   initial_y: "-0.0317"
   # 동적 장애물 (amr_gazebo #58). 켜면 obstacle_seed로 같은 seed를 쓴다
   dynamic_obstacles: "false"
+  # 녹화 (rosbag/, 그림은 plots/)
+  record: "true"
 processes:
   - name: sim
     cmd: >-
@@ -37,6 +39,14 @@ processes:
       - ros2 lifecycle get /map_server | grep -q '^active'
       - ros2 lifecycle get /amr_01/amcl | grep -q '^active'
     settle_s: 5
+  # 가벼운 토픽만 녹화 (Foxglove·Lichtblick으로 열어 보기용, 하연 10/14 제안). 스캔·카메라는 뺀다.
+  # 이미지에 mcap 저장 플러그인이 없어 sqlite3(.db3)로 남긴다. record=false면 녹화하지 않는다
+  - name: rosbag
+    cmd: >-
+      if [ "{record}" = true ];
+      then exec ros2 bag record -o {run_dir}/rosbag /map /tf /tf_static /amr_01/amcl_pose /amr_01/odometry/filtered /amr_01/odometry/local /amr_01/ground_truth/odom;
+      else exec sleep infinity; fi
+    stop_first: true
   - name: eval_ekf
     cmd: >-
       ros2 run amr_localization eval_node --ros-args -r __ns:=/amr_01 -r __node:=eval_ekf
@@ -66,6 +76,10 @@ driver:
     - [0.0, 0.0, 2.0]
     - [0.5, 0.0, 6.0]
     - [0.0, 0.0, 5.0]
+# 실행 폴더에 plots/loc_traj.png(지도 위 GT·EKF·AMCL 궤적), plots/loc_error.png(시간에 따른 오차). 실패해도 실행은 그대로
+postprocess:
+  - name: plot
+    cmd: python3 /repo/tools/harness/plot_run.py {run_dir} --map {map}
 # 프로세스 그룹 정리 뒤에도 남을 수 있는 Gazebo 서버
 cleanup:
   - pkill -9 -f "[i]gn gazebo" || true
