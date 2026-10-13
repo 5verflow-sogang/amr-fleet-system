@@ -1,0 +1,9 @@
+# 위치추정 KPI 참고 측정: 지도 정렬 보정 없이 매핑 시작 자세를 원점으로 (A안, 보고서에 B안과 함께 적는다).
+# 지도가 월드에 대해 밀린 만큼(약 6 cm) 오차가 커진다 (localization.md 3-1절).
+#   tools/harness/docker_run.sh loc_kpi_a0025 -n 10
+name: loc_kpi_a0025
+extends: loc_basic
+params:
+  map_origin: "[0.0, 1.5, 0.0]"
+  initial_x: "0.0"
+  initial_y: "0.0"

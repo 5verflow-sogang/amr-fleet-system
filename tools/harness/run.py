@@ -33,6 +33,11 @@ def load_scenario(name: str) -> dict:
     if not path.exists():
         path = HERE / 'scenarios' / f'{name}.yaml'
     scenario = yaml.safe_load(path.read_text(encoding='utf-8'))
+    if 'extends' in scenario:
+        # 다른 시나리오를 그대로 쓰고 이름·params만 바꾼다 (예: loc_kpi_*는 loc_basic + 지도·원점)
+        base = load_scenario(scenario.pop('extends'))
+        params = {**(base.get('params') or {}), **(scenario.get('params') or {})}
+        scenario = {**base, **scenario, 'params': params}
     for key in ('name', 'processes', 'driver'):
         if key not in scenario:
             raise ValueError(f'{path}: {key}가 없다')
