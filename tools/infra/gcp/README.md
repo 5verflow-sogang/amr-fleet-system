@@ -81,8 +81,58 @@ terraform output                          # 2번에 넣을 값
 
 ### 3. 실행
 
-Actions → Fleet Regression Test → Run workflow. `ref`에 브랜치나 `refs/pull/<번호>/head`를 넣는다.
+**가장 쉬운 방법: 로컬 하네스 명령에서 `docker_run.sh`를 `gcp_run.sh`로 바꾼다.** 인자가 같다. `gh`(`gh auth login`)만 있으면 된다.
 
+```bash
+# 로컬
+tools/harness/docker_run.sh loc_basic -n 10
+# GCP (지금 브랜치의 PR 코드로 돈다. push한 데까지)
+tools/harness/gcp_run.sh loc_basic -n 10
+
+# 시나리오 값·라벨·새 컨테이너·빌드 패키지도 로컬과 같다
+HARNESS_FRESH=1 HARNESS_PACKAGES="amr_bringup amr_nav2_plugins" \
+  tools/harness/gcp_run.sh nav_compare -n 10 --set controller=teb --set scenario=obstacle --label teb_obstacle
+
+# Fleet 장애도 --set으로
+tools/harness/gcp_run.sh fleet_fake -n 10 --set delay_ms=200 --ref dev
+```
+
+| 옵션 | 뜻 |
+| --- | --- |
+| (없음) | 지금 브랜치의 열린 PR 코드로 돈다. PR이 없으면 멈추고 안내한다 |
+| `--pr 145` / `--ref dev` | 다른 PR이나 브랜치 코드로 |
+| `--watch` | 끝날 때까지 진행을 보여 준다. 없으면 실행 링크만 찍고 끝난다 |
+| `--fresh`, `--packages a,b` | `HARNESS_FRESH=1`, `HARNESS_PACKAGES`와 같다 |
+
+`gcp_run.sh`는 아래 워크플로 입력으로 바꿔 `gh workflow run`을 부를 뿐이다. 브라우저에서는 Actions → Fleet Regression Test → Run workflow에 같은 값을 넣는다. 저장소 관리자면 누구나 돌릴 수 있다.
+
+| 입력 | 기본값 | 설명 |
+| --- | --- | --- |
+| `ref` | `dev` | 돌릴 코드. **포크 브랜치는 PR을 열고 `refs/pull/<번호>/head`** (머지 전 시나리오도 이렇게 돌린다) |
+| `scenario` | `fleet_fake` | `tools/harness/scenarios/<이름>.yaml` |
+| `repeats` | `3` | 1~15. 제한 시간 240분 안에 들게 정한다 |
+| `delay_ms`, `loss_pct` | `0` | 통신 장애. 시나리오 `params`에 `delay_ms`가 있을 때만 넘기고, 없는 시나리오에 0이 아닌 값을 넣으면 시작하지 않는다 |
+| `kill_robot`, `kill_robot_at_s` | `none`, `-1` | 로봇 장애. 시나리오에 `kill_robot`이 있을 때만 |
+| `label` | (비움) | 요약·`index.csv`·결과 경로에서 조건을 구분하는 이름. 비우면 `d<지연>_l<손실>[_kill_<로봇>]`, 장애 없는 시나리오는 `default`. `params`로 조건을 바꾸면 직접 정해야 한다 |
+| `params` | (비움) | 시나리오 값을 `이름=값`으로, 여러 개면 공백으로 나눈다. 시나리오 `params`에 없는 이름(오타)은 거부한다. 값에는 공백·따옴표·`$`를 못 쓴다 |
+| `fresh` | 끔 | 반복마다 새 컨테이너 (`HARNESS_FRESH=1`). Nav2 시나리오를 여러 번 돌리면 켠다 (#138) |
+
+`params`의 특별한 이름은 `packages=a,b` 하나다. 시나리오 값이 아니라 컨테이너에서 빌드할 패키지(`docker_run.sh`의 `HARNESS_PACKAGES`)로 넘긴다.
+
+예시
+
+| 하려는 것 | 입력 |
+| --- | --- |
+| 러너만 빨리 확인 (약 8분) | `repeats=1`, `params=duration_s=120`, `label=smoke` |
+| Fleet 지연 200 ms × 10회 | `repeats=10`, `delay_ms=200` (라벨 `d200_l0`) |
+| 위치추정 KPI (RTF 1.0) | `scenario=loc_basic`, `repeats=10` |
+| DWA·TEB 비교 (PR #145) | `ref=refs/pull/145/head`, `scenario=nav_compare`, `params=controller=teb scenario=obstacle packages=amr_bringup,amr_nav2_plugins`, `label=teb_obstacle`, `fresh` 켬 |
+
+진행 상황은 `gh run list -R 5verflow-sogang/amr-fleet-system --workflow fleet-test.yml`로 본다.
+
+- 러너는 동시에 1대다. 앞 실행이 끝날 때까지 대기열에 선다. 10회면 시나리오에 따라 1~2시간 걸리므로 긴 실행은 팀 채널에 미리 알린다.
+- 카메라가 필요한 측정(도킹 ArUco, YOLO FPS)은 GCP에 맞지 않는다. CPU 렌더링이라 카메라를 켜면 RTF가 0.37로 떨어진다(명세서 11-3절).
+- 끝나면 요약이 실행 화면 Summary와 Discord 실험 결과 채널로 온다.
 - 포크 PR의 `pull_request` 이벤트는 GCP 로그인 토큰을 받지 못해 PR 라벨로 자동 실행하지 않는다.
 - 결과는 `gs://amr-fleet-results/runs/<시나리오>-<라벨>/<날짜>_<실행 번호>/`: `rosbag/`, `fleet_latency.csv`, `response_time.csv`, `assignments.csv`, `tasks.json`, `meta.json`(`fault.direction`, `observation_cutoff` 포함), 각 노드 로그.
 
