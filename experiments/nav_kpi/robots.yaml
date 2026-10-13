@@ -1,0 +1,4 @@
+# Nav KPI 시나리오의 로봇 1대 (system.launch.py robots_file). 웨이포인트 투어가 이 스폰 자세에서 시작한다
+# (waypoints.yaml 첫 점, 위치추정 하네스 loc_basic과 같은 자리).
+robots:
+  amr_01: [0.0, 1.5, 0.0]

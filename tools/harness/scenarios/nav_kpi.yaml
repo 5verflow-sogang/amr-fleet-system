@@ -1,0 +1,43 @@
+# 경로 계획·추종 KPI (민지 측정, 이진 판정, 4주차 민지 작업 2). 로봇 1대, 지도 v1 0.025 m, EKF+AMCL, Nav2(DWA).
+# 웨이포인트 50개 투어(= 출발·목표 50쌍, experiments/nav_kpi/waypoints.yaml)를 한 실행에 돈다.
+#   HARNESS_PACKAGES="amr_bringup amr_nav2_plugins" tools/harness/docker_run.sh nav_kpi -n 1
+# 결과: nav_pairs.csv(쌍마다 계획·주행·예측 오차), replan.csv, cte.csv, nav_kpi.json (experiments/nav_kpi/README.md)
+name: nav_kpi
+num_robots: 1
+use_sim_time: true
+seed_base: 1
+# 투어 약 480 m. 0.5 m/s면 20분 남짓 + 기동
+timeout_s: 3600
+params:
+  # 앞에서부터 이만큼의 쌍만 (0 = 50쌍 전부). 스모크는 --set pairs=3
+  pairs: "0"
+  cruise_mps: "0.5"
+  curve_kappa: "0.2"
+processes:
+  - name: system
+    # 로봇 1대 + 위치추정 + Nav2만 (Fleet·BT·구역 클라이언트 끔: Nav2가 바로 cmd_vel을 낸다, amr_bringup README)
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:=1 gui:=false enable_camera:=false
+      fleet:=false bt:=false nav2:=true seed:={seed} robots_file:=/repo/experiments/nav_kpi/robots.yaml
+    ready_topic: /amr_01/odometry/filtered
+    # 시뮬레이터 + 위치추정 + Nav2 기동. ready_cmds도 이 시간 안에
+    ready_timeout_s: 300
+    ready_cmds:
+      - ros2 lifecycle get /map_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/amcl | grep -q '^active'
+      - ros2 lifecycle get /amr_01/planner_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/controller_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/bt_navigator | grep -q '^active'
+    settle_s: 5
+driver:
+  mode: command
+  use_sim_time: true
+  # 실제 시간. runner timeout_s보다 짧게 (drive.py command 모드 설명)
+  timeout_s: 3500
+  cmd: >-
+    python3 /repo/experiments/nav_kpi/nav_kpi.py --out-dir {run_dir}/nav_kpi --pairs {pairs}
+    --cruise-mps {cruise_mps} --curve-kappa {curve_kappa}
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
+  - pkill -9 -f "[n]av_kpi.py" || true
