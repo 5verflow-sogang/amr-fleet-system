@@ -64,6 +64,8 @@ def test_zone_client_uses_prefixed_frame_and_server_zones():
     items = robot_stack(Options(nav2=True, zone_client=True, zones_file='/z.yaml'), 0, 'amr_02', POSE, MAP_POSE)
     zone = args(items, 'zone_client.launch.py')
     assert (zone['robot_id'], zone['base_frame'], zone['zones_file']) == ('amr_02', 'amr_02/base_footprint', '/z.yaml')
+    # zones.yaml은 world 좌표라 TF map ← world로 바꿔 쓴다
+    assert zone['zones_frame'] == 'world'
 
 
 def test_bt_follows_nav2_and_docking():
