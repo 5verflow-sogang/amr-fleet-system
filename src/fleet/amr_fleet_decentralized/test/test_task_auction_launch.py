@@ -101,8 +101,11 @@ class TestTaskAuctionLive(unittest.TestCase):
 
     def make_auction(self, auctioneer_id: str, auction_id: int, task_id: str,
                       pickup_xy=(10.0, 0.0), bid_window_s: int = 1):
+        # header.stamp는 여기서 안 찍는다 - 호출 쪽이 재전송 루프에 들어가기 직전(처음 실제
+        # publish 바로 전)에 찍는다. 여기서 찍으면 그 뒤로 몇 초씩 같은 메시지 객체를 그대로
+        # 반복 publish하는 호출부(마감 판정과는 무관하지만, stamp는 "언제 보냈는지"를
+        # 뜻해야 한다) 전부에서 stamp가 생성 시점에 멈춰 버린다 (#155·#171 CI).
         auction = TaskAuction()
-        auction.header.stamp = self.node.get_clock().now().to_msg()
         auction.auctioneer_id = auctioneer_id
         auction.auction_id = auction_id
         auction.task.task_id = task_id
@@ -148,6 +151,7 @@ class TestTaskAuctionLive(unittest.TestCase):
         # 입찰을 미뤘다가(_pending_bids) 다시 보는 경우, 반복 실행 중 CPU 경쟁으로
         # 재시도가 늦어져도 마감을 못 맞추는 일이 없게 한다(10/10 반복 실행 검증, #109).
         auction = self.make_auction('amr_01', auction_id=1, task_id='task_1', bid_window_s=3)
+        auction.header.stamp = self.node.get_clock().now().to_msg()  # 처음 publish 바로 전에 찍는다
 
         end = time.monotonic() + 3.0
         while time.monotonic() < end and not bids:
@@ -268,7 +272,13 @@ class TestTaskAuctionLive(unittest.TestCase):
             amr_01_alive()
             self.publish_robot_state(state_pub, 'amr_02', x=9.0, y=0.0, battery=80.0)
 
-        auction = self.make_auction('amr_01', auction_id=100, task_id='task_reclaim', bid_window_s=2)
+        # bid_window를 5초로 넉넉히 둔다 - 경매인(amr_01)의 마감 판정은 amr_01이 이 공고를
+        # 처음 받은 자기 시각(announce_time) 기준이라, amr_02가 공고를 받고 입찰을 보내
+        # amr_01이 그 입찰을 받기까지의 왕복이 CI에서 CPU 경쟁으로 늘어지면 2초로는
+        # 간헐적으로 못 맞췄다(#155·#171) - amr_02가 입찰만 하고 정작 amr_01 자기
+        # 입찰로 낙찰되는 증상이었다. 기본값(yaml)은 그대로 두고 이 테스트만 넉넉히 둔다.
+        auction = self.make_auction('amr_01', auction_id=100, task_id='task_reclaim', bid_window_s=5)
+        auction.header.stamp = self.node.get_clock().now().to_msg()  # 처음 publish 바로 전에 찍는다
 
         def accepted_by_amr_02():
             both_alive()
@@ -319,6 +329,7 @@ class TestTaskAuctionLive(unittest.TestCase):
         # 절대 경로로 보낸 공고에는 반응하지 않아야 한다(상대 이름만 구독하므로).
         absolute_auction = self.make_auction(
             'amr_relay_probe', auction_id=1, task_id='absolute_probe')
+        absolute_auction.header.stamp = self.node.get_clock().now().to_msg()
         end = time.monotonic() + 2.0
         while time.monotonic() < end:
             refresh_state()
@@ -331,6 +342,7 @@ class TestTaskAuctionLive(unittest.TestCase):
         # 상대 이름(자기 네임스페이스 하위, 중계본과 같은 경로)으로 보낸 공고에는 반응해야 한다.
         relative_auction = self.make_auction(
             'amr_relay_probe', auction_id=2, task_id='relay_task')
+        relative_auction.header.stamp = self.node.get_clock().now().to_msg()
 
         def got_relayed_bid():
             refresh_state()
@@ -362,6 +374,7 @@ class TestTaskAuctionLive(unittest.TestCase):
         # (bid_window를 5초로 넉넉히 둬 아래 지연 뒤에도 마감 전이게 한다).
         auction = self.make_auction(
             'amr_relay_probe', auction_id=1, task_id='deferred_task', bid_window_s=5)
+        auction.header.stamp = self.node.get_clock().now().to_msg()
         end = time.monotonic() + 1.5
         while time.monotonic() < end:
             auction_pub.publish(auction)
