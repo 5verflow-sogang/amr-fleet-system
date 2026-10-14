@@ -127,9 +127,36 @@ def nav_metrics(run_dir: Path) -> dict[str, float]:
     return out
 
 
+def kidnap_metrics(run_dir: Path) -> dict[str, float]:
+    """kidnap.json(amr_localization kidnap_trial) → 성공·감지·복구 (0/1 지표의 평균이 성공률이다).
+
+    시험 자체가 안 된 실행(순간 이동 실패 등, error)은 지표를 내지 않는다. 복구 시간은 복구한 실행만.
+    """
+    out = {}
+    for path in sorted(run_dir.glob('**/kidnap.json')):
+        k = json.loads(path.read_text(encoding='utf-8'))
+        if k.get('error') or 'success' not in k:
+            continue
+        # 순간 이동 순간에 이미 복구 중이던 실행은 감지를 잴 수 없어 분모에서 뺀다 (kidnap.valid로 몇 개인지 남김)
+        out['kidnap.valid'] = float(k.get('valid', True))
+        if not k.get('valid', True):
+            continue
+        out['kidnap.success'] = float(k['success'])
+        out['kidnap.late_recovered'] = float(k.get('late_recover_s') is not None)
+        out['kidnap.detected'] = float(k['detected'])
+        out['kidnap.recovered'] = float(k['recovered'])
+        out['kidnap.false_alarms'] = float(k.get('false_alarms', 0))
+        if k.get('detect_s') is not None:
+            out['kidnap.detect_s'] = float(k['detect_s'])
+        if k.get('recover_s') is not None:
+            out['kidnap.recover_s'] = float(k['recover_s'])
+    return out
+
+
 def run_metrics(run_dir: Path) -> dict[str, float]:
     meta = load_meta(run_dir)
-    out = {**localization_metrics(run_dir), **fleet_metrics(run_dir), **nav_metrics(run_dir)}
+    out = {**localization_metrics(run_dir), **fleet_metrics(run_dir), **nav_metrics(run_dir),
+           **kidnap_metrics(run_dir)}
     rtf = meta.get('real_time_factor')
     if isinstance(rtf, (int, float)):
         out['run.real_time_factor'] = float(rtf)

@@ -136,13 +136,48 @@ def leftover_processes() -> list[str]:
             and not LEFTOVER_IGNORE_RE.search(args)]
 
 
+CLI_TIMEOUT_S = 30.0
+
+
+def run_cli(cmd, timeout_s: float = CLI_TIMEOUT_S) -> tuple[Optional[int], str]:
+    """준비 확인용 명령을 자기 프로세스 그룹으로 돌린다. (종료 코드, stdout). 시간 초과면 (None, '').
+
+    shell=True로 띄운 명령이 멈추면 subprocess.run의 timeout은 셸만 죽이고 그 아래 ros2 CLI는 남아 재시도마다 쌓인다
+    (#148 하연 리뷰). 그래서 새 세션으로 띄우고 시간 초과면 그룹째 죽인다.
+    """
+    shell = isinstance(cmd, str)
+    proc = subprocess.Popen(cmd, shell=shell, executable='/bin/bash' if shell else None, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=timeout_s)
+        return proc.returncode, out
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+        return None, ''
+
+
+def _warn_cli_timeout(what: str, warned: list) -> None:
+    # CLI가 DDS 발견을 못 끝내 멈춘 것이다. 실행 전체 시간 초과로 번지지 않게 "아직 준비 안 됨"으로 보고 다시 확인한다.
+    # 같은 대기에서 한 번만 알린다
+    if not warned:
+        print(f'  경고: 준비 확인 명령이 {CLI_TIMEOUT_S:.0f}s 응답 없음, 다시 확인한다: {what}', flush=True)
+        warned.append(True)
+
+
 def wait_topic(topic: str, timeout_s: float, proc: Optional[Proc] = None) -> float:
     """토픽이 보일 때까지 기다린다. 걸린 시간(s)을 돌려준다. 기다리는 동안 proc이 끝나면 바로 실패한다."""
     t0 = time.monotonic()
+    warned = []
     while time.monotonic() - t0 < timeout_s:
         if proc is not None and proc.popen.poll() is not None:
             raise RunError('error', f'{proc.name}이(가) 끝남 (로그: {proc.log})', startup=True)
-        out = subprocess.run(['ros2', 'topic', 'list'], capture_output=True, text=True, timeout=30).stdout
+        code, out = run_cli(['ros2', 'topic', 'list'])
+        if code is None:
+            _warn_cli_timeout('ros2 topic list', warned)
         if topic in out.split():
             return time.monotonic() - t0
         time.sleep(1.0)
@@ -152,9 +187,13 @@ def wait_topic(topic: str, timeout_s: float, proc: Optional[Proc] = None) -> flo
 def wait_cmd(cmd: str, timeout_s: float) -> float:
     """명령이 성공(종료 코드 0)할 때까지 다시 실행한다. 예: lifecycle 노드가 active인지 확인."""
     t0 = time.monotonic()
+    warned = []
     while time.monotonic() - t0 < timeout_s:
-        if subprocess.run(cmd, shell=True, executable='/bin/bash', capture_output=True, timeout=30).returncode == 0:
+        code, _ = run_cli(cmd)
+        if code == 0:
             return time.monotonic() - t0
+        if code is None:
+            _warn_cli_timeout(cmd, warned)
         time.sleep(1.0)
     raise RunError('error', f'준비 확인 실패: {cmd} ({timeout_s:.0f}s)', startup=True)
 

@@ -1,0 +1,68 @@
+# Kidnapped Robot 복구 성공률 (민지, 작업 8). 로봇 1대, 창고 월드, 지도 v1 (0.05 m).
+# 정지 5초 → 직진 3 m → 정지 → (멈춘 지 2초 뒤) Gazebo에서 순간 이동 → 복구 노드가 감지·복구 → 판정.
+# 판정 기준은 docs/algorithms/localization.md 4-4절: 감지 5초, 감지 뒤 60초 안에 진행 0.3 m·옆 0.1 m·방향 0.1 rad를 3초 유지.
+#
+#   tools/harness/docker_run.sh kidnap -n 20 --label near
+#   tools/harness/docker_run.sh kidnap -n 20 --label far --set mode=far
+#
+# 같은 seed면 같은 곳으로 옮긴다(kidnap/trial.py pick_target). 요약의 kidnap.success 평균이 성공률이다.
+name: kidnap
+num_robots: 1
+use_sim_time: true
+seed_base: 1
+timeout_s: 400
+params:
+  # near: 같은 통로 안 1~2.5 m·±0.6 rad / far: 다른 통로(B–C) 무작위 위치·방향
+  mode: near
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1.yaml
+  # 지도↔월드 정합값(#98, v1 0.05 m). 옆 방향 기준(0.1 m)이 작아 지도 밀림(약 6 cm)을 빼고 잰다
+  map_origin: "[-0.0571, 1.5167, 0.00013]"
+  # 스폰 자세 world (0, 1.5, 0)을 위 원점 기준 map 좌표로 바꾼 AMCL 초기 위치
+  initial_x: "0.0571"
+  initial_y: "-0.0167"
+processes:
+  - name: sim
+    cmd: >-
+      ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false publish_odom_tf:=false enable_camera:=false
+      dynamic_obstacles:=false
+    ready_topic: /amr_01/scan_raw
+  - name: odometry
+    cmd: ros2 launch amr_odometry odometry.launch.py encoder_seed:={seed}
+  - name: sensor_filters
+    cmd: ros2 launch amr_odometry sensor_filters.launch.py
+    settle_s: 3
+  - name: localization
+    cmd: >-
+      ros2 launch amr_localization localization.launch.py map:={map}
+      initial_x:={initial_x} initial_y:={initial_y}
+    ready_topic: /amr_01/odometry/filtered
+    ready_cmds:
+      - ros2 lifecycle get /map_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/amcl | grep -q '^active'
+    settle_s: 5
+  # 복구 노드. 이 시나리오에는 twist_mux·안전 노드가 없어 회전 명령을 cmd_vel로 바로 낸다
+  - name: kidnap_recovery
+    cmd: >-
+      ros2 run amr_localization kidnap_recovery --ros-args -r __ns:=/amr_01 -p use_sim_time:=true
+      -p cmd_vel_topic:=/amr_01/cmd_vel -p events_file:={run_dir}/kidnap/events.csv
+    ready_topic: /amr_01/kidnap_recovery/state
+  - name: kidnap_trial
+    cmd: >-
+      ros2 run amr_localization kidnap_trial --ros-args -r __ns:=/amr_01 -p use_sim_time:=true
+      -p mode:={mode} -p seed:={seed} -p "map_origin_in_world:={map_origin}" -p output_dir:={run_dir}/kidnap
+    stop_first: true
+    wait_files: ["{run_dir}/kidnap/kidnap.json"]
+driver:
+  mode: segments
+  topic: /amr_01/cmd_vel
+  use_sim_time: true
+  segments:
+    - [0.0, 0.0, 5.0]
+    - [0.5, 0.0, 6.0]
+    - [0.0, 0.0, 3.0]
+  # 순간 이동(정지 2초 뒤) + 감지 5초 + 복구 창 60초 + 유지 3초 + 늦은 복구 30초(kidnap_trial late_s)를 덮는다.
+  # 이 동안 주행 명령은 내지 않는다. 짧으면 시험 노드가 판정 전에 멈춘다
+  then_wait_s: 115.0
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
