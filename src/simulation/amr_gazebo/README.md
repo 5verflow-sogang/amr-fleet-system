@@ -8,7 +8,7 @@
 
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
-| Publish | `/clock` | `rosgraph_msgs/msg/Clock` | 시뮬레이션 시간. 다른 노드는 `use_sim_time:=true`로 쓴다 |
+| Publish | `/clock` | `rosgraph_msgs/msg/Clock` | 시뮬레이션 시간. 다른 노드는 `use_sim_time:=true`로 쓴다. Gazebo 시계(물리 스텝마다, 약 1000 Hz)를 `/clock_raw`로 받아 `clock_throttle`이 `clock_rate_hz`(기본 200 Hz)로 줄여 낸다 - 노드마다 1000 Hz를 받으면 5대에서 16코어를 다 썼다 |
 | Publish | `/<ns>/diff_drive/odom` | `nav_msgs/msg/Odometry` | DiffDrive 이상적 휠 오도메트리 (노이즈·공분산 없음), 50 Hz. 로봇 판단용 `/<ns>/odom`은 `amr_odometry`가 낸다 |
 | Publish | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 바퀴 조인트 각도 |
 | Publish | `/<ns>/ground_truth/odom` | `nav_msgs/msg/Odometry` | **GT(진짜 위치·속도)**, 기본 100 Hz (`gt_rate`). `frame_id: world`(Gazebo 월드 원점 = 창고 중심), `child_frame_id: <ns>/base_footprint`. TF로는 내보내지 않음. **평가 전용**(RMSE, 제동 거리) — 로봇 판단에 쓰지 않는다. 아래 "GT 사용 시 주의" 참고 |
