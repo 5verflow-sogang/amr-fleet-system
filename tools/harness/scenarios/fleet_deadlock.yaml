@@ -41,7 +41,7 @@ driver:
   mode: command
   use_sim_time: true
   timeout_s: 1100
-  cmd: python3 /repo/experiments/fleet_deadlock/drive.py --out {run_dir}/deadlock_result.json --timeout 900 --origin "{map_origin}"
+  cmd: python3 /repo/experiments/fleet_deadlock/drive.py --out {run_dir}/deadlock_result.json --timeout 900
 postprocess:
   - name: fleet_metrics
     cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots 2

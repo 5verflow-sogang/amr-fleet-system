@@ -32,6 +32,8 @@ from nav_msgs.msg import Odometry
 from rclpy.action import ActionClient
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
+from rclpy.time import Time
+from tf2_ros import Buffer, TransformListener
 
 # 경유점 (world x, y, yaw). 통로 중심선 y = -1.1, 두 구역 경계 x = -1.9 (zones_split.yaml)
 ROUTES = {
@@ -62,13 +64,32 @@ def pose(x, y, yaw):
     return p
 
 
+def origin_from_tf(node, timeout_s=15.0):
+    """TF world → map(system.launch의 world_to_map 정적 TF)에서 map 원점의 world 자세 [x, y, yaw]를 읽는다.
+    원점 값을 시나리오·스크립트에 따로 적지 않고 launch 한 곳(map_origin_in_world 인자)만 따르게 한다."""
+    buffer = Buffer()
+    TransformListener(buffer, node)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.1)
+        try:
+            t = buffer.lookup_transform('world', 'map', Time()).transform
+        except Exception:  # noqa: BLE001 - 아직 정적 TF를 못 받음
+            continue
+        q = t.rotation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        return [t.translation.x, t.translation.y, yaw]
+    raise RuntimeError('TF world → map이 없다 (system.launch localization:=true가 낸다). --origin으로 직접 줄 수 있다')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--out', required=True)
     ap.add_argument('--timeout', type=float, default=600.0, help='두 목표 전체 제한 (실제 시간 s)')
-    ap.add_argument('--origin', default='[-0.0562, 1.5317, 0.00009]', help='map_origin_in_world (system.launch 기본)')
+    ap.add_argument('--origin', default=None,
+                    help='map_origin_in_world [x, y, yaw]. 주지 않으면 system.launch가 내는 TF world → map에서 읽는다')
     args = ap.parse_args()
-    origin = [float(v) for v in args.origin.strip('[]').split(',')]
+    origin = [float(v) for v in args.origin.strip('[]').split(',')] if args.origin else None
 
     rclpy.init()
     node = rclpy.create_node('deadlock_drive', parameter_overrides=[Parameter('use_sim_time', value=True)])
@@ -107,6 +128,9 @@ def main():
         while node.get_clock().now().nanoseconds == 0:  # /clock 대기
             rclpy.spin_once(node, timeout_sec=0.1)
 
+        if origin is None:
+            origin = origin_from_tf(node)
+        print(f'map_origin_in_world = {origin}', flush=True)
         t0 = sim_now()
         # 로봇마다 남은 경유점, 지금 future(목표 핸들 또는 결과), 결과
         todo = {r: [world_to_map(x, y, yaw, origin) for x, y, yaw in ROUTES[r]] for r in robots}
