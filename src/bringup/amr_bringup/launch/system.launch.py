@@ -71,7 +71,7 @@ def _system(context):
         zone_client=flag('zone_client'), tracking=flag('tracking'), safety=flag('safety'),
         detection=flag('detection'), docking=flag('docking'), enable_camera=flag('enable_camera'),
         payload_mass=arg('payload_mass'), seed=seed, map=arg('map'), use_imu=arg('use_imu'),
-        zones_file=os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', 'zones.yaml'))
+        zones_file=arg('zones_file'))
     opt.validate()
 
     actions = [_launch('amr_gazebo', 'world.launch.py', gui=arg('gui'))]
@@ -100,7 +100,8 @@ def _system(context):
             'amr_fleet_manager', 'fleet_manager.launch.py',
             algorithm=arg('algorithm'), assignments_csv=arg('assignments_csv'), epoch_file=arg('epoch_file'),
             kill_at_s=arg('kill_at_s'), restart_after_s=arg('restart_after_s'),
-            fault_events_file=arg('fault_events_file'), use_sim_time='true'))
+            fault_events_file=arg('fault_events_file'), zones_file=arg('zones_file'),
+            deadlock_strategy=arg('deadlock_strategy'), use_sim_time='true'))
         injector_config = os.path.join(
             get_package_share_directory('amr_fault_injector'), 'config', 'fault_injector.yaml')
         actions.append(Node(
@@ -161,6 +162,10 @@ def generate_launch_description():
         ('kill_at_s', '-1', '서버 강제종료 시각 (launch 시작 기준, 실제 시간). 음수면 끔'),
         ('restart_after_s', '-1', '강제종료 후 재시작까지'),
         ('fault_events_file', '', '강제종료·재시작 시각 기록'),
+        # 서버와 로봇(구역 클라이언트)이 같은 파일을 쓴다. 교착 유도 실험은 구역을 나눈 파일을 준다
+        ('zones_file', os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', 'zones.yaml'),
+         '구역 목록 (world 좌표)'),
+        ('deadlock_strategy', 'revoke', '교착 해소 전략: revoke / avoid'),
     ]
     return LaunchDescription(
         [DeclareLaunchArgument(name, default_value=default, description=desc) for name, default, desc in args]

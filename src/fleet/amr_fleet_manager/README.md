@@ -181,7 +181,7 @@
 | `task_table_period_s` | `1.0` | 작업표 방송 주기 (s) |
 | `traffic.lease_s` | `5.0` | 구역 허가 유효 시간 (노드 시계, s) |
 | `traffic.release_timeout_s` | `30.0` | 점유 로봇이 이 시간 동안 요청·반납이 없으면 구역을 푼다 (노드 시계, s) |
-| `traffic.deadlock_strategy` | `revoke` | 교착 해소 전략. `revoke`(순환이 생기면 우선순위 낮은 로봇 허가 회수) / `avoid`(순환을 닫는 대기 요청 거부). [amr_fleet_core README](../amr_fleet_core/README.md) '교착 탐지' |
+| `traffic.deadlock_strategy` | `revoke` | 교착 해소 전략. `revoke`(순환이 생기면 우선순위 낮은 로봇 허가 회수) / `avoid`(순환을 닫는 대기 요청 거부). [amr_fleet_core README](../amr_fleet_core/README.md) '교착 탐지'. launch 인자 `deadlock_strategy` |
 | `traffic.zones_file` | `''` | 구역 목록 파일. 비우면 모든 구역 요청을 거부. launch 인자 `zones_file` (기본 `config/zones.yaml`) |
 | `tick_s` | `0.05` | 재전송·구역 만료 확인 주기 (s) |
 | `epoch_file` | `''` | 서버 재시작 번호 파일. launch 인자 `epoch_file` (기본 `/tmp/amr_fleet_manager/epoch`) |

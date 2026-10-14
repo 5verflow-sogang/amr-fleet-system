@@ -1,0 +1,16 @@
+# 교착 유도 실험용 구역 (experiments/fleet_deadlock). config/zones.yaml과 같고, 좁은 통로 ②만 가운데(x -1.9)에서
+# 두 구역으로 나눈다. 양 끝에서 마주 들어온 두 로봇이 각자 한쪽을 쥐고 다른 쪽을 기다리면 순환 대기(교착)가 된다.
+# 좌표는 world (config/zones.yaml 머리말).
+zones:
+  - id: narrow_01
+    capacity: 1
+    area_world: [-5.0, -4.4, -2.6, -1.4]
+    description: 좁은 통로 ① rack_b3–rack_b4 사이, 폭 0.6 m 길이 1.2 m
+  - id: narrow_02w
+    capacity: 1
+    area_world: [-4.4, -1.9, -1.4, -0.8]
+    description: 좁은 통로 ② 서쪽 절반 (2.5 m)
+  - id: narrow_02e
+    capacity: 1
+    area_world: [-1.9, 0.6, -1.4, -0.8]
+    description: 좁은 통로 ② 동쪽 절반 (2.5 m)
