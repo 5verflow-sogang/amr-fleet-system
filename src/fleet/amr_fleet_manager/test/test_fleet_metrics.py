@@ -194,8 +194,9 @@ def request(task_id):
     return NS(task_id=task_id)
 
 
-def status(task_id, robot, state, phase='', distance=0.0):
-    return NS(task_id=task_id, robot_id=robot, state=state, phase=phase, distance_traveled=distance)
+def status(task_id, robot, state, phase='', distance=0.0, error_code=0):
+    return NS(task_id=task_id, robot_id=robot, state=state, phase=phase, distance_traveled=distance,
+              error=NS(code=error_code))
 
 
 COMPLETED, FAILED, IN_PROGRESS = 2, 3, 1
@@ -222,9 +223,17 @@ def test_task_outcomes():
     rows = task_outcomes(kill_scenario())
     assert [r[0] for r in rows] == ['t1', 't2', 't3']
     # 작업 시간 = 요청 → 끝 보고, 이동 거리 = 끝 보고의 distance_traveled (최적성 지표)
-    assert rows[0][3:] == ['amr_01', 'COMPLETED', '8.000000', '7.500', '12.500']
-    assert rows[1][2:] == ['11.000000', 'amr_01 amr_02', 'COMPLETED', '40.000000', '29.500', '30.000']
-    assert rows[2][2:] == ['', '', '', '', '', '']
+    assert rows[0][3:] == ['amr_01', 'COMPLETED', '8.000000', '7.500', '12.500', '']
+    assert rows[1][2:] == ['11.000000', 'amr_01 amr_02', 'COMPLETED', '40.000000', '29.500', '30.000', '']
+    assert rows[2][2:] == ['', '', '', '', '', '', '']
+
+
+def test_task_outcome_failed_keeps_error_code():
+    # 끝내 FAILED면 그 보고의 ErrorInfo.code (#173: 203 위치를 잃음). 하네스 요약이 원인별로 센다 (#180)
+    records = [rec('/fleet/task_assignments', 1.0, assignment(1, 'amr_01', 1, 't1')),
+               rec('/fleet/task_status', 5.0, status('t1', 'amr_01', FAILED, error_code=203))]
+    row = task_outcomes(records)[0]
+    assert (row[4], row[-1]) == ('FAILED', '203')
 
 
 def test_task_outcome_failed_then_retried_is_not_final():

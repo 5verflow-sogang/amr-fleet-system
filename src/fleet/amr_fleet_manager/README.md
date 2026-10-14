@@ -260,7 +260,7 @@ ros2 run amr_fleet_manager fleet_metrics /tmp/run1/rosbag --out /tmp/run1 --dela
 | --- | --- |
 | `fleet_latency.csv` | 원본 메시지 1건 × 로봇 1대마다 1행 (`topic, robot, key, send_time, recv_time, latency_ms, delivered`) |
 | `response_time.csv` | 할당 명령 1건마다 1행 (명세서 컬럼 + `robot, task_id, latency_sim_ms, assignment_id, ack_time, ack_rtt_ms, resends`) |
-| `task_outcomes.csv` | 작업 1건마다 1행 (`task_id, request_time, first_assign_time, robots, final_state, end_time`). `robots`는 맡았던 로봇 순서(공백 구분), `final_state`는 마지막 할당 뒤 그 로봇의 끝 보고(`COMPLETED`·`FAILED`), 없으면 빈칸 |
+| `task_outcomes.csv` | 작업 1건마다 1행 (`task_id, request_time, first_assign_time, robots, final_state, end_time, task_time_s, distance_m, error_code`). `robots`는 맡았던 로봇 순서(공백 구분), `final_state`는 마지막 할당 뒤 그 로봇의 끝 보고(`COMPLETED`·`FAILED`), 없으면 빈칸. `error_code`는 `FAILED`일 때 그 보고의 `ErrorInfo.code`(예: 203 위치, 501 작업 시간 초과) |
 | `recovery.csv` | `fault_events.csv`에 `robot_kill:<로봇>`이 있을 때만. 강제종료 1건 × 그 로봇이 하던 작업 1건마다 1행 (`robot, kill_time, task_id, reassign_time, reassigned_robot, recovery_s, completed`). `recovery_s` = 다른 로봇에 다시 할당된 시각 − 죽은 시각. 놀던 로봇이면 `task_id`가 빈 행 1개 |
 | `meta.json` | `observation_cutoff` (`end, delay_ms, grace_s, resend_grace_s, cutoff, ack_cutoff, start`). 다른 키는 그대로 둔다 |
 

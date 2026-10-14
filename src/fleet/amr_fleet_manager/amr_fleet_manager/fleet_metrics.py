@@ -71,7 +71,7 @@ ANGULAR_THRESHOLD = 0.05  # rad/s
 
 FLEET_LATENCY_HEADER = ['topic', 'robot', 'key', 'send_time', 'recv_time', 'latency_ms', 'delivered']
 TASK_OUTCOMES_HEADER = ['task_id', 'request_time', 'first_assign_time', 'robots', 'final_state', 'end_time',
-                        'task_time_s', 'distance_m']
+                        'task_time_s', 'distance_m', 'error_code']
 ZONE_WAITS_HEADER = ['robot', 'zone', 'request_id', 'request_time', 'grant_time', 'wait_s', 'outcome', 'release_time']
 STALLS_HEADER = ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s']
 RECOVERY_HEADER = ['robot', 'kill_time', 'task_id', 'reassign_time', 'reassigned_robot', 'recovery_s', 'completed']
@@ -284,25 +284,31 @@ def task_outcomes(records: Sequence[Record]) -> list[list]:
 
     final_state: 마지막 끝 보고(COMPLETED·FAILED)가 그 작업의 마지막 할당 뒤에 왔으면 그 상태, 아니면 빈칸
     (실행이 끝날 때 아직 하는 중이거나, FAILED 뒤 다시 할당됐거나, 맡은 로봇이 죽었다).
+    error_code: final_state가 FAILED일 때 그 보고의 ErrorInfo.code (amr_msgs, #173 대역: 203 위치, 501 작업 시간 초과,
+    502 충전 시간 초과 등). 하네스 요약이 실패 원인별로 센다(fleet.tasks_failed_*). FAILED가 아니면 빈칸.
     """
     requests, assigns, finishes = _task_events(records)
     # 끝 보고의 이동 거리 (TaskStatus.distance_traveled, #141)
     distance = {(r.msg.task_id, r.msg.robot_id, r.t): r.msg.distance_traveled
                 for r in records if r.topic == STATUS_TOPIC and r.msg.state in STATE_NAMES}
+    error = {(r.msg.task_id, r.msg.robot_id, r.t): getattr(getattr(r.msg, 'error', None), 'code', 0)
+             for r in records if r.topic == STATUS_TOPIC and r.msg.state in STATE_NAMES}
     rows = []
     for task_id in sorted(set(requests) | set(assigns), key=lambda t: (requests.get(t, math.inf), t)):
         series = assigns.get(task_id, [])
         last_assign = series[-1] if series else None
-        final = end = dist = None
+        final = end = dist = code = None
         for t, robot, state in finishes.get(task_id, []):
             if last_assign is not None and t >= last_assign[0] and robot == last_assign[1]:
                 final, end, dist = STATE_NAMES[state], t, distance.get((task_id, robot, t))
+                code = error.get((task_id, robot, t)) if final == 'FAILED' else None
                 break
         request = requests.get(task_id)
         task_time = None if end is None or request is None else end - request
         rows.append([task_id, _fmt(request), _fmt(series[0][0] if series else None),
                      ' '.join(robot for _, robot in series), final or '', _fmt(end),
-                     _fmt(task_time, 3), _fmt(None if dist is None else float(dist), 3)])
+                     _fmt(task_time, 3), _fmt(None if dist is None else float(dist), 3),
+                     '' if code is None else str(int(code))])
     return rows
 
 
