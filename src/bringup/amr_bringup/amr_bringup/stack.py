@@ -39,6 +39,9 @@ class Options:
     def validate(self) -> None:
         if self.nav2 and not self.localization:
             raise RuntimeError('nav2:=true는 map → odom TF를 내는 위치추정이 필요하다 (localization:=true)')
+        if self.docking and not self.nav2:
+            # nav2:=false면 BT 이동이 자리채움이라 로봇이 스테이션에 가지 않고 제자리에서 도킹을 시도한다 (마커판이 안 보여 904)
+            raise RuntimeError('docking:=true는 로봇이 스테이션까지 가야 해서 Nav2가 필요하다 (nav2:=true)')
         for name in ('detection', 'docking'):
             if getattr(self, name) and not self.enable_camera:
                 raise RuntimeError(f'{name}:=true는 카메라가 필요하다 (enable_camera:=true)')

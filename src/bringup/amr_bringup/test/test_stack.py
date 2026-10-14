@@ -94,7 +94,8 @@ def test_localization_off_uses_diffdrive_tf():
 @pytest.mark.parametrize('flags, message', [
     ({'nav2': True, 'localization': False}, 'localization'),
     ({'detection': True}, 'enable_camera'),
-    ({'docking': True}, 'enable_camera'),
+    ({'docking': True, 'enable_camera': True}, 'nav2'),
+    ({'docking': True, 'nav2': True}, 'enable_camera'),
 ])
 def test_invalid_options(flags, message):
     with pytest.raises(RuntimeError, match=message):
