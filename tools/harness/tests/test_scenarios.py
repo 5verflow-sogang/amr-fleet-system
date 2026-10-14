@@ -34,3 +34,11 @@ def test_kpi_scenarios_extend_loc_basic(name, origin):
     assert float(s['params']['initial_x']) == pytest.approx(0.0 - ox)
     assert float(s['params']['initial_y']) == pytest.approx(1.5 - oy)
     assert s['params']['dynamic_obstacles'] == base['params']['dynamic_obstacles']
+
+
+def test_config_patch_values_are_filled_from_params():
+    # 규모 곡선 B안: 10대면 120건·5초
+    sets = run.load_scenario('fleet_fake')['config_patch']['amr_fleet_manager/config/scenarios/basic.yaml']
+    params = {**run.load_scenario('fleet_fake')['params'], 'task_count': '120', 'task_interval_s': '5.0'}
+    assert run.render_patch(sets, params) == {'count': 120, 'interval_s': 5.0}
+    assert run.render_patch({'a.b': 3, 'c': 'plain'}, {}) == {'a.b': 3, 'c': 'plain'}
