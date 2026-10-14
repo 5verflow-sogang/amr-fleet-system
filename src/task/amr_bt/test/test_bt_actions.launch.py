@@ -227,7 +227,11 @@ class TestBtActions(unittest.TestCase):
 
     # 위치 복구가 failed인 동안도 MODE_ERROR·할당 거부, tracking으로 돌아오면 다시 받는다 (#148)
     def test_5_kidnap_failed_rejects_until_tracking(self):
-        self.zone_pub.publish(String(data='idle'))        # 앞 테스트의 zone failed 풀기
+        # 앞 테스트의 zone failed를 풀고 MODE_IDLE이 된 걸 본 뒤 kidnap failed를 보낸다.
+        # 바로 보내면 zone failed의 MODE_ERROR가 남아 있어 아래 할당이 TRAFFIC_REVOKED로 거부된다
+        self.zone_pub.publish(String(data='idle'))
+        self.assertTrue(self.wait_until(
+            lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_IDLE, 5.0))
         self.kidnap_pub.publish(String(data='failed'))
         self.assertTrue(self.wait_until(
             lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_ERROR, 5.0))
