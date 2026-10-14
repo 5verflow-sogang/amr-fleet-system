@@ -82,6 +82,9 @@ def main():
 
     def on_grant(robot):
         def cb(msg):
+            # 중계본(/<로봇>/fleet/zone_grants)에는 모든 로봇의 답이 온다 - 이 로봇 것만 남긴다
+            if msg.robot_id != robot:
+                return
             name = GRANT_NAMES.get(msg.grant, str(msg.grant))
             log = grants[robot]
             # 같은 답이 연장 요청마다 반복되므로 바뀔 때만 남긴다
