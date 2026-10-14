@@ -84,3 +84,13 @@ def cmd_vel_chain(zone_client: bool, safety: bool) -> dict:
         'zone_out': 'cmd_vel_zone_limited' if safety else 'cmd_vel',
         'safety_in': 'cmd_vel_zone_limited' if zone_client else 'cmd_vel_nav',
     }
+
+
+def world_to_map_tf_args(map_origin_in_world: Sequence[float]) -> list[str]:
+    """static_transform_publisher 인자: world → map (map 원점이 world의 어디인지).
+
+    zones.yaml처럼 world 좌표로 적은 설정을 map 좌표로 바꿀 때, 각자 원점 값을 복사하지 않고 이 TF를 조회하게 한다.
+    """
+    x, y, yaw = (float(v) for v in map_origin_in_world)
+    return ['--x', repr(x), '--y', repr(y), '--z', '0.0', '--yaw', repr(yaw),
+            '--frame-id', 'world', '--child-frame-id', 'map']

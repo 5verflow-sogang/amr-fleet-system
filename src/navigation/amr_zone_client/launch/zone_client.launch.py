@@ -31,6 +31,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_sim_time', default_value='false',
             description='서버 lease와 같은 시계로 비교하려면 시뮬레이션 시간(true)'),
+        DeclareLaunchArgument(
+            'zones_frame', default_value='',
+            description='zones.yaml area_world의 좌표계. 시뮬레이션은 world (TF map ← world로 바꿔 쓴다). 비우면 map 그대로'),
         Node(
             package='amr_zone_client',
             executable='zone_client_node',
@@ -42,6 +45,7 @@ def generate_launch_description():
                 'base_frame': LaunchConfiguration('base_frame'),
                 'cmd_vel_out_topic': LaunchConfiguration('cmd_vel_out_topic'),
                 'use_sim_time': LaunchConfiguration('use_sim_time'),
+                'zones_frame': LaunchConfiguration('zones_frame'),
             }],
             output='screen',
         ),

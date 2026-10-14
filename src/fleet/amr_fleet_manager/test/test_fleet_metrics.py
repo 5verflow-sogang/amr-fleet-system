@@ -6,7 +6,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from amr_fleet_manager.fleet_metrics import (FLEET_LATENCY_HEADER, RECOVERY_HEADER, RESPONSE_TIME_HEADER,
+from amr_fleet_manager.fleet_metrics import (robot_ids, FLEET_LATENCY_HEADER, RECOVERY_HEADER, RESPONSE_TIME_HEADER,
                                              TASK_OUTCOMES_HEADER, Cutoff, Record, convert, fleet_latency,
                                              observation_start, read_kill_events, recovery, response_time,
                                              task_outcomes)
@@ -245,3 +245,10 @@ def test_convert_writes_outcomes_and_recovery(tmp_path):
     other = tmp_path / 'other'
     convert(kill_scenario(), other, delay_ms=0.0)
     assert not (other / 'recovery.csv').exists()
+
+
+def test_robot_ids_follow_naming_rule():
+    assert robot_ids(3) == ['amr_01', 'amr_02', 'amr_03']
+    assert robot_ids(10)[-1] == 'amr_10'
+    with pytest.raises(ValueError):
+        robot_ids(0)

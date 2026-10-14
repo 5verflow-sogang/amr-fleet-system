@@ -41,7 +41,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from amr_bringup.robots import load_robots, world_to_map
+from amr_bringup.robots import load_robots, world_to_map, world_to_map_tf_args
 from amr_bringup.stack import Options, robot_stack
 
 
@@ -75,6 +75,12 @@ def _system(context):
     opt.validate()
 
     actions = [_launch('amr_gazebo', 'world.launch.py', gui=arg('gui'))]
+    if opt.localization:
+        # world → map 정적 TF. 지도 원점(map_origin_in_world)을 여기 한 곳에서만 발행하고, world 좌표 설정
+        # (zones.yaml 등)을 쓰는 노드는 이 TF로 바꾼다. 원점 값을 노드마다 복사하지 않기 위해서다
+        actions.append(Node(
+            package='tf2_ros', executable='static_transform_publisher', name='world_to_map',
+            arguments=world_to_map_tf_args(origin), parameters=[{'use_sim_time': True}], output='screen'))
     if flag('dynamic_obstacles'):
         actions.append(_launch('amr_gazebo', 'dynamic_obstacles.launch.py', seed=seed, use_sim_time='true'))
 
@@ -115,9 +121,9 @@ def _system(context):
 
 def generate_launch_description():
     share = get_package_share_directory('amr_bringup')
-    # 지도 v1 (#96, 0.05 m). 0.025 m는 위치 오차에 효과가 없었다 (민지 하네스 측정, 10/8). 매핑 시작 자세가 v0과 같아
-    # map_origin_in_world [0, 1.5, 0]은 그대로다
-    default_map = os.path.join(get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v1.yaml')
+    # 지도 v1 0.025 m(10/13 결정) + 지도↔월드 정렬 원점(10/12 회의 B안, #98·#157). 0.05 m보다 정지 오차가 작다
+    # (GCP 10회: 정지 2.09 vs 2.84 cm, localization.md 3-1절). Nav2 경로 계획이 느리면 Nav2만 0.05 m 지도로 나눈다
+    default_map = os.path.join(get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v1_0025.yaml')
 
     args = [
         # 로봇·시뮬레이터
@@ -132,7 +138,8 @@ def generate_launch_description():
         # 위치추정
         ('localization', 'true', 'AMCL + EKF. 끄면 DiffDrive odom TF를 쓴다'),
         ('map', default_map, '지도 yaml'),
-        ('map_origin_in_world', '[0.0, 1.5, 0.0]', 'world에서 본 map 원점 [x, y, yaw]. AMCL 초기 위치 계산'),
+        ('map_origin_in_world', '[-0.0562, 1.5317, 0.00009]',
+         'world에서 본 map 원점 [x, y, yaw] (지도 정렬값, amr_mapping README). AMCL 초기 위치 계산'),
         ('use_imu', 'true', 'EKF에 IMU를 넣을지'),
         # 작업 수행
         ('bt', 'true', 'amr_bt (Fleet 작업 수신). nav2:=true면 이동도 Nav2, 아니면 자리채움'),

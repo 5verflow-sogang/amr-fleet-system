@@ -175,6 +175,35 @@
   </gazebo>
   </xacro:if>
 
+  <!--
+    라벨 카메라 (YOLO 학습 데이터 수집 전용, label_camera:=true). RGBD 카메라와 같은 링크·화각·해상도라
+    같은 시각의 RGB 영상과 픽셀이 맞는다. Label 플러그인이 붙은 모델마다 화면에 보이는 부분의 2D 상자를 낸다
+    (가려진 부분은 빼고, 모델 단위로 하나). ROS: /<ns>/camera/labels (vision_msgs/Detection2DArray)
+  -->
+  <xacro:if value="${label_camera}">
+  <gazebo reference="${prefix}camera_link">
+    <sensor name="label_camera" type="boundingbox_camera">
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <update_rate>10</update_rate>
+      <topic>${topic_ns}/camera/labels</topic>
+      <ignition_frame_id>${prefix}camera_optical_frame</ignition_frame_id>
+      <camera>
+        <box_type>2d</box_type>
+        <horizontal_fov>${radians(rgbd['horizontal_fov'])}</horizontal_fov>
+        <image>
+          <width>${rgbd['width']}</width>
+          <height>${rgbd['height']}</height>
+        </image>
+        <clip>
+          <near>${rgbd['range_min']}</near>
+          <far>${rgbd['range_max']}</far>
+        </clip>
+      </camera>
+    </sensor>
+  </gazebo>
+  </xacro:if>
+
   <gazebo reference="${prefix}imu_link">
     <sensor name="imu" type="imu">
       <always_on>true</always_on>

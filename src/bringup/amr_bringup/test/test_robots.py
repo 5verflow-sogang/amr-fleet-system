@@ -7,7 +7,8 @@ import pytest
 
 import yaml
 
-from amr_bringup.robots import cmd_vel_chain, encoder_seed, load_robots, obstacle_clearance, world_to_map
+from amr_bringup.robots import (
+    cmd_vel_chain, encoder_seed, load_robots, obstacle_clearance, world_to_map, world_to_map_tf_args)
 
 ROBOTS = str(Path(__file__).resolve().parents[1] / 'config' / 'robots.yaml')
 # 같은 저장소의 amr_gazebo 동적 장애물 설정 (src/bringup/amr_bringup/test → src/simulation/amr_gazebo)
@@ -95,3 +96,10 @@ def test_cmd_vel_chain_has_single_final_publisher():
             if safety:
                 outputs.append('cmd_vel')
             assert outputs.count('cmd_vel') == 1, (zone_client, safety, outputs)
+
+
+def test_world_to_map_tf_args():
+    assert world_to_map_tf_args([0.0, 1.5, 0.0]) == [
+        '--x', '0.0', '--y', '1.5', '--z', '0.0', '--yaw', '0.0', '--frame-id', 'world', '--child-frame-id', 'map']
+    # 문자열 원점(launch 인자를 yaml로 읽은 값)도 받는다
+    assert world_to_map_tf_args(['-0.0562', '1.5317', '0.00009'])[1:8:2] == ['-0.0562', '1.5317', '0.0', '9e-05']

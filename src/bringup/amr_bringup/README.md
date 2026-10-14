@@ -65,7 +65,7 @@ ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose \
 
 Nav2는 `nav2_params.yaml`의 DWA를 `FollowPath` 이름으로 등록해 쓴다(bt_navigator 기본 트리가 그 이름을 부른다). 컨트롤러가 속도를 읽는 odom은 `odometry/local`(EKF, 50 Hz)이다.
 
-전역: `amr_gazebo world`(`/clock`), `dynamic_obstacles`(선택), Fleet 서버(`use_sim_time:=true`, 구역 lease를 로봇과 같은 시계로), 장애 주입기(로봇 목록을 `robots.yaml`에서 넘김).
+전역: `world → map` 정적 TF(지도 원점 `map_origin_in_world`를 한 곳에서 발행, 위치추정을 켤 때. world 좌표 설정을 쓰는 노드는 이 TF로 바꾼다), `amr_gazebo world`(`/clock`), `dynamic_obstacles`(선택), Fleet 서버(`use_sim_time:=true`, 구역 lease를 로봇과 같은 시계로), 장애 주입기(로봇 목록을 `robots.yaml`에서 넘김).
 
 로봇은 `spawn_interval_s`(3초) 간격으로 차례로 띄운다. 한꺼번에 스폰하면 Gazebo RTF가 수십 초 동안 크게 떨어진다(명세서 11-3절).
 
@@ -82,8 +82,8 @@ Nav2는 `nav2_params.yaml`의 DWA를 `FollowPath` 이름으로 등록해 쓴다(
 | `payload_mass` | `0.0` | 모든 로봇의 적재물 질량 [kg] (연구 2 Gazebo 평가) |
 | `seed` | `0` | 실행 seed. 엔코더 노이즈(로봇마다 `seed × 100 + 번호`), 동적 장애물, 손실 난수. 하네스는 1부터 준다. 0이면 엔코더 노이즈는 매번 무작위 |
 | `localization` | `true` | 끄면 DiffDrive odom TF를 쓴다 |
-| `map` | `amr_mapping maps/warehouse_v1.yaml` | 지도 v1 (0.05 m). 0.025 m는 위치 오차에 효과가 없어 쓰지 않는다 |
-| `map_origin_in_world` | `[0.0, 1.5, 0.0]` | world에서 본 map 원점. 지도가 바뀌면 그 지도의 매핑 시작 자세 |
+| `map` | `amr_mapping maps/warehouse_v1_0025.yaml` | 지도 v1 0.025 m (10/13 결정, #157). 정렬 원점과 함께 쓰면 0.05 m보다 정지 오차가 작다 (GCP 10회 2.09 vs 2.84 cm). Nav2 전역 costmap도 이 해상도를 따라가 칸이 4배다. 경로 계획이 느리면 Nav2만 0.05 m 지도로 나눈다 |
+| `map_origin_in_world` | `[-0.0562, 1.5317, 0.00009]` | world에서 본 map 원점. 지도↔월드 정렬값(B안, amr_mapping README "지도 정렬"). 지도를 바꾸면 그 지도의 정렬값 |
 | `use_imu` | `true` | EKF에 IMU |
 | `bt` | `true` | `amr_bt` |
 | `nav2` | `false` | Nav2. `localization:=true`가 필요하다 (map → odom TF) |

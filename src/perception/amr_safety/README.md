@@ -62,3 +62,6 @@ ros2 topic echo /amr_01/safety/status
 ```bash
 colcon test --packages-select amr_perception_core amr_safety
 ```
+
+- `test_gate.py`, `test_safety_node.py`: 노드 없이 게이트·판정 입력·메시지 변환
+- `test_safety_launch.py` (I14, `launch_testing`): `safety_node`를 띄우고 가짜 입력으로 NORMAL → 진행 경로 장애물 CRITICAL → TTC WARNING(0.6 m/s, 곡률 유지) → 스캔 끊김 CRITICAL을 차례로 걸어 `safety/status`와 최종 `cmd_vel`을 본다

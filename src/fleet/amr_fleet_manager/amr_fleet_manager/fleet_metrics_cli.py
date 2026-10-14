@@ -19,7 +19,7 @@ from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 
 from .fleet_metrics import (ACKS_TOPIC, ASSIGNMENTS_TOPIC, ODOM_TOPIC, RELAY_TOPIC, RELAYED_KEYS, REQUESTS_TOPIC,
-                            STATUS_TOPIC, Record, convert)
+                            STATUS_TOPIC, Record, convert, robot_ids)
 
 ORIGINAL_TOPIC = re.compile(r'^/fleet/(' + '|'.join(RELAYED_KEYS) + r')$')
 
@@ -59,13 +59,17 @@ def main(argv=None) -> int:
     parser.add_argument('--grace-s', type=float, default=1.0, help='관측 마감 여유 시간 (s)')
     parser.add_argument('--resend-grace-s', type=float, default=5.0,
                         help='Ack 관측 마감에 더할 시간 = 서버 resend.interval_s × resend.max_resends (s)')
-    parser.add_argument('--robots', nargs='*', help='로봇 목록. 주지 않으면 bag에 중계본이 있는 로봇 전부')
+    robots = parser.add_mutually_exclusive_group()
+    robots.add_argument('--robots', nargs='*', help='로봇 목록. 주지 않으면 bag에 중계본이 있는 로봇 전부')
+    # 목록을 정해 줘야 중계본을 하나도 못 받은 로봇이 손실 100%로 잡힌다 (bag에 없으면 빠진다)
+    robots.add_argument('--num-robots', type=int, help='amr_01부터 이 수만큼을 로봇 목록으로 (--robots 대신)')
     parser.add_argument('--meta', help='observation_cutoff를 쓸 meta.json (기본: <결과 폴더>/meta.json)')
     args = parser.parse_args(argv)
 
     records = read_bag(args.bag)
     out = Path(args.out)
-    cutoff = convert(records, out, args.delay_ms, args.grace_s, args.resend_grace_s, args.robots,
+    robots = robot_ids(args.num_robots) if args.num_robots is not None else args.robots
+    cutoff = convert(records, out, args.delay_ms, args.grace_s, args.resend_grace_s, robots,
                      Path(args.meta) if args.meta else None)
     print(f'{len(records)}건 → {out}/fleet_latency.csv, response_time.csv '
           f'(cutoff={cutoff.latency:.3f}, ack_cutoff={cutoff.ack:.3f})')

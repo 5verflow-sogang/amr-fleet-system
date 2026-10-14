@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 import pytest
 import yaml
 
-from amr_gazebo.cargo import (LIDAR_HEIGHT, SIZES, CargoBox, cargo_sdf, check_lidar_clearance, footprint,
+from amr_gazebo.cargo import (LIDAR_HEIGHT, SIZES, CargoBox, cargo_model_sdf, check_lidar_clearance, footprint,
                               load_boxes)
 
 PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -131,15 +131,17 @@ def test_boxes_clear_of_signs(boxes):
             assert not (near and overlap_z), f'{b.id}가 표지판 {name}을 가린다'
 
 
-def test_sdf_has_one_link_per_box_at_center(boxes):
-    root = ET.fromstring(cargo_sdf(boxes))
-    model = root.find('model')
-    assert model.find('static').text == 'true'
-    links = {lk.get('name'): lk for lk in model.findall('link')}
-    assert set(links) == {b.id for b in boxes}
-    b = boxes[0]
-    pose = [float(v) for v in links[b.id].find('pose').text.split()]
-    assert pose[:3] == pytest.approx(list(b.center))
+def test_sdf_one_labeled_model_per_box_at_center(boxes):
+    # 라벨 카메라는 모델 단위로 상자를 내므로 상자마다 모델 하나, 화물 라벨(2)
+    for b in boxes:
+        model = ET.fromstring(cargo_model_sdf(b)).find('model')
+        assert model.get('name') == b.id
+        assert model.find('static').text == 'true'
+        links = model.findall('link')
+        assert [lk.get('name') for lk in links] == [b.id]
+        pose = [float(v) for v in links[0].find('pose').text.split()]
+        assert pose[:3] == pytest.approx(list(b.center))
+        assert model.find('plugin/label').text == '2'
 
 
 def test_duplicate_id_rejected(tmp_path):

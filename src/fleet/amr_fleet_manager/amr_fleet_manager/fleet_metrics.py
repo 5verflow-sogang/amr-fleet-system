@@ -99,6 +99,13 @@ class Cutoff:
                 'start': None if self.start is None else round(self.start, 6)}
 
 
+def robot_ids(count: int) -> list[str]:
+    """amr_01부터 count대의 이름 (가짜 로봇·장애 주입기·system.launch와 같은 규칙)."""
+    if count < 1:
+        raise ValueError(f'로봇 수는 1 이상: {count}')
+    return [f'amr_{i:02d}' for i in range(1, count + 1)]
+
+
 def observation_start(records: Sequence[Record], delay_ms: float) -> Optional[float]:
     """주기 토픽의 모든 링크(토픽 × 로봇)에서 중계본이 처음 녹화된 시각 중 가장 늦은 것 − 주입 지연.
 

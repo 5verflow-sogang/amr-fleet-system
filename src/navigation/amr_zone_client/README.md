@@ -160,7 +160,8 @@ TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BAC
 | --- | --- | --- |
 | `robot_id` | 노드 네임스페이스(`/amr_03` → `amr_03`, 없으면 `amr_01`) | `ZoneRequest.robot_id`, `ZoneGrant` 필터링 기준. 파라미터로 주면 그 값이 우선한다 |
 | `zones_file` | `''` | 구역 목록 yaml 경로. 서버(`amr_fleet_manager`)와 같은 파일을 가리켜야 한다. 비어 있으면 구역 없음 |
-| `map_frame` | `map` | TF 대상 좌표계 이름. `zones.yaml`의 `area_world`도 이 좌표계 기준으로 본다 |
+| `map_frame` | `map` | TF 대상 좌표계 이름 |
+| `zones_frame` | `''` | `zones.yaml` `area_world`의 좌표계. `world`면 TF `map ← world`로 바꿔 쓴다(시뮬레이션). 비우면 `map_frame` 그대로 (아래 "좌표계에 대해") |
 | `base_frame` | `base_footprint` | TF 로봇 좌표계 이름 |
 | `plan_topic` | `plan` | Nav2 전역 경로 (상대 이름) |
 | `zone_grants_topic` | `fleet/zone_grants` | 상대 이름 (네임스페이스 → 장애 주입기 중계본) |
@@ -219,9 +220,15 @@ controller_server (Nav2) → cmd_vel_nav → [velocity_smoother, 아직 없음] 
 
 ## 좌표계에 대해
 
-`zones.yaml`의 `area_world`는 Gazebo world 좌표다. 지금은 world 원점과 `map` 원점이 같다고 보고 TF
-`map_frame`(기본 `map`) 좌표를 그대로 비교한다. 지도 v1(10/9 인계) 뒤 둘이 어긋나면 `map_frame` 파라미터
-이름만 바꾸거나, `zones.yaml` 쪽 좌표를 실제 `map` 좌표로 다시 맞추면 된다 — 코드 변경은 필요 없다.
+`zones.yaml`의 `area_world`는 Gazebo world 좌표다. 그런데 `map` 원점은 world (0, 1.5)라(지도 매핑 시작 자세),
+`area_world`를 `map` 좌표로 그대로 비교하면 구역이 1.5 m 북쪽(통로 옆 랙 위)에 있는 것으로 보여 로봇이 실제 통로
+앞에서 허가를 요청하지 않는다 (10/13 발견).
+
+- `zones_frame:=world`이면 시작할 때 TF `map ← world`를 조회해 구역을 `map` 좌표로 바꾼 뒤 판단한다.
+  TF는 `amr_bringup system.launch.py`가 지도 원점으로 한 번 발행한다(`world → map` 정적 TF). 원점 값을 이 노드가
+  따로 들고 있지 않아 지도를 바꿔도 여기는 고칠 게 없다.
+- TF가 오기 전에는 구역이 어디인지 모르므로 위치를 모를 때와 같이 속도 상한 0으로 멈춘다 (fail-closed).
+- `zones_frame`을 비우면(기본) `map` 좌표로 그대로 본다. TF 없는 단위·launch 테스트용이다.
 
 ## 실행
 

@@ -1,0 +1,68 @@
+<?xml version="1.0"?>
+<!--
+  연구 2 RL 평가 환경 (적재 질량 RL, 연우 주도). 빈 바닥 하나만 있다.
+
+  통로 벽과 돌발 장애물은 에피소드마다 rl_eval_node가 스폰한다. 연우 2D 학습 환경
+  (experiments/research2/payload_nav)과 같은 시나리오다: 직선 통로(중심선 y = 0, 진행 방향 +x),
+  출발선 x = 0, 목표 (goal_distance, 0). 출발 속도를 내려고 x < 0 쪽에 가속 구간이 있다.
+
+  물리·바닥 마찰(0.7)은 창고 월드(warehouse.sdf)와 같다. 2D 동역학(dynamics.py)의 floor_friction_mu와도 같다.
+-->
+<sdf version="1.8">
+  <world name="rl_eval">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system" name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system" name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="ignition-gazebo-imu-system" name="ignition::gazebo::systems::Imu"/>
+
+    <scene>
+      <ambient>0.7 0.7 0.7 1</ambient>
+      <background>0.75 0.8 0.85 1</background>
+      <shadows>false</shadows>
+    </scene>
+
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <direction>-0.3 0.2 -0.9</direction>
+    </light>
+
+    <model name="floor">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane><normal>0 0 1</normal><size>200 40</size></plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0.7</mu>
+                <mu2>0.7</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane><normal>0 0 1</normal><size>200 40</size></plane>
+          </geometry>
+          <material>
+            <ambient>0.55 0.55 0.52 1</ambient>
+            <diffuse>0.55 0.55 0.52 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>
