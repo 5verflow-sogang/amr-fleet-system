@@ -182,3 +182,21 @@ def test_nav_kpi_metrics_and_verdict(tmp_path):
     assert kpi_verdict('navkpi.ref_cte_straight_mean_m', 0.063, 0.07, 0.05) is None
     m = summarize([run('pp1', True, 1.0), run('pp2', True, 1.0)])['nav_kpi/pp']['metrics']
     assert m['navkpi.replan_p95_ms']['kpi'] == 'PASS' and m['navkpi.cte_straight_mean_m']['kpi'] == 'FAIL'
+
+
+def test_failure_causes_by_error_code(tmp_path):
+    run = tmp_path / 'r'
+    run.mkdir()
+    (run / 'task_outcomes.csv').write_text(
+        'task_id,request_time,first_assign_time,robots,final_state,end_time,error_code\n'
+        't1,0,1,amr_01,COMPLETED,10,0\n'
+        't2,0,1,amr_01,FAILED,10,203\n'
+        't3,0,1,amr_02,FAILED,10,202\n'
+        't4,0,1,amr_03,FAILED,10,904\n')
+    m = fleet_metrics(run)
+    assert m['fleet.tasks_failed_localization'] == 1 and m['fleet.tasks_failed_nav'] == 1
+    assert m['fleet.tasks_failed_docking'] == 1 and m['fleet.tasks_failed_traffic'] == 0
+    # 열이 없던 예전 결과는 원인 지표를 내지 않는다
+    (run / 'task_outcomes.csv').write_text('task_id,request_time,first_assign_time,robots,final_state,end_time\n'
+                                           't1,0,1,amr_01,FAILED,10\n')
+    assert not [k for k in fleet_metrics(run) if k.startswith('fleet.tasks_failed_')]

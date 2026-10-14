@@ -19,6 +19,10 @@ from .stats import percentile, summarize_runs
 LOCALIZATION_KPI = {'stationary': 0.03, 'straight': 0.05, 'rotation': 0.08}
 # 원 명세서 응답 시간 KPI [ms]
 RESPONSE_KPI_MS = 200.0
+# 작업 실패 원인 묶음 (ErrorInfo.code 대역, docs/api.md). 위치(203)를 주행(201·202)과 나눠 센다 (#148 지수 합의)
+FAILURE_CAUSES = {'localization': {'203'}, 'nav': {'201', '202'}, 'traffic': {'301', '302', '303'},
+                  'comm': {'401', '402'}, 'task_timeout': {'501'}, 'charge': {'502'},
+                  'docking': {str(c) for c in range(900, 1000)}}
 # 원 명세 경로 계획(4장)·경로 추종(5장) KPI: (기준, 방향). min = 클수록 좋음 (CI 하한으로 판정), max = 작을수록 좋음
 NAV_KPI = {'navkpi.plan_success_rate': (0.98, 'min'), 'navkpi.replan_p95_ms': (500.0, 'max'),
            'navkpi.pred_err_mean': (0.15, 'max'), 'navkpi.cte_straight_mean_m': (0.05, 'max'),
@@ -93,6 +97,11 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
         out['fleet.tasks_requested'] = len(tasks)
         out['fleet.tasks_completed'] = done
         out['fleet.task_completion_rate'] = done / len(tasks)
+        # 실패 원인 (amr_msgs ErrorInfo 코드, #173). task_outcomes.csv에 error_code 열이 있을 때만 (fleet_metrics, 하연)
+        if 'error_code' in tasks[0]:
+            failed = [r for r in tasks if r['final_state'] == 'FAILED']
+            for name, codes in FAILURE_CAUSES.items():
+                out[f'fleet.tasks_failed_{name}'] = sum(r['error_code'] in codes for r in failed)
     # 로봇 장애 회수 (fault_events.csv에 robot_kill이 있을 때만 파일이 있다)
     reclaimed = [r for r in _read_csv(run_dir / 'recovery.csv') if r.get('task_id')]
     if (run_dir / 'recovery.csv').exists():
