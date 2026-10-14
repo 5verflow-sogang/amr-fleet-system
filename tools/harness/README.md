@@ -60,7 +60,7 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 | --- | --- | --- |
 | `loc_basic` | 로봇 1대, 지도 v0. 정지 → 직진 3 m → 한 바퀴 → 반 바퀴 → 복귀 직진 → 정지. 약 1분 | `eval_ekf/`·`eval_amcl/`의 `localization.csv`·궤적 |
 | `kidnap` | 로봇 1대, 지도 v1. 직진 3 m 후 정지하면 Gazebo `set_pose`로 순간 이동, 복구 노드(`kidnap_recovery`)가 감지·복구. `--set mode=far`면 다른 통로로 옮긴다. 약 2분 | `kidnap/kidnap.json`(판정), `kidnap_samples.csv`(진행·옆·방향 오차), `kidnap_states.csv`, `events.csv`. 요약 `kidnap.success` 평균 = 성공률 |
-| `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분. `kill_robot`으로 로봇 장애 | `fleet_latency.csv`, `response_time.csv`(Ack), `task_outcomes.csv`, `recovery.csv`(로봇 장애 시), `tasks.json`, `assignments.csv`, `fault_events.csv` |
+| `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분. `kill_robot`으로 로봇 장애 | `fleet_latency.csv`, `response_time.csv`(Ack), `task_outcomes.csv`, `recovery.csv`(로봇 장애 시), `tasks.json`, `assignments.csv`, `fault_events.csv`, `robot_states.csv`, `plots/` |
 | `nav_compare` | 로봇 1대, 지도 v1, Nav2 데모 + 목표 1곳. `--set controller=dwa\|teb --set scenario=clear\|obstacle`. 약 1분. `HARNESS_PACKAGES="amr_bringup amr_nav2_plugins"` 필요 | `nav_result.json`(성공·도착 시간·최소 장애물 거리·경로 길이·CTE, GT), `nav_series.csv` ([experiments/teb_compare](../../experiments/teb_compare/README.md)) |
 
 `fleet_fake`는 Fleet 계층(지연·손실·Ack)만 잰다. 가짜 로봇은 `odom`을 내지 않아 응답 시간 KPI(200 ms)는 비어 있으므로, 그 Before 데이터는 실제 로봇 스택 시나리오가 따로 필요하다. 서버 강제종료 `kill_at_s`는 서버 launch 시작 기준이라 작업 시작보다 약 10초 빠르다.
@@ -137,6 +137,8 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
 | `rosbag/` | rosbag2 (mcap) | 시나리오에서 정한 토픽 기록 (선택). 단 Fleet 시나리오는 `/fleet/*`, `/<robot>/fleet/*` 녹화가 필수 (`fleet_latency.csv`·Ack 컬럼의 원자료) | 시나리오 작성자, Fleet 토픽은 하연 |
 | `trace/` | LTTng CTF | ros2_tracing 원본 (UST `ros2:*` 이벤트). `hop_latency.csv`의 원자료 | 하연 (수집 절차는 [runbook](../../docs/runbook.md) "트레이싱") |
 | `fault_events.csv` | CSV `time, event` | 서버 강제종료·재시작 시각 (실제 시간, UNIX 초). 서버 장애 시나리오에서만 | 하연 (`fleet_manager.launch.py`의 `fault_events_file`) |
+| `robot_states.csv` | CSV `time, robot, x, y, mode, task_id` | `/fleet/robot_states` 1건마다 1행 (map 좌표, bag 수신 시각). 그림의 원자료 | 하연 (`fleet_metrics`) |
+| `plots/` | PNG | 보기용 그림. 판정에 쓰지 않는다. Fleet: `timeline.png`(로봇별 작업 구간·강제종료·회수) | 하연 (`fleet_plot`, [amr_fleet_manager README](../../src/fleet/amr_fleet_manager/README.md) "작업 타임라인 그림") |
 
 - TUM 궤적 형식: 한 줄에 `timestamp x y z qx qy qz qw` (공백 구분, 초·m·쿼터니언). evo가 그대로 읽는다.
 - **좌표계 정렬**: GT(Gazebo world)와 추정값(`map`)은 서로 다른 좌표계다. 두 좌표계 사이 변환을 시나리오 설정에 고정값으로 두고, 정렬 방식을 `meta.json`에 기록한다. 평가 도구가 임의로 최적 정렬(Umeyama 등)을 하면 오차가 실제보다 작게 나올 수 있으므로 KPI 산출에는 고정 변환만 쓴다.
