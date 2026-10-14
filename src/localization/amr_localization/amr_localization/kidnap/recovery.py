@@ -12,9 +12,11 @@
     시도가 max_attempts를 넘으면 FAILED (사람·상위 BT가 처리). FAILED에서도 계속 지켜보다가
     수렴 조건을 다시 만족하면(사람이 위치를 다시 잡아 준 경우 등) TRACKING으로 돌아온다
 
-수렴: 일치율 ≥ ok_ratio이고 AMCL 위치 표준편차 ≤ ok_std_m가 ok_checks번 연속.
-기준값 근거 (localization.md 4-6절, 10/14): 순간 이동 뒤 GT 기준으로 맞게 수렴한 샘플의 일치율 중앙값 0.72,
-틀리게 수렴한 샘플의 95%가 0.69 아래 → 0.75. 맞게 수렴해도 AMCL σ가 0.27 m인 경우가 있어 σ 기준은 0.3 m.
+수렴: 멈춘 상태(SETTLING)에서 일치율 ≥ ok_ratio이고 AMCL 위치 표준편차 ≤ ok_std_m가 ok_checks번 연속.
+회전 중에는 판정하지 않는다 (스캔·자세 시각 차이로 일치율이 흔들린다).
+기준값 근거 (localization.md 4-6절, 10/14 튜닝 seed 1001~1010): 멈춘 상태에서 GT로 맞게 복구한 8회의 일치율은
+0.96~1.00 (1회 0.79), 옆 통로(7.5 m)로 틀리게 받아들인 1회는 0.87 → 0.9. 반복 구조라 틀린 곳도 87%까지 겹친다.
+맞게 수렴해도 AMCL σ가 0.27 m인 경우가 있어 σ 기준은 0.3 m.
 제자리 갱신을 계속 부르면 리샘플링만 반복돼 파티클이 한 점(틀린 곳 포함)에 몰리므로 시도마다 nomotion_max번만 부른다.
 """
 
@@ -38,7 +40,7 @@ STOP = 'stop'              # 회전 멈춤
 class RecoveryConfig:
     lost_ratio: float = 0.5
     lost_checks: int = 3
-    ok_ratio: float = 0.75
+    ok_ratio: float = 0.9
     ok_std_m: float = 0.3
     ok_checks: int = 3
     nomotion_max: int = 4
@@ -98,7 +100,7 @@ class KidnapRecovery:
                 return self._start_attempt(now)
             return []
         if self.state in (SETTLING, ROTATING):
-            if self._converged(ratio, std_m):
+            if self.state == SETTLING and self._converged(ratio, std_m):
                 self.state = TRACKING
                 self.events.append(Event(now, 'recovered', f'{now - self.lost_at:.1f}s, 일치율 {ratio:.2f}'))
                 return [STOP]

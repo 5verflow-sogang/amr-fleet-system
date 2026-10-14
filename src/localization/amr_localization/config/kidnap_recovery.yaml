@@ -6,8 +6,8 @@
     match_tol: 0.1
     lost_ratio: 0.5
     lost_checks: 3
-    # 수렴: 일치율 ≥ ok_ratio이고 AMCL σ ≤ ok_std_m가 ok_checks번 연속 (4-6절 진단 근거)
-    ok_ratio: 0.75
+    # 수렴: 멈춘 상태에서 일치율 ≥ ok_ratio이고 AMCL σ ≤ ok_std_m가 ok_checks번 연속 (4-6절, 옆 통로 오수렴 0.87)
+    ok_ratio: 0.9
     ok_std_m: 0.3
     ok_checks: 3
     # 시도 1번 = 정지 settle_s(제자리 갱신은 nomotion_max번까지) → 회전 rotate_s → 정지 확인 confirm_s.

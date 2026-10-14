@@ -69,7 +69,7 @@ def test_detects_lost_and_recovers_without_rotation():
     acts = run(m, [(0.9, 0.05), (0.3, 0.05), (0.3, 0.05), (0.3, 0.05)])
     # 첫 시도는 국소 재초기화
     assert acts[-1] == [STOP, LOCAL_REINIT, NOMOTION] and m.state == 'settling'
-    acts = run(m, [(0.4, 1.0), (0.85, 0.1), (0.9, 0.1)], t0=2.0)
+    acts = run(m, [(0.4, 1.0), (0.95, 0.1), (0.97, 0.1)], t0=2.0)
     assert acts[0] == [NOMOTION] and acts[-1] == [STOP] and m.state == 'tracking'
     assert [e.kind for e in m.events] == ['lost', 'local_reinit', 'recovered']
 
@@ -114,7 +114,7 @@ def test_confirms_after_rotation_before_next_attempt():
     m = KidnapRecovery(cfg)
     run(m, [(0.1, 1.0)] * 6)                       # 감지 → 정지 대기 → 회전 → 회전 끝
     assert m.state == 'settling' and m.events[-1].kind == 'confirm'
-    run(m, [(0.8, 0.2), (0.8, 0.2)], t0=3.0)
+    run(m, [(0.95, 0.2), (0.95, 0.2)], t0=3.0)
     assert m.state == 'tracking' and m.events[-1].kind == 'recovered'
     assert [e.kind for e in m.events].count('reinit') == 0   # 맞던 자세를 전역 재초기화로 버리지 않음
 
@@ -124,3 +124,15 @@ def test_confirm_timeout_moves_to_next_attempt():
     m = KidnapRecovery(cfg)
     run(m, [(0.1, 1.0)] * 10)
     assert [e.kind for e in m.events][:5] == ['lost', 'local_reinit', 'rotate', 'confirm', 'reinit']
+
+
+def test_no_recovery_while_rotating_and_wrong_aisle_ratio_rejected():
+    # 회전 중에는 판정하지 않고, 옆 통로 오수렴(일치율 0.87, 10/14)은 받지 않는다
+    cfg = RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=2.0, confirm_s=2.0, ok_checks=2)
+    m = KidnapRecovery(cfg)
+    run(m, [(0.1, 1.0)] * 3)                        # 감지 → 정지 → 회전 시작
+    assert m.state == 'rotating'
+    run(m, [(0.99, 0.05)] * 3, t0=1.5)              # 회전 중 높은 일치율이어도 복구로 안 침
+    assert m.state in ('rotating', 'settling') and 'recovered' not in [e.kind for e in m.events]
+    run(m, [(0.87, 0.09)] * 4, t0=3.5)              # 멈춘 확인 단계에서 0.87은 거부
+    assert 'recovered' not in [e.kind for e in m.events]

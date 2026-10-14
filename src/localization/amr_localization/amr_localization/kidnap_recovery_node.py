@@ -17,6 +17,7 @@
       넣어 구역 허가·안전 노드를 그대로 거친다(#79 이진 리뷰). 복구 중 내비 목표 중지는 BT가 한다
 """
 
+import csv
 import math
 import os
 
@@ -54,7 +55,7 @@ class KidnapRecoveryNode(Node):
         self.events_file = d('events_file', '').value
         cfg = RecoveryConfig(
             lost_ratio=d('lost_ratio', 0.5).value, lost_checks=d('lost_checks', 3).value,
-            ok_ratio=d('ok_ratio', 0.75).value, ok_std_m=d('ok_std_m', 0.3).value, ok_checks=d('ok_checks', 3).value,
+            ok_ratio=d('ok_ratio', 0.9).value, ok_std_m=d('ok_std_m', 0.3).value, ok_checks=d('ok_checks', 3).value,
             settle_s=d('settle_s', 10.0).value, allow_rotate=d('allow_rotate', True).value,
             rotate_s=d('rotate_s', 15.0).value, max_attempts=d('max_attempts', 3).value,
             local_first=d('local_first', True).value, nomotion_max=d('nomotion_max', 4).value,
@@ -216,10 +217,11 @@ class KidnapRecoveryNode(Node):
             return
         new = not os.path.exists(self.events_file)
         os.makedirs(os.path.dirname(self.events_file) or '.', exist_ok=True)
-        with open(self.events_file, 'a', encoding='utf-8') as f:
+        with open(self.events_file, 'a', encoding='utf-8', newline='') as f:
+            w = csv.writer(f)   # detail에 쉼표가 들어가므로 따옴표 처리
             if new:
-                f.write('time,event,detail,ratio,amcl_std\n')
-            f.write(f'{e.t:.3f},{e.kind},{e.detail},{self.ratio:.3f},{self.amcl_std:.3f}\n')
+                w.writerow(['time', 'event', 'detail', 'ratio', 'amcl_std'])
+            w.writerow([f'{e.t:.3f}', e.kind, e.detail, f'{self.ratio:.3f}', f'{self.amcl_std:.3f}'])
 
 
 def main(args=None):
