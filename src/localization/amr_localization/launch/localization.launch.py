@@ -3,6 +3,7 @@
     ros2 launch amr_localization localization.launch.py                          # amr_01, 지도 v0
     ros2 launch amr_localization localization.launch.py use_imu:=false           # IMU 없이 (센서 플러그인 전)
     ros2 launch amr_localization localization.launch.py odom_topic:=wheel/odom   # DiffDrive odom과 겹칠 때 (#35)
+    ros2 launch amr_localization localization.launch.py kidnap_recovery:=true    # Kidnapped 감지·복구 노드도
 
 구독 (<ns> = namespace):
     /<ns>/<odom_topic>  nav_msgs/Odometry   휠 오도메트리 (amr_odometry)
@@ -14,6 +15,8 @@
     /<ns>/odometry/local     ekf_local 출력, odom 기준
     /<ns>/odometry/filtered  ekf_global 출력, map 기준 (위치 오차 KPI 측정 대상)
     /tf                      map → <ns>/odom (ekf_global), <ns>/odom → <ns>/base_footprint (ekf_local)
+    kidnap_recovery:=true면 /<ns>/kidnap_recovery/state(tracking·settling·rotating·failed), /<ns>/kidnap_recovery/match_ratio,
+                    탐색 중에만 /<ns>/<recovery_cmd_vel_topic> (기본 cmd_vel_recovery, 안전 노드 앞에서 합친다)
 """
 
 import os
@@ -32,6 +35,7 @@ def _is_true(context, name):
 def _localization(context):
     share = get_package_share_directory('amr_localization')
     ekf_config = os.path.join(share, 'config', 'ekf.yaml')
+    recovery_config = os.path.join(share, 'config', 'kidnap_recovery.yaml')
     amcl_config = os.path.join(share, 'config', 'amcl.yaml')
 
     ns = LaunchConfiguration('namespace').perform(context)
@@ -124,6 +128,20 @@ def _localization(context):
             output='screen',
         ),
     ]
+    if _is_true(context, 'kidnap_recovery'):
+        actions.append(Node(
+            package='amr_localization',
+            executable='kidnap_recovery',
+            name='kidnap_recovery',
+            namespace=ns,
+            parameters=[recovery_config, {
+                'use_sim_time': use_sim_time,
+                'base_frame': 'base_footprint',
+                'cmd_vel_topic': LaunchConfiguration('recovery_cmd_vel_topic').perform(context),
+                'events_file': LaunchConfiguration('recovery_events_file').perform(context),
+            }],
+            output='screen',
+        ))
     return actions
 
 
@@ -144,6 +162,13 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_imu', default_value='true',
             description='EKF에 IMU를 넣을지. IMU가 없는 환경(센서 플러그인 전, sandbox)에서는 false'),
+        DeclareLaunchArgument(
+            'kidnap_recovery', default_value='false',
+            description='Kidnapped 감지·복구 노드. 켜면 위치를 잃었을 때 재초기화·회전한다 (localization.md 4절)'),
+        DeclareLaunchArgument(
+            'recovery_cmd_vel_topic', default_value='cmd_vel_recovery',
+            description='복구 회전 속도 토픽 (상대 이름). 안전 노드 앞에서 내비보다 우선해 합친다'),
+        DeclareLaunchArgument('recovery_events_file', default_value='', description='복구 이벤트 CSV (비우면 안 씀)'),
         DeclareLaunchArgument('initial_x', default_value='0.0562', description='AMCL 초기 위치 x (map 기준) [m]'),
         DeclareLaunchArgument('initial_y', default_value='-0.0317', description='AMCL 초기 위치 y (map 기준) [m]'),
         DeclareLaunchArgument('initial_yaw', default_value='0.0', description='AMCL 초기 방향 (map 기준) [rad]'),
