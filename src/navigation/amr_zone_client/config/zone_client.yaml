@@ -31,6 +31,10 @@
     resend_period_s: 1.0
     # REJECTED 뒤 경로에 구역이 남아 있으면 이 시간 뒤 새 request_id로 재시도한다 (#66 하연 리뷰)
     retry_period_s: 5.0
+    # 아직 들어가지 않은 구역이 전역 경로에서 빠져도, 로봇이 trigger_distance_m(직선) 안에 있으면 이 시간(s)
+    # 동안은 반납하지 않고 같은 request_id로 계속 요청하며 직선 거리로 정지 상한을 건다. 넘으면 반납·IDLE
+    # (10/15 하연·이진, #66의 "경로에서 빠지면 즉시 반납"을 바꿈 - 교착 중 Nav2의 잠깐 우회로 정지선을 넘던 문제)
+    drop_grace_s: 3.0
     # 아직 안 건드린 구역은 로봇 앞 이 거리(m)까지만 찾아본다. 0.0이면 trigger_distance_m + 2.0m로
     # 알아서 정한다(core.py _DEFAULT_LOOKAHEAD_MARGIN_M) - 긴 경로를 매번 끝까지 훑지 않게 한다 (#66)
     lookahead_m: 0.0

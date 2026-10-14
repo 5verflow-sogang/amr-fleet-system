@@ -19,8 +19,14 @@
   구역 안)면 BACKING으로 가서 cmd_vel_nav를 무시하고 직접 후진 명령을 낸다 - 아래 'BACKING' 참고.
   둘 중 어느 쪽이든, 그 구역이 복구를 마치고 IDLE로 돌아갈 때까지 다른 구역의 대기 중 요청은
   반납하고 새 요청도 보내지 않는다(#137 하연 두 번째 리뷰 - 교착 해소에 집중한다).
-- 전역 경로가 바뀌어 대기·통과 허가 중인 구역이 경로에서 빠지고 로봇도 그 구역 밖이면, 서버가 자리를
-  계속 쥐고 있지 않도록 반납(TYPE_RELEASE)하고 IDLE로 돌아간다.
+- 전역 경로가 바뀌어 아직 들어가지 않은 구역(APPROACHING·BLOCKED)이 경로에서 빠져도, 로봇이 그 구역에서
+  trigger_distance_m(직선 거리) 안에 있으면 바로 반납하지 않는다(10/15 하연·이진, #66의 "빠지면 즉시
+  반납"을 바꿈 - fleet_deadlock에서 교착 상대가 통로를 막자 Nav2가 잠깐 우회 경로를 냈고, 그 사이 정지
+  상한이 사라져 허가 없이 구역에 들어갔다). 그동안은 같은 request_id로 계속 요청해 대기열 순서를 지키고,
+  정지 상한은 경로 거리 대신 로봇 → 구역 사각형 직선 거리(보수적)로 계산한다. 경로가 drop_grace_s 넘게
+  계속 빠져 있거나 로봇이 trigger_distance_m 밖으로 멀어지면 그때 반납(TYPE_RELEASE, BLOCKED는 쥔 자리가
+  없으니 반납 없이)하고 IDLE로 돌아간다. 그 전에 경로가 다시 그 구역을 지나면 그대로 이어간다.
+  INSIDE 구역은 그대로다(구역을 벗어나면 반납).
 - 남은 거리는 경로의 시작점이 아니라 로봇과 가장 가까운 경로 점부터 잰다(경로가 로봇 뒤쪽 점도
   담고 있을 수 있어서 - geometry.remaining_distance_to_rect).
 - ZoneGrant는 모든 로봇에 방송되므로 robot_id로 거른다 (on_grant).
@@ -65,7 +71,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Sequence
 
 from .geometry import (
-    Point, Rect, combine_caps, distance, point_in_rect, ramp_cap_down, ramp_speed,
+    Point, Rect, combine_caps, distance, distance_to_rect, point_in_rect, ramp_cap_down, ramp_speed,
     remaining_distance_to_rect, speed_cap_for_stop,
 )
 
@@ -112,6 +118,9 @@ class _ZoneState:
     # 가장 최근 update() 틱에서 구한 경계까지 남은 거리 (state_label의 waiting 판정용, #137 지수 리뷰) -
     # remaining_distance_to_rect가 매 틱 _update_zone에 넘겨주는 값을 그대로 적어 둔다.
     last_remaining: Optional[float] = None
+    # 경로에서 이 구역이 빠지기 시작한 시각 (APPROACHING·BLOCKED만, drop_grace_s 기준). 경로가 다시 이
+    # 구역을 지나면 None으로 돌린다.
+    off_path_since: Optional[float] = None
     # BLOCKED 전환 뒤 아직 못 보낸 RELEASE가 있는지 (REVOKED면 REJECTED와 달리 반납해야 한다) - 다음
     # update() 틱에 한 번 보내고 지운다.
     pending_release: bool = False
@@ -147,6 +156,9 @@ class ZoneClientConfig:
     resend_period_s: float = 1.0
     # REJECTED 뒤, 경로에 구역이 남아 있으면 이 시간 뒤 새 request_id로 재시도한다 (#66).
     retry_period_s: float = 5.0
+    # 아직 들어가지 않은 구역(APPROACHING·BLOCKED)이 경로에서 빠진 채로 이 시간(s)이 지나면 반납·IDLE.
+    # 그 전에는 로봇이 trigger_distance_m(직선) 안에 있는 한 요청·정지 상한을 유지한다 (10/15, #66 규칙 변경).
+    drop_grace_s: float = 3.0
     # 구역 검사를 로봇 앞 이 거리(m)까지만 한다. None이면 trigger_distance_m + 여유로 정한다 (#66).
     lookahead_m: Optional[float] = None
     # SafetyStatus.speed_limit 램프의 "제한 없음" 기준값(ramp_cap_down). nav2_params.yaml
@@ -329,9 +341,24 @@ class ZoneClientCore:
     def _update_zone(self, zone_id: str, spec: ZoneConfig, state: _ZoneState, now: float,
                       remaining: Optional[float], robot_xy: Point, safety_cap: Optional[float]):
         outgoing: List[OutgoingRequest] = []
-        state.last_remaining = remaining  # state_label의 waiting 판정용 (#137 지수 리뷰)
         inside = point_in_rect(robot_xy, spec.area)
         dropped_from_path = remaining is None and not inside
+        detouring = False
+        if state.phase in (Phase.APPROACHING, Phase.BLOCKED):
+            if dropped_from_path:
+                # 경로에서 빠졌다 - 가까이 있는 동안은 drop_grace_s까지 기다린다(10/15, #66 규칙 변경).
+                # 그동안 남은 거리는 직선 거리로 본다(경로 거리보다 짧아 정지 상한이 보수적이다)
+                if state.off_path_since is None:
+                    state.off_path_since = now
+                straight = distance_to_rect(robot_xy, spec.area)
+                if (straight <= self._config.trigger_distance_m
+                        and now - state.off_path_since <= self._config.drop_grace_s):
+                    dropped_from_path = False
+                    detouring = True
+                    remaining = straight
+            else:
+                state.off_path_since = None  # 경로가 다시 이 구역을 지난다 - 그대로 이어간다
+        state.last_remaining = remaining  # state_label의 waiting 판정용 (#137 지수 리뷰)
 
         if state.phase is Phase.IDLE:
             if remaining is not None and remaining <= self._config.trigger_distance_m:
@@ -366,7 +393,7 @@ class ZoneClientCore:
             if dropped_from_path:
                 self._state[zone_id] = _ZoneState()
                 return outgoing, None, None, []
-            if now - state.last_sent >= self._config.retry_period_s:
+            if not detouring and now - state.last_sent >= self._config.retry_period_s:
                 # REJECTED·REVOKED 모두 경로에 구역이 남아 있으면 retry_period_s 뒤 새 request_id로
                 # 재시도한다 (#66, 10/11)
                 state.request_id = self._next_request_id

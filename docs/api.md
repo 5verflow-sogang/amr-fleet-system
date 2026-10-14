@@ -309,7 +309,8 @@ dot -Tpng frames_*.gv -o tf_tree.png
 안 지남) 전엔 경계 0.5 m 앞에 감속 정지, 허가 없이 넘어가도 상한 0 유지) → `INSIDE`(위치가 구역 안
 **and** 유효한 허가일 때만 전환, 안에서는 lease가 지나도 안 멈춘다) → `IDLE`(벗어나며 반납). `REJECTED`면
 `BLOCKED`로 가 경고를 남기고, 경로에 구역이 남아 있으면 `retry_period_s` 뒤 새 번호로 재시도한다. 경로가
-바뀌어 대기·통과 허가 중이던 구역이 빠지고 로봇도 구역 밖이면 반납하고 `IDLE`로 돌아간다. 자세한
+바뀌어 아직 안 들어간 구역이 빠져도 로봇이 그 구역 trigger 거리 안이면 `drop_grace_s`(3 s) 동안은 같은 번호로
+요청·정지 상한을 유지하고, 그 뒤에도 빠져 있거나 멀어지면 반납하고 `IDLE`로 돌아간다(10/15, #66 규칙 변경). 자세한
 흐름·파라미터는 [amr_zone_client README](../src/navigation/amr_zone_client/README.md).
 
 cmd_vel 체인: 최종 `cmd_vel`을 가로채는 건 안전 노드(`amr_safety`)의 몫으로 합의했으므로(4-4절

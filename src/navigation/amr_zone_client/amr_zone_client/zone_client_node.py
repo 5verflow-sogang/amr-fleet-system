@@ -89,6 +89,7 @@ class ZoneClientNode(Node):
             decel_mps2=p('decel_mps2', 1.0).value,
             resend_period_s=p('resend_period_s', 1.0).value,
             retry_period_s=p('retry_period_s', 5.0).value,
+            drop_grace_s=p('drop_grace_s', 3.0).value,
             lookahead_m=lookahead_m if lookahead_m > 0.0 else None,
             max_linear_velocity_mps=p('max_linear_velocity_mps', 2.0).value,
             backing_speed_mps=p('backing_speed_mps', 0.15).value,
@@ -174,6 +175,18 @@ class ZoneClientNode(Node):
         self._cmd_vel_pub.publish(out)
         self._last_cmd_vel_mps = out.linear.x
 
+    def _set_speed_cap(self, cap: Optional[float]):
+        """속도 상한을 바꾼다. 0이 아닌 값(제한 없음 포함)에서 0으로 바뀌는 순간에만 정지 명령을 한 번 낸다.
+
+        상한은 cmd_vel_nav가 들어올 때(_on_cmd_vel)만 적용되므로, Nav2가 0이 아닌 명령을 낸 뒤 발행을
+        멈추면 상한이 0이 돼도 마지막 명령이 그대로 남는다(fleet_deadlock 조사). 계속 0인 동안은 다시 내지
+        않는다. BACKING 중이면 _update가 후진 명령을 직접 내므로 건너뛴다.
+        """
+        dropped_to_zero = cap is not None and cap <= 0.0 and (self._speed_cap is None or self._speed_cap > 0.0)
+        self._speed_cap = cap
+        if dropped_to_zero and self._backing_linear_x is None:
+            self._publish_cmd(0.0)
+
     def _publish_cmd(self, linear_x: float):
         out = Twist()
         out.linear.x = linear_x
@@ -213,7 +226,7 @@ class ZoneClientNode(Node):
             return
         if not self._ensure_core():
             # 구역이 어디인지 모르면 fail-closed: 위치를 모를 때와 같은 규칙으로 상한을 0으로 묶는다
-            self._speed_cap = 0.0
+            self._set_speed_cap(0.0)
             return
         robot_xy = self._lookup_robot_xy()
         if robot_xy is None:
@@ -221,7 +234,7 @@ class ZoneClientNode(Node):
             # 이미 throttle해서 남긴다 (#66). BACKING 중이면(위치가 있어야 후진 거리를 재므로)
             # 같은 규칙으로 바로 정지한다 - core 상태는 그대로 두고(이번 틱만 건너뜀) TF가
             # 돌아오면 이어서 재개한다.
-            self._speed_cap = 0.0
+            self._set_speed_cap(0.0)
             if self._backing_linear_x is not None:
                 self._publish_cmd(0.0)
             return
@@ -234,8 +247,8 @@ class ZoneClientNode(Node):
             safety_limit = None
         outgoing, speed_cap, backing_linear_x, errors = self._core.update(
             now, self._path_xy, robot_xy, safety_limit, self._last_cmd_vel_mps)
-        self._speed_cap = speed_cap
         self._backing_linear_x = backing_linear_x
+        self._set_speed_cap(speed_cap)
         for error in errors:
             self.get_logger().error(error)
         for item in outgoing:
