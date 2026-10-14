@@ -19,7 +19,16 @@ scenario="$1"; shift
 
 repeats=3; label=""; ref=""; watch=0
 fresh="${HARNESS_FRESH:-0}"; packages="${HARNESS_PACKAGES:-}"
-delay=0; loss=0; kill_robot=none; kill_at=-1
+# 지연·손실을 안 주면 시나리오 params 기본값을 쓴다 (워크플로 입력 기본값 0이 시나리오 기본값을 덮지 않게.
+# 예: fleet_stack은 원 명세 조건인 지연 100 ms가 기본)
+scenario_default() {
+  local file
+  file="$(dirname "$0")/scenarios/${scenario}.yaml"
+  [ -f "$file" ] && sed -n "s/^  $1:[[:space:]]*\([0-9.]*\).*/\1/p" "$file" | head -1
+}
+delay="$(scenario_default delay_ms || true)"; delay="${delay:-0}"
+loss="$(scenario_default loss_pct || true)"; loss="${loss:-0}"
+kill_robot=none; kill_at=-1
 params=()
 while [ $# -gt 0 ]; do
   case "$1" in

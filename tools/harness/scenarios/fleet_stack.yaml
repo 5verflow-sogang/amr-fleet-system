@@ -6,11 +6,13 @@
 #   - 교착 없음: zone_waits.csv(구역 30 s 넘게 대기) · stalls.csv(60 s 넘게 정체) 0건
 # 추적·안전 노드(3단계)는 끈다: 랙 옆에서 DWA가 갇히는 문제가 남아 있다(#169). Fleet 지표와는 관계없다.
 #
-#   HARNESS_PACKAGES=amr_bringup tools/harness/docker_run.sh fleet_stack -n 1 --label smoke --set duration_s=300
-#   HARNESS_PACKAGES=amr_bringup tools/harness/gcp_run.sh fleet_stack -n 3 --label d100     # 기본: 5대, 지연 100 ms
+#   tools/harness/docker_run.sh fleet_stack -n 1 --label smoke --set duration_s=300
+#   tools/harness/gcp_run.sh fleet_stack -n 3 --label d100     # 기본: 5대, 지연 100 ms
 #
 # 응답 시간 50회: 작업 60건(10 s 간격)이 들어오지만 할당은 로봇이 비어야 생긴다. 한 실행에 다 못 모으면 -n으로 반복한다.
 name: fleet_stack
+# 빌드할 패키지 (docker_run.sh가 읽는다. HARNESS_PACKAGES·--packages가 있으면 그쪽이 우선)
+packages: amr_bringup
 num_robots: 5
 use_sim_time: true
 seed_base: 1

@@ -3,11 +3,13 @@
 # 서버 교착 해소 전략(revoke: 허가 회수·후진 / avoid: 순환을 닫는 요청 거부)이 풀어내는지 deadlock_result.json으로 본다.
 # Fleet KPI "교착 없음"의 근거: 일부러 만든 교착이 해소되는지 (일반 운용 fleet_stack에서는 zone_waits·stalls 0건).
 #
-#   HARNESS_PACKAGES=amr_bringup tools/harness/gcp_run.sh fleet_deadlock -n 3 --label revoke
-#   HARNESS_PACKAGES=amr_bringup tools/harness/gcp_run.sh fleet_deadlock -n 3 --set deadlock_strategy=avoid --label avoid
+#   tools/harness/gcp_run.sh fleet_deadlock -n 3 --label revoke
+#   tools/harness/gcp_run.sh fleet_deadlock -n 3 --set deadlock_strategy=avoid --label avoid
 #
 # 좁은 통로 진입은 #165(DWA lookahead 0.5·lethal 254)가 필요하다. 그 전에는 통로 앞에서 DWA가 멈춘다.
 name: fleet_deadlock
+# 빌드할 패키지 (docker_run.sh가 읽는다. HARNESS_PACKAGES·--packages가 있으면 그쪽이 우선)
+packages: amr_bringup
 num_robots: 2
 use_sim_time: true
 seed_base: 1

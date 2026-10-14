@@ -14,8 +14,8 @@
 ## 실행
 
 ```bash
-HARNESS_PACKAGES=amr_bringup tools/harness/gcp_run.sh fleet_deadlock -n 3 --label revoke
-HARNESS_PACKAGES=amr_bringup tools/harness/gcp_run.sh fleet_deadlock -n 3 --set deadlock_strategy=avoid --label avoid
+tools/harness/gcp_run.sh fleet_deadlock -n 3 --label revoke
+tools/harness/gcp_run.sh fleet_deadlock -n 3 --set deadlock_strategy=avoid --label avoid
 ```
 
 ## 결과 파일
