@@ -109,7 +109,18 @@ def test_response_time_with_ack_resend_and_odom():
         'task_id': 'task_s0_0001', 'latency_sim_ms': '0.000', 'assignment_id': 3,
         'ack_time': '11.200000', 'ack_rtt_ms': '1200.000', 'resends': 1,
         # 장애 주입기 중계본이 없으면 수신 기준은 비운다
-        'recv_time': '', 'latency_recv_ms': ''}
+        'recv_time': '', 'latency_recv_ms': '',
+        # 명령 직전 odom(9.0 s)이 움직이는 중이었다
+        'moving_at_cmd': '1'}
+
+
+def test_response_time_marks_robot_moving_at_command():
+    a = assignment(1, 'amr_01', 20)
+    stopped = [rec('/amr_01/odom', 19.9, odom(0.0, 19)), rec('/fleet/task_assignments', 20.0, a),
+               rec('/amr_01/odom', 20.2, odom(0.3, 20))]
+    no_odom_before = [rec('/fleet/task_assignments', 20.0, a), rec('/amr_01/odom', 20.2, odom(0.3, 20))]
+    assert response_time(stopped, CUTOFF)[0][-1] == '0'
+    assert response_time(no_odom_before, CUTOFF)[0][-1] == ''   # 판단할 odom이 없으면 비운다
 
 
 def test_response_time_separates_epochs_and_skips():

@@ -78,7 +78,8 @@ RECOVERY_HEADER = ['robot', 'kill_time', 'task_id', 'reassign_time', 'reassigned
 # latency_ms: 서버 발행 → 첫 움직임 (원 명세 측정 표 "작업 명령 발행"). 통신 지연 포함
 # latency_recv_ms: 로봇 수신(중계본 도착) → 첫 움직임 (원 명세 성능 요구사항 "명령 수신 ~ 로봇 반응"). 통신 지연 제외
 RESPONSE_TIME_HEADER = ['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms',
-                        'assignment_id', 'ack_time', 'ack_rtt_ms', 'resends', 'recv_time', 'latency_recv_ms']
+                        'assignment_id', 'ack_time', 'ack_rtt_ms', 'resends', 'recv_time', 'latency_recv_ms',
+                        'moving_at_cmd']
 
 
 @dataclass(frozen=True)
@@ -199,6 +200,8 @@ def response_time(records: Sequence[Record], cutoff: Cutoff) -> list[list]:
     - 명령은 (robot_id, assignment_id, header.stamp)로 구분한다. 서버가 재시작하면 번호가 1부터 다시 시작하지만
       stamp가 달라 섞이지 않는다. Ack는 assignment_stamp로 같은 명령을 되돌려 준다.
     - response_time은 /<robot>/odom이 bag에 있을 때만 채운다 (가짜 로봇은 odom이 없다).
+    - moving_at_cmd: 명령 직전 마지막 odom이 이미 움직이는 중이면 1. 첫 움직임 = "명령 뒤 처음 움직인 odom"이라
+      감속·후진 중이던 로봇은 지연이 0에 가깝고 latency_recv_ms는 음수도 나온다. 표시만 하고 빼지는 않는다 (#171 리뷰 4)
     """
     commands: dict[tuple[str, int, int], dict] = {}
     acks: dict[tuple[str, int, int], float] = {}
@@ -246,10 +249,11 @@ def response_time(records: Sequence[Record], cutoff: Cutoff) -> list[list]:
         ack_rtt = None if ack is None else (ack - cmd_time) * 1000.0
         recv = received.get((robot, assignment_id, stamp_ns))
         latency_recv = None if recv is None or response is None else (response - recv) * 1000.0
+        moving_at_cmd = '' if start == 0 else ('1' if _moving(series[start - 1].msg) else '0')
         rows.append([
             _fmt(cmd_time), _fmt(response), _fmt(latency, 3), robot, cmd['msg'].task.task_id,
             _fmt(latency_sim, 3), assignment_id, _fmt(ack), _fmt(ack_rtt, 3), cmd['count'] - 1,
-            _fmt(recv), _fmt(latency_recv, 3),
+            _fmt(recv), _fmt(latency_recv, 3), moving_at_cmd,
         ])
     return rows
 

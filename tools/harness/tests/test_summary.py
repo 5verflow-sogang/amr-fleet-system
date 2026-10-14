@@ -197,3 +197,34 @@ def test_fleet_stack_metrics(tmp_path):
     assert kpi_verdict('fleet.response_recv_ms.mean', 175.0, 190.0) == 'PASS'
     assert kpi_verdict('fleet.zone_long_waits', 1.0, 1.0) == 'FAIL'
     assert kpi_verdict('fleet.stalls', 0.0, 0.0) == 'PASS'
+    # 교착을 일부러 만드는 시나리오에서는 판정하지 않는다
+    assert kpi_verdict('fleet.zone_long_waits', 1.0, 1.0, scenario='fleet_deadlock') is None
+    assert kpi_verdict('fleet.response_recv_ms.mean', 175.0, 190.0, scenario='fleet_deadlock') == 'PASS'
+
+
+def _stack_run(root, name, n, latency_ms=150.0, scenario='fleet_stack'):
+    """응답 시간 n건 (그중 1건은 명령 순간 움직이던 로봇) + 움직임을 못 찾은 명령 1건."""
+    run = root / name
+    run.mkdir()
+    (run / 'meta.json').write_text(json.dumps({'scenario': scenario, 'label': '', 'outcome': 'completed'}))
+    rows = [['1.0', '1.2', f'{latency_ms}', 'amr_01', f't{i}', '120.0', str(i), '', '', '0', '1.1',
+             f'{latency_ms - 50}', '1' if i == 0 else '0'] for i in range(n)]
+    rows.append(['9.0', '', '', 'amr_02', 'tx', '', '99', '', '', '0', '', '', ''])
+    _csv(run / 'response_time.csv',
+         ['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms', 'assignment_id',
+          'ack_time', 'ack_rtt_ms', 'resends', 'recv_time', 'latency_recv_ms', 'moving_at_cmd'], rows)
+    return run
+
+
+def test_response_extras_and_min_samples(tmp_path):
+    m = fleet_metrics(_stack_run(tmp_path, 'one', 4))
+    assert m['fleet.response_sim_ms.mean'] == pytest.approx(120.0)
+    assert m['fleet.response_coverage'] == pytest.approx(4 / 5)
+    assert m['fleet.response_moving_at_cmd'] == 1
+    # 실행 3회 × 움직임 20건 = 60건이면 판정, 2회 × 20건 = 40건이면 보류 (명세서 "50회 이상")
+    enough = summarize([_stack_run(tmp_path, f'a{i}', 20) for i in range(3)])['fleet_stack']['metrics']
+    assert enough['fleet.response_recv_ms.mean']['kpi'] == 'PASS'
+    short = summarize([_stack_run(tmp_path, f'b{i}', 20, scenario='fleet_short') for i in range(2)])
+    d = short['fleet_short']['metrics']['fleet.response_ms.mean']
+    assert 'kpi' not in d and d['kpi_note'] == '보류 (n=40<50)'
+    assert '보류 (n=40<50)' in to_markdown(short)

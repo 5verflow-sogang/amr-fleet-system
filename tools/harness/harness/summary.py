@@ -17,14 +17,20 @@ from .stats import percentile, summarize_runs
 
 # 원 명세서 위치 오차 KPI [m] (amr_localization/eval/metrics.py KPI_THRESHOLDS와 같은 값)
 LOCALIZATION_KPI = {'stationary': 0.03, 'straight': 0.05, 'rotation': 0.08}
-# 원 명세서 응답 시간 KPI [ms]
+# 원 명세서 응답 시간 KPI [ms]. "50회 이상" 측정이라 움직임을 찾은 명령이 그보다 적으면 판정을 비운다
 RESPONSE_KPI_MS = 200.0
+RESPONSE_MIN_N = 50
+# 판정할 응답 시간 지표 → 그 표본 수 지표
+RESPONSE_KPI = {'fleet.response_ms.mean': 'fleet.response_ms.n',
+                'fleet.response_recv_ms.mean': 'fleet.response_recv_ms.n'}
 # 원 명세서 CPU 사용률 KPI [%]. 실행한 컨테이너가 쓸 수 있는 코어 기준 (기준 기기는 docker --cpus로 맞춘다)
 CPU_KPI_PCT = 80.0
 # 교착 판정 (4주차 10/13 결정): 구역 허가 장기 대기·이동 중 정체가 0건이어야 "5대 교착 없이 수행"
 # 장기 대기 기준은 amr_fleet_manager fleet_metrics.ZONE_LONG_WAIT_S와 같다 (서버 release_timeout_s)
 ZONE_LONG_WAIT_S = 30.0
 COUNT_ZERO_KPI = ('fleet.zone_long_waits', 'fleet.stalls')
+# 시나리오가 일부러 만드는 상황이라 판정하면 오해되는 지표 (fleet_deadlock은 교착을 유도한다)
+NO_VERDICT = {'fleet_deadlock': set(COUNT_ZERO_KPI)}
 
 
 def load_meta(run_dir: Path) -> dict:
@@ -94,6 +100,17 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
             out['fleet.response_recv_ms.mean'] = sum(recv) / len(recv)
             out['fleet.response_recv_ms.max'] = recv[-1]
             out['fleet.response_recv_ms.n'] = len(recv)
+        # 시뮬레이션 시간 기준 (발행 → 움직임). RTF < 1이면 실제 시간 값이 부푼다. KPI 시계는 회의에서 정한다 (#171 리뷰 2)
+        sim = sorted(_floats(resp_rows, 'latency_sim_ms'))
+        if sim:
+            out['fleet.response_sim_ms.mean'] = sum(sim) / len(sim)
+            out['fleet.response_sim_ms.max'] = sim[-1]
+        if resp:
+            # 움직임을 찾은 명령의 비율. 못 찾은 명령은 평균에서 조용히 빠지므로 같이 본다 (#171 리뷰 3)
+            out['fleet.response_coverage'] = len(resp) / len(resp_rows)
+            # 명령 순간 이미 움직이던 경우 (지연이 0에 가깝게 나온다, #171 리뷰 4)
+            out['fleet.response_moving_at_cmd'] = sum(r.get('moving_at_cmd') == '1' for r in resp_rows
+                                                      if r.get('latency_ms'))
     # 작업 결과. 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로, 완료율은 같은 seed(같은 작업 일정)끼리 비교한다
     tasks = _read_csv(run_dir / 'task_outcomes.csv')
     if tasks:
@@ -151,9 +168,11 @@ def cpu_metrics(run_dir: Path) -> dict[str, float]:
     out['sys.cpu_cores.mean'] = sum(cores) / len(cores)
     out['sys.cpu_cores.p95'] = percentile(cores, 0.95)
     out['sys.cpu_cores.max'] = cores[-1]
-    pct = _floats(rows, 'cpu_pct')
+    pct = sorted(_floats(rows, 'cpu_pct'))
     out['sys.cpu_pct.mean'] = sum(pct) / len(pct)
-    out['sys.cpu_pct.max'] = max(pct)
+    # 작업이 끝난 뒤 쉬는 구간도 평균에 들어가 낮아지므로 P95도 같이 본다 (#171 리뷰 5)
+    out['sys.cpu_pct.p95'] = percentile(pct, 0.95)
+    out['sys.cpu_pct.max'] = pct[-1]
     allowed = _floats(rows, 'allowed_cores')
     out['sys.allowed_cores'] = allowed[-1]
     host = _floats(rows, 'host_cpu_pct')
@@ -239,13 +258,15 @@ def group_key(meta: dict) -> str:
     return f"{meta.get('scenario', '?')}{'/' + label if label else ''}"
 
 
-def kpi_verdict(metric: str, mean: float, ci_high: Optional[float]) -> Optional[str]:
+def kpi_verdict(metric: str, mean: float, ci_high: Optional[float], scenario: str = '') -> Optional[str]:
     """KPI가 있는 지표만 판정한다. CI 상한까지 기준 안이면 PASS, 평균만 안이면 MARGINAL, 아니면 FAIL."""
+    if metric in NO_VERDICT.get(scenario, ()):
+        return None
     threshold = None
     parts = metric.split('.')
     if parts[0] == 'loc' and parts[-1] == 'rmse':
         threshold = LOCALIZATION_KPI.get(parts[-2])
-    elif metric in ('fleet.response_ms.mean', 'fleet.response_recv_ms.mean'):
+    elif metric in RESPONSE_KPI:
         threshold = RESPONSE_KPI_MS
     elif metric in COUNT_ZERO_KPI:
         threshold = 0.0
@@ -266,6 +287,7 @@ def summarize(run_dirs: Iterable[Path]) -> dict:
         if not meta:
             continue
         g = groups[group_key(meta)]
+        g['scenario'] = meta.get('scenario', '')
         if meta.get('outcome') != 'completed':
             g['failed'].append({'run_id': run_dir.name, 'outcome': meta.get('outcome')})
             continue
@@ -281,8 +303,13 @@ def summarize(run_dirs: Iterable[Path]) -> dict:
             if iv is None:
                 continue
             d = iv.as_dict()
-            verdict = kpi_verdict(metric, iv.mean, iv.ci_high)
-            if verdict:
+            verdict = kpi_verdict(metric, iv.mean, iv.ci_high, g.get('scenario', ''))
+            n_key = RESPONSE_KPI.get(metric)
+            samples = int(sum(g['values'].get(n_key, []))) if n_key else 0
+            if verdict and n_key and samples < RESPONSE_MIN_N:
+                # 명세서 "50회 이상": 실행을 모두 합쳐 움직임을 찾은 명령이 모자라면 판정하지 않는다
+                d['kpi_note'] = f'보류 (n={samples}<{RESPONSE_MIN_N})'
+            elif verdict:
                 d['kpi'] = verdict
             metrics[metric] = d
         result[name] = {'runs': g['runs'], 'failed': g['failed'], 'metrics': metrics}
@@ -314,7 +341,8 @@ def to_markdown(summary: dict) -> str:
                 continue
             ci = '—' if d['ci_low'] is None else f"{_fmt(d['ci_low'], metric)} ~ {_fmt(d['ci_high'], metric)}"
             lines.append(f"| `{metric}` | {d['n']} | {_fmt(d['mean'], metric)} | {ci} | "
-                         f"{_fmt(d['min'], metric)} | {_fmt(d['max'], metric)} | {d.get('kpi', '')} |")
+                         f"{_fmt(d['min'], metric)} | {_fmt(d['max'], metric)} | "
+                         f"{d.get('kpi') or d.get('kpi_note', '')} |")
         lines.append('')
     lines.append('위치 오차(`loc.*`)는 cm. KPI: CI 상한까지 기준 안이면 PASS, 평균만 안이면 MARGINAL.')
     return '\n'.join(lines) + '\n'
