@@ -10,6 +10,7 @@ from amr_fleet_core.assignment import (
     sort_by_priority,
 )
 from amr_fleet_core.assignment.types import MODE_BUSY, MODE_IDLE, TYPE_CHARGE, TYPE_DELIVERY
+from amr_fleet_core.viz import draw_assignment
 
 
 def task(task_id, priority=0, created=0.0, deadline=None, pickup=(0.0, 0.0), dropoff=(1.0, 1.0)):
@@ -152,15 +153,38 @@ def test_load_is_not_mutated():
     assert robots[0].load == 3
 
 
-def test_hungarian_beats_greedy():
+def test_hungarian_beats_greedy(viz):
     # 탐욕은 t1(급함)에 가까운 amr_01을 주고 t2에 먼 amr_02를 준다: 1 + 5 = 6
     # 최적은 t1←amr_02, t2←amr_01: 2 + 2 = 4
     tasks = [task('t1', priority=9, pickup=(1.0, 0.0)), task('t2', priority=1, pickup=(-2.0, 0.0))]
     robots = [robot('amr_01', xy=(0.0, 0.0)), robot('amr_02', xy=(3.0, 0.0))]
     greedy = ALGORITHMS['nearest'](tasks, robots)
     optimal = ALGORITHMS['hungarian'](tasks, robots)
+    viz('greedy_vs_hungarian', lambda ax: draw_assignment(ax, robots, tasks, greedy, 'nearest'),
+        lambda ax: draw_assignment(ax, robots, tasks, optimal, 'hungarian'))
     assert greedy.total_cost == pytest.approx(6.0)
     assert optimal.total_cost == pytest.approx(4.0)
+
+
+def test_algorithms_side_by_side(viz):
+    # 창고 한 구역 크기의 배치. 로봇 4대, 작업 5건이라 우선순위가 가장 낮고 늦은 t5가 남는다.
+    # nearest는 급한 t1에 가장 가까운 amr_03을 먼저 줘서 t3·t4가 먼 로봇을 받는다 (21.66).
+    # load_balance는 누적 할당이 적은 로봇부터 줘서 거리가 길어진다 (31.45). Hungarian이 가장 짧다 (14.44)
+    robots = [robot('amr_01', xy=(0.0, 0.0), load=2), robot('amr_02', xy=(4.0, 0.0)),
+              robot('amr_03', xy=(8.0, 0.0), load=1), robot('amr_04', xy=(12.0, 0.0))]
+    tasks = [task('t1', priority=5, pickup=(6.5, 2.0), dropoff=(1.0, 9.0)),
+             task('t2', priority=2, pickup=(2.0, -4.0), dropoff=(9.0, -6.0)),
+             task('t3', priority=2, pickup=(9.0, 3.0), dropoff=(13.0, 7.0)),
+             task('t4', priority=0, pickup=(14.0, -3.0), dropoff=(6.0, -7.0)),
+             task('t5', priority=0, pickup=(6.0, 8.0), dropoff=(0.0, 8.0))]
+    results = {name: ALGORITHMS[name](tasks, robots) for name in sorted(ALGORITHMS)}
+    viz('algorithms', *[lambda ax, n=n, r=r: draw_assignment(ax, robots, tasks, r, n) for n, r in results.items()])
+    for result in results.values():
+        assert len(set(result.assignments.values())) == len(result.assignments) == len(robots)
+        assert result.unassigned == ['t5']
+    assert results['nearest'].assignments['t1'] == 'amr_03'
+    assert results['hungarian'].assignments['t1'] == 'amr_02'
+    assert results['hungarian'].total_cost < results['nearest'].total_cost < results['load_balance'].total_cost
 
 
 @pytest.mark.parametrize('name', sorted(ALGORITHMS))

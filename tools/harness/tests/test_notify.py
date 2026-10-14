@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from harness.notify import ENV, build_payload, context_line, group_status, notify  # noqa: E402
+from harness.notify import ENV, build_payload, context_line, group_status, notify, pick_plot  # noqa: E402
 from harness.summary import summarize  # noqa: E402
 
 
@@ -108,6 +108,50 @@ def test_notify_sends_payload_and_summary_file(tmp_path, webhook):
     assert headers['User-Agent'] == 'amr-fleet-harness'
     assert b'name="payload_json"' in body and '✅ loc_basic'.encode() in body
     assert b'name="files[0]"; filename="summary.md"' in body and b'## loc_basic' in body
+
+
+def add_timeline(run: Path, done: int, total: int = 4) -> Path:
+    """Fleet 실행처럼 task_outcomes.csv(완료 done/total)와 plots/timeline.png를 넣는다."""
+    rows = ['task_id,request_time,first_assign_time,robots,final_state,end_time']
+    rows += [f't{i},1.0,2.0,amr_01,{"COMPLETED" if i < done else ""},3.0' for i in range(total)]
+    (run / 'task_outcomes.csv').write_text('\n'.join(rows) + '\n')
+    (run / 'plots').mkdir()
+    (run / 'plots' / 'timeline.png').write_bytes(b'\x89PNG fake ' + run.name.encode())
+    return run
+
+
+def test_pick_plot_lowest_completion(tmp_path):
+    runs = [make_run(tmp_path, f'r{i}', seed=i + 1) for i in range(4)]
+    assert pick_plot(runs) is None
+    add_timeline(runs[0], done=4)
+    add_timeline(runs[1], done=2)
+    add_timeline(runs[2], done=2)          # 같으면 앞 실행
+    plot, name, note = pick_plot(runs)
+    assert (plot, name) == (runs[1] / 'plots' / 'timeline.png', 'r1')
+    assert '3회 중' in note and '50%' in note
+
+
+def test_payload_puts_plot_in_its_group():
+    summary = {'a': group(runs=['r0']), 'b': group(runs=['r1'])}
+    payload = build_payload(summary, plot=('r1', '그림: r1'))
+    assert 'image' not in payload['embeds'][0]
+    assert payload['embeds'][1]['image'] == {'url': 'attachment://timeline.png'}
+    assert payload['embeds'][1]['description'].endswith('그림: r1')
+
+
+def test_notify_attaches_worst_timeline(tmp_path, webhook):
+    runs = [make_run(tmp_path, f'r{i}', seed=i + 1) for i in range(2)]
+    add_timeline(runs[0], done=4)
+    add_timeline(runs[1], done=1)
+    md = tmp_path / 'summary.md'
+    md.write_text('## loc_basic\n', encoding='utf-8')
+    assert notify(summarize(runs), runs, md)
+
+    [(_, body)] = webhook.received
+    assert b'name="files[0]"; filename="summary.md"' in body
+    assert b'name="files[1]"; filename="timeline.png"' in body and b'Content-Type: image/png' in body
+    assert b'PNG fake r1' in body and b'PNG fake r0' not in body
+    assert b'attachment://timeline.png' in body
 
 
 def test_notify_failure_does_not_raise(tmp_path, webhook, capsys):
