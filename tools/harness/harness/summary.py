@@ -137,7 +137,12 @@ def kidnap_metrics(run_dir: Path) -> dict[str, float]:
         k = json.loads(path.read_text(encoding='utf-8'))
         if k.get('error') or 'success' not in k:
             continue
+        # 순간 이동 순간에 이미 복구 중이던 실행은 감지를 잴 수 없어 분모에서 뺀다 (kidnap.valid로 몇 개인지 남김)
+        out['kidnap.valid'] = float(k.get('valid', True))
+        if not k.get('valid', True):
+            continue
         out['kidnap.success'] = float(k['success'])
+        out['kidnap.late_recovered'] = float(k.get('late_recover_s') is not None)
         out['kidnap.detected'] = float(k['detected'])
         out['kidnap.recovered'] = float(k['recovered'])
         out['kidnap.false_alarms'] = float(k.get('false_alarms', 0))

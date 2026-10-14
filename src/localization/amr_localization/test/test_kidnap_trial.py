@@ -91,3 +91,19 @@ def test_evaluate_counts_false_alarms_before_kidnap():
     r = evaluate(20.0, states, [])
     assert r['false_alarms'] == 1
     assert not r['recovered'] and r['final_error'] is None
+
+
+def test_detection_needs_tracking_to_lost_transition():
+    # 순간 이동 순간에 이미 복구 중이면 감지를 잴 수 없어 무효
+    states = [(5.0, 'tracking'), (15.0, 'settling')]
+    r = evaluate(20.0, states, samples([(0.0, 0.0, 0.0)] * 50, t0=20.0))
+    assert not r['valid'] and not r['success'] and r['detect_s'] is None
+
+
+def test_late_recovery_after_window_is_counted_separately():
+    c = Criteria(window_s=5.0, hold_s=1.0)
+    states = [(5.0, 'tracking'), (21.0, 'settling'), (30.0, 'failed'), (40.0, 'tracking')]
+    s = samples([(2.0, 1.0, 0.5)] * 200 + [(0.0, 0.0, 0.0)] * 50, t0=20.0)   # 40초부터 맞음
+    r = evaluate(20.0, states, s, c)
+    assert r['valid'] and r['detected'] and not r['recovered'] and not r['success']
+    assert r['late_recover_s'] == pytest.approx(19.0)

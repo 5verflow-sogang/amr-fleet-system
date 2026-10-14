@@ -1,7 +1,8 @@
 """순간 이동(Kidnapped) 시험 한 번의 목표 자세 고르기와 성공 판정. ROS에 의존하지 않는다.
 
 판정 기준은 docs/algorithms/localization.md 4-4절이다.
-- 감지: 순간 이동 뒤 detect_s(5초) 안에 복구 노드 상태가 tracking에서 벗어남
+- 감지: 순간 이동 뒤 detect_s(5초) 안에 복구 노드 상태가 tracking에서 벗어나는 전환.
+  순간 이동 순간에 이미 tracking이 아니면(앞서 복구 중) 감지를 잴 수 없으니 무효(valid=False)로 뺀다 (#148 하연 리뷰)
 - 복구: 기준 시각(감지, 못 했으면 순간 이동) 뒤 window_s(60초) 안에, 로봇 진행 방향 오차 ≤ along_m(0.3 m),
   옆 방향 오차 ≤ lateral_m(0.1 m), 방향 오차 ≤ yaw_rad(0.1 rad)를 hold_s(3초) 이상 유지
 - 성공: 감지와 복구 둘 다
@@ -108,18 +109,26 @@ def evaluate(t_kidnap: float, states: Sequence[tuple[float, str]], samples: Sequ
     """시험 한 번 판정. states는 (시각, 복구 노드 상태) 목록, samples는 순간 이동 뒤 오차."""
     false_alarms = sum(1 for (t, s), (_, prev) in zip(states[1:], states)
                        if t < t_kidnap and prev == 'tracking' and s != 'tracking')
-    t_detect = next((t for t, s in states if t >= t_kidnap and s != 'tracking'), None)
+    before = [s for t, s in states if t < t_kidnap]
+    valid = not before or before[-1] == 'tracking'
+    # tracking → 다른 상태로 바뀐 첫 전환만 감지로 센다
+    t_detect = next((t for (t, s), (_, prev) in zip(states[1:], states) if t >= t_kidnap and prev == 'tracking'
+                     and s != 'tracking'), None)
     detect_s = None if t_detect is None else t_detect - t_kidnap
     detected = detect_s is not None and detect_s <= c.detect_s
     t_ref = t_detect if detected else t_kidnap
     t_hold = first_hold(samples, t_ref, t_ref + c.window_s, c)
     last = samples[-1] if samples else None
+    # 판정 창이 끝난 뒤의 복구(늦은 복구)도 따로 센다. failed에서 tracking으로 돌아오는 경우가 있다 (recovery.py)
+    t_late = first_hold(samples, t_ref + c.window_s, math.inf, c) if t_hold is None else None
     return {
+        'valid': valid,
         'detected': detected,
         'detect_s': None if detect_s is None else round(detect_s, 2),
         'recovered': t_hold is not None,
         'recover_s': None if t_hold is None else round(t_hold - t_ref, 2),
-        'success': detected and t_hold is not None,
+        'success': valid and detected and t_hold is not None,
+        'late_recover_s': None if t_late is None else round(t_late - t_ref, 2),
         'false_alarms': false_alarms,
         'final_state': states[-1][1] if states else None,
         'final_error': None if last is None else {

@@ -145,11 +145,14 @@ def test_kidnap_metrics_success_rate(tmp_path):
 
     ok = dict(error=None, success=True, detected=True, recovered=True, detect_s=1.5, recover_s=9.5, false_alarms=0)
     lost = dict(error=None, success=False, detected=True, recovered=False, detect_s=2.0, recover_s=None, false_alarms=0)
-    runs = [trial('r0', **ok), trial('r1', **ok), trial('r2', **lost), trial('r3', error='set_pose 실패')]
-    assert kidnap_metrics(runs[0]) == {'kidnap.success': 1.0, 'kidnap.detected': 1.0, 'kidnap.recovered': 1.0,
+    runs = [trial('r0', **ok), trial('r1', **ok), trial('r2', **lost), trial('r3', error='set_pose 실패'),
+            trial('r4', **{**ok, 'valid': False})]   # 순간 이동 때 이미 복구 중 → 분모에서 뺌
+    assert kidnap_metrics(runs[0]) == {'kidnap.valid': 1.0, 'kidnap.success': 1.0, 'kidnap.detected': 1.0,
+                                       'kidnap.recovered': 1.0, 'kidnap.late_recovered': 0.0,
                                        'kidnap.false_alarms': 0.0, 'kidnap.detect_s': 1.5, 'kidnap.recover_s': 9.5}
     assert 'kidnap.recover_s' not in kidnap_metrics(runs[2])
     assert kidnap_metrics(runs[3]) == {}   # 시험이 안 된 실행은 성공률 분모에서 뺀다
+    assert kidnap_metrics(runs[4]) == {'kidnap.valid': 0.0}
     m = summarize(runs)['kidnap/near']['metrics']
     assert m['kidnap.success']['n'] == 3
     assert m['kidnap.success']['mean'] == pytest.approx(2 / 3)

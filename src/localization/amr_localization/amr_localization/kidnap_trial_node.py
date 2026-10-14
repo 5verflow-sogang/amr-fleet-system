@@ -52,6 +52,8 @@ class KidnapTrialNode(Node):
         self.output_dir = d('output_dir', '').value
         self.moved_min_m = d('moved_min_m', 2.0).value
         self.still_s = d('still_s', 2.0).value
+        # 판정 창(감지 5 s + 복구 60 s) 뒤에도 이만큼 더 지켜 늦은 복구를 센다
+        self.late_s = d('late_s', 30.0).value
         self.criteria = Criteria(
             detect_s=d('detect_s', 5.0).value, window_s=d('window_s', 60.0).value,
             along_m=d('along_m', 0.3).value, lateral_m=d('lateral_m', 0.1).value,
@@ -136,10 +138,10 @@ class KidnapTrialNode(Node):
                 self._finish('순간 이동 후 정답 자세가 목표로 바뀌지 않음')
         elif self.phase == OBSERVE:
             c = self.criteria
-            # 성공이 정해졌거나, 복구 노드가 포기했거나, 기준 시간이 다 지나면 끝낸다
+            # 성공이 정해졌거나 판정 창 + late_s가 지나면 끝낸다. 복구 노드가 failed여도 그 뒤 tracking으로 돌아올 수
+            # 있으니(늦은 복구) 일찍 끝내지 않는다 (#148 하연 리뷰)
             success = evaluate(self.t_kidnap, self.states, self.samples, c)['success']
-            failed = self.states and self.states[-1][1] == 'failed' and t - self.states[-1][0] > 2.0
-            if success or failed or t - self.t_kidnap > c.detect_s + c.window_s + c.hold_s + 1.0:
+            if success or t - self.t_kidnap > c.detect_s + c.window_s + c.hold_s + self.late_s:
                 self._finish()
 
     def _teleport(self):
