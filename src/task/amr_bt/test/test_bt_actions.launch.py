@@ -240,7 +240,7 @@ class TestBtActions(unittest.TestCase):
         self.assertTrue(self.wait_until(lambda: any(a.assignment_id == ack_id for a in self.acks), 5.0))
         ack = [a for a in self.acks if a.assignment_id == ack_id][0]
         self.assertEqual(ack.result, TaskAssignmentAck.RESULT_REJECTED)
-        self.assertEqual(ack.error.code, ErrorInfo.NAV_TIMEOUT)
+        self.assertEqual(ack.error.code, ErrorInfo.LOCALIZATION_LOST)
         self.assertIn('localization', ack.error.message)
 
         self.kidnap_pub.publish(String(data='tracking'))
@@ -258,6 +258,24 @@ class TestBtActions(unittest.TestCase):
             lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_ERROR, 2.0))
         self.assertTrue(self.wait_until(
             lambda: self.states[-1].mode == RobotState.MODE_IDLE, 6.0))
+
+    # 작업 중 위치 복구가 failed가 되면 기다리지 않고 바로 FAILED(LOCALIZATION_LOST)
+    def test_7_kidnap_failed_during_task_fails_now(self):
+        self.kidnap_pub.publish(String(data='tracking'))
+        self.assertTrue(self.wait_until(
+            lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_IDLE, 5.0))
+        with self.servers.lock:
+            self.servers.nav_duration = 30.0
+            before = len(self.servers.nav_goals)
+        self.assign('t7', Task.TYPE_RETURN, '', 'wait_1', dropoff_xy=(1.0, 0.0))
+        self.assertTrue(self.wait_until(lambda: len(self.servers.nav_goals) == before + 1, 10.0))
+        sent = time.monotonic()
+        self.kidnap_pub.publish(String(data='failed'))
+        last = self.final('t7', 10.0)
+        self.assertLess(time.monotonic() - sent, 5.0)
+        self.assertEqual(last.state, TaskStatus.STATE_FAILED)
+        self.assertEqual(last.error.code, ErrorInfo.LOCALIZATION_LOST)
+        self.kidnap_pub.publish(String(data='tracking'))
 
 
 @launch_testing.post_shutdown_test()

@@ -32,9 +32,11 @@
     nav_timeout_s: 300.0
     # Nav2가 실패(abort)하면 같은 목표를 다시 보내는 횟수 (모두 실패하면 NAV_NO_PATH)
     nav_retries: 2
-    # zone_client/state가 waiting·blocked·backing이거나 kidnap_recovery/state가 tracking이 아니면 멈춘다.
-    # 한 번 멈춘 채 이만큼 지나면 실패 [s] (구역 → TRAFFIC_LEASE_TIMEOUT, 위치 → NAV_TIMEOUT)
+    # zone_client/state가 waiting·blocked·backing이면 멈춘다. 한 번 멈춘 채 이만큼 지나면 실패 [s] → TRAFFIC_LEASE_TIMEOUT
     pause_timeout_s: 60.0
+    # kidnap_recovery/state가 settling·rotating이면 멈춘다. 한 번 멈춘 채 이만큼 지나면 실패 [s] → LOCALIZATION_LOST.
+    # 복구 시도 1번이 최대 28 s, 3번이면 약 84 s (#178). failed면 기다리지 않고 바로 LOCALIZATION_LOST
+    kidnap_pause_timeout_s: 120.0
     # 진행 상태가 이만큼 이어져야 목표를 다시 보낸다 [s] (상태가 한 틱만 바뀌는 것을 거른다)
     resume_hold_s: 0.3
     # kidnap_recovery/state가 이만큼 안 오면(복구 노드가 죽거나 scan·odom 끊김) 기본값 tracking으로 돌린다 [s]

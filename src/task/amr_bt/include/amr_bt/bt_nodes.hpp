@@ -94,6 +94,7 @@ struct PauseReason
   bool abort = false;
   uint16_t code = 0;    // 오래 멈추거나(abort면 바로) 실패할 때의 ErrorInfo 코드
   std::string why;      // 로그·실패 설명
+  double timeout_s = 0.0;   // 한 번 멈춘 채 이만큼 지나면 실패 (구역 pause_timeout_s, 위치 kidnap_pause_timeout_s)
 };
 PauseReason pause_reason(const TaskContext & ctx);
 
@@ -101,8 +102,9 @@ PauseReason pause_reason(const TaskContext & ctx);
 // - 멈춤 상태(pause_reason)면 목표를 취소하고 RUNNING으로 기다린다. 진행 상태가 resume_hold_s 이어지면
 //   같은 목표를 다시 보낸다 (Nav2가 지금 위치에서 경로를 다시 짠다)
 // - Nav2가 실패하면 nav_retries번 다시 보낸다. 그래도 실패하면 Nav2가 준 코드로 FAILURE
-// - 멈춘 시간을 뺀 이동 시간이 nav_timeout_s를 넘으면 NAV_TIMEOUT, 한 번 멈춘 채 pause_timeout_s를 넘으면
-//   멈춘 이유의 코드(구역 TRAFFIC_LEASE_TIMEOUT, 위치 NAV_TIMEOUT)로 FAILURE
+// - 멈춘 시간을 뺀 이동 시간이 nav_timeout_s를 넘으면 NAV_TIMEOUT, 한 번 멈춘 채 상한을 넘으면 멈춘 이유의
+//   코드로 FAILURE (구역 pause_timeout_s → TRAFFIC_LEASE_TIMEOUT, 위치 kidnap_pause_timeout_s → LOCALIZATION_LOST)
+// - 구역·위치 복구가 failed면 기다리지 않고 바로 FAILURE (구역 TRAFFIC_REVOKED, 위치 LOCALIZATION_LOST)
 class MoveTo : public BT::StatefulActionNode
 {
 public:

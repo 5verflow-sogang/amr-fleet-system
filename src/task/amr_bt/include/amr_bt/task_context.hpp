@@ -72,7 +72,10 @@ struct TaskContext
   // ---- MoveTo 규칙 (amr_bt.yaml) ----
   double nav_timeout_s = 300.0;   // 멈춘 시간을 뺀 이동 시간 상한 → NAV_TIMEOUT
   int nav_retries = 2;            // Nav2가 실패(abort)하면 다시 보내는 횟수
-  double pause_timeout_s = 60.0;  // 한 번 멈춘 채 이만큼 지나면 실패 (구역 → TRAFFIC_LEASE_TIMEOUT)
+  double pause_timeout_s = 60.0;  // 구역 때문에 한 번 멈춘 채 이만큼 지나면 실패 → TRAFFIC_LEASE_TIMEOUT
+  // 위치 복구 때문에 한 번 멈춘 채 이만큼 지나면 실패 → LOCALIZATION_LOST. 복구 노드가 시도 1번에 최대 28 s
+  // (정지 10 + 회전 15 + 확인 3), 3번이면 약 84 s라 구역보다 길게 둔다 (#178)
+  double kidnap_pause_timeout_s = 120.0;
   double resume_hold_s = 0.3;     // 진행 상태가 이만큼 이어져야 다시 보낸다 (한 틱짜리 idle 걸러냄)
 
   // ---- 가상 배터리 (amr_bt_node가 battery.hpp 모델로 채운다) ----

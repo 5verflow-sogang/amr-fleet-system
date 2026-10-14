@@ -195,6 +195,7 @@ public:
     ctx_->nav_timeout_s = declare_parameter<double>("nav_timeout_s", 300.0);
     ctx_->nav_retries = static_cast<int>(declare_parameter<int64_t>("nav_retries", 2));
     ctx_->pause_timeout_s = declare_parameter<double>("pause_timeout_s", 60.0);
+    ctx_->kidnap_pause_timeout_s = declare_parameter<double>("kidnap_pause_timeout_s", 120.0);
     ctx_->resume_hold_s = declare_parameter<double>("resume_hold_s", 0.3);
     kidnap_stale_s_ = declare_parameter<double>("kidnap_state_stale_s", 5.0);
     ctx_->charge_target = declare_parameter<double>("battery.charge_target_percent", 100.0);
@@ -351,7 +352,7 @@ private:
     if (ctx_->kidnap_state == "failed") {
       // 위치 복구가 실패한 상태(#79). 복구 노드가 failed에서도 수렴하면 tracking으로 돌아오고 그때 다시 받는다.
       // 위치 잃음용 ErrorInfo 코드가 없어 MoveTo 멈춤 초과와 같은 NAV_TIMEOUT을 쓴다 (#148)
-      return std::make_pair(ErrorInfo::NAV_TIMEOUT, std::string("localization lost (kidnap_recovery failed)"));
+      return std::make_pair(ErrorInfo::LOCALIZATION_LOST, std::string("localization lost (kidnap_recovery failed)"));
     }
     return std::nullopt;
   }

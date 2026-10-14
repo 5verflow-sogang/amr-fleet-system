@@ -76,7 +76,8 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 | Nav2 실패(abort) | 같은 목표를 `nav_retries`(2)번 다시 보낸다 | 다 실패하면 `NAV_NO_PATH`(201) |
 | 멈춘 시간을 뺀 이동 시간 > `nav_timeout_s`(300 s) | 목표 취소 | `NAV_TIMEOUT`(202) |
 | `zone_client/state` = `waiting`·`blocked`·`backing` | 목표 취소, RUNNING으로 기다림 | 한 번에 `pause_timeout_s`(60 s) 넘게 멈추면 `TRAFFIC_LEASE_TIMEOUT`(301) |
-| `kidnap_recovery/state` ≠ `tracking` | 같음 | 60 s 넘으면 `NAV_TIMEOUT`(202) |
+| `kidnap_recovery/state` = `settling`·`rotating` | 같음 | 한 번에 `kidnap_pause_timeout_s`(120 s) 넘게 멈추면 `LOCALIZATION_LOST`(203). 복구 시도 3번이 약 84 s라 구역보다 길게 둔다 (#178) |
+| `kidnap_recovery/state` = `failed` (복구 노드가 포기) | 바로 실패 | `LOCALIZATION_LOST`(203) |
 | `zone_client/state` = `failed` (후진 안전 한도로 정지) | 바로 실패 | `TRAFFIC_REVOKED`(302) |
 | 진행 상태(`idle`·`approaching`·`inside`, `tracking`)로 돌아옴 | `resume_hold_s`(0.3 s) 이어지면 같은 목표를 다시 보낸다. Nav2가 지금 위치에서 경로를 다시 짠다 | — |
 
@@ -84,8 +85,9 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 - 상태 토픽을 내는 노드가 없으면 기본값(`idle`, `tracking`) = 진행이다
 - 후진(`backing`)은 zone_client가 `cmd_vel_zone_limited`로 직접 낸다. BT는 Nav2 목표만 멈춘다 (#137)
 - `zone_client/state` = `failed`인 동안은 `RobotState.mode`를 `MODE_ERROR`로 내고 새 할당을 `RESULT_REJECTED` + `TRAFFIC_REVOKED`로 거부한다. 서버가 멈춘 로봇에 작업을 계속 줘서 바로 실패하는 일을 되풀이하지 않게 한다
-- `kidnap_recovery/state` = `failed`인 동안도 같다 (`NAV_TIMEOUT`, "localization lost"). 복구 노드가 `failed`에서도 수렴해 `tracking`으로 돌아오면 다시 `MODE_IDLE`로 할당을 받는다 (#148). 위치 잃음용 ErrorInfo 코드가 생기면 바꾼다
+- `kidnap_recovery/state` = `failed`인 동안도 같다 (`LOCALIZATION_LOST`, "localization lost"). 사람이 위치를 다시 잡거나 복구 노드가 늦게라도 수렴해 `tracking`으로 돌아오면 다시 `MODE_IDLE`로 할당을 받는다 (#148)
 - `kidnap_recovery/state`가 `kidnap_state_stale_s`(5 s) 넘게 안 오면(복구 노드가 죽거나 scan·odom이 끊김) 마지막 값을 버리고 기본값 `tracking`으로 돌린다. 안 그러면 `failed`가 남아 `MODE_ERROR`가 풀리지 않는다. `zone_client/state` = `failed`는 사람이 확인해야 하는 상태라 그대로 둔다
+  - 복구 노드는 scan·odom·지도가 다 있을 때만 상태를 낸다. 그래서 scan이 끊겨도 5 s 뒤 `failed`가 `tracking`으로 풀려 할당을 받는다. 상태를 모르는 채 멈춰 있기보다 움직이게 둔 것이고(위치가 정말 틀리면 Nav2·구역이 막는다), 멈춰 있는 쪽이 낫다고 정하면 `failed`만 남기게 바꾼다
 - `MODE_ERROR`에 들어갈 때 이유를 WARN으로, 나올 때 빠져 있던 시간을 INFO로 남긴다 (할당에서 빠진 로봇·시간을 로그로 본다)
 
 ### 가상 배터리 (`include/amr_bt/battery.hpp`)
@@ -142,8 +144,9 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 | `dwell_s` | `2.0` | 싣기·내리기 시간 [s] (가상 적재·하역 이벤트) |
 | `nav_timeout_s` | `300.0` | 멈춘 시간을 뺀 이동 시간 상한 [s] |
 | `nav_retries` | `2` | Nav2 실패 때 다시 보내는 횟수 |
-| `pause_timeout_s` | `60.0` | 한 번 멈춘 채 기다리는 상한 [s] |
+| `pause_timeout_s` | `60.0` | 구역(`waiting`·`blocked`·`backing`)으로 한 번 멈춘 채 기다리는 상한 [s] |
 | `resume_hold_s` | `0.3` | 진행 상태가 이만큼 이어져야 다시 보낸다 [s] |
+| `kidnap_pause_timeout_s` | `120.0` | 위치 복구(`settling`·`rotating`)로 한 번 멈춘 채 기다리는 상한 [s] (구역은 `pause_timeout_s`) |
 | `kidnap_state_stale_s` | `5.0` | `kidnap_recovery/state`가 이만큼 안 오면 기본값(`tracking`)으로 돌린다 [s] |
 | `battery.*` | 위 표 | 가상 배터리 (`initial_percent`, `move_per_m`, `idle_per_s`, `charge_per_s`, `charge_target_percent`, `charge_timeout_s`, `reject_below_percent`) |
 | `groot_port` | `0` | Groot 모니터링 포트 (0이면 끔) |
@@ -189,12 +192,13 @@ colcon test --packages-select amr_bt
   - 충전: 배터리가 찰 때까지 대기, 충전 시간 초과, 충전 중 취소. 배터리 모델 소모·충전·상하한
   - 도킹: 2번 실패 뒤 성공, 3번 실패 → FAILED(900번대·"failed 3 times"), 작업마다 시도 횟수 새로
   - 이동: Nav2 실패 재시도·한도 초과, 타임아웃, 멈춘 시간은 타임아웃에서 뺌
-  - 멈춤·재개: 구역 waiting → 취소 → approaching → 재전송, 한 틱 idle 무시, 같은 상태 반복에 재전송 없음, 멈춤 시간 초과(301), zone failed(302), kidnap 멈춤, 시작부터 멈춤
+  - 멈춤·재개: 구역 waiting → 취소 → approaching → 재전송, 한 틱 idle 무시, 같은 상태 반복에 재전송 없음, 멈춤 시간 초과(301), zone failed(302), kidnap 멈춤, kidnap failed 바로 실패(203), kidnap 멈춤 상한 120 s, 시작부터 멈춤
   - 취소: 즉시 FAILED(Nav2·도킹 목표도 취소), 취소 직후 새 작업, 도킹·싣기 중 취소, 다른 작업 취소 무시, 실패 코드 전달
 - `test_bt_actions.launch.py` (launch_testing): 실제 `amr_bt_node`를 가짜 Nav2·도킹 액션 서버와 띄운다
   - 배송 한 사이클: 목표 자세 2개·도킹 스테이션 2개가 순서대로 가고 COMPLETED
   - 도킹이 늘 실패하는 스테이션: Dock.action 3번 호출 뒤 FAILED(`FAILED_TO_DETECT_DOCK` 904)
   - 이동 중 `zone_client/state` = waiting → Nav2 목표 취소, approaching → 다시 보내고 COMPLETED
   - `zone_client/state` = failed → `MODE_ERROR`, 새 할당 거부(`TRAFFIC_REVOKED`)
-  - `kidnap_recovery/state` = failed → `MODE_ERROR`, 새 할당 거부(`NAV_TIMEOUT`), tracking으로 돌아오면 다시 받아 COMPLETED
+  - `kidnap_recovery/state` = failed → `MODE_ERROR`, 새 할당 거부(`LOCALIZATION_LOST`), tracking으로 돌아오면 다시 받아 COMPLETED
+  - 작업 중 `kidnap_recovery/state` = failed → 바로 FAILED(`LOCALIZATION_LOST`)
   - `kidnap_recovery/state` = failed 뒤 끊김 → `kidnap_state_stale_s` 뒤 `MODE_IDLE`
