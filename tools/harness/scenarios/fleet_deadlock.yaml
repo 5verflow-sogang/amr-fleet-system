@@ -31,8 +31,8 @@ processes:
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/{map}.yaml map_origin_in_world:="{map_origin}"
     ready_topic: /fleet/heartbeat
     ready_cmds:
-      - for i in 01 02; do ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
-    ready_timeout_s: 600
+      - for i in 01 02; do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
+    ready_timeout_s: 240
     settle_s: 5
   - name: rosbag
     cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/amr_[0-9][0-9]/odom'

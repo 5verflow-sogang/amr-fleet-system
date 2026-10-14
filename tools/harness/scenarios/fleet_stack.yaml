@@ -38,11 +38,14 @@ processes:
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
       fault_events_file:={run_dir}/fault_events.csv
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/{map}.yaml map_origin_in_world:="{map_origin}"
+      spawn_interval_s:=5.0
     ready_topic: /fleet/heartbeat
-    # 로봇마다 스폰 3 s 간격 + Nav2 활성. 모든 로봇의 bt_navigator가 active여야 작업을 받아 움직인다
+    # 모든 로봇의 bt_navigator가 active여야 작업을 받아 움직인다. 보통 60 s(GCP 5대). 로봇 하나의 Nav2 기동이
+    # 실패하면(lifecycle 서비스 호출 실패, 10/14 amr_05) 다시 오르지 않으므로 오래 기다리지 않고 기동 재시도로 넘긴다.
+    # 스폰 간격은 기본 3 s → 5 s: 기동이 겹치면 CPU가 차서 lifecycle 서비스 호출이 실패했다
     ready_cmds:
-      - for i in $(seq -f %02g 1 {num_robots}); do ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
-    ready_timeout_s: 600
+      - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
+    ready_timeout_s: 240
     settle_s: 5
   # 기동이 끝난 뒤부터 잰다 (기동 중 빌드·스폰 부하는 운용 CPU가 아니다)
   - name: cpu_monitor
