@@ -265,6 +265,34 @@ OpenRobotics "Male visitor" ([Gazebo Fuel](https://app.gazebosim.org/OpenRobotic
 (실제 시간으로 재면 LiDAR 7.6 Hz, IMU 79 Hz, 카메라 23 Hz). 시뮬레이션 시간 기준 주기는 설정값 그대로이므로
 노드는 `use_sim_time:=true`로 쓴다. 로봇 대수를 늘릴 때는 카메라 해상도·주기 조정이 필요할 수 있다.
 
+## 연구 2 RL 평가 환경 (`worlds/rl_eval.sdf`, `launch/rl_eval.launch.py`, 3주차 작업 11)
+
+연우 2D 학습 환경([experiments/research2](../../../experiments/research2/README.md))과 **같은 시나리오**를 Gazebo에서 돌리고 **같은 지표**를 CSV로 남긴다. 학습한 정책을 물리 시뮬레이터에서 다시 재는 용도다.
+
+```bash
+ros2 launch amr_gazebo rl_eval.launch.py payload_mass:=25.0 episodes:=10 policy:=brake csv:=/tmp/rl/25kg.csv
+ros2 launch amr_gazebo rl_eval.launch.py payload_mass:=10.0 eval_list:=3 scenarios:=S1
+ros2 launch amr_gazebo rl_eval.launch.py policy:=my_pkg.ppo:act      # 학습한 정책 (obs dict → v, ω)
+ros2 launch amr_gazebo rl_eval.launch.py mode:=brake_sweep payload_mass:=10.0 csv:=/tmp/rl/brake.csv   # 속도별 급정지 제동 거리·지연
+```
+
+| 항목 | 2D (payload_nav) | Gazebo (여기) |
+| --- | --- | --- |
+| 시나리오 | `sample_scenario(np_random(seed))` | 같은 함수·같은 난수 생성기 (`rl_eval.scenario_for`). 테스트가 2D 환경과 값이 같은지 본다 |
+| 평가 시드 | `seeds.eval_seed(목록 k, 에피소드)` | 같음 (`eval_list`, `start_episode`, `episodes`) |
+| 통로 | 폭 1.2–2.0 m, 중심선 y = 0 | 에피소드마다 벽 두 개 스폰 (높이 1 m) |
+| 출발 | x = 0에서 1–2 m/s | x < 0 가속 구간에서 출발 속도까지 올려 x = 0을 지날 때 시작 (실측 출발 속도를 CSV에) |
+| 돌발 장애물 | 로봇 중심이 trigger_x를 지나면 로봇 앞면 + gap에 생김 | 트리거 1.5 m 앞에서 그 자리로 옮겨 두고, trigger_x를 지나는 순간(GT 100 Hz) 움직이기 시작. 실제 간격을 CSV에 (`popout_gap_actual`). 그 순간 장애물 GT가 옮길 자리에서 3 cm(`place_tol_m`) 넘게 떨어져 있으면 무효(`valid` False)로 보고 2번(`max_retries`)까지 다시 한다 (`popout_place_error`, `attempts`) |
+| 동역학 | 바퀴 토크 3 N·m 한계, 질량 의존 | URDF `payload_mass` + DiffDrive 가속 상한을 풀어(`max_linear_acceleration` 10) 바퀴 조인트 토크 한계가 정한다 (#55: 상한 1.0이면 질량과 무관). 바퀴 회전 관성 때문에 감속이 2D보다 2.5–5 % 약하고, 명령 지연이 10–30 ms 있다 (`mode:=brake_sweep`, [비교 결과](../../../experiments/rl_gazebo_eval/README.md)) |
+| 충돌·도착 판정 | 몸체 사각형·원 장애물, 0.2 m·0.1 m/s 정지 | 같은 함수(`dynamics.footprint_clearance`)로 GT 자세에 적용 |
+| 지표 | `evaluation.run_episode` | 같은 열 이름 (`rl_eval.EpisodeTracker.metrics`) + Gazebo 실측 열 |
+
+- 질량은 스폰할 때 URDF에 들어가서 질량마다 launch를 다시 띄운다
+- 정책 관측은 2D처럼 GT다 (`rl_eval.policy_obs`: 로봇 자세·속도, 목표, 통로 폭, 질량, 남은 시간, 나타난 장애물). 2D 48차원 관측은 이 값으로 만든다. 카메라·LiDAR는 쓰지 않는다
+- 정책: `cruise`(장애물 무시), `brake`(진행선 앞 장애물이 제동 거리 안이면 급정지). 둘 다 환경 확인용 시험 주행기다. 학습한 PPO는 `모듈:함수`로 붙인다 (연우와 함께)
+- 2D 소스는 `research2_dir` 파라미터, `AMR_RESEARCH2_DIR`, compose 마운트(`/ros2_ws/src/experiments/research2`) 순으로 찾는다. `payload_nav` 패키지 `__init__`은 Python 3.11(tomllib)·gymnasium이 필요해서 `dynamics.py`·`scenarios.py`만 읽는다
+- 2D와의 비교 결과: [experiments/rl_gazebo_eval](../../../experiments/rl_gazebo_eval/README.md)
+
 ## 파라미터
 
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
@@ -277,7 +305,8 @@ launch 파일과 인자:
 | launch | 인자 (기본값) | 설명 |
 | --- | --- | --- |
 | `world.launch.py` | `world` (`warehouse.sdf`), `gui` (`true`), `verbosity` (`2`) | 월드만. `gui:=false`면 서버만 |
-| `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `label_camera` (`false`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
+| `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `label_camera` (`false`), `max_linear_acceleration` (`1.0`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
+| `rl_eval.launch.py` | `payload_mass` (`0.0`), `eval_list` (`0`), `episodes` (`5`), `start_episode` (`0`), `scenarios` (`S1,S2`), `policy` (`brake`), `csv`, `research2_dir`, `gui` (`false`), `mode` (`episodes`), `sweep_speeds` (`0.5,1.0,1.5,2.0`), `sweep_repeats` (`3`) | 연구 2 RL 평가: 빈 월드 + 로봇 1대 + 에피소드 실행 (위 절). `mode:=brake_sweep`이면 속도별 급정지 |
 | `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `label_camera` (`false`), `dynamic_obstacles` (`false`), `obstacle_seed` (`0`), `cargo` (`false`) | 월드 + 로봇 1대 + RViz (+ 동적 장애물, 화물 상자) |
 | `dynamic_obstacles.launch.py` | `config` (`config/dynamic_obstacles.yaml`), `only` (전부, 쉼표로 id), `seed` (`0`), `use_sim_time` (`true`) | 실행 중인 Gazebo에 동적 장애물 스폰 + 브리지 + 이동 노드 |
 | `cargo_boxes.launch.py` | `config` (`config/cargo_boxes.yaml`) | 실행 중인 Gazebo에 화물 상자 스폰 (LiDAR 높이에 걸리면 실패) |
@@ -306,3 +335,8 @@ colcon test --packages-select amr_gazebo
 
 `test/test_cargo.py`: 실제 `config/cargo_boxes.yaml`과 월드 SDF로 상자가 LiDAR 스캔 높이에 안 걸리는지, 카메라 높이 범위(1.5 m 이하),
 바닥 상자가 랙·기둥과 겹치지 않고 랙 면에 붙어 있는지, 도크 상자가 플랫폼 위에 있는지, 좁은 통로·동적 장애물 경로를 피하는지, SDF 링크 위치를 확인한다.
+
+`test/test_rl_eval.py`: 평가 시드 규칙과 시나리오가 2D 환경과 같은지(gymnasium이 있으면 2D 환경과 직접 비교), 가속 구간·벽·장애물 배치,
+에피소드 판정(도착·지나침·벽 충돌·장애물 정지 여유·충돌), 급정지 지표(`brake_metrics`), 시험 정책, 외부 정책 불러오기를 확인한다.
+ROS 이미지에는 gymnasium이 없어 2D 환경 직접 비교는 건너뛴다. CI `rl-env.yml`이 연구 2 uv 환경에서 `RL_EVAL_REQUIRE_2D=1`로 이 파일을 돌려
+건너뛰지 않고 확인한다 (연구 2 시나리오가 바뀌면 여기서 걸린다).
