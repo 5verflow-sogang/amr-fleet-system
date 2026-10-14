@@ -25,6 +25,11 @@ params:
   algorithm: nearest
   # 작업 생성기 basic.yaml은 600 s(실제 시간)에 60건을 넣는다. 로봇이 다 처리할 때까지 여유를 둔다
   duration_s: 1500
+  # 지도: 0.05 m(warehouse_v1)와 그 정렬 원점(#157 B안). 기본 0.025 m는 5대에서 NavFn(Dijkstra)이 전체 지도
+  # 2400x1600칸을 훑느라 경로를 끝내 못 냈다(GCP 스모크 10/14: planner "missed deadline" 475회, 로봇 정지).
+  # Fleet KPI는 위치 정밀도와 관계없어 0.05 m를 쓴다 (system.launch 주석 "경로 계획이 느리면 0.05 m")
+  map: warehouse_v1
+  map_origin: "[-0.0571, 1.5167, 0.00013]"
 processes:
   - name: stack
     cmd: >-
@@ -32,6 +37,7 @@ processes:
       seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct} algorithm:={algorithm}
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
       fault_events_file:={run_dir}/fault_events.csv
+      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/{map}.yaml map_origin_in_world:="{map_origin}"
     ready_topic: /fleet/heartbeat
     # 로봇마다 스폰 3 s 간격 + Nav2 활성. 모든 로봇의 bt_navigator가 active여야 작업을 받아 움직인다
     ready_cmds:
@@ -47,7 +53,9 @@ processes:
     cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/amr_[0-9][0-9]/odom'
     settle_s: 3
   - name: task_generator
-    cmd: ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json
+    cmd: >-
+      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json
+      map_origin_in_world:="{map_origin}"
 driver:
   mode: wait
   # 작업 일정이 실제 시간이라 실제 시간으로 기다린다

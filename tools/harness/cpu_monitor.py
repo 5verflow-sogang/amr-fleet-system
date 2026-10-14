@@ -5,6 +5,7 @@
 
 열: time, cores(컨테이너가 쓴 코어 수), allowed_cores, cpu_pct(쓸 수 있는 코어 대비 %), host_cpu_pct(VM 전체, 참고),
 cores_<묶음>(sim·nav2·localization·fleet·perception·other). 계산은 harness/cpu.py.
+끝날 때 같은 폴더에 cpu_procs.csv(프로세스별 평균 코어 수, 큰 순서 40개)를 남긴다.
 """
 
 import argparse
@@ -45,7 +46,8 @@ def main(argv=None) -> int:
         writer = csv.writer(f)
         writer.writerow(CSV_HEADER)
         f.flush()
-        sampler.sample(time.time())
+        started = time.time()
+        sampler.sample(started)
         while not stopping:
             time.sleep(args.interval)
             row = sampler.sample(time.time())
@@ -53,6 +55,12 @@ def main(argv=None) -> int:
                 writer.writerow([_fmt(row[k]) for k in CSV_HEADER])
                 # 하네스가 강제로 끝내도 그때까지의 행은 남게 한다
                 f.flush()
+    # 프로세스별 평균 코어 수 (어느 노드가 CPU를 먹는지)
+    with out.with_name('cpu_procs.csv').open('w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['process', 'group', 'cpu_s', 'mean_cores'])
+        for name, group, sec, cores in sampler.top_processes(time.time() - started):
+            writer.writerow([name, group, f'{sec:.1f}', f'{cores:.3f}'])
     return 0
 
 

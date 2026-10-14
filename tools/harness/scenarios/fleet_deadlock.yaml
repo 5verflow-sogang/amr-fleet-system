@@ -17,6 +17,9 @@ timeout_s: 1200
 params:
   deadlock_strategy: revoke
   delay_ms: 100
+  # fleet_stack과 같은 0.05 m 지도 (0.025 m는 경로 계획이 느리다)
+  map: warehouse_v1
+  map_origin: "[-0.0571, 1.5167, 0.00013]"
 processes:
   - name: stack
     cmd: >-
@@ -25,6 +28,7 @@ processes:
       zones_file:=/repo/experiments/fleet_deadlock/zones_split.yaml
       deadlock_strategy:={deadlock_strategy} delay_ms:={delay_ms}
       epoch_file:={run_dir}/epoch
+      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/{map}.yaml map_origin_in_world:="{map_origin}"
     ready_topic: /fleet/heartbeat
     ready_cmds:
       - for i in 01 02; do ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
@@ -37,7 +41,7 @@ driver:
   mode: command
   use_sim_time: true
   timeout_s: 1100
-  cmd: python3 /repo/experiments/fleet_deadlock/drive.py --out {run_dir}/deadlock_result.json --timeout 900
+  cmd: python3 /repo/experiments/fleet_deadlock/drive.py --out {run_dir}/deadlock_result.json --timeout 900 --origin "{map_origin}"
 postprocess:
   - name: fleet_metrics
     cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots 2

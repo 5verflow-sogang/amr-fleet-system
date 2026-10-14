@@ -39,6 +39,27 @@ def classify(cmdline: str) -> str:
     return 'other'
 
 
+def proc_label(cmdline: str) -> str:
+    """프로세스 명령줄 → 짧은 이름. ROS 노드면 "<네임스페이스>/<노드>"(예: amr_01/planner_server),
+    아니면 실행 파일 이름(python3 스크립트면 스크립트 이름)."""
+    parts = cmdline.split()
+    node = ns = None
+    for part in parts:
+        if part.startswith('__node:='):
+            node = part.split(':=', 1)[1]
+        elif part.startswith('__ns:='):
+            ns = part.split(':=', 1)[1].strip('/')
+    if node:
+        return f'{ns}/{node}' if ns else node
+    exe = [p for p in parts if not p.startswith('-')]
+    if not exe:
+        return '?'
+    name = exe[0].rsplit('/', 1)[-1]
+    if name.startswith('python') and len(exe) > 1:
+        name = exe[1].rsplit('/', 1)[-1]
+    return name
+
+
 def parse_cgroup_usage_us(cpu_stat: str) -> Optional[int]:
     """cgroup v2 cpu.stat의 usage_usec (마이크로초)."""
     for line in cpu_stat.splitlines():
@@ -83,6 +104,9 @@ class Sampler:
         self.prev_cgroup: Optional[int] = None
         self.prev_host: Optional[Tuple[int, int]] = None
         self.prev_pids: Dict[int, int] = {}
+        # 프로세스 이름(proc_label)별 누적 CPU 시간 (s). 끝날 때 cpu_procs.csv로 남겨 어느 노드가 먹는지 본다
+        self.proc_seconds: Dict[str, float] = {}
+        self.proc_group: Dict[str, str] = {}
 
     # --- 읽기 (테스트에서 root를 가짜 폴더로) ---
     def _read(self, rel: str) -> Optional[str]:
@@ -129,7 +153,12 @@ class Sampler:
             for pid, (cmd, ticks) in pids.items():
                 # 이번 구간에 새로 생긴 프로세스는 다음 구간부터 센다
                 if pid in self.prev_pids:
-                    groups[classify(cmd)] += max(ticks - self.prev_pids[pid], 0) / self.clk_tck / dt
+                    used_s = max(ticks - self.prev_pids[pid], 0) / self.clk_tck
+                    group = classify(cmd)
+                    groups[group] += used_s / dt
+                    label = proc_label(cmd)
+                    self.proc_seconds[label] = self.proc_seconds.get(label, 0.0) + used_s
+                    self.proc_group[label] = group
             if cgroup is not None and self.prev_cgroup is not None:
                 cores = (cgroup - self.prev_cgroup) / 1e6 / dt
             else:
@@ -144,3 +173,8 @@ class Sampler:
         self.prev_time, self.prev_cgroup, self.prev_host = now, cgroup, host
         self.prev_pids = {pid: ticks for pid, (_, ticks) in pids.items()}
         return row
+
+    def top_processes(self, elapsed_s: float, limit: int = 40) -> list:
+        """누적 CPU 시간이 큰 순서로 [(이름, 묶음, CPU 시간 s, 평균 코어 수)]."""
+        rows = sorted(self.proc_seconds.items(), key=lambda kv: -kv[1])[:limit]
+        return [(name, self.proc_group[name], sec, sec / elapsed_s if elapsed_s > 0 else 0.0) for name, sec in rows]

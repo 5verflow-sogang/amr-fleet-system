@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harness.cpu import (CSV_HEADER, Sampler, classify, parse_cgroup_usage_us, parse_cpu_max,  # noqa: E402
-                         parse_pid_ticks, parse_proc_stat)
+                         parse_pid_ticks, parse_proc_stat, proc_label)
 from harness.summary import cpu_metrics, kpi_verdict  # noqa: E402
 
 
@@ -70,6 +70,32 @@ def test_sampler_cores_and_groups(tmp_path):
     assert row['cores_nav2'] == pytest.approx(0.5)
     assert row['cores_other'] == 0  # 이번 구간에 새로 생긴 프로세스는 다음 구간부터
     assert set(row) == set(CSV_HEADER)
+
+
+@pytest.mark.parametrize('cmdline, label', [
+    ('/opt/ros/humble/lib/nav2_planner/planner_server --ros-args -r __node:=planner_server -r __ns:=/amr_01 '
+     '--params-file /tmp/x.yaml', 'amr_01/planner_server'),
+    ('/usr/bin/python3 /ws/lib/amr_fleet_manager/fleet_manager --ros-args -r __node:=fleet_manager', 'fleet_manager'),
+    ('/usr/bin/python3 /repo/tools/harness/cpu_monitor.py --out /r/cpu.csv', 'cpu_monitor.py'),
+    ('ruby /usr/bin/ign gazebo -s -r world.sdf', 'ruby'),
+    ('', '?'),
+])
+def test_proc_label(cmdline, label):
+    assert proc_label(cmdline) == label
+
+
+def test_sampler_top_processes(tmp_path):
+    sampler = Sampler(root=tmp_path, cpu_count=16)
+    sampler.clk_tck = 100
+    a = 'planner_server --ros-args -r __node:=planner_server -r __ns:=/amr_01'
+    b = 'amcl --ros-args -r __node:=amcl -r __ns:=/amr_01'
+    _write_fs(tmp_path, 0, (0, 0), {1: (a, 0), 2: (b, 0)})
+    sampler.sample(0.0)
+    _write_fs(tmp_path, 1_000_000, (0, 0), {1: (a, 300), 2: (b, 100)})  # 2초에 3 s, 1 s
+    sampler.sample(2.0)
+    top = sampler.top_processes(2.0)
+    assert [(n, g) for n, g, _, _ in top] == [('amr_01/planner_server', 'nav2'), ('amr_01/amcl', 'localization')]
+    assert top[0][2] == pytest.approx(3.0) and top[0][3] == pytest.approx(1.5)
 
 
 def test_sampler_cpu_quota_is_reference_machine(tmp_path):
