@@ -103,7 +103,7 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
 
 - 조건 묶음마다 embed 하나: ✅ KPI 모두 PASS, ⚠️ MARGINAL 또는 실패한 반복 있음, ❌ KPI FAIL 또는 완료 0회, ℹ️ KPI 없음. KPI 지표와 Fleet 주요 지표(지연·손실률·Ack)의 평균·95% CI를 싣고 `summary.md`를 첨부한다.
 - 첫 줄에 git SHA, 호스트, 장애 조건, seed 범위를 적는다.
-- 실행 폴더에 `plots/timeline.png`(Fleet 시나리오, `fleet_plot`)가 있으면 **작업 완료율이 가장 낮은 실행의 그림 한 장**을 그 조건의 embed 안에 붙이고, 어느 실행인지 적는다. 반복마다 다 보내면 채널이 그림으로 덮이므로 "어디를 열어 볼지"만 알린다. 나머지 그림은 각 실행 폴더에 있다.
+- 실행 폴더에 `plots/timeline.png`(Fleet 시나리오, `fleet_plot`)가 있으면 **작업 완료율이 가장 낮은 실행의 그림 한 장**을 그 조건의 embed 안에 붙이고, 어느 실행인지 적는다. 반복마다 다 보내면 채널이 그림으로 덮이므로 "어디를 열어 볼지"만 알린다. 나머지 그림은 각 실행 폴더에 있다. 그림을 붙인 전송이 실패하면(413 크기 초과 등) 그림 없이 한 번 더 보낸다.
 - 보내기가 실패해도 실험 결과에는 영향이 없다 (경고만 출력).
 - CI 실패 알림(`DISCORD_WEBHOOK_URL`, [workflows/README](../../.github/workflows/README.md))과 다른 채널을 쓰려고 이름을 따로 둔다.
 

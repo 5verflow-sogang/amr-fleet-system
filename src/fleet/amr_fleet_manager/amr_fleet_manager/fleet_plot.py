@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+import traceback
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,9 +55,16 @@ class Segment:
 def read_states(path: Path) -> list[State]:
     if not path.exists():
         return []
+    states = []
     with path.open(newline='', encoding='utf-8') as f:
-        return sorted((State(float(r['time']), r['robot'], float(r['x']), float(r['y']), int(r['mode']), r['task_id'])
-                       for r in csv.DictReader(f)), key=lambda s: s.t)
+        for r in csv.DictReader(f):
+            try:
+                states.append(State(float(r['time']), r['robot'], float(r['x']), float(r['y']), int(r['mode']),
+                                    r['task_id'] or ''))
+            except (TypeError, ValueError):
+                # 잘린 줄(쓰는 도중 강제종료 등)은 건너뛴다. 나머지로 그린다
+                continue
+    return sorted(states, key=lambda s: s.t)
 
 
 def read_rows(path: Path) -> list[dict]:
@@ -202,7 +210,12 @@ def main(argv=None) -> int:
         # 그림은 결과가 아니라 보기용이다. 이미지에 matplotlib이 없어도 실행을 실패로 만들지 않는다
         print('경고: matplotlib이 없어 그림을 건너뛴다 (python3-matplotlib 설치)', file=sys.stderr)
         return 0
-    written = render(run_dir, Path(args.out) if args.out else run_dir / 'plots')
+    try:
+        written = render(run_dir, Path(args.out) if args.out else run_dir / 'plots')
+    except Exception:  # noqa: BLE001 - 그림 실패가 실행을 실패로 만들지 않게 한다 (plot_run.py와 같은 정책)
+        print('fleet_plot 실패 (실행 결과에는 영향 없음):', file=sys.stderr)
+        traceback.print_exc()
+        return 0
     if not written:
         print(f'경고: {run_dir}/robot_states.csv가 없거나 비어 그림을 건너뛴다', file=sys.stderr)
     for path in written:

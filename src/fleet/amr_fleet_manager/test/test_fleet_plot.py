@@ -59,6 +59,28 @@ def test_main_writes_timeline(tmp_path):
     assert (tmp_path / 'plots' / 'timeline.png').stat().st_size > 1000
 
 
+def test_truncated_last_line_is_skipped(tmp_path):
+    pytest.importorskip('matplotlib')
+    # 강제종료로 마지막 줄이 잘린 경우: 그 줄만 빼고 그린다
+    (tmp_path / 'robot_states.csv').write_text('time,robot,x,y,mode,task_id\n'
+                                               '100.0,amr_01,0.0,0.0,1,t1\n100.5,amr_01,0.1,0.0,1,t1\n101.0,amr_0')
+    assert main([str(tmp_path)]) == 0
+    assert (tmp_path / 'plots' / 'timeline.png').exists()
+
+
+def test_render_failure_still_exits_zero(tmp_path, monkeypatch, capsys):
+    pytest.importorskip('matplotlib')
+    import amr_fleet_manager.fleet_plot as fleet_plot
+
+    def broken(*args, **kwargs):
+        raise RuntimeError('boom')
+    monkeypatch.setattr(fleet_plot, 'render', broken)
+    # 하네스 후처리가 실패(outcome=error)로 기록되지 않게 늘 0으로 끝난다
+    assert main([str(tmp_path)]) == 0
+    err = capsys.readouterr().err
+    assert 'fleet_plot 실패' in err and 'RuntimeError: boom' in err
+
+
 def test_main_without_states_writes_nothing(tmp_path):
     pytest.importorskip('matplotlib')
     assert main([str(tmp_path)]) == 0

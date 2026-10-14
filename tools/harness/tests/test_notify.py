@@ -76,11 +76,13 @@ def test_payload_limits():
 class _Hook(BaseHTTPRequestHandler):
     received = []
     status = 204
+    # 요청마다 차례로 쓸 응답 코드. 비면 status
+    statuses = []
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers['Content-Length']))
         _Hook.received.append((dict(self.headers), body))
-        self.send_response(_Hook.status)
+        self.send_response(_Hook.statuses.pop(0) if _Hook.statuses else _Hook.status)
         self.end_headers()
 
     def log_message(self, *args):
@@ -89,7 +91,7 @@ class _Hook(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def webhook(monkeypatch):
-    _Hook.received, _Hook.status = [], 204
+    _Hook.received, _Hook.status, _Hook.statuses = [], 204, []
     server = HTTPServer(('127.0.0.1', 0), _Hook)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     monkeypatch.setenv(ENV, f'http://127.0.0.1:{server.server_port}/hook')
@@ -152,6 +154,19 @@ def test_notify_attaches_worst_timeline(tmp_path, webhook):
     assert b'name="files[1]"; filename="timeline.png"' in body and b'Content-Type: image/png' in body
     assert b'PNG fake r1' in body and b'PNG fake r0' not in body
     assert b'attachment://timeline.png' in body
+
+
+def test_notify_resends_without_plot_when_upload_fails(tmp_path, webhook, capsys):
+    runs = [make_run(tmp_path, 'r0')]
+    add_timeline(runs[0], done=1)
+    webhook.statuses = [413]               # 그림을 붙인 첫 요청만 거절 (크기 초과)
+    assert notify(summarize(runs), runs)
+
+    [(_, first), (_, second)] = webhook.received
+    assert b'filename="timeline.png"' in first
+    assert b'filename="timeline.png"' not in second and b'attachment://' not in second
+    assert b'name="payload_json"' in second and b'loc_basic' in second
+    assert '그림 없이 다시 보낸다' in capsys.readouterr().out
 
 
 def test_notify_failure_does_not_raise(tmp_path, webhook, capsys):

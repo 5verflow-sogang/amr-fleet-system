@@ -143,15 +143,25 @@ def send(webhook: str, payload: dict, attachment: Optional[Path] = None, timeout
 
 
 def notify(summary: dict, run_dirs: Iterable[Path], summary_path: Optional[Path] = None) -> bool:
-    """HARNESS_DISCORD_WEBHOOK이 있으면 요약을 보낸다. 보냈으면 True."""
+    """HARNESS_DISCORD_WEBHOOK이 있으면 요약을 보낸다. 보냈으면 True.
+
+    그림을 붙인 전송이 실패하면(413 크기 초과 등) 그림 없이 한 번 더 보낸다. 그림 때문에 요약까지 빠지지 않게 한다.
+    """
     webhook = os.environ.get(ENV, '').strip()
     if not webhook or not summary:
         return False
     try:
         run_dirs = list(run_dirs)
+        context = context_line(run_dirs)
         picked = pick_plot(run_dirs)
-        send(webhook, build_payload(summary, context_line(run_dirs), picked[1:] if picked else None), summary_path,
-             image=picked[0] if picked else None)
+        if picked is not None:
+            try:
+                send(webhook, build_payload(summary, context, picked[1:]), summary_path, image=picked[0])
+                print('Discord 알림 보냄 (그림 포함)')
+                return True
+            except Exception as e:  # noqa: BLE001 - 그림 없이 다시 보낸다
+                print(f'Discord 그림 첨부 실패, 그림 없이 다시 보낸다: {type(e).__name__}: {e}')
+        send(webhook, build_payload(summary, context), summary_path)
     except Exception as e:  # noqa: BLE001 - 알림 실패로 실험을 실패시키지 않는다
         print(f'Discord 알림 실패 (결과에는 영향 없음): {type(e).__name__}: {e}')
         return False

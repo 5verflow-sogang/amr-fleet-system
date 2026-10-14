@@ -293,7 +293,7 @@ PYTHONPATH=src/fleet/amr_fleet_manager python3 -m amr_fleet_manager.fleet_plot <
 - 회수된 작업의 재할당: 죽은 로봇 → 넘겨받은 로봇 화살표 (`recovery.csv`, 작업 이름 + 회수 시간)
 
 - 읽는 파일이 없으면 그 부분만 빼고 그린다. `robot_states.csv`가 없거나 비면 그림을 쓰지 않는다.
-- matplotlib이 없으면 경고만 하고 0으로 끝난다. 그림 때문에 하네스 실행이 실패(`outcome: error`)가 되지 않게 하기 위해서다.
+- 그림이 실패해도(matplotlib 없음, 읽기 오류 등) traceback만 찍고 늘 0으로 끝난다. 그림 때문에 하네스 실행이 실패(`outcome: error`)가 되어 측정 결과까지 버려지지 않게 하기 위해서다 (하네스 `plot_run.py`와 같은 정책). 잘린 줄(쓰는 도중 강제종료 등)은 건너뛰고 나머지로 그린다.
 - 그림 글자는 한글 글꼴 문제를 피하려고 영어로 쓴다.
 
 ## 테스트
