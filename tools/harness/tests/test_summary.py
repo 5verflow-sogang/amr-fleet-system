@@ -10,8 +10,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harness.runner import fault_meta, render  # noqa: E402
-from harness.summary import (fleet_metrics, kidnap_metrics, kpi_verdict, nav_metrics, summarize,  # noqa: E402
-                             to_markdown)
+from harness.summary import (fleet_metrics, kidnap_metrics, kpi_verdict, nav_kpi_metrics, nav_metrics,  # noqa: E402
+                             summarize, to_markdown)
 
 
 def make_run(root: Path, name: str, scenario='loc_basic', label='', outcome='completed', rmse=0.02):
@@ -157,3 +157,28 @@ def test_kidnap_metrics_success_rate(tmp_path):
     assert m['kidnap.success']['n'] == 3
     assert m['kidnap.success']['mean'] == pytest.approx(2 / 3)
     assert m['kidnap.recover_s']['n'] == 2
+
+
+def test_nav_kpi_metrics_and_verdict(tmp_path):
+    def run(name, cte_kpi, plan):
+        d = tmp_path / name / 'nav_kpi'
+        d.mkdir(parents=True)
+        (tmp_path / name / 'meta.json').write_text(json.dumps({'scenario': 'nav_kpi', 'label': name[:-1],
+                                                               'outcome': 'completed'}))
+        (d / 'nav_kpi.json').write_text(json.dumps({
+            'plan_success_rate': plan, 'nav_success_rate': 0.9, 'replan_p95_ms': 13.0, 'replan_max_ms': 39.0,
+            'pred_err_mean': 0.055, 'pred_err_median': 0.05, 'pred_err_no_recovery_mean': float('nan'),
+            'cte_straight_mean_m': 0.063, 'cte_curve_mean_m': 0.067, 'definition': {'cte_kpi': cte_kpi}}))
+        return tmp_path / name
+    pp = nav_kpi_metrics(run('pp0', True, 1.0))
+    assert pp['navkpi.cte_straight_mean_m'] == 0.063 and 'navkpi.pred_err_no_recovery_mean' not in pp
+    dwa = nav_kpi_metrics(run('dwa0', False, 1.0))
+    assert 'navkpi.cte_straight_mean_m' not in dwa and dwa['navkpi.ref_cte_straight_mean_m'] == 0.063
+    # 클수록 좋은 지표는 CI 하한으로
+    assert kpi_verdict('navkpi.plan_success_rate', 1.0, 1.0, 0.99) == 'PASS'
+    assert kpi_verdict('navkpi.plan_success_rate', 0.99, 1.0, 0.96) == 'MARGINAL'
+    assert kpi_verdict('navkpi.plan_success_rate', 0.95, 0.97, 0.93) == 'FAIL'
+    assert kpi_verdict('navkpi.cte_straight_mean_m', 0.063, 0.07, 0.05) == 'FAIL'
+    assert kpi_verdict('navkpi.ref_cte_straight_mean_m', 0.063, 0.07, 0.05) is None
+    m = summarize([run('pp1', True, 1.0), run('pp2', True, 1.0)])['nav_kpi/pp']['metrics']
+    assert m['navkpi.replan_p95_ms']['kpi'] == 'PASS' and m['navkpi.cte_straight_mean_m']['kpi'] == 'FAIL'

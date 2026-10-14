@@ -19,6 +19,10 @@ from .stats import percentile, summarize_runs
 LOCALIZATION_KPI = {'stationary': 0.03, 'straight': 0.05, 'rotation': 0.08}
 # 원 명세서 응답 시간 KPI [ms]
 RESPONSE_KPI_MS = 200.0
+# 원 명세 경로 계획(4장)·경로 추종(5장) KPI: (기준, 방향). min = 클수록 좋음 (CI 하한으로 판정), max = 작을수록 좋음
+NAV_KPI = {'navkpi.plan_success_rate': (0.98, 'min'), 'navkpi.replan_p95_ms': (500.0, 'max'),
+           'navkpi.pred_err_mean': (0.15, 'max'), 'navkpi.cte_straight_mean_m': (0.05, 'max'),
+           'navkpi.cte_curve_mean_m': (0.10, 'max')}
 
 
 def load_meta(run_dir: Path) -> dict:
@@ -153,10 +157,29 @@ def kidnap_metrics(run_dir: Path) -> dict[str, float]:
     return out
 
 
+def nav_kpi_metrics(run_dir: Path) -> dict[str, float]:
+    """nav_kpi.json(하네스 nav_kpi, experiments/nav_kpi/nav_kpi.py) → navkpi.* 지표.
+
+    CTE는 path_tracker로 잰 실행(definition.cte_kpi)만 KPI 이름(navkpi.cte_*)으로 넣고, DWA(Nav2)로 잰 값은
+    참고 지표(navkpi.ref_cte_*)로 넣어 판정하지 않는다 (CTE KPI는 5장 모션 제어, 이진 10/13).
+    """
+    out = {}
+    for path in sorted(run_dir.glob('**/nav_kpi.json')):
+        k = json.loads(path.read_text(encoding='utf-8'))
+        cte_kpi = (k.get('definition') or {}).get('cte_kpi', False)
+        for key in ('plan_success_rate', 'nav_success_rate', 'replan_p95_ms', 'replan_max_ms', 'pred_err_mean',
+                    'pred_err_median', 'pred_err_no_recovery_mean', 'cte_straight_mean_m', 'cte_curve_mean_m'):
+            v = k.get(key)
+            if isinstance(v, (int, float)) and not math.isnan(v):
+                name = key if cte_kpi or not key.startswith('cte_') else 'ref_' + key
+                out[f'navkpi.{name}'] = float(v)
+    return out
+
+
 def run_metrics(run_dir: Path) -> dict[str, float]:
     meta = load_meta(run_dir)
     out = {**localization_metrics(run_dir), **fleet_metrics(run_dir), **nav_metrics(run_dir),
-           **kidnap_metrics(run_dir)}
+           **kidnap_metrics(run_dir), **nav_kpi_metrics(run_dir)}
     rtf = meta.get('real_time_factor')
     if isinstance(rtf, (int, float)):
         out['run.real_time_factor'] = float(rtf)
@@ -169,14 +192,23 @@ def group_key(meta: dict) -> str:
     return f"{meta.get('scenario', '?')}{'/' + label if label else ''}"
 
 
-def kpi_verdict(metric: str, mean: float, ci_high: Optional[float]) -> Optional[str]:
-    """KPI가 있는 지표만 판정한다. CI 상한까지 기준 안이면 PASS, 평균만 안이면 MARGINAL, 아니면 FAIL."""
+def kpi_verdict(metric: str, mean: float, ci_high: Optional[float], ci_low: Optional[float] = None) -> Optional[str]:
+    """KPI가 있는 지표만 판정한다. CI 상한까지 기준 안이면 PASS, 평균만 안이면 MARGINAL, 아니면 FAIL.
+
+    클수록 좋은 지표(성공률)는 거꾸로 CI 하한까지 기준 이상이면 PASS다.
+    """
     threshold = None
     parts = metric.split('.')
     if parts[0] == 'loc' and parts[-1] == 'rmse':
         threshold = LOCALIZATION_KPI.get(parts[-2])
     elif metric == 'fleet.response_ms.mean':
         threshold = RESPONSE_KPI_MS
+    elif metric in NAV_KPI:
+        threshold, kind = NAV_KPI[metric]
+        if kind == 'min':
+            if ci_low is not None and ci_low >= threshold:
+                return 'PASS'
+            return 'MARGINAL' if mean >= threshold else 'FAIL'
     if threshold is None:
         return None
     if ci_high is not None and ci_high <= threshold:
@@ -207,7 +239,7 @@ def summarize(run_dirs: Iterable[Path]) -> dict:
             if iv is None:
                 continue
             d = iv.as_dict()
-            verdict = kpi_verdict(metric, iv.mean, iv.ci_high)
+            verdict = kpi_verdict(metric, iv.mean, iv.ci_high, iv.ci_low)
             if verdict:
                 d['kpi'] = verdict
             metrics[metric] = d
