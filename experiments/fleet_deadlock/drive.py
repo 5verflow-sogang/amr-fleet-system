@@ -2,8 +2,10 @@
 """교착 유도 주행: 두 로봇을 좁은 통로 ② 양 끝에서 동시에 마주 보내고 결과를 deadlock_result.json에 쓴다.
 
 하네스 fleet_deadlock 시나리오의 주행 명령. system.launch(2대, robots.yaml·zones_split.yaml)가 떠 있는 상태에서:
-  1. 두 로봇에 NavigateThroughPoses를 동시에 보낸다. 경유점이 통로 ② 두 구역(narrow_02w·narrow_02e)을 차례로
-     지나게 해서, 전역 계획이 통로를 피해 북쪽 넓은 길로 돌아가지 못하게 한다.
+  1. 두 로봇에 경유점 3개를 NavigateToPose로 차례대로 동시에 보낸다(앞 경유점에 도착하면 다음). 경유점이 통로 ②
+     두 구역(narrow_02w·narrow_02e) 안에 있어서, 전역 계획이 통로를 피해 북쪽 넓은 길로 돌아가지 못하게 한다.
+     NavigateThroughPoses는 쓰지 않는다: Humble 경유점 BT(RemovePassedGoals)가 로봇 프레임 기본값 base_link를 써서
+     amr_NN/base_footprint를 못 찾고 바로 중단됐다(GCP 10/14).
        amr_01: 서쪽 → narrow_02w → narrow_02e → 동쪽 끝 너머
        amr_02: 동쪽 → narrow_02e → narrow_02w → 서쪽 끝 너머
      각자 가까운 절반을 먼저 쥐고 반대쪽 절반을 기다리면 순환 대기(교착)다.
@@ -25,7 +27,7 @@ import rclpy
 from action_msgs.msg import GoalStatus
 from amr_msgs.msg import ZoneGrant
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import NavigateThroughPoses
+from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
 from rclpy.action import ActionClient
 from rclpy.parameter import Parameter
@@ -38,6 +40,8 @@ ROUTES = {
 }
 GRANT_NAMES = {ZoneGrant.GRANT_GRANTED: 'GRANTED', ZoneGrant.GRANT_QUEUED: 'QUEUED',
                ZoneGrant.GRANT_REJECTED: 'REJECTED', ZoneGrant.GRANT_REVOKED: 'REVOKED'}
+# 중단된 경유점을 다시 보내는 최대 횟수 (로봇마다 합계)
+MAX_RESENDS = 5
 STATUS_NAMES = {GoalStatus.STATUS_SUCCEEDED: 'succeeded', GoalStatus.STATUS_ABORTED: 'aborted',
                 GoalStatus.STATUS_CANCELED: 'canceled'}
 
@@ -49,10 +53,10 @@ def world_to_map(x, y, yaw, origin):
     return c * dx - s * dy, s * dx + c * dy, yaw - oyaw
 
 
-def pose(node, x, y, yaw):
+def pose(x, y, yaw):
     p = PoseStamped()
     p.header.frame_id = 'map'
-    p.header.stamp = node.get_clock().now().to_msg()
+    # stamp 0 = 최신 TF로 바꾼다. 지금 시각을 찍으면 TF 버퍼 범위를 벗어나 "과거로 외삽" 오류가 났다(GCP 10/14)
     p.pose.position.x, p.pose.position.y = x, y
     p.pose.orientation.z, p.pose.orientation.w = math.sin(yaw / 2), math.cos(yaw / 2)
     return p
@@ -91,43 +95,66 @@ def main():
         node.create_subscription(Odometry, f'/{r}/ground_truth/odom',
                                  lambda m, r=r: gt.__setitem__(r, m.pose.pose), qos_profile_sensor_data)
 
-    clients = {r: ActionClient(node, NavigateThroughPoses, f'/{r}/navigate_through_poses') for r in robots}
+    clients = {r: ActionClient(node, NavigateToPose, f'/{r}/navigate_to_pose') for r in robots}
     result = {'robots': {}, 'success': False}
     try:
         for r, c in clients.items():
             if not c.wait_for_server(timeout_sec=60.0):
-                raise RuntimeError(f'{r} navigate_through_poses 서버 없음')
+                raise RuntimeError(f'{r} navigate_to_pose 서버 없음')
         while node.get_clock().now().nanoseconds == 0:  # /clock 대기
             rclpy.spin_once(node, timeout_sec=0.1)
 
         t0 = sim_now()
-        handles = {}
-        for r in robots:
-            goal = NavigateThroughPoses.Goal()
-            goal.poses = [pose(node, *world_to_map(x, y, yaw, origin)) for x, y, yaw in ROUTES[r]]
-            handles[r] = clients[r].send_goal_async(goal)
-        print(f'두 목표 전송 (sim t0={t0:.1f})', flush=True)
+        # 로봇마다 남은 경유점, 지금 future(목표 핸들 또는 결과), 결과
+        todo = {r: [world_to_map(x, y, yaw, origin) for x, y, yaw in ROUTES[r]] for r in robots}
+        futures, results, done_at, reached = {}, {}, {}, {r: 0 for r in robots}
+        current, resends = {}, {r: 0 for r in robots}
 
-        pending, results, done_at = dict(handles), {}, {}
+        def send(r, waypoint):
+            current[r] = waypoint
+            goal = NavigateToPose.Goal()
+            goal.pose = pose(*waypoint)
+            futures[r] = clients[r].send_goal_async(goal)
+
+        def send_next(r):
+            send(r, todo[r].pop(0))
+
+        for r in robots:
+            send_next(r)
+        print(f'두 로봇 출발 (sim t0={t0:.1f})', flush=True)
+
         wall_end = time.monotonic() + args.timeout
-        while pending and time.monotonic() < wall_end:
+        while futures and time.monotonic() < wall_end:
             rclpy.spin_once(node, timeout_sec=0.1)
-            for r, fut in list(pending.items()):
+            for r, fut in list(futures.items()):
                 if not fut.done():
                     continue
                 h = fut.result()
                 if hasattr(h, 'accepted'):  # 목표 핸들 → 결과 future로 바꿔 계속 본다
-                    if not h.accepted:
-                        results[r] = 'rejected'
-                        del pending[r]
+                    if h.accepted:
+                        futures[r] = h.get_result_async()
                     else:
-                        pending[r] = h.get_result_async()
+                        results[r] = 'rejected'
+                        del futures[r]
                     continue
-                results[r] = STATUS_NAMES.get(h.status, f'status_{h.status}')
+                status = STATUS_NAMES.get(h.status, f'status_{h.status}')
+                # 구역 허가를 기다리거나(QUEUED) 회수당해 물러나는 동안 Nav2 진행 감시(10 s)가 목표를 중단한다.
+                # BT(amr_bt)는 이때 멈췄다가 다시 보낸다(#141) - 같은 방식으로 같은 경유점을 다시 보낸다
+                if status == 'aborted' and resends[r] < MAX_RESENDS:
+                    resends[r] += 1
+                    print(f'{r}: 중단 → 같은 경유점 다시 보냄 ({resends[r]}/{MAX_RESENDS}, {sim_now() - t0:.1f} s)', flush=True)
+                    send(r, current[r])
+                    continue
+                if status == 'succeeded' and todo[r]:
+                    reached[r] += 1
+                    print(f'{r}: 경유점 {reached[r]} 도착 ({sim_now() - t0:.1f} s)', flush=True)
+                    send_next(r)
+                    continue
+                results[r] = status
                 done_at[r] = sim_now() - t0
-                print(f'{r}: {results[r]} ({done_at[r]:.1f} s)', flush=True)
-                del pending[r]
-        for r in pending:
+                print(f'{r}: {status} ({done_at[r]:.1f} s, 경유점 {reached[r]}개 지남)', flush=True)
+                del futures[r]
+        for r in futures:
             results[r] = 'timeout'
 
         for r in robots:
@@ -138,6 +165,8 @@ def main():
                 'result': results.get(r, 'unknown'),
                 'time_s': round(done_at[r], 2) if r in done_at else None,
                 'end_world': [round(p.position.x, 3), round(p.position.y, 3)] if p else None,
+                'waypoints_reached': reached[r],
+                'resends': resends[r],
                 'revoked': len(revoked),
                 'rejected': len(rejected),
                 'grants': grants[r],
