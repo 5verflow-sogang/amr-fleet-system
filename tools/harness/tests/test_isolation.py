@@ -127,14 +127,14 @@ def test_run_cli_kills_whole_group_on_timeout(tmp_path):
     code, out = runner.run_cli(f'sleep 30 & echo $! > {marker}; wait', timeout_s=0.5)
     assert code is None and out == ''
     pid = int(marker.read_text())
-    import os
     import time
-    for _ in range(20):
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+    for _ in range(40):
+        # 죽은 자식은 부모(셸)가 먼저 죽어 init에 넘어가는데, CI 컨테이너의 1번 프로세스는 거두지 않아 좀비(Z)로 남는다.
+        # 좀비는 아무것도 안 하므로 죽은 것으로 본다
+        state = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
+        if not state or state.startswith('Z'):
             break
         time.sleep(0.05)
     else:
-        raise AssertionError('자식 프로세스가 남았다')
+        raise AssertionError(f'자식 프로세스가 남았다 (상태 {state})')
     assert runner.run_cli('echo hi') == (0, 'hi\n')
