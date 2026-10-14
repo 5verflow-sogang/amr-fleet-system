@@ -2,7 +2,8 @@
 
     ros2 run amr_fleet_manager fleet_metrics <bag 폴더> --out <결과 폴더> --delay-ms 100
 
-결과: <결과 폴더>/fleet_latency.csv, response_time.csv, task_outcomes.csv, meta.json의 observation_cutoff.
+결과: <결과 폴더>/fleet_latency.csv, response_time.csv, task_outcomes.csv, robot_states.csv,
+meta.json의 observation_cutoff.
 <결과 폴더>/fault_events.csv에 로봇 강제종료가 있으면 recovery.csv도 쓴다.
 로직은 fleet_metrics.py (ROS 없이 테스트), 여기는 bag 읽기만 한다.
 """
@@ -19,13 +20,14 @@ from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 
 from .fleet_metrics import (ACKS_TOPIC, ASSIGNMENTS_TOPIC, ODOM_TOPIC, RELAY_TOPIC, RELAYED_KEYS, REQUESTS_TOPIC,
-                            STATUS_TOPIC, Record, convert, robot_ids)
+                            STATES_TOPIC, STATUS_TOPIC, Record, convert, robot_ids)
 
 ORIGINAL_TOPIC = re.compile(r'^/fleet/(' + '|'.join(RELAYED_KEYS) + r')$')
 
 
 def wanted(topic: str) -> bool:
-    return bool(topic in (ASSIGNMENTS_TOPIC, ACKS_TOPIC, REQUESTS_TOPIC, STATUS_TOPIC) or ORIGINAL_TOPIC.match(topic)
+    return bool(topic in (ASSIGNMENTS_TOPIC, ACKS_TOPIC, REQUESTS_TOPIC, STATUS_TOPIC, STATES_TOPIC)
+                or ORIGINAL_TOPIC.match(topic)
                 or RELAY_TOPIC.match(topic) or ODOM_TOPIC.match(topic))
 
 

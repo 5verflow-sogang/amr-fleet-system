@@ -262,6 +262,7 @@ ros2 run amr_fleet_manager fleet_metrics /tmp/run1/rosbag --out /tmp/run1 --dela
 | `response_time.csv` | 할당 명령 1건마다 1행 (명세서 컬럼 + `robot, task_id, latency_sim_ms, assignment_id, ack_time, ack_rtt_ms, resends`) |
 | `task_outcomes.csv` | 작업 1건마다 1행 (`task_id, request_time, first_assign_time, robots, final_state, end_time`). `robots`는 맡았던 로봇 순서(공백 구분), `final_state`는 마지막 할당 뒤 그 로봇의 끝 보고(`COMPLETED`·`FAILED`), 없으면 빈칸 |
 | `recovery.csv` | `fault_events.csv`에 `robot_kill:<로봇>`이 있을 때만. 강제종료 1건 × 그 로봇이 하던 작업 1건마다 1행 (`robot, kill_time, task_id, reassign_time, reassigned_robot, recovery_s, completed`). `recovery_s` = 다른 로봇에 다시 할당된 시각 − 죽은 시각. 놀던 로봇이면 `task_id`가 빈 행 1개 |
+| `robot_states.csv` | `/fleet/robot_states` 1건마다 1행 (`time, robot, x, y, mode, task_id`). 아래 `fleet_plot`의 원자료 |
 | `meta.json` | `observation_cutoff` (`end, delay_ms, grace_s, resend_grace_s, cutoff, ack_cutoff, start`). 다른 키는 그대로 둔다 |
 
 형식과 정의는 [하네스 README](../../../tools/harness/README.md#지표-csv)를 따르고, 아래는 구현에서 정한 것이다.
@@ -272,6 +273,28 @@ ros2 run amr_fleet_manager fleet_metrics /tmp/run1/rosbag --out /tmp/run1 --dela
 - 관측 마감: `cutoff` = 끝 − `delay_ms` − `grace_s`(1초) 뒤에 보낸 메시지는 `delivered`를 비운다. `ack_cutoff` = `cutoff` − `resend_grace_s`(5초 = 서버 재전송 1초 × 5회) 뒤에 보낸 명령은 `response_time.csv`에 행을 만들지 않는다.
 - `response_time`은 `/<robot>/odom`이 bag에 있을 때만 채운다. 임계값: 선속도 0.01 m/s 또는 각속도 0.05 rad/s.
 - 로봇 → 서버 방향은 장애를 걸지 않는다(D8 제안). 걸게 되면 Ack 원본·중계본 짝짓기를 추가한다.
+
+### 작업 타임라인 그림 (`fleet_plot`)
+
+GUI(rviz·Gazebo) 없이 실행 하나를 눈으로 보는 그림. 하네스 `fleet_fake`가 `fleet_metrics` 다음에 부른다. 보기용이라 판정에는 쓰지 않는다.
+
+```bash
+ros2 run amr_fleet_manager fleet_plot /tmp/run1            # → /tmp/run1/plots/timeline.png
+# ROS 없이 (matplotlib만). GCP 결과 폴더를 받아 맥에서 다시 그릴 때
+PYTHONPATH=src/fleet/amr_fleet_manager python3 -m amr_fleet_manager.fleet_plot <실행 폴더>
+```
+
+`timeline.png`는 로봇마다 한 줄이다.
+
+- 작업 구간: `current_task_id`가 같은 동안. 작업마다 색이 다르고, 막대가 넓으면 작업 이름을 쓴다
+- ERROR·E-Stop: 막대 아래 빨간 띠
+- RobotState가 3초 넘게 끊긴 구간: 빗금 (죽고 다시 뜨지 않은 로봇은 실행 끝까지)
+- 로봇 강제종료: 그 로봇 줄의 빨간 세로선. 서버 강제종료·재시작: 전체 점선
+- 회수된 작업의 재할당: 죽은 로봇 → 넘겨받은 로봇 화살표 (`recovery.csv`, 작업 이름 + 회수 시간)
+
+- 읽는 파일이 없으면 그 부분만 빼고 그린다. `robot_states.csv`가 없거나 비면 그림을 쓰지 않는다.
+- 그림이 실패해도(matplotlib 없음, 읽기 오류 등) traceback만 찍고 늘 0으로 끝난다. 그림 때문에 하네스 실행이 실패(`outcome: error`)가 되어 측정 결과까지 버려지지 않게 하기 위해서다 (하네스 `plot_run.py`와 같은 정책). 잘린 줄(쓰는 도중 강제종료 등)은 건너뛰고 나머지로 그린다.
+- 그림 글자는 한글 글꼴 문제를 피하려고 영어로 쓴다.
 
 ## 테스트
 

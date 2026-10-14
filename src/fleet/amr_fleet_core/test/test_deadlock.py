@@ -3,6 +3,7 @@
 import pytest
 
 from amr_fleet_core.deadlock import choose_victim, find_deadlocks, would_deadlock
+from amr_fleet_core.viz import draw_wait_for
 
 
 def test_no_cycle():
@@ -15,14 +16,16 @@ def test_two_robot_cycle():
     assert find_deadlocks({'a': ['b'], 'b': ['a']}) == [['a', 'b']]
 
 
-def test_three_robot_cycle_with_tail():
+def test_three_robot_cycle_with_tail(viz):
     # d는 순환 밖에서 a를 기다릴 뿐이다
     edges = {'a': ['b'], 'b': ['c'], 'c': ['a'], 'd': ['a']}
+    viz('cycle_with_tail', lambda ax: draw_wait_for(ax, edges))
     assert find_deadlocks(edges) == [['a', 'b', 'c']]
 
 
-def test_separate_cycles():
+def test_separate_cycles(viz):
     edges = {'a': ['b'], 'b': ['a'], 'x': ['y'], 'y': ['z'], 'z': ['x']}
+    viz('separate_cycles', lambda ax: draw_wait_for(ax, edges))
     assert find_deadlocks(edges) == [['a', 'b'], ['x', 'y', 'z']]
 
 

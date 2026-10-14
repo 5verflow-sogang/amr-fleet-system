@@ -12,6 +12,8 @@
   <depend>python3-scipy</depend>
 
   <test_depend>python3-pytest</test_depend>
+  <!-- amr_fleet_core.viz (그림 함수) 확인. 라이브러리 본체는 matplotlib에 의존하지 않는다 -->
+  <test_depend>python3-matplotlib</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

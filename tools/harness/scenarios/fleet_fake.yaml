@@ -59,3 +59,6 @@ driver:
 postprocess:
   - name: fleet_metrics
     cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots {num_robots}
+  # 보기용 그림 (plots/timeline.png). fleet_metrics가 쓴 robot_states.csv를 읽는다
+  - name: fleet_plot
+    cmd: ros2 run amr_fleet_manager fleet_plot {run_dir}
