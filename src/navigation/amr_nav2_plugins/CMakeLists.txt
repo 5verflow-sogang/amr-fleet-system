@@ -94,6 +94,11 @@ if(BUILD_TESTING)
   ament_add_gtest(test_waypoint test/test_waypoint.cpp)
   target_link_libraries(test_waypoint waypoint)
 
+  ament_add_gtest(test_obstacles test/test_obstacles.cpp)
+  target_include_directories(test_obstacles PRIVATE include)
+  target_link_libraries(test_obstacles amr_planning_core::amr_planning_core)
+  ament_target_dependencies(test_obstacles amr_msgs)
+
   ament_add_gtest(test_plugin_loadable test/test_plugin_loadable.cpp)
   target_link_libraries(test_plugin_loadable dwa_controller)
   ament_target_dependencies(test_plugin_loadable pluginlib nav2_core)

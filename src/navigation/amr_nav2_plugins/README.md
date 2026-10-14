@@ -17,7 +17,8 @@
 
 1. `configure()`에서 `amr_bringup/config/nav2_params.yaml`의 `DWA:` 섹션을 읽어
    `amr_planning_core::DwaConfig`를 만들고 `perception/obstacles`(상대 이름,
-   `amr_msgs/msg/TrackedObstacleArray`)를 구독한다.
+   `amr_msgs/msg/TrackedObstacleArray`)를 구독한다. 움직이는 트랙(`is_dynamic`)만
+   동적 장애물로 쓴다 - 정적 트랙은 costmap에 이미 있다(`obstacles.hpp`).
 2. `computeVelocityCommands()`에서: local costmap을 `amr_planning_core::Grid`로
    감싸고(costmap origin을 빼 Grid-로컬 좌표로), 전역 경로에서
    `lookahead_distance`만큼 앞의 점을 "다음 목표"로 고르고(`waypoint.hpp`,
