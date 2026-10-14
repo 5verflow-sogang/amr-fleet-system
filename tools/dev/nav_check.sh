@@ -16,6 +16,9 @@
 # 목표 좌표는 map 기준 (x,y[,yaw rad]). 모든 목표가 SUCCEEDED면 exit 0.
 # 컨테이너는 docker compose의 dev 서비스(./src → /ros2_ws/src)다. 이미 `docker compose run --rm dev`로 띄운 게 있으면 그걸 쓴다.
 set -euo pipefail
+# Windows Git Bash(MSYS)는 /ros2_ws/..., /tmp/... 같은 인자를 Windows 경로로 바꿔 docker exec·docker cp에 넘긴다
+# (test -f /ros2_ws/install/setup.bash가 늘 실패해 매번 다시 빌드). 변환을 끈다. macOS·Linux에는 영향 없음
+export MSYS_NO_PATHCONV=1
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 HERE="$REPO/tools/dev"
 BUILD=0
