@@ -3,14 +3,19 @@
     TRACKING ─(일치율 < lost_ratio가 lost_checks번 연속)→ 재초기화 → SETTLING
       재초기화는 첫 시도만 국소(마지막으로 확실했던 자세 주변에 파티클), 다음부터 전역(지도 전체)이다.
       반복 구조 창고에서 전역 재초기화는 비슷한 다른 통로로 수렴하기 쉽다(10/6 실험)
-    SETTLING: 움직이지 않고 AMCL 갱신을 요청한다 (request_nomotion_update)
+    SETTLING: 움직이지 않고 AMCL 갱신을 요청한다 (request_nomotion_update, 시도마다 nomotion_max번까지)
       ─(수렴)→ TRACKING
       ─(settle_s 지나도 미수렴)→ ROTATING (allow_rotate일 때) 또는 다음 시도
-    ROTATING: 제자리 회전으로 스캔을 모은다 ─(수렴)→ TRACKING / ─(rotate_s 지남)→ 다음 시도
+    ROTATING: 제자리 회전으로 스캔을 모은다 ─(수렴)→ TRACKING
+      ─(rotate_s 지남)→ 멈추고 confirm_s 동안 한 번 더 판정(SETTLING) → 그래도 미수렴이면 다음 시도
+      회전 중에는 스캔과 자세의 시각 차이로 일치율이 낮게 나와, 맞게 수렴해도 판정을 놓친다 (10/12 진단)
     시도가 max_attempts를 넘으면 FAILED (사람·상위 BT가 처리). FAILED에서도 계속 지켜보다가
     수렴 조건을 다시 만족하면(사람이 위치를 다시 잡아 준 경우 등) TRACKING으로 돌아온다
 
 수렴: 일치율 ≥ ok_ratio이고 AMCL 위치 표준편차 ≤ ok_std_m가 ok_checks번 연속.
+기준값 근거 (localization.md 4-6절, 10/14): 순간 이동 뒤 GT 기준으로 맞게 수렴한 샘플의 일치율 중앙값 0.72,
+틀리게 수렴한 샘플의 95%가 0.69 아래 → 0.75. 맞게 수렴해도 AMCL σ가 0.27 m인 경우가 있어 σ 기준은 0.3 m.
+제자리 갱신을 계속 부르면 리샘플링만 반복돼 파티클이 한 점(틀린 곳 포함)에 몰리므로 시도마다 nomotion_max번만 부른다.
 """
 
 from __future__ import annotations
@@ -33,9 +38,11 @@ STOP = 'stop'              # 회전 멈춤
 class RecoveryConfig:
     lost_ratio: float = 0.5
     lost_checks: int = 3
-    ok_ratio: float = 0.8
-    ok_std_m: float = 0.15
+    ok_ratio: float = 0.75
+    ok_std_m: float = 0.3
     ok_checks: int = 3
+    nomotion_max: int = 4
+    confirm_s: float = 3.0
     settle_s: float = 10.0
     allow_rotate: bool = True
     rotate_s: float = 15.0
@@ -59,6 +66,8 @@ class KidnapRecovery:
     _low: int = 0
     _ok: int = 0
     _since: float = 0.0
+    _nomotion: int = 0
+    _confirming: bool = False
     lost_at: Optional[float] = None
 
     def _converged(self, ratio: float, std_m: float) -> bool:
@@ -73,6 +82,7 @@ class KidnapRecovery:
             self.events.append(Event(now, 'failed', f'{self.config.max_attempts}번 시도'))
             return [STOP]
         self.state, self._since, self._ok = SETTLING, now, 0
+        self._nomotion, self._confirming = 1, False
         local = self.config.local_first and self.attempts == 1
         self.events.append(Event(now, 'local_reinit' if local else 'reinit', f'{self.attempts}번째'))
         return [STOP, LOCAL_REINIT if local else REINIT, NOMOTION]
@@ -94,8 +104,13 @@ class KidnapRecovery:
                 return [STOP]
             elapsed = now - self._since
             if self.state == SETTLING:
-                if elapsed < c.settle_s:
-                    return [NOMOTION]
+                if elapsed < (c.confirm_s if self._confirming else c.settle_s):
+                    if self._nomotion < c.nomotion_max:
+                        self._nomotion += 1
+                        return [NOMOTION]
+                    return []
+                if self._confirming:
+                    return self._start_attempt(now)
                 if c.allow_rotate:
                     self.state, self._since = ROTATING, now
                     self.events.append(Event(now, 'rotate'))
@@ -103,6 +118,12 @@ class KidnapRecovery:
                 return self._start_attempt(now)
             if elapsed < c.rotate_s:
                 return [ROTATE]
+            if c.confirm_s > 0:
+                # 멈춘 상태에서 한 번 더 판정한다 (회전 중 놓친 수렴을 다음 시도로 버리지 않게)
+                self.state, self._since, self._ok, self._confirming = SETTLING, now, 0, True
+                self._nomotion = 1
+                self.events.append(Event(now, 'confirm'))
+                return [STOP, NOMOTION]
             return self._start_attempt(now)
         if self.state == FAILED and self._converged(ratio, std_m):
             self.state, self.attempts = TRACKING, 0

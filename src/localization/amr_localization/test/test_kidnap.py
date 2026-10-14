@@ -81,7 +81,7 @@ def test_one_low_reading_is_not_lost():
 
 
 def test_rotates_then_fails_after_max_attempts():
-    cfg = RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, max_attempts=2)
+    cfg = RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, max_attempts=2, confirm_s=0.0)
     m = KidnapRecovery(cfg)
     acts = run(m, [(0.1, 1.0)] * 12)
     assert ROTATE in [a for step in acts for a in step]
@@ -93,8 +93,34 @@ def test_rotates_then_fails_after_max_attempts():
 
 def test_failed_returns_to_tracking_when_relocalized():
     # 실패한 뒤 사람이 위치를 다시 잡아 주면(일치율·σ 회복) 정상 추적으로 돌아와 BT가 다음 작업을 받는다
-    m = KidnapRecovery(RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, max_attempts=1, ok_checks=2))
+    m = KidnapRecovery(RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, max_attempts=1, ok_checks=2,
+                                      confirm_s=0.0))
     run(m, [(0.1, 1.0)] * 8)
     assert m.state == 'failed'
     run(m, [(0.95, 0.05)] * 2, t0=10.0)
     assert m.state == 'tracking' and m.events[-1].kind == 'restored'
+
+
+def test_nomotion_requests_are_limited_per_attempt():
+    # 제자리 갱신을 계속 부르면 파티클이 한 점에 몰린다 → 시도마다 nomotion_max번까지만
+    m = KidnapRecovery(RecoveryConfig(lost_checks=1, settle_s=10.0, nomotion_max=3))
+    acts = run(m, [(0.1, 1.0)] * 12)
+    assert sum(step.count(NOMOTION) for step in acts) == 3
+
+
+def test_confirms_after_rotation_before_next_attempt():
+    # 회전 중에는 일치율이 낮게 나와 판정을 놓친다 → 멈추고 confirm_s 동안 한 번 더 보고, 수렴하면 다음 시도로 가지 않는다
+    cfg = RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, confirm_s=2.0, ok_checks=2, max_attempts=2)
+    m = KidnapRecovery(cfg)
+    run(m, [(0.1, 1.0)] * 6)                       # 감지 → 정지 대기 → 회전 → 회전 끝
+    assert m.state == 'settling' and m.events[-1].kind == 'confirm'
+    run(m, [(0.8, 0.2), (0.8, 0.2)], t0=3.0)
+    assert m.state == 'tracking' and m.events[-1].kind == 'recovered'
+    assert [e.kind for e in m.events].count('reinit') == 0   # 맞던 자세를 전역 재초기화로 버리지 않음
+
+
+def test_confirm_timeout_moves_to_next_attempt():
+    cfg = RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, confirm_s=1.0, max_attempts=2)
+    m = KidnapRecovery(cfg)
+    run(m, [(0.1, 1.0)] * 10)
+    assert [e.kind for e in m.events][:5] == ['lost', 'local_reinit', 'rotate', 'confirm', 'reinit']
