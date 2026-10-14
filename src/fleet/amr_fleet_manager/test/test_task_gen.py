@@ -97,3 +97,16 @@ def test_json_round_trip(tmp_path, stations, basic):
     dump_tasks_json(list(reversed(tasks)), str(path), meta={'seed': 2})
     # 시각 순으로 다시 읽는다
     assert load_tasks_json(str(path)) == tasks
+
+
+def test_response_short_uses_nearby_racks(stations):
+    """응답 시간 KPI용 시나리오: B–C 통로 랙 6곳만 쓰고, 작업 하나가 짧다 (픽업 ↔ 하차 16 m 이하)."""
+    scenario = yaml.safe_load((CONFIG / 'scenarios' / 'response_short.yaml').read_text(encoding='utf-8'))
+    tasks = generate(scenario, stations, seed=1)
+    assert len(tasks) == 60
+    racks = {'rack_b5', 'rack_b6', 'rack_b7', 'rack_c5', 'rack_c6', 'rack_c7'}
+    for t in tasks:
+        assert {t.pickup, t.dropoff} <= racks
+        (px, py, _), (dx, dy, _) = stations[t.pickup], stations[t.dropoff]
+        assert math.hypot(px - dx, py - dy) <= 16.0
+

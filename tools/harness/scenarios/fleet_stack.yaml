@@ -8,6 +8,7 @@
 #
 #   tools/harness/docker_run.sh fleet_stack -n 1 --label smoke --set duration_s=300
 #   tools/harness/gcp_run.sh fleet_stack -n 3 --label d100     # 기본: 5대, 지연 100 ms
+#   tools/harness/gcp_run.sh fleet_stack -n 1 --set task_scenario=response_short --label resp   # 응답 시간 50회
 #
 # 응답 시간 50회: 작업 60건(10 s 간격)이 들어오지만 할당은 로봇이 비어야 생긴다. 한 실행에 다 못 모으면 -n으로 반복한다.
 name: fleet_stack
@@ -28,6 +29,8 @@ params:
   # 지도: 0.05 m(warehouse_v1)와 그 정렬 원점(#157 B안). 기본 0.025 m는 5대에서 NavFn(Dijkstra)이 전체 지도
   # 2400x1600칸을 훑느라 경로를 끝내 못 냈다(GCP 스모크 10/14: planner "missed deadline" 475회, 로봇 정지).
   # Fleet KPI는 위치 정밀도와 관계없어 0.05 m를 쓴다 (system.launch 주석 "경로 계획이 느리면 0.05 m")
+  # 작업 시나리오 (amr_fleet_manager config/scenarios/<이름>.yaml). 응답 시간 50회는 response_short(가까운 랙만)로 모은다
+  task_scenario: basic
   map: warehouse_v1
   map_origin: "[-0.0571, 1.5167, 0.00013]"
 processes:
@@ -59,6 +62,7 @@ processes:
     cmd: >-
       ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json
       map_origin_in_world:="{map_origin}"
+      scenario_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/scenarios/{task_scenario}.yaml
 driver:
   mode: wait
   # 작업 일정이 실제 시간이라 실제 시간으로 기다린다
