@@ -23,6 +23,16 @@
 
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
 
+## 모델
+
+| 모델 | 경로 (이미지 안) | 클래스 | 비고 |
+| --- | --- | --- | --- |
+| **v1 (기본)** | `/opt/models/yolov8n_amr_v1.pt` | `person`, `cargo`, `sign` | 시뮬레이터 영상으로 파인튜닝한 3종 모델. 출처 [ye0n-w0/yolov8n-fine-tuning](https://github.com/ye0n-w0/yolov8n-fine-tuning), 학습 기록 [experiments/yolo](../../../experiments/yolo/README.md) |
+| COCO 원본 | `/opt/models/yolov8n.pt` | `person`, `stop sign` → `sign` | 화물이 없다. 쓰려면 `model_path`와 `model_classes: ["person", "stop sign"]`, `output_classes: ["person", "sign"]` |
+
+- 두 모델 모두 `docker/Dockerfile`이 이미지를 만들 때 받는다. v1은 해시(`ADD --checksum`)가 다르면 빌드가 멈춘다.
+- 모델을 바꾸면 `model_path`, `model_classes`, `output_classes`만 바꾼다. 모델에 없는 클래스 이름을 적으면 시작할 때 `ValueError`다.
+
 ## 실행
 
 ```bash
@@ -37,7 +47,7 @@ ros2 launch amr_detection detection.launch.py device:=cuda:0            # GPU �
 
 ## 학습 데이터 수집 (`collect_dataset`, 시뮬 전용)
 
-화물·표지판 클래스를 학습할 데이터를 Gazebo에서 만든다. 라벨은 라벨 카메라(`label_camera:=true`)가 낸 **화면에 보이는 부분의 2D 상자**라 사람이 라벨을 달지 않는다([amr_gazebo README "라벨 카메라"](../../simulation/amr_gazebo/README.md)). 학습(학교 GPU)과 결과 기록은 [experiments/yolo](../../../experiments/yolo/README.md).
+화물·표지판 클래스를 학습할 데이터를 Gazebo에서 만든다. 라벨은 라벨 카메라(`label_camera:=true`)가 낸 **화면에 보이는 부분의 2D 상자**라 사람이 라벨을 달지 않는다([amr_gazebo README "라벨 카메라"](../../simulation/amr_gazebo/README.md)). 학습과 결과 기록은 [experiments/yolo](../../../experiments/yolo/README.md).
 
 ```bash
 # 결과를 호스트에 남기려고 데이터 폴더만 붙인다 (git 제외 폴더)
