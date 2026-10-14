@@ -188,27 +188,71 @@ def test_blocked_returns_to_idle_without_release_when_zone_leaves_path():
     assert core.phase('z1') is Phase.IDLE
 
 
-def test_path_change_drops_zone_releases_and_returns_idle():
-    # 대기(QUEUED)·통과 허가(GRANTED) 중에 경로가 바뀌어 구역이 빠지고 로봇도 구역 밖이면, 서버가
-    # 자리를 계속 쥐고 있지 않게 반납하고 IDLE로 돌아간다(#66 하연 리뷰)
+def _queued_core():
+    """z1(RECT, 로봇 앞 3 m)에 요청을 보내 QUEUED를 받은 상태."""
     core = make_core()
-    path = straight_path(2.0, 10.0)
-
-    outgoing, _, _, _ = core.update(0.0, path, (2.0, 0.0))
+    outgoing, _, _, _ = core.update(0.0, straight_path(2.0, 10.0), (2.0, 0.0))
     rid = outgoing[0].request_id
     core.on_grant(0.0, 'amr_01', 'z1', rid, GRANT_QUEUED, None, 0, 'amr_02')
+    return core, rid
 
-    # 경로가 바뀌어 더는 z1을 지나지 않는다 (y=5로 우회), 로봇은 아직 구역 밖
-    detour = straight_path(2.0, 10.0, y=5.0)
-    outgoing_release, cap, _, _ = core.update(1.0, detour, (2.0, 5.0))
-    assert [(o.zone_id, o.request_id, o.type) for o in outgoing_release] == [('z1', rid, TYPE_RELEASE)]
+
+# 경로가 바뀌어 대기 중인 구역이 빠졌을 때 (10/15 하연·이진, #66의 "빠지면 즉시 반납"을 바꿈):
+# 로봇이 trigger 거리(직선) 안이면 drop_grace_s 동안 반납하지 않고, 지나거나 멀어지면 반납한다
+
+DETOUR = straight_path(2.0, 10.0, y=5.0)  # z1을 안 지나는 경로 (y=5로 우회)
+
+
+def test_path_detour_near_zone_keeps_request_and_stop_cap_during_grace():
+    core, rid = _queued_core()
+    # 로봇은 그대로 z1 3 m 앞(직선 거리 3.0 = trigger 거리 안), 경로만 우회로 바뀐다
+    outgoing, cap, _, _ = core.update(0.5, DETOUR, (2.0, 0.0))
+    assert outgoing == []  # 반납하지 않는다
+    assert core.phase('z1') is Phase.APPROACHING and core.grant('z1') == GRANT_QUEUED
+    assert cap == pytest.approx(speed_cap_for_stop(3.0, 0.5, 1.0))  # 직선 거리로 정지 상한
+    # 같은 request_id로 연장 요청을 계속 보낸다 (대기열 순서 유지)
+    outgoing, _, _, _ = core.update(1.0, DETOUR, (2.0, 0.0))
+    assert [(o.zone_id, o.request_id, o.type) for o in outgoing] == [('z1', rid, TYPE_ACCESS)]
+    # 그 사이 경로가 다시 z1을 지나면 그대로 이어간다 (새 request_id 없음)
+    outgoing, _, _, _ = core.update(2.0, straight_path(2.0, 10.0), (2.0, 0.0))
+    assert [(o.request_id, o.type) for o in outgoing] == [(rid, TYPE_ACCESS)]
+    assert core.request_id('z1') == rid and core.grant('z1') == GRANT_QUEUED
+    # 이어간 뒤 다시 우회해도 grace는 새로 잰다 (앞의 우회 시간을 이어 세지 않는다)
+    outgoing, _, _, _ = core.update(4.5, DETOUR, (2.0, 0.0))
+    assert all(o.type != TYPE_RELEASE for o in outgoing)
+    assert core.phase('z1') is Phase.APPROACHING
+
+
+def test_path_detour_near_zone_releases_after_grace():
+    core, rid = _queued_core()
+    core.update(1.0, DETOUR, (2.0, 0.0))   # 우회 시작
+    outgoing, cap, _, _ = core.update(4.0, DETOUR, (2.0, 0.0))  # 3.0 s - 아직 grace 안
+    assert all(o.type != TYPE_RELEASE for o in outgoing) and cap is not None
+    outgoing, cap, _, _ = core.update(4.1, DETOUR, (2.0, 0.0))  # 3.1 s - grace(3.0 s) 넘음
+    assert [(o.zone_id, o.request_id, o.type) for o in outgoing] == [('z1', rid, TYPE_RELEASE)]
+    assert cap is None
+    assert core.phase('z1') is Phase.IDLE and core.grant('z1') is None
+    # 그 뒤로는 완전히 새 진입처럼 다룬다 (다음 트리거에서 새 request_id)
+    outgoing, _, _, _ = core.update(5.0, straight_path(2.0, 10.0), (2.0, 0.0))
+    assert outgoing[0].request_id == rid + 1
+
+
+def test_path_detour_far_from_zone_releases_immediately():
+    # 로봇이 z1에서 trigger 거리 밖(직선 5 m)으로 멀어졌으면 기다리지 않고 바로 반납한다
+    core, rid = _queued_core()
+    outgoing, cap, _, _ = core.update(1.0, DETOUR, (2.0, 5.0))
+    assert [(o.zone_id, o.request_id, o.type) for o in outgoing] == [('z1', rid, TYPE_RELEASE)]
     assert cap is None
     assert core.phase('z1') is Phase.IDLE
-    assert core.grant('z1') is None
 
-    # 그 뒤로는 완전히 새 진입처럼 다룬다(다음 트리거에서 새 request_id)
-    outgoing_again, _, _, _ = core.update(2.0, path, (2.0, 0.0))
-    assert outgoing_again[0].request_id == rid + 1
+
+def test_drop_grace_s_is_configurable():
+    core = make_core(drop_grace_s=1.0)
+    outgoing, _, _, _ = core.update(0.0, straight_path(2.0, 10.0), (2.0, 0.0))
+    core.on_grant(0.0, 'amr_01', 'z1', outgoing[0].request_id, GRANT_QUEUED, None, 0, 'amr_02')
+    core.update(1.0, DETOUR, (2.0, 0.0))
+    outgoing, _, _, _ = core.update(2.1, DETOUR, (2.0, 0.0))
+    assert [o.type for o in outgoing] == [TYPE_RELEASE]
 
 
 def test_lease_expiry_inside_zone_continues_then_releases():
@@ -754,9 +798,6 @@ def test_adjacent_zone_queued_robot_stops_before_east_boundary():
     assert x <= EAST[0] - 0.5 + 0.05, f'허가 없이 정지선을 넘음: x={x:.3f}'
 
 
-# 원인: 허가 없는 구역이 경로에서 잠깐 빠지면 dropped_from_path로 즉시 반납·IDLE이 되어 정지 상한이 사라진다
-@pytest.mark.xfail(strict=True, reason='원인: 경로에서 잠깐 빠진 구역을 즉시 반납·IDLE로 돌려 정지 상한이 사라짐 '
-                   '(수정은 반납 규칙을 정한 뒤)')
 def test_adjacent_zone_queued_detour_path_keeps_stop_cap():
     # 교착 중 상대 로봇(amr_02)이 동쪽 구역을 막고 있으면 Nav2가 북쪽으로 돌아가는 경로를 낼 수 있다.
     # 그동안 컨트롤러가 전진 명령을 계속 내도, 허가 없는 구역 앞 정지선은 지켜야 한다

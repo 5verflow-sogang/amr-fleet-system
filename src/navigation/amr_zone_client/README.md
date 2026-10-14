@@ -34,9 +34,9 @@
 | `IDLE` | 남은 거리 ≤ `trigger_distance_m` | `APPROACHING` | `TYPE_ACCESS` (새 `request_id`) |
 | `APPROACHING` | 위치가 구역 안 **and** 유효한 `GRANTED` | `INSIDE` | — |
 | `APPROACHING` | `GRANT_REJECTED` 응답 | `BLOCKED` | — |
-| `APPROACHING` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 | `IDLE` | `TYPE_RELEASE` |
+| `APPROACHING` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 **and** (빠진 지 `drop_grace_s` 초과 **or** 직선 거리 > `trigger_distance_m`) | `IDLE` | `TYPE_RELEASE` |
 | `BLOCKED` | `retry_period_s` 경과, 경로에 구역이 남아 있음 | `APPROACHING` | `TYPE_ACCESS` (새 `request_id`) |
-| `BLOCKED` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 | `IDLE` | (반납 없음 — 서버가 쥔 적이 없다) |
+| `BLOCKED` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 **and** (빠진 지 `drop_grace_s` 초과 **or** 직선 거리 > `trigger_distance_m`) | `IDLE` | (반납 없음 — 서버가 쥔 적이 없다) |
 | `INSIDE` | 위치가 구역 밖으로 나감 | `IDLE` | `TYPE_RELEASE` |
 | `APPROACHING` | `GRANT_REVOKED` 응답(교착 해소), 응답 시점에 아직 구역 밖 | `BLOCKED` | `TYPE_RELEASE` (다음 틱) |
 | `APPROACHING` | `GRANT_REVOKED` 응답(교착 해소), 응답 시점에 이미 구역 안 | `BACKING` | — |
@@ -45,7 +45,7 @@
 | `BACKING` | `backing_max_distance_m`·`backing_timeout_s` 중 하나라도 초과 | `FAILED` | (없음 — 반납하지 않는다) |
 
 표에 없는 조합(예: `APPROACHING`에서 유효한 허가 없이 경계를 넘었거나, 구역 밖에서 lease가 지난
-경우)은 상태를 그대로 유지하면서 같은 `request_id`로 계속 요청하고 정지 상한을 다시 건다 — 아래
+경우, 경로에서 빠졌지만 아직 grace 안인 경우)은 상태를 그대로 유지하면서 같은 `request_id`로 계속 요청하고 정지 상한을 다시 건다 — 아래
 설명 참고.
 
 - **IDLE → APPROACHING**: 계획 경로를 따라(로봇과 가장 가까운 경로 점부터, 뒤쪽 점은 안 본다) 구역
@@ -64,11 +64,18 @@
   걸지 않는다 — **lease가 지나도 멈추지 않고 빠져나간다** (서버도 반납 전까지 구역을 쥐고 있는다).
 - **BLOCKED**: 재시도 없이 경고만 남기던 걸 바꿔서, 경로에 그 구역이 남아 있으면 `retry_period_s`
   (기본 5 s) 뒤 새 `request_id`로 다시 요청하며 `APPROACHING`으로 돌아간다 (영원히 막힌 채로 안 둔다).
-  경로가 바뀌어 그 구역을 더는 지나지 않고 로봇도 구역 밖이면 반납 없이 바로 `IDLE`로 돌아간다 — REJECTED는
-  서버가 자리를 쥔 적이 없어서 반납할 게 없다.
-- **APPROACHING/INSIDE → IDLE (경로 변경)**: 전역 경로가 바뀌어 대기·통과 허가 중인 구역이 경로에서
-  빠지고 로봇도 그 구역 밖이면, 서버가 자리를 계속 쥐고 있지 않도록 `TYPE_RELEASE`를 보내고 `IDLE`로
-  돌아간다.
+  경로가 바뀌어 그 구역을 더는 지나지 않으면 아래 "경로에서 빠진 구역" 규칙을 따르고, 끝내 `IDLE`로 갈 때는
+  반납 없이 간다 — REJECTED는 서버가 자리를 쥔 적이 없어서 반납할 게 없다. 경로에서 빠져 있는 동안은
+  재시도하지 않는다.
+- **경로에서 빠진 구역 (APPROACHING·BLOCKED, 10/15 하연·이진)**: #66에서 정한 "경로에서 빠지면 즉시 반납"을
+  바꿨다. 전역 경로가 바뀌어 아직 들어가지 않은 구역이 경로에서 빠져도, 로봇이 그 구역에서
+  `trigger_distance_m`(직선 거리) 안에 있으면 바로 반납하지 않는다 — 같은 `request_id`로 계속 요청해 대기열
+  순서를 지키고, 정지 상한은 경로 거리 대신 로봇 → 구역 사각형 **직선 거리**(경로 거리보다 짧아 보수적)로
+  건다. 경로가 `drop_grace_s`(기본 3 s) 넘게 계속 빠져 있거나 로봇이 `trigger_distance_m` 밖으로 멀어지면
+  그때 `TYPE_RELEASE`(BLOCKED는 반납 없이)를 보내고 `IDLE`로 돌아간다. 그 전에 경로가 다시 그 구역을
+  지나면 그대로 이어간다(새 `request_id`를 쓰지 않는다). 교착 중 상대 로봇이 통로를 막자 Nav2가 잠깐 우회
+  경로를 냈고, 그 사이 정지 상한이 사라져 허가 없이 구역에 들어간 문제(fleet_deadlock 실험) 때문이다.
+  `INSIDE` 구역은 그대로다(아래).
 - **INSIDE → IDLE**: 위치가 구역을 벗어나면 그 즉시 `TYPE_RELEASE`를 보내고 상태를 초기화한다.
 - **`GRANT_REVOKED`(교착 해소, 10/11 결정)**: 서버가 교착을 풀려고 우선순위 낮은 로봇의 허가를
   회수할 때 쓴다(`REASON_DEADLOCK_RESOLUTION`).
@@ -173,6 +180,7 @@ TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BAC
 | `decel_mps2` | `1.0` | 정지 속도 프로파일 기준 감속 |
 | `resend_period_s` | `1.0` | 재전송(연장) 주기 |
 | `retry_period_s` | `5.0` | `BLOCKED`(REJECTED·REVOKED) 뒤 재시도까지 기다리는 시간 |
+| `drop_grace_s` | `3.0` | 아직 안 들어간 구역이 경로에서 빠진 채 이 시간이 지나면 반납·`IDLE` (그 전엔 trigger 거리 안이면 요청·정지 상한 유지) |
 | `backing_speed_mps` | `0.15` | `BACKING` 후진 속도 (10/11 결정) |
 | `backing_margin_m` | `0.3` | 구역 경계를 벗어난 뒤 이만큼 더 나가면 정지·반납 |
 | `backing_max_distance_m` | `6.0` | `BACKING` 안전장치: 총 후진 거리 한도(fail-closed). 가장 긴 구역(`narrow_02`, 5.0 m) + `backing_margin_m` 여유 (#137 하연 두 번째 리뷰) |
