@@ -97,12 +97,20 @@ def test_nav2_needs_localization():
 def test_camera_features_need_camera(name):
     module = load_module()
     with pytest.raises(RuntimeError, match='enable_camera'):
-        module._system(context_with_defaults(module, **{name: True}))
+        module._system(context_with_defaults(module, nav2=True, **{name: True}))
+
+
+def test_docking_needs_nav2():
+    # nav2:=false면 BT 이동이 자리채움이라 로봇이 스테이션에 가지 않는다
+    module = load_module()
+    with pytest.raises(RuntimeError, match='nav2'):
+        module._system(context_with_defaults(module, docking=True, enable_camera=True))
 
 
 def test_docking_spawns_markers_once():
     module = load_module()
-    actions = module._system(context_with_defaults(module, num_robots=3, docking=True, enable_camera=True))
+    actions = module._system(context_with_defaults(module, num_robots=3, nav2=True, docking=True,
+                                                                  enable_camera=True))
     # 로봇마다 TimerAction 1 + 마커판 TimerAction 1
     assert sum(isinstance(a, TimerAction) for a in actions) == 3 + 1
 
