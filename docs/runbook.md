@@ -75,6 +75,19 @@ colcon build
 
 `./src`가 컨테이너에 마운트되어 있어 호스트에서 고친 코드가 바로 반영된다.
 
+### 주행 빠른 확인 (한 줄)
+
+스택 실행 → Nav2 활성 대기 → 목표 전송 → 결과 표 → 스택 종료를 호스트에서 한 번에 한다. dev 컨테이너가 없으면 띄우고 빌드한다. 로그는 `tools/dev/logs/<시각>/`.
+
+```bash
+tools/dev/nav_check.sh -r 2 -g amr_01:6,0              # 2단계(Nav2+구역), 2대, amr_01을 map (6,0)으로
+tools/dev/nav_check.sh -r 2 --stage 3 -g amr_01:6,0    # 추적·안전 노드까지
+tools/dev/nav_check.sh --build --keep -g amr_01:6,0    # 빌드 먼저, 끝나도 스택 유지(RViz) → --stop으로 끈다
+tools/dev/nav_check.sh --obstacles                     # 떠 있는 스택에서 로봇 주변 추적 트랙 (DWA가 멈췄을 때)
+```
+
+옵션 전체는 `tools/dev/nav_check.sh -h`.
+
 ### GUI (RViz2)
 
 ```bash
