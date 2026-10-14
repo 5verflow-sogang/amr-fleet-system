@@ -67,9 +67,10 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 
 시나리오 파일은 `processes`(띄울 명령, `ready_topic`으로 준비 확인, `stop_first`·`wait_files`로 기록 노드를 먼저 끝냄), `driver`(`segments`: `cmd_vel` 구간 / `wait`: 시간만 기다림 / `command`: 셸 명령이 끝날 때까지, 0이 아닌 종료 코드면 주행 실패), `postprocess`(예: `fleet_metrics`), `cleanup`으로 이루어진다. 명령 안의 `{run_dir}`, `{seed}`, `params` 이름은 실행마다 채워진다.
 
-**그림과 녹화** (`loc_basic`, `nav_kpi`)
+**그림과 녹화** (`loc_basic`, `nav_kpi`, `fleet_fake`)
 
 - 실행이 끝나면 `postprocess`가 `plot_run.py`로 `plots/*.png`를 남긴다. 위치추정: `loc_traj.png`(지도 위 GT·EKF·AMCL 궤적), `loc_error.png`(시간에 따른 오차, 구간 색, KPI 점선). Nav KPI: `nav_map.png`(지도 위 계획 경로·GT 궤적·성공/실패 목표), `nav_time.png`(예측·실제 주행시간). 그림이 실패해도 실행 결과는 그대로다(늘 0으로 끝남). 지난 결과도 `python3 tools/harness/plot_run.py <실행 폴더> --map <지도 yaml>`로 다시 그린다 (ROS 불필요)
+- `fleet_fake`는 `fleet_metrics` 다음에 `fleet_plot`(`amr_fleet_manager`)이 `plots/timeline.png`(로봇별 작업 구간·상태 끊김·강제종료·회수된 작업의 재할당)를 남긴다. 실패 정책은 같다(늘 0으로 끝남). 지난 결과는 `PYTHONPATH=src/fleet/amr_fleet_manager python3 -m amr_fleet_manager.fleet_plot <실행 폴더>` (ROS 불필요). 가짜 로봇은 스테이션 사이를 직선으로 움직여 지도 위 궤적은 그리지 않는다
 - `rosbag/`에 가벼운 토픽만 녹화한다: `/map`, `/tf`, `/tf_static`, `amcl_pose`, GT (`nav_kpi`는 `plan`·`cmd_vel` 추가). 스캔·카메라는 뺀다. Foxglove·Lichtblick에 `rosbag_0.db3`를 끌어다 놓으면 열린다. 이미지에 mcap 저장 플러그인이 없어 sqlite3로 남긴다
 - 크기: `loc_basic` 1회 약 9 MB(0.025 m 지도 4 MB + GT). `nav_kpi`는 50쌍이면 수백 MB라 기본으로 끄고, 실패한 쌍을 볼 때 `--set record=true`. `--set record=false`로 끈다
 - 추천 흐름: N회 돌린 뒤 `plots/`로 이상한 실행을 고르고, 그 실행의 bag을 열어 자세히 본다
@@ -139,7 +140,7 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
 | `trace/` | LTTng CTF | ros2_tracing 원본 (UST `ros2:*` 이벤트). `hop_latency.csv`의 원자료 | 하연 (수집 절차는 [runbook](../../docs/runbook.md) "트레이싱") |
 | `fault_events.csv` | CSV `time, event` | 서버 강제종료·재시작 시각 (실제 시간, UNIX 초). 서버 장애 시나리오에서만 | 하연 (`fleet_manager.launch.py`의 `fault_events_file`) |
 | `robot_states.csv` | CSV `time, robot, x, y, mode, task_id` | `/fleet/robot_states` 1건마다 1행 (map 좌표, bag 수신 시각). 그림의 원자료 | 하연 (`fleet_metrics`) |
-| `plots/` | PNG | 보기용 그림. 판정에 쓰지 않는다. Fleet: `timeline.png`(로봇별 작업 구간·강제종료·회수) | 하연 (`fleet_plot`, [amr_fleet_manager README](../../src/fleet/amr_fleet_manager/README.md) "작업 타임라인 그림") |
+| `plots/` | PNG | 보기용 그림. 판정에 쓰지 않는다. 위치추정·Nav KPI는 `plot_run.py`, Fleet은 `timeline.png` (위 "그림과 녹화") | 민지 (`plot_run.py`), 하연 (`fleet_plot`, [amr_fleet_manager README](../../src/fleet/amr_fleet_manager/README.md) "작업 타임라인 그림") |
 
 - TUM 궤적 형식: 한 줄에 `timestamp x y z qx qy qz qw` (공백 구분, 초·m·쿼터니언). evo가 그대로 읽는다.
 - **좌표계 정렬**: GT(Gazebo world)와 추정값(`map`)은 서로 다른 좌표계다. 두 좌표계 사이 변환을 시나리오 설정에 고정값으로 두고, 정렬 방식을 `meta.json`에 기록한다. 평가 도구가 임의로 최적 정렬(Umeyama 등)을 하면 오차가 실제보다 작게 나올 수 있으므로 KPI 산출에는 고정 변환만 쓴다.
