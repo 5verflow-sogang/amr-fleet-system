@@ -207,6 +207,36 @@ class ConfigOverrides:
         return {target: {'file': str(source), 'sha256': sha256(source)} for target, _, source in self.items}
 
 
+def patch_yaml(source: Path, sets: dict, dest: Path) -> Path:
+    """source YAML에서 sets의 값만 바꿔 dest에 쓴다. 키는 점으로 이은 경로 (예: controller_server.ros__parameters.DWA.max_v).
+
+    시나리오 config_patch가 쓴다: 설정 파일을 통째로 복사해 두면 원본이 바뀔 때 어긋나므로 바꿀 값만 적는다.
+    """
+    import yaml
+    data = yaml.safe_load(source.read_text(encoding='utf-8'))
+    for key, value in sets.items():
+        node, parts = data, key.split('.')
+        for part in parts[:-1]:
+            if not isinstance(node, dict) or part not in node:
+                raise KeyError(f'{source.name}에 {key}가 없다 ({part})')
+            node = node[part]
+        if parts[-1] not in node:
+            raise KeyError(f'{source.name}에 {key}가 없다')
+        node[parts[-1]] = value
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding='utf-8')
+    return dest
+
+
+def installed_path(target: str) -> Path:
+    """'<패키지>/<share 아래 경로>' → 설치된 파일 경로."""
+    pkg, _, rel = target.partition('/')
+    prefix = subprocess.run(['ros2', 'pkg', 'prefix', pkg], capture_output=True, text=True).stdout.strip()
+    if not prefix:
+        raise ValueError(f'패키지를 찾지 못함: {pkg}')
+    return Path(prefix) / 'share' / pkg / rel
+
+
 def host_info() -> dict:
     cpu = platform.processor()
     try:

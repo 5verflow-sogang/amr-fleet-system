@@ -1,0 +1,73 @@
+# 경로 계획·추종 KPI (민지 측정, 이진 판정, 4주차 민지 작업 2). 로봇 1대, 지도 v1 0.025 m, EKF+AMCL, Nav2(DWA).
+# 웨이포인트 50개 투어(= 출발·목표 50쌍, experiments/nav_kpi/waypoints.yaml)를 한 실행에 돈다.
+#   HARNESS_PACKAGES="amr_bringup amr_nav2_plugins amr_control" tools/harness/docker_run.sh nav_kpi -n 1
+#   ... --set controller=pp --label pp     # CTE KPI(5장 모션 제어)는 path_tracker로 판정 (이진 10/13)
+# 결과: nav_pairs.csv(쌍마다 계획·주행·예측 오차·복구 횟수), replan.csv, cte.csv, paths.csv, nav_kpi.json
+# DWA 최고 속도를 예측 순항 속도(0.5 m/s)와 같게 맞춘다 (config_patch, navigation.md 7-4절 비교 조건)
+name: nav_kpi
+num_robots: 1
+use_sim_time: true
+seed_base: 1
+# 투어 약 480 m. 0.5 m/s면 20분 남짓 + 기동
+timeout_s: 3600
+params:
+  # 앞에서부터 이만큼의 쌍만 (0 = 50쌍 전부). 스모크는 --set pairs=3
+  pairs: "0"
+  # nav2: Nav2 주행(DWA, CTE는 참고) / pp: path_tracker(Pure Pursuit)가 계획 경로를 따라감 (CTE KPI 판정)
+  controller: nav2
+  cruise_mps: "0.5"
+  curve_kappa: "0.2"
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1_0025.yaml
+  # 녹화는 기본 끔: 50쌍(46분)이면 GT·plan만으로 수백 MB다. 실패한 쌍을 Foxglove로 볼 때 --set record=true
+  record: "false"
+processes:
+  - name: system
+    # 로봇 1대 + 위치추정 + Nav2만 (Fleet·BT·구역 클라이언트 끔: Nav2가 바로 cmd_vel을 낸다, amr_bringup README)
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:=1 gui:=false enable_camera:=false
+      fleet:=false bt:=false nav2:=true seed:={seed} robots_file:=/repo/experiments/nav_kpi/robots.yaml
+    ready_topic: /amr_01/odometry/filtered
+    # 시뮬레이터 + 위치추정 + Nav2 기동. ready_cmds도 이 시간 안에
+    ready_timeout_s: 300
+    ready_cmds:
+      - ros2 lifecycle get /map_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/amcl | grep -q '^active'
+      - ros2 lifecycle get /amr_01/planner_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/controller_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/bt_navigator | grep -q '^active'
+    settle_s: 5
+  - name: path_tracker
+    # pp 방식에서만. Nav2 BT에 주행 목표를 보내지 않으므로 controller_server는 놀고, path_tracker가 cmd_vel을 낸다
+    cmd: >-
+      if [ "{controller}" = pp ];
+      then exec ros2 run amr_control path_tracker_node --ros-args -r __ns:=/amr_01 -r cmd_vel_nav:=cmd_vel
+      -r odom:=odometry/local --params-file $(ros2 pkg prefix amr_control)/share/amr_control/config/path_tracker.yaml
+      -p use_sim_time:=true;
+      else exec sleep infinity; fi
+  # 가벼운 토픽만 녹화 (Foxglove·Lichtblick으로 열어 보기용, 하연 10/14 제안). 스캔·카메라는 뺀다.
+  # 이미지에 mcap 저장 플러그인이 없어 sqlite3(.db3)로 남긴다. record=false면 녹화하지 않는다
+  - name: rosbag
+    cmd: >-
+      if [ "{record}" = true ];
+      then exec ros2 bag record -o {run_dir}/rosbag /map /tf /tf_static /amr_01/amcl_pose /amr_01/ground_truth/odom /amr_01/plan /amr_01/cmd_vel;
+      else exec sleep infinity; fi
+    stop_first: true
+config_patch:
+  amr_bringup/config/nav2_params.yaml:
+    controller_server.ros__parameters.DWA.max_v: 0.5
+driver:
+  mode: command
+  use_sim_time: true
+  # 실제 시간. runner timeout_s보다 짧게 (drive.py command 모드 설명)
+  timeout_s: 3500
+  cmd: >-
+    python3 /repo/experiments/nav_kpi/nav_kpi.py --out-dir {run_dir}/nav_kpi --pairs {pairs}
+    --controller {controller} --cruise-mps {cruise_mps} --curve-kappa {curve_kappa}
+# plots/nav_map.png(지도 위 계획 경로·GT 궤적·성공/실패 목표), plots/nav_time.png(예측·실제 주행시간)
+postprocess:
+  - name: plot
+    cmd: python3 /repo/tools/harness/plot_run.py {run_dir} --map {map}
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
+  - pkill -9 -f "[n]av_kpi.py" || true

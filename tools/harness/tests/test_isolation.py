@@ -94,3 +94,15 @@ def test_run_once_records_ready_time(tmp_path, monkeypatch):
     meta = run_once(scenario, {'repeat': 0, 'seed': 1}, tmp_path / 'r0', reset_dds=False)
     assert list(meta['ready_s']) == ['sim', 'quick']
     assert 'leftover_processes' in meta
+
+
+def test_patch_yaml_changes_only_named_values(tmp_path):
+    src = tmp_path / 'nav2_params.yaml'
+    src.write_text('controller_server:\n  ros__parameters:\n    DWA:\n      max_v: 2.0\n      max_w: 1.5\n')
+    out = runner.patch_yaml(src, {'controller_server.ros__parameters.DWA.max_v': 0.5}, tmp_path / 'p' / 'n.yaml')
+    import yaml
+    assert yaml.safe_load(out.read_text()) == {'controller_server': {'ros__parameters': {'DWA': {'max_v': 0.5, 'max_w': 1.5}}}}
+    # 없는 키는 조용히 새로 만들지 않고 거부한다 (오타로 아무 효과 없는 실험을 막는다)
+    import pytest
+    with pytest.raises(KeyError):
+        runner.patch_yaml(src, {'controller_server.ros__parameters.DWA.max_vv': 0.5}, tmp_path / 'q.yaml')
