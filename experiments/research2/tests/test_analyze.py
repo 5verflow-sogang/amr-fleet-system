@@ -156,3 +156,33 @@ def test_dwa_lists_pair_with_seeds_one_by_one(tmp_path):
     assert len(h1) == 2
     assert all(r['n'] == 10 and r['mean'] == pytest.approx(-0.1) for r in h1)
     assert not any(r['pass'] for r in h1)
+
+
+def test_t_distribution_matches_known_values():
+    assert analyze.t_cdf(0.0, 9) == pytest.approx(0.5)
+    assert analyze.t_quantile(0.975, 9) == pytest.approx(2.262, abs=1e-3)     # t 표
+    assert analyze.t_quantile(0.975, 1000) == pytest.approx(1.962, abs=2e-3)  # 정규에 가까움
+    assert analyze.t_cdf(-2.262, 9) == pytest.approx(0.025, abs=1e-4)
+
+
+def test_paired_t_one_sided_against_bound():
+    r = analyze.paired_t([-0.10, -0.12, -0.08, -0.11, -0.09], bound=0.0)
+    assert r['p_t'] < 0.001 and r['t_ci_high'] < 0
+    # 비열등 마진: 평균 +1%p, 마진 +2%p, 흔들림이 크면 통과 못 함
+    r = analyze.paired_t([0.01, 0.05, -0.03, 0.04, -0.02], bound=0.02)
+    assert r['t_ci_high'] > 0.02 and r['p_t'] > 0.025
+    assert analyze.paired_t([0.1], 0.0) == {'t_ci_high': None, 'p_t': None}
+
+
+def test_hypothesis_needs_every_condition():
+    # H1 "10·25 kg 각각": 하나라도 통과 못 하면 H1 실패 (#100 연우 리뷰)
+    rows = [{'hypothesis': 'H1', 'pass': True}, {'hypothesis': 'H1', 'pass': False},
+            {'hypothesis': 'H2-a', 'pass': True}, {'hypothesis': 'H2-a', 'pass': True},
+            {'hypothesis': 'H3', 'pass': True}, {'hypothesis': 'H3', 'pass': None}]
+    assert analyze.hypothesis_verdicts(rows) == {'H1': False, 'H2-a': True, 'H3': None}
+
+
+def test_check_uses_more_conservative_interval():
+    # 값 둘: 부트스트랩 구간은 두 값 사이라 좁지만 t 구간은 넓다 → t 기준으로 FAIL
+    r = analyze.check('H1', 'x', [-0.10, -0.01], 0.0, seed=0)
+    assert r['ci_high'] < 0 and r['t_ci_high'] > 0 and r['pass'] is False
