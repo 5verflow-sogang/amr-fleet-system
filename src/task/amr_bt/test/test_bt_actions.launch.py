@@ -37,6 +37,7 @@ def generate_test_description():
         parameters=[{
             'use_sim_time': False, 'use_nav2': True, 'use_docking': True,
             'dwell_s': 0.3, 'server_wait_s': 5.0, 'resume_hold_s': 0.3,
+            'kidnap_state_stale_s': 3.0,
         }])
     return launch.LaunchDescription([bt, launch_testing.actions.ReadyToTest()])
 
@@ -238,6 +239,14 @@ class TestBtActions(unittest.TestCase):
             self.servers.nav_duration = 0.3
         self.assign('t6', Task.TYPE_RETURN, '', 'wait_1', dropoff_xy=(1.0, 0.0))
         self.assertEqual(self.final('t6', 15.0).state, TaskStatus.STATE_COMPLETED)
+
+    # 복구 노드가 failed를 낸 뒤 죽으면(상태가 끊기면) kidnap_state_stale_s 뒤 MODE_IDLE로 돌아온다
+    def test_6_kidnap_failed_expires_when_silent(self):
+        self.kidnap_pub.publish(String(data='failed'))
+        self.assertTrue(self.wait_until(
+            lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_ERROR, 2.0))
+        self.assertTrue(self.wait_until(
+            lambda: self.states[-1].mode == RobotState.MODE_IDLE, 6.0))
 
 
 @launch_testing.post_shutdown_test()

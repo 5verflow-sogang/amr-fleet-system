@@ -85,6 +85,8 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 - 후진(`backing`)은 zone_client가 `cmd_vel_zone_limited`로 직접 낸다. BT는 Nav2 목표만 멈춘다 (#137)
 - `zone_client/state` = `failed`인 동안은 `RobotState.mode`를 `MODE_ERROR`로 내고 새 할당을 `RESULT_REJECTED` + `TRAFFIC_REVOKED`로 거부한다. 서버가 멈춘 로봇에 작업을 계속 줘서 바로 실패하는 일을 되풀이하지 않게 한다
 - `kidnap_recovery/state` = `failed`인 동안도 같다 (`NAV_TIMEOUT`, "localization lost"). 복구 노드가 `failed`에서도 수렴해 `tracking`으로 돌아오면 다시 `MODE_IDLE`로 할당을 받는다 (#148). 위치 잃음용 ErrorInfo 코드가 생기면 바꾼다
+- `kidnap_recovery/state`가 `kidnap_state_stale_s`(5 s) 넘게 안 오면(복구 노드가 죽거나 scan·odom이 끊김) 마지막 값을 버리고 기본값 `tracking`으로 돌린다. 안 그러면 `failed`가 남아 `MODE_ERROR`가 풀리지 않는다. `zone_client/state` = `failed`는 사람이 확인해야 하는 상태라 그대로 둔다
+- `MODE_ERROR`에 들어갈 때 이유를 WARN으로, 나올 때 빠져 있던 시간을 INFO로 남긴다 (할당에서 빠진 로봇·시간을 로그로 본다)
 
 ### 가상 배터리 (`include/amr_bt/battery.hpp`)
 
@@ -142,6 +144,7 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 | `nav_retries` | `2` | Nav2 실패 때 다시 보내는 횟수 |
 | `pause_timeout_s` | `60.0` | 한 번 멈춘 채 기다리는 상한 [s] |
 | `resume_hold_s` | `0.3` | 진행 상태가 이만큼 이어져야 다시 보낸다 [s] |
+| `kidnap_state_stale_s` | `5.0` | `kidnap_recovery/state`가 이만큼 안 오면 기본값(`tracking`)으로 돌린다 [s] |
 | `battery.*` | 위 표 | 가상 배터리 (`initial_percent`, `move_per_m`, `idle_per_s`, `charge_per_s`, `charge_target_percent`, `charge_timeout_s`, `reject_below_percent`) |
 | `groot_port` | `0` | Groot 모니터링 포트 (0이면 끔) |
 | `task_log_file` | `""` | 작업 로그 CSV (비우면 안 씀) |
@@ -194,3 +197,4 @@ colcon test --packages-select amr_bt
   - 이동 중 `zone_client/state` = waiting → Nav2 목표 취소, approaching → 다시 보내고 COMPLETED
   - `zone_client/state` = failed → `MODE_ERROR`, 새 할당 거부(`TRAFFIC_REVOKED`)
   - `kidnap_recovery/state` = failed → `MODE_ERROR`, 새 할당 거부(`NAV_TIMEOUT`), tracking으로 돌아오면 다시 받아 COMPLETED
+  - `kidnap_recovery/state` = failed 뒤 끊김 → `kidnap_state_stale_s` 뒤 `MODE_IDLE`

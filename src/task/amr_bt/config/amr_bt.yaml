@@ -37,6 +37,8 @@
     pause_timeout_s: 60.0
     # 진행 상태가 이만큼 이어져야 목표를 다시 보낸다 [s] (상태가 한 틱만 바뀌는 것을 거른다)
     resume_hold_s: 0.3
+    # kidnap_recovery/state가 이만큼 안 오면(복구 노드가 죽거나 scan·odom 끊김) 기본값 tracking으로 돌린다 [s]
+    kidnap_state_stale_s: 5.0
 
     # ---- 가상 배터리 (include/amr_bt/battery.hpp) ----
     battery:
