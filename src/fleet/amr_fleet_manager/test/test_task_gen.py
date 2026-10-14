@@ -100,7 +100,7 @@ def test_json_round_trip(tmp_path, stations, basic):
 
 
 def test_response_short_uses_nearby_racks(stations):
-    """응답 시간 KPI용 시나리오: B–C 통로 동쪽 랙 8곳만 쓰고(로봇 5대보다 많게), 작업 하나가 짧다 (픽업 ↔ 하차 23 m 이하)."""
+    """응답 시간 KPI용 시나리오: B–C 통로 동쪽 랙 8곳만 쓰고(로봇 5대보다 많게), 작업 하나가 짧다 (픽업 ↔ 하차 25 m 이하, rack_b4만 x −1.9)."""
     scenario = yaml.safe_load((CONFIG / 'scenarios' / 'response_short.yaml').read_text(encoding='utf-8'))
     tasks = generate(scenario, stations, seed=1)
     assert len(tasks) == 60
@@ -108,5 +108,5 @@ def test_response_short_uses_nearby_racks(stations):
     for t in tasks:
         assert {t.pickup, t.dropoff} <= racks
         (px, py, _), (dx, dy, _) = stations[t.pickup], stations[t.dropoff]
-        assert math.hypot(px - dx, py - dy) <= 23.0
+        assert math.hypot(px - dx, py - dy) <= 25.0
 
