@@ -152,7 +152,14 @@ class TestBtActions(unittest.TestCase):
         msg.task = task
         # 노드가 구독을 붙일 때까지 기다린다
         self.assertTrue(self.wait_until(lambda: self.assign_pub.get_subscription_count() > 0, 20.0))
-        self.assign_pub.publish(msg)
+        # 구독이 보여도 노드 쪽 연결(discovery)이 덜 끝나면 첫 메시지가 버려진다 (volatile).
+        # 서버처럼 Ack가 올 때까지 같은 assignment_id로 다시 보낸다. 노드는 중복이면 같은 Ack만 다시 보낸다
+        for _ in range(10):
+            self.assign_pub.publish(msg)
+            if self.wait_until(
+                    lambda: any(a.assignment_id == msg.assignment_id for a in self.acks), 1.0):
+                return
+        self.fail(f'{task_id} Ack 없음')
 
     def final(self, task_id, timeout):
         def done():
