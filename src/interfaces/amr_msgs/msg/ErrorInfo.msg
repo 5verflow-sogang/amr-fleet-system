@@ -17,6 +17,7 @@ uint16 LOCALIZATION_LOST=203         # 위치를 잃음 (위치 복구 실패, �
 # 300번대: 교통
 uint16 TRAFFIC_LEASE_TIMEOUT=301     # 구역 허가 시간 초과
 uint16 TRAFFIC_REVOKED=302           # 교착 해소로 허가 회수
+uint16 TRAFFIC_BACKING_FAILED=303    # 교착 해소 후진이 안전 한도를 넘음 (수동 확인 또는 리셋 필요)
 
 # 400번대: 통신
 uint16 COMM_HEARTBEAT_LOST=401       # 서버 heartbeat 끊김
