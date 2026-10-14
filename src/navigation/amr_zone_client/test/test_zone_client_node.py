@@ -7,7 +7,7 @@ fleet_manager·Gazebo까지는 필요 없다. test_zone_client_launch.py(launch_
 
 import rclpy
 from amr_msgs.msg import SafetyStatus, ZoneGrant
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, Vector3
 from nav_msgs.msg import Path
 
 from amr_zone_client.zone_client_node import ZoneClientNode
@@ -53,3 +53,59 @@ def test_prepare_shutdown_stops_timer_and_guards_callbacks():
             node.destroy_node()
     finally:
         rclpy.shutdown()
+
+
+class _FakePublisher:
+    def __init__(self):
+        self.sent = []
+
+    def publish(self, msg):
+        self.sent.append(msg.linear.x)
+
+
+class _FakeCore:
+    """core.update가 정해 둔 상한만 돌려준다 (구역 상태 기계는 test_core.py에서 따로 본다)."""
+
+    def __init__(self):
+        self.cap = None
+
+    def update(self, now, path_xy, robot_xy, safety_limit, current_speed):
+        return [], self.cap, None, []
+
+    def state_label(self, now):
+        return 'waiting' if self.cap == 0.0 else 'approaching'
+
+
+def test_stop_published_once_when_speed_cap_drops_to_zero_without_new_cmd_vel():
+    # Nav2가 0.5 m/s를 낸 뒤 cmd_vel_nav 발행을 멈춰도, 상한이 0이 되는 순간 0을 한 번 낸다
+    # (fleet_deadlock 조사: 상한은 cmd_vel_nav가 들어올 때만 적용돼 마지막 명령이 남았다)
+    rclpy.init()
+    try:
+        node = ZoneClientNode()
+        try:
+            pub, core = _FakePublisher(), _FakeCore()
+            node._cmd_vel_pub = pub
+            node._core = core
+            node._lookup_robot_xy = lambda: (0.0, 0.0)
+
+            node._on_cmd_vel(Twist(linear=Vector3(x=0.5)))
+            assert pub.sent == [0.5]
+
+            core.cap = 0.0
+            node._update()
+            assert pub.sent == [0.5, 0.0]
+            node._update()
+            node._update()
+            assert pub.sent == [0.5, 0.0]  # 계속 0이면 다시 내지 않는다
+
+            core.cap = 0.3
+            node._update()
+            assert pub.sent == [0.5, 0.0]  # 0이 아닌 상한으로 바뀌는 건 cmd_vel_nav에 맡긴다
+            core.cap = 0.0
+            node._update()
+            assert pub.sent == [0.5, 0.0, 0.0]  # 다시 0으로 떨어지는 순간은 또 낸다
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+

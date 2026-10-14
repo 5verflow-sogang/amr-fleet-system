@@ -695,3 +695,83 @@ def test_waiting_margin_m_defaults_to_small_value_near_zero_speed():
         config.stop_margin_m + config.waiting_margin_m, config.stop_margin_m, config.decel_mps2)
     assert cap_at_waiting_threshold == pytest.approx(math.sqrt(2 * 1.0 * 0.15), abs=1e-6)
     assert cap_at_waiting_threshold < 0.6  # margin 0.5였을 때는 sqrt(2*1.0*0.5) = 1.0 m/s였다
+
+
+# --- 붙어 있는 두 구역 (fleet_deadlock 실험: 통로 ②를 x -1.9에서 서쪽·동쪽 구역으로 나눔) ---
+# 서쪽 구역 INSIDE인 채로 동쪽 구역 허가가 QUEUED면, 동쪽 경계 stop_margin_m(0.5 m) 앞에서 서야 한다.
+
+WEST = (-4.4, -1.9, -1.4, -0.8)
+EAST = (-1.9, 0.6, -1.4, -0.8)
+CORRIDOR_Y = -1.1
+
+
+def adjacent_core():
+    return make_core(zones=[ZoneConfig('west', WEST), ZoneConfig('east', EAST)])
+
+
+def answer(core, now, outgoing, lease_s=5.0):
+    """서버 흉내: 서쪽은 허가, 동쪽은 다른 로봇이 쥐고 있어 대기열(QUEUED)."""
+    for o in outgoing:
+        if o.type != TYPE_ACCESS:
+            continue
+        if o.zone_id == 'west':
+            core.on_grant(now, 'amr_01', 'west', o.request_id, GRANT_GRANTED, now + lease_s, 0, 'amr_01')
+        else:
+            core.on_grant(now, 'amr_01', 'east', o.request_id, GRANT_QUEUED, None, 0, 'amr_02')
+
+
+def test_adjacent_zone_queued_cap_zero_at_stop_line_while_inside_west():
+    core = adjacent_core()
+    now = 0.0
+    # 서쪽 구역 3 m 앞에서 출발해 서쪽 구역 안(동쪽 경계 0.5 m 앞)까지 순간이동하며 상태를 만든다
+    for x in (-7.3, -5.0, -4.0, -3.0):
+        now += 1.0
+        outgoing, _, _, _ = core.update(now, straight_path(x, 2.0, y=CORRIDOR_Y), (x, CORRIDOR_Y))
+        answer(core, now, outgoing)
+    assert core.phase('west') is Phase.INSIDE
+    assert core.phase('east') is Phase.APPROACHING
+    assert core.grant('east') == GRANT_QUEUED
+
+    now += 1.0
+    stop_x = EAST[0] - 0.5
+    _, cap, _, _ = core.update(now, straight_path(stop_x, 2.0, y=CORRIDOR_Y), (stop_x, CORRIDOR_Y))
+    assert cap == pytest.approx(0.0)
+
+
+def test_adjacent_zone_queued_robot_stops_before_east_boundary():
+    # 주행 흉내: 매 틱 Nav2 경로(로봇 앞부터)를 새로 받고, 명령 선속도 0.5 m/s를 상한으로 자른 만큼 움직인다
+    core = adjacent_core()
+    dt, x, now = 0.1, -8.0, 0.0
+    for _ in range(600):
+        now += dt
+        outgoing, cap, _, _ = core.update(now, straight_path(x, 2.0, step=0.05, y=CORRIDOR_Y), (x, CORRIDOR_Y))
+        answer(core, now, outgoing)
+        v = 0.5 if cap is None else min(0.5, cap)
+        x += v * dt
+    assert core.phase('west') is Phase.INSIDE
+    assert core.grant('east') == GRANT_QUEUED
+    # 정지선(동쪽 경계 0.5 m 앞)을 넘지 않는다. 한 틱 이동(0.05 m) 여유만 둔다
+    assert x <= EAST[0] - 0.5 + 0.05, f'허가 없이 정지선을 넘음: x={x:.3f}'
+
+
+# 원인: 허가 없는 구역이 경로에서 잠깐 빠지면 dropped_from_path로 즉시 반납·IDLE이 되어 정지 상한이 사라진다
+@pytest.mark.xfail(strict=True, reason='원인: 경로에서 잠깐 빠진 구역을 즉시 반납·IDLE로 돌려 정지 상한이 사라짐 '
+                   '(수정은 반납 규칙을 정한 뒤)')
+def test_adjacent_zone_queued_detour_path_keeps_stop_cap():
+    # 교착 중 상대 로봇(amr_02)이 동쪽 구역을 막고 있으면 Nav2가 북쪽으로 돌아가는 경로를 낼 수 있다.
+    # 그동안 컨트롤러가 전진 명령을 계속 내도, 허가 없는 구역 앞 정지선은 지켜야 한다
+    core = adjacent_core()
+    dt, x, now, detour_ticks = 0.1, -8.0, 0.0, 0
+    for _ in range(600):
+        now += dt
+        if x >= -3.5 and detour_ticks < 30:  # 정지선 1.1 m 앞부터 3초 동안 우회 경로
+            path = [(x - 0.05 * i, CORRIDOR_Y) for i in range(1, 40)] + [(-6.0, 1.0), (2.0, 1.0)]
+            detour_ticks += 1
+        else:
+            path = straight_path(x, 2.0, step=0.05, y=CORRIDOR_Y)
+        outgoing, cap, _, _ = core.update(now, path, (x, CORRIDOR_Y))
+        answer(core, now, outgoing)
+        v = 0.5 if cap is None else min(0.5, cap)
+        x += v * dt
+    assert x <= EAST[0] - 0.5 + 0.05, f'허가 없이 정지선을 넘음: x={x:.3f}'
+
