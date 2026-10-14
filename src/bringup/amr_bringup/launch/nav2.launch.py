@@ -74,8 +74,10 @@ def _nav2(context):
              parameters=[{'robot_base_frame': base_footprint, 'global_frame': odom_frame, **use_sim_time}],
              remappings=cmd_vel_remap, output='screen'),
         Node(package='nav2_bt_navigator', executable='bt_navigator', name='bt_navigator', namespace=ns,
+             # bt_loop_duration 50ms(20Hz) - 기본 10ms(100Hz)는 5대 통합 실행에서 "tick rate 100
+             # exceeded" 경고가 1,400번 나오고 로봇당 CPU를 0.25코어씩 더 썼다
              parameters=[{'global_frame': 'map', 'robot_base_frame': base_footprint,
-                          'odom_topic': odom_topic, **use_sim_time}],
+                          'odom_topic': odom_topic, 'bt_loop_duration': 50, **use_sim_time}],
              output='screen'),
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
              name='lifecycle_manager_navigation', namespace=ns,

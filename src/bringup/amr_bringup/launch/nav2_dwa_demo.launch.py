@@ -220,8 +220,10 @@ def _launch_setup(context, *args, **kwargs):
         Node(
             package='nav2_bt_navigator', executable='bt_navigator', name='bt_navigator',
             namespace=ns,
+            # bt_loop_duration 50ms(20Hz) - 기본 10ms(100Hz)는 "tick rate 100 exceeded" 경고가
+            # 계속 나고 로봇당 CPU를 더 쓴다 (5대 통합 실행에서 확인)
             parameters=[{'global_frame': 'map', 'robot_base_frame': base_footprint,
-                        **use_sim_time}],
+                        'bt_loop_duration': 50, **use_sim_time}],
             output='screen'),
         Node(
             package='nav2_lifecycle_manager', executable='lifecycle_manager',
