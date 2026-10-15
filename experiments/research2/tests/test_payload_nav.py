@@ -75,7 +75,7 @@ def test_check_env():
     (True, None, (0.0, 0.0)),           # 제안 + 평가 "정보 없음": 모름. 0 kg과 구분된다
 ])
 def test_mass_slots(observe, mass_obs, expected):
-    env = PayloadNavEnv(EnvConfig(observe_mass=observe))
+    env = PayloadNavEnv(EnvConfig(observe_mass=observe, mass_obs_mode='mass'))
     obs, _ = env.reset(seed=0, options={'payload_kg': 10.0, 'mass_obs_kg': mass_obs})
     assert obs.shape == (OBS_DIM,) == (48,)
     assert (obs[MASS], obs[KNOWN]) == pytest.approx(expected)
@@ -333,9 +333,24 @@ def test_config_variants():
     assert (r1.mass_mode, r1.fixed_mass, r1.observe_mass) == ('fixed', 0.0, False)
     assert (r2.mass_mode, r2.observe_mass, r2.mass_hide_prob) == ('random', False, 0.0)
     assert (prop.mass_mode, prop.observe_mass, prop.mass_hide_prob) == ('random', True, 0.2)
+    # 질량 칸 표현은 제안 방법만 brake_ratio (질량 입력 튜닝). R1·R2는 질량 칸이 늘 (0, 0)이라 영향 없다
+    assert (r1.mass_obs_mode, r2.mass_obs_mode, prop.mass_obs_mode) == ('mass', 'mass', 'brake_ratio')
     # 비교군끼리 질량 설정 말고는 같다
-    assert replace(r2, observe_mass=True, mass_hide_prob=0.2) == prop
+    assert replace(r2, observe_mass=True, mass_hide_prob=0.2, mass_obs_mode='brake_ratio') == prop
     assert exp.ppo['net_arch'] == [128, 128]
+
+
+def test_old_run_config_reads_as_mass_slot():
+    # mass_obs_mode가 생기기 전 실행의 config.json(env)은 m / norm_mass로 학습했다. 다시 평가할 때 그대로 읽혀야 한다
+    import importlib.util
+    from dataclasses import asdict
+    spec = importlib.util.spec_from_file_location(
+        'evaluate', Path(__file__).resolve().parents[1] / 'scripts' / 'evaluate.py')
+    evaluate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(evaluate)
+    old = asdict(EnvConfig(observe_mass=True, mass_hide_prob=0.2))
+    del old['mass_obs_mode']
+    assert evaluate.load_env_config(old).mass_obs_mode == 'mass'
 
 
 def test_config_rejects_unknown_key(tmp_path):

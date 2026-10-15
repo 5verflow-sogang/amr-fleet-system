@@ -74,8 +74,9 @@ class EnvConfig:
     norm_rel_speed: float = 3.0
     norm_radius: float = 1.0
     norm_mass: float = 30.0
-    # 질량 칸에 넣는 값 (제안 방법 설계 튜닝, README "질량 입력 튜닝"). 'mass': m / norm_mass,
-    # 'brake_ratio': a_max(m) / a_max(0 kg) (빈 차 대비 제동 능력, B2가 쓰는 a_max(m)과 같은 정보). 모르면 둘 다 (0, 0)
+    # 질량 칸에 넣는 값 (README "제안 방법 질량 입력 튜닝"). 'mass': m / norm_mass, 'brake_ratio': a_max(m) / a_max(0 kg)
+    # (빈 차 대비 제동 능력, B2가 쓰는 a_max(m)과 같은 정보). 모르면 둘 다 (0, 0). 제안 방법은 설정 파일
+    # [variants.proposed]에서 brake_ratio를 쓴다. 기본값 mass는 이 옵션이 없던 예전 실행(config.json)과 맞춘 것이다
     mass_obs_mode: str = 'mass'
     norm_lateral: float = 1.0           # m. 경로 옆 오차, 벽까지 거리
     scenario: ScenarioConfig = field(default_factory=ScenarioConfig)
