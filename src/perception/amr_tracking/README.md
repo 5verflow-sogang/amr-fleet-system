@@ -29,6 +29,8 @@
 - `is_dynamic`은 속력이 임계값을 5프레임 연속 넘고 빈 공간 침입 증거가 3프레임 이상이면 true로 바뀌고 유지된다.
 - `class_name`은 카메라 검출 근거가 쌓이면 붙고(예: `person`), 카메라 시야를 벗어나도 근거가 줄어들 때까지 유지된다. 근거가 모자라면 `unknown`. `source`는 최근 1 s 안에 짝지어졌으면 `LIDAR_CAMERA`, 아니면 `LIDAR`. `person`이면 반경을 최소 0.25 m로 둔다.
 - 지도 대조(R2)가 기본 꺼짐이라 기둥·랙 끝·다리 사이로 보이는 벽 조각도 **정적 트랙**(`is_dynamic` false)으로 나간다. 안전 노드와 DWA는 `is_dynamic`인 트랙만 쓴다(정적인 것은 costmap·원본 스캔에 이미 있다).
+  - `perception/collision_risks`도 정적 트랙까지 트랙마다 나온다. 안전 노드와 DWA 회피 모드는 같은 규칙으로 걸러 움직이는 장애물의 TTC만 쓴다([perception.md](../../../docs/algorithms/perception.md) 2-4절, 10/11 합의).
+  - 다른 소비자는 용도에 맞게 고른다. 연구 2 관측은 멈춰 선 돌발 장애물(`is_dynamic` false)도 봐야 한다.
 - 측정 시각이 거꾸로 가면(시뮬레이션 리셋, rosbag 반복) 경고를 남기고 트랙을 초기화한다. ID는 이어서 매긴다.
 
 ### 노드
