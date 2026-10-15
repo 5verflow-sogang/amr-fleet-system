@@ -58,6 +58,49 @@ class SuccessEvalCallback(BaseCallback):
         return True
 
 
+class CommonEvalCallback(BaseCallback):
+    """모든 비교군이 같은 조건으로 재는 곡선 비교용 검증 (eval_common/*). 체크포인트 선택에는 쓰지 않는다.
+
+    eval/*는 비교군의 학습 질량으로 재서(R1은 0 kg만) 비교군끼리 나란히 놓으면 안 된다 (README "학습 곡선 비교").
+    여기서는 검증 시나리오 하나를 학습 질량마다 한 번씩 잰다(에피소드 i → 시나리오 i // 개수, 질량 i % 개수).
+    질량마다 다른 시나리오를 주면 돌발 장애물 비율 등이 질량마다 달라져(200회에서 0.66~0.78) 질량별 속도·충돌에 섞인다.
+    질량을 지정하면 학습용 질량 가림이 꺼지므로 제안 방법은 정확한 질량을, R1·R2는 원래대로 "모름"을 본다.
+    질량별 평균 속도와 가장 무거운 질량의 충돌률로 "무거우면 천천히"가 학습 중에 생기는지 본다.
+    """
+
+    def __init__(self, env_config, vecnorm, every_steps, episodes, seed_base=VAL_SEED_BASE):
+        super().__init__()
+        self.env = PayloadNavEnv(env_config)
+        self.masses = tuple(env_config.train_masses)
+        self.vecnorm, self.every_steps, self.episodes, self.seed_base = vecnorm, every_steps, episodes, seed_base
+        self.last_eval = 0
+
+    def evaluate(self, model) -> dict:
+        n = len(self.masses)
+        results = [run_episode(model, self.vecnorm, self.env, self.seed_base + i // n,
+                               {'payload_kg': self.masses[i % n]})
+                   for i in range(self.episodes)]
+        out = {'success_rate': float(np.mean([r['success'] for r in results])),
+               'collision_rate': float(np.mean([r['collision'] for r in results])),
+               'timeout_rate': float(np.mean([r['outcome'] == 'timeout' for r in results])),
+               'mean_time_s': float(np.mean([r['time_s'] for r in results]))}
+        heaviest = max(self.masses)
+        for m in self.masses:
+            rs = [r for r in results if r['payload_kg'] == m]
+            out[f'speed_{m:g}kg'] = float(np.mean([r['mean_speed'] for r in rs]))
+        out[f'collision_{heaviest:g}kg'] = float(np.mean([r['collision'] for r in results
+                                                         if r['payload_kg'] == heaviest]))
+        return out
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps - self.last_eval < self.every_steps:
+            return True
+        self.last_eval = self.num_timesteps
+        for key, value in self.evaluate(self.model).items():
+            self.logger.record(f'eval_common/{key}', value)
+        return True
+
+
 class OutcomeLogCallback(BaseCallback):
     """학습 중 끝난 에피소드의 결과 비율(최근 window개)을 롤아웃마다 기록한다 (outcome/*).
 
@@ -93,6 +136,8 @@ def main():
     parser.add_argument('--n-envs', type=int, default=None, help='기본은 설정 파일 [ppo] n_envs')
     parser.add_argument('--eval-every', type=int, default=50_000)
     parser.add_argument('--eval-episodes', type=int, default=100)
+    parser.add_argument('--common-eval-episodes', type=int, default=200,
+                        help='비교군 공통 검증(eval_common/*) 횟수. 학습 질량에 고르게 나눈다. 0이면 끈다')
     parser.add_argument('--threads', type=int, default=int(os.environ.get('OMP_NUM_THREADS', '2')))
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
@@ -116,7 +161,10 @@ def main():
          'n_envs': n_envs, 'env_seed_base': env_seed, 'ppo': {**ppo, 'net_arch': net_arch},
          'env': asdict(env_config), 'torch': torch.__version__}, indent=2, ensure_ascii=False))
     callback = SuccessEvalCallback(env_config, venv, run_dir, args.eval_every, args.eval_episodes)
-    model.learn(args.steps, callback=[callback, OutcomeLogCallback()])
+    callbacks = [callback, OutcomeLogCallback()]
+    if args.common_eval_episodes > 0:
+        callbacks.append(CommonEvalCallback(env_config, venv, args.eval_every, args.common_eval_episodes))
+    model.learn(args.steps, callback=callbacks)
     model.save(run_dir / 'final_model.zip')
     venv.save(str(run_dir / 'final_vecnormalize.pkl'))
     print(f'저장: {run_dir} (검증 최고 성공률 {callback.best:.2f})')

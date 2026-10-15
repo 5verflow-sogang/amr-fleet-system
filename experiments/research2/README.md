@@ -242,6 +242,8 @@ uv run --frozen --with pytest pytest tests/test_dwa_policy.py
 
 튜닝 후보는 마지막 값 하나가 아니라 **곡선 전체**로 비교한다. 마지막 값만 보면 빨리 배우는지, 중간에 무너지는지, 시드마다 흔들리는지가 사라진다.
 
+- **비교군(R1·R2·제안)끼리는 `eval/*`로 비교하지 않는다.** `eval/*`는 비교군마다 학습 질량으로 재서, 10/15 예비 학습에서 0 kg만 잰 R1이 가장 좋아 보였다(성공 91.8%). 질량별 평가로는 R1이 R2보다 나빴다(성공 91.4 vs 95.0%, 30 kg 시간 초과 11.2%). 비교군 곡선은 `--panels common`(`eval_common/*`)으로 그린다. 같은 비교군의 튜닝 후보끼리는 `eval/*`로 비교해도 된다.
+
 ```bash
 uv run python scripts/plot_curves.py --out raw/curves/<이름> \
     --group F raw/proposed_s100_<시각> raw/proposed_s101_<시각> \
@@ -253,7 +255,8 @@ uv run python scripts/plot_curves.py --out raw/curves/<이름> \
 
 | 기록 (TensorBoard 태그) | 주기 | 내용 |
 | --- | --- | --- |
-| `eval/success_rate`·`collision_rate`·`timeout_rate`·`mean_time_s` | `--eval-every` (기본 5만 스텝) | 검증 환경, 평균 행동(deterministic) 100회 |
+| `eval/success_rate`·`collision_rate`·`timeout_rate`·`mean_time_s` | `--eval-every` (기본 5만 스텝) | 체크포인트 선택용 검증, 평균 행동(deterministic) 100회. **비교군의 학습 질량으로 잰다**(R1은 0 kg만, 제안 방법은 20% 가림) |
+| `eval_common/success_rate`·`collision_rate`·`timeout_rate`·`mean_time_s`, `speed_<질량>kg`, `collision_25kg` | `--eval-every` | 비교군 공통 검증 200회(`--common-eval-episodes`). 검증 시나리오 50개를 학습 질량 0·2·10·25 kg마다 한 번씩(질량끼리 같은 시나리오) 가림 없이 잰다(제안 방법은 정확한 질량, R1·R2는 원래대로 모름). 질량별 평균 속도로 "무거우면 천천히"가 학습 중에 생기는지 본다. 체크포인트 선택에는 쓰지 않는다 |
 | `outcome/success_rate`·`collision_rate`·`timeout_rate`·`overshoot_rate` | 롤아웃마다 (약 1.6만 스텝) | 학습 중 끝난 최근 200개 에피소드의 결과 비율. 무작위 행동이 섞여 있다 |
 | `train/approx_kl` 등 | 업데이트마다 | 학습 안정성 |
 

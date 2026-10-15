@@ -440,6 +440,39 @@ def test_reward_prefers_safe_cruise_speed():
     assert safe['return'] > fast['return']
 
 
+# ---------------------------------------------------------------- 비교군 공통 검증 (train_ppo.py eval_common/*)
+def _train_ppo_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('train_ppo', Path(__file__).resolve().parents[1] / 'scripts'
+                                                  / 'train_ppo.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_common_eval_same_conditions_for_every_variant():
+    exp = load_experiment(CONFIG)
+    train_ppo = _train_ppo_module()
+    # R1(0 kg 고정)도 학습 질량 전부로, 제안 방법은 가림 없이 정확한 질량으로 잰다
+    for variant, known in (('r1', False), ('r2', False), ('proposed', True)):
+        cfg = env_config_for(exp, variant)
+        model, venv, _ = make_model(cfg, 1, 0, {'n_steps': 64, 'batch_size': 64}, [8], verbose=0)
+        cb = train_ppo.CommonEvalCallback(cfg, venv, every_steps=1, episodes=8)
+        assert cb.masses == exp.env.train_masses
+        env = PayloadNavEnv(cfg)
+        scenarios = []
+        for i in range(8):
+            _, info = env.reset(seed=cb.seed_base + i // 4, options={'payload_kg': cb.masses[i % 4]})
+            assert info['payload_kg'] == cb.masses[i % 4] and info['mass_known'] is known
+            scenarios.append(env.scenario)
+        # 질량끼리 같은 시나리오 (0~3번이 시나리오 0, 4~7번이 시나리오 1)
+        assert scenarios[0] == scenarios[3] and scenarios[4] == scenarios[7] and scenarios[0] != scenarios[4]
+        out = cb.evaluate(model)
+        assert set(out) == {'success_rate', 'collision_rate', 'timeout_rate', 'mean_time_s',
+                            'speed_0kg', 'speed_2kg', 'speed_10kg', 'speed_25kg', 'collision_25kg'}
+        assert all(0.0 <= out[k] <= 1.0 for k in ('success_rate', 'collision_rate', 'collision_25kg'))
+
+
 # ---------------------------------------------------------------- v1 튜닝 옵션
 def test_collision_penalty_scales_with_impact_speed():
     from payload_nav.env import collision_penalty
