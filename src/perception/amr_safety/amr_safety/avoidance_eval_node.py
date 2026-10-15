@@ -166,8 +166,11 @@ def main(args=None):
         # Ctrl+C(SIGINT)와 launch·하네스 정리(SIGTERM) 모두 저장하고 끝낸다
         pass
     finally:
-        if node.recorder.counts[0]:
+        # 받은 것이 없어도 저장한다: 무효 사유(로봇 GT 없음 등)가 남고, 하네스가 wait_files를 헛되이 기다리지 않는다
+        try:
             node.save()
+        except Exception as e:  # noqa: BLE001 저장 실패가 종료를 막지 않게 한다
+            node.get_logger().error(f'저장 실패: {e}')
         node.recorder.close()
         node.destroy_node()
         if rclpy.ok():

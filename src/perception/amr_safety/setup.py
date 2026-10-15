@@ -29,6 +29,7 @@ setup(
             'avoidance_eval = amr_safety.avoidance_eval_node:main',
             'avoidance_eval_offline = amr_safety.avoidance_eval.cli:offline_main',
             'avoidance_report = amr_safety.avoidance_eval.cli:report_main',
+            'avoidance_obstacles = amr_safety.avoidance_eval.obstacles:main',
         ],
     },
 )

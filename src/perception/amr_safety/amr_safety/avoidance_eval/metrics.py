@@ -448,7 +448,9 @@ def _summarize(samples, episodes, collisions, per_obstacle_min, reference, p: Av
         reasons.append('기준 경로 없음')
     if not samples:
         reasons.append('로봇 GT 없음')
-    if samples and not encounter:
+    if samples and not per_obstacle_min:
+        reasons.append('장애물 GT 없음')     # 장애물 토픽을 못 받았거나 로봇 기록 시간과 겹치지 않음
+    elif samples and not encounter:
         # 무효 원인을 나눈다: 시나리오가 장애물과 시간을 못 맞춘 것인지, 로봇이 못 간 것인지
         if goal_t is not None:
             cause = '목표 도착'

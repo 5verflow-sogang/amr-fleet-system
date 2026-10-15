@@ -98,7 +98,7 @@ launch는 안전 노드와 함께 E-Stop 버튼 노드(`estop_button`)도 띄운
 | Subscribe | `ground_truth/odom` | `nav_msgs/msg/Odometry` | 로봇 GT, world 기준 (`amr_gazebo`) |
 | Subscribe | `plan` (`plan_topic`) | `nav_msgs/msg/Path` | Nav2 `planner_server` 전역 경로, map 기준. **처음 받은 경로**를 기준 경로로 고정한다 |
 | Subscribe | `/dynamic_obstacles/<id>/ground_truth/odom` | `nav_msgs/msg/Odometry` | 장애물 GT, world 기준. `obstacle_ids`가 비면 1초마다 찾아 붙는다 |
-| Service | `~/save` | `std_srvs/srv/Trigger` | 지금까지로 계산해 저장. 종료(SIGINT·SIGTERM) 때도 저장 |
+| Service | `~/save` | `std_srvs/srv/Trigger` | 지금까지로 계산해 저장. 종료(SIGINT·SIGTERM) 때도 저장한다. 받은 것이 없어도 무효 사유(`로봇 GT 없음`·`장애물 GT 없음`)를 담아 저장한다 |
 
 **지표 정의**
 
@@ -144,8 +144,9 @@ ros2 service call /amr_01/avoidance_eval/save std_srvs/srv/Trigger
 ros2 run amr_safety avoidance_eval_offline /tmp/amr_avoidance/run1 --set return_deviation=0.15 --out /tmp/re
 ```
 
-- `map_origin_in_world`: world에서 본 map 원점 `[x, y, yaw]`. 지도 v0·v1 모두 `[0.0, 1.5, 0.0]`(매핑 시작 자세). 전역 경로(map)를 GT 좌표계(world)로 옮기는 데만 쓴다.
-- `nav_avoidance` 시나리오의 장애물은 [`config/avoidance_eval_obstacles.yaml`](config/avoidance_eval_obstacles.yaml)(작업자 1명, x = 3에서 통로를 1.0 m/s로 가로지름)이다.
+- `map_origin_in_world`: world에서 본 map 원점 `[x, y, yaw]`. 전역 경로(map)를 GT 좌표계(world)로 옮기는 데만 쓴다. `nav_avoidance`가 띄우는 `nav2_dwa_demo`는 map->odom 항등이라 map 원점이 스폰 위치와 같은 `[0.0, 1.5, 0.0]`이다. 위치 추정(AMCL·EKF)을 켠 스택으로 재면 지도 정렬값(0.025 m 지도 `[-0.0562, 1.5317, 0.00009]`, [amr_localization README](../../localization/amr_localization/README.md))을 쓴다. 틀리면 그 차이(약 6 cm)가 경로 이탈에 섞인다.
+- `nav_avoidance` 시나리오의 장애물은 실행마다 시드로 만든다(`ros2 run amr_safety avoidance_obstacles --seed <시드> --out <파일>`, [`avoidance_eval/obstacles.py`](amr_safety/avoidance_eval/obstacles.py)). 작업자 1명이 x 2.5~4.0 m 중 한 곳에서 통로를 건너고, 방향·처음 위치(만나는 시점)·속도가 시드마다 다르다. 속도는 시드 3개 중 1개가 원 명세 1.0 m/s, 나머지는 0.5~1.5 m/s다. 같은 시드면 같은 시험이다. 만든 설정은 실행 폴더 `obstacles.yaml`에 남는다.
+- 손으로 돌릴 때 쓰는 고정 예시는 [`config/avoidance_eval_obstacles.yaml`](config/avoidance_eval_obstacles.yaml)(x = 3에서 1.0 m/s)이다.
 - 정적 장애물(벽·랙)과의 충돌은 보지 않는다. GT에 정적 물체 모양이 없어서다.
 
 ## 테스트

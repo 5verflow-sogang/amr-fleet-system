@@ -21,6 +21,7 @@ from amr_safety.avoidance_eval import (
 )
 from amr_safety.avoidance_eval.cli import report_main
 from amr_safety.avoidance_eval.metrics import clopper_pearson
+from amr_safety.avoidance_eval.obstacles import CORRIDOR_Y, CROSS_X, SPEC_SPEED, SPEED_RANGE, make_obstacles
 
 L, W = 0.6, 0.4
 WORKER = Shape('circle', radius=0.25)
@@ -292,6 +293,42 @@ def test_clopper_pearson_known_values():
     lo, hi = clopper_pearson(15, 30)
     assert lo == pytest.approx(0.3130, abs=1e-3) and hi == pytest.approx(0.6870, abs=1e-3)
     assert clopper_pearson(0, 0) == (None, None)
+
+
+
+def test_missing_data_is_invalid_with_reason(tmp_path):
+    # 로봇 GT도 장애물 GT도 없어도 요약을 낸다 (하네스가 요약을 기다리다 끝나지 않게)
+    assert evaluate_run([], {}, {}, REF).summary['kpi']['invalid_reasons'] == ['로봇 GT 없음']
+    s = evaluate_run(drive(), {}, {}, REF).summary
+    assert s['kpi']['invalid_reasons'] == ['장애물 GT 없음'] and not s['kpi']['valid']
+    rec = AvoidanceRecorder('amr_01', [0.0, 1.5, 0.0], {'worker_1': WORKER}, stream_dir=str(tmp_path))
+    summary = rec.save(str(tmp_path))
+    rec.close()
+    assert not summary['kpi']['valid'] and '로봇 GT 없음' in summary['kpi']['invalid_reasons']
+    assert (tmp_path / 'avoidance_summary.json').exists()
+
+
+# --- 장애물 설정 (시드) ---
+
+def test_obstacles_from_seed_vary_and_repeat():
+    assert make_obstacles(5) == make_obstacles(5)          # 같은 시드면 같은 시험
+    specs = [make_obstacles(seed)['obstacles'][0] for seed in range(1, 31)]
+    assert len({(o['spawn']['x'], o['spawn']['y']) for o in specs}) == 30
+    speeds = [o['speed_range_mps'][0] for o in specs]
+    assert speeds.count(SPEC_SPEED) == 10                   # 시드 3개 중 1개는 원 명세 1.0 m/s
+    assert all(SPEED_RANGE[0] <= v <= SPEED_RANGE[1] for v in speeds) and len(set(speeds)) > 10
+    southward = []
+    for o in specs:
+        (a, b) = o['waypoints']
+        assert o['id'] == 'worker_cross' and o['pattern'] == 'straight' and o['type'] == 'worker'
+        assert CROSS_X[0] <= o['spawn']['x'] <= CROSS_X[1] and a['x'] == b['x'] == o['spawn']['x']
+        assert CORRIDOR_Y[0] <= o['spawn']['y'] <= CORRIDOR_Y[1]
+        assert {a['y'], b['y']} == set(CORRIDOR_Y)
+        # straight 패턴은 처음에 두 번째 waypoint로 간다. 몸 방향도 그쪽
+        south = b['y'] < a['y']
+        assert o['spawn']['yaw'] == pytest.approx(-math.pi / 2 if south else math.pi / 2, abs=1e-3)
+        southward.append(south)
+    assert 0 < sum(southward) < 30                          # 두 방향 모두 나온다
 
 
 # --- 기록·재계산 ---
