@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "amr_nav2_plugins/obstacles.hpp"
 #include "amr_nav2_plugins/waypoint.hpp"
 #include "nav2_util/node_utils.hpp"
 #include "tf2/exceptions.h"
@@ -157,17 +158,7 @@ void DwaController::onObstacles(const amr_msgs::msg::TrackedObstacleArray::Share
       msg->header.frame_id.c_str(), costmap_ros_->getGlobalFrameID().c_str());
   }
 
-  std::vector<amr_planning_core::DynamicObstacle> obstacles;
-  obstacles.reserve(msg->obstacles.size());
-  for (const amr_msgs::msg::TrackedObstacle & tracked : msg->obstacles) {
-    amr_planning_core::DynamicObstacle obstacle;
-    obstacle.x = tracked.pose.pose.position.x;
-    obstacle.y = tracked.pose.pose.position.y;
-    obstacle.vx = tracked.twist.twist.linear.x;
-    obstacle.vy = tracked.twist.twist.linear.y;
-    obstacle.radius = tracked.radius;
-    obstacles.push_back(obstacle);
-  }
+  std::vector<amr_planning_core::DynamicObstacle> obstacles = toDynamicObstacles(*msg);
 
   std::lock_guard<std::mutex> lock(obstacles_mutex_);
   obstacles_ = std::move(obstacles);
