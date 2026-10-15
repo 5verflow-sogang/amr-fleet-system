@@ -33,6 +33,7 @@ norm_obs_dist = 10.0
 norm_rel_speed = 3.0
 norm_radius = 1.0
 norm_mass = 30.0
+mass_obs_mode = "mass"     # 질량 칸: "mass"(m / norm_mass) 또는 "brake_ratio"(a_max(m) / a_max(0 kg))
 norm_lateral = 1.0       # m. 경로 옆 오차, 벽까지 거리
 
 [env.scenario]
