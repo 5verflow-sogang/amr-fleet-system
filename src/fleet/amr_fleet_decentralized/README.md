@@ -36,6 +36,9 @@
 ```
 공고(TaskAuction)
   -> 참여 로봇이 decide_bid()로 입찰할지 정함 (IDLE 아니면·배터리 부족·마감 불가면 입찰 안 함)
+  -> BID는 마감까지 bid_resend_period_s 간격으로 재전송(1회성 발행의 디스커버리 레이스
+     유실 대응, #155·#171) - AWARD를 받으면 멈춘다. 경매인은 같은 로봇의 재전송을 중복으로
+     세지 않는다(register_bid)
   -> 경매인이 마감(bid_window_s, "경매인이 받은 시각" 기준) 전 입찰만 모아
      decide_winner()로 낙찰자 결정 (최저가, 동점이면 robot_id 사전순 — TaskBid.msg 주석과 동일)
   -> 낙찰 통보(AWARD, 1초 간격 x 5회 재전송)
@@ -107,6 +110,7 @@
 | `min_battery_percent` | `20.0` | 이 미만이면 입찰하지 않는다 (10/7 결정) |
 | `robot_speed_mps` | `1.0` | `estimated_finish_time` 추정용 단순 등속 |
 | `award_resend_interval_s` / `award_max_attempts` | `1.0` / `5` | AWARD 재전송 간격·횟수 (10/7 결정) |
+| `bid_resend_period_s` | `0.5` | BID 재전송 간격. 마감(`bid_window_s`)까지, AWARD를 받거나 마감되면 멈춤 (#155·#171) |
 | `failed_retries` | `1` | ACCEPT 뒤 FAILED 보고 시 재경매 최대 횟수 (10/9 결정) |
 | `reclaim_timeout_s` | `5.0` | ACCEPT한 낙찰 로봇의 `RobotState`가 이 시간(실제 시간, s) 동안 끊기면 재경매. 0이면 끄기 (중앙 #132와 같음) |
 | `max_reclaims` | `-1` | 장애 회수 재경매 상한. 음수면 상한 없음 (#132와 같음) |

@@ -13,6 +13,10 @@ class AuctionParams:
     # 10/7 결정: 중앙 Ack 재전송과 같게 1초 간격 x 5회, 그래도 ACCEPT가 없으면 재경매.
     award_resend_interval_s: float = 1.0
     award_max_attempts: int = 5
+    # #155·#171: BID는 1회성 발행이라 DDS 디스커버리가 아직 안 끝난 상태에서 나가면
+    # 그대로 유실되고 다시 안 온다. 마감(bid_window_s)까지 이 간격으로 같은 입찰을
+    # 다시 보낸다 - AWARD를 받거나 마감되면 멈춘다. 횟수 상한은 없다(마감이 상한 역할을 한다).
+    bid_resend_period_s: float = 0.5
     # 10/9 하연·이진 결정(#107·#108): ACCEPT 뒤 TaskStatus FAILED를 받으면 최대 1회
     # 재경매하고, 그래도 실패하면 실패로 남긴다. 중앙(fleet_manager.yaml
     # assignment.failed_retries)과 같은 규칙·이름 - 비교군 조건을 같게 둔다.

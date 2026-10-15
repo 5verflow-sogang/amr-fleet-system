@@ -25,6 +25,21 @@ def should_resend_award(
     return now_s - last_sent_time >= resend_interval_s
 
 
+def should_resend_bid(last_sent_time: float, now_s: float, resend_period_s: float, deadline_s: float) -> bool:
+    """BID를 지금 다시 보내야 하는지.
+
+    #155·#171: BID는 원래 1회성 발행이라, DDS 디스커버리가 아직 안 끝난 상태(또는
+    그 밖의 일시적 유실)에서 나가면 그대로 사라지고 다시 안 온다. 마감(deadline_s,
+    호출 쪽이 "공고를 받은 시각 + bid_window_s"로 잰다) 전까지 resend_period_s
+    간격으로 같은 입찰(같은 auction_id·robot_id·cost)을 다시 보낸다. AWARD를
+    받았는지는 여기서 모르므로(호출 쪽 상태) 판단하지 않는다 - 노드가 AWARD를
+    받으면 재전송을 바로 멈춘다.
+    """
+    if now_s >= deadline_s:
+        return False
+    return now_s - last_sent_time >= resend_period_s
+
+
 def award_exhausted(attempts_sent: int, max_attempts: int) -> bool:
     """재전송을 다 썼는데도(ACCEPT가 안 와서) 재경매해야 하는지."""
     return attempts_sent >= max_attempts

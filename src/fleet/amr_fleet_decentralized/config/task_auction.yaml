@@ -12,6 +12,9 @@
     # 결정: 중앙 Ack 재전송과 같게 1초 간격 x 5회, 그래도 ACCEPT가 없으면 재경매.
     award_resend_interval_s: 1.0
     award_max_attempts: 5
+    # #155·#171: BID 1회성 발행이 디스커버리 레이스로 유실되는 문제 - 마감(bid_window_s)까지
+    # 이 간격으로 같은 입찰을 다시 보낸다. AWARD를 받거나 마감되면 멈춘다.
+    bid_resend_period_s: 0.5
     # 10/9 결정(#107·#108): ACCEPT 뒤 TaskStatus FAILED를 받으면 최대 1회 재경매, 그래도
     # 실패하면 실패로 남긴다. 중앙(fleet_manager.yaml assignment.failed_retries)과 같은 값.
     failed_retries: 1

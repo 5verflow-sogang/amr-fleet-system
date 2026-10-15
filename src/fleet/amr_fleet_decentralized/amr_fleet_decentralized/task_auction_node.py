@@ -32,6 +32,11 @@ reclaim_timeout_s(실제 시간) 동안 끊기면 로봇이 죽은 것으로 보
 내 상태(RobotState)를 아직 모를 때 공고를 받으면(기동 직후 등) 입찰 여부 결정을 미룬다 -
 상태를 먼저 확인하기 전에 "결정 끝"으로 기록해 버리면 그 경매에 영원히 입찰을 못 한다
 (10/10 연우 리뷰, #109). RobotState를 처음 받으면 미뤄 둔 공고를 마감 전인 것만 다시 본다.
+
+BID는 1회성 발행이라 DDS 디스커버리가 아직 안 끝난 상태에서 나가면 그대로 유실되고
+다시 안 온다(#155·#171) - 마감(공고를 받은 시각 + bid_window_s)까지 bid_resend_period_s
+간격으로 같은 입찰(같은 cost)을 다시 보낸다. AWARD를 받거나 마감되면 멈춘다. 경매인
+쪽은 같은 로봇의 재전송 BID를 중복으로 세지 않는다(auction.register_bid).
 """
 from __future__ import annotations
 
@@ -59,7 +64,9 @@ from .auction import (
     can_withdraw,
     decide_bid,
     decide_winner,
+    register_bid,
     should_resend_award,
+    should_resend_bid,
     winner_lost,
 )
 
@@ -147,6 +154,8 @@ class TaskAuctionNode(Node):
             award_resend_interval_s=p(
                 'award_resend_interval_s', AuctionParams.award_resend_interval_s).value,
             award_max_attempts=p('award_max_attempts', AuctionParams.award_max_attempts).value,
+            bid_resend_period_s=p(
+                'bid_resend_period_s', AuctionParams.bid_resend_period_s).value,
             failed_retries=p('failed_retries', AuctionParams.failed_retries).value,
             reclaim_timeout_s=p('reclaim_timeout_s', AuctionParams.reclaim_timeout_s).value,
             max_reclaims=p('max_reclaims', AuctionParams.max_reclaims).value,
@@ -161,6 +170,13 @@ class TaskAuctionNode(Node):
         # 내 상태(RobotState)를 아직 몰라 입찰 여부를 못 정한 공고 - (msg, 받은 시각).
         # RobotState를 처음 받으면 마감 전인 것만 다시 본다(10/10 연우 리뷰, #109).
         self._pending_bids: Dict[AuctionKey, Tuple[TaskAuction, float]] = {}
+        # 입찰 마감(실제 시간) - 공고를 처음 받은 시각 + bid_window_s. #155·#171 BID
+        # 재전송이 멈춰야 할 때(마감)를 판단하는 기준이라, 공고를 받을 때(_on_task_auction)
+        # 마다 한 번만 찍는다(재전송·중계 에코로 다시 받아도 안 바꾼다).
+        self._bid_deadline: Dict[AuctionKey, float] = {}
+        # 재전송 중인 내 BID - key -> [TaskBid, 마감, 마지막 전송 시각]. AWARD를 받거나
+        # 마감되면 꺼진다(_on_awarded·_maybe_resend_bids).
+        self._bid_resends: Dict[AuctionKey, list] = {}
         # 입찰할 때 본 작업 내용 - AWARD를 받았을 때 재확인(decide_bid)하려면 필요하다
         # (TaskBid AWARD에는 task_id만 있고 좌표·마감이 없다).
         self._tasks_seen: Dict[AuctionKey, TaskInfo] = {}
@@ -218,6 +234,10 @@ class TaskAuctionNode(Node):
 
     def _on_task_auction(self, msg: TaskAuction):
         key: AuctionKey = (msg.auctioneer_id, msg.auction_id)
+        if key not in self._bid_deadline:
+            # 마감은 "내가 이 공고를 받은 시각" 기준(10/7 결정과 같은 원칙 - 보낸 쪽
+            # 시각이 아니라 내 수신 시각을 쓴다). 재전송·중계 에코로 또 받아도 안 바꾼다.
+            self._bid_deadline[key] = self._now() + _duration_to_s(msg.bid_window)
         if msg.auctioneer_id == self._robot_id and key not in self._auctions:
             # 내가 경매인인 공고 - 직접 시작했든(_announce) 외부에서 내 이름으로 왔든(이
             # 노드는 아직 "언제 새로 경매를 열지"는 안 다룬다, README 참고) 똑같이
@@ -257,6 +277,11 @@ class TaskAuctionNode(Node):
         out.estimated_finish_time = _epoch_to_time(bid.estimated_finish_time)
         self._bid_pub.publish(out)
 
+        # #155·#171: BID는 1회성 발행이라 디스커버리가 안 끝난 상태에서 나가면 유실될 수
+        # 있다 - 마감(_bid_deadline)까지 bid_resend_period_s 간격으로 같은 메시지를
+        # 다시 보낸다. AWARD를 받으면(_on_awarded) 바로 멈춘다.
+        self._bid_resends[key] = [out, self._bid_deadline[key], now]
+
         # 내 경매에 나도 입찰했으면, 중계 에코를 기다리지 않고(자기 메시지는 걸러 무시하므로
         # 에코로는 절대 등록되지 않는다) 바로 내 입찰 목록에 넣는다.
         if key in self._auctions:
@@ -268,7 +293,9 @@ class TaskAuctionNode(Node):
         state = self._auctions.get(key)
         if state is None or state.phase != 'collecting':
             return
-        state.bids.append(bid)
+        # register_bid: 재전송(bid_resend_period_s)으로 같은 로봇의 BID가 또 와도
+        # 중복으로 세지 않는다(#155·#171).
+        state.bids = register_bid(state.bids, bid)
 
     def _on_task_bid(self, msg: TaskBid):
         key: AuctionKey = (msg.auctioneer_id, msg.auction_id)
@@ -305,6 +332,9 @@ class TaskAuctionNode(Node):
             self._on_withdraw(key, msg.robot_id)
 
     def _on_awarded(self, key: AuctionKey, msg: TaskBid):
+        # AWARD를 받았다는 건 경매인이 이미 낙찰자(나)를 정했다는 뜻 - 더 입찰을
+        # 재전송할 이유가 없다(#155·#171, ACCEPT·WITHDRAW 어느 쪽이든 마찬가지).
+        self._bid_resends.pop(key, None)
         if key in self._accepted:
             return  # 재전송된 AWARD - 이미 수락을 보냈다(멱등)
         task = self._tasks_seen.get(key)
@@ -388,6 +418,7 @@ class TaskAuctionNode(Node):
 
     def _on_timer(self):
         now = self._now()
+        self._maybe_resend_bids(now)
         for key, state in list(self._auctions.items()):
             if state.phase == 'collecting':
                 self._maybe_decide_winner(key, state, now)
@@ -395,6 +426,19 @@ class TaskAuctionNode(Node):
                 self._maybe_resend_or_reauction(key, state, now)
             elif state.phase == 'done':
                 self._maybe_reclaim(key, state)
+
+    def _maybe_resend_bids(self, now: float):
+        """내가 보낸 BID들 중 아직 마감 전인 것을 bid_resend_period_s 간격으로 다시 보낸다
+        (#155·#171 - 1회성 발행이 디스커버리 레이스로 유실되는 문제). AWARD를 받으면
+        (_on_awarded) 이미 꺼져 있다."""
+        for key, entry in list(self._bid_resends.items()):
+            msg, deadline, last_sent = entry
+            if now >= deadline:
+                del self._bid_resends[key]
+                continue
+            if should_resend_bid(last_sent, now, self._params.bid_resend_period_s, deadline):
+                self._bid_pub.publish(msg)
+                entry[2] = now
 
     def _maybe_reclaim(self, key: AuctionKey, state: _AuctionState):
         """ACCEPT한 낙찰 로봇의 RobotState가 reclaim_timeout_s 동안 없으면 재경매한다 (중앙 #132와 같음)."""

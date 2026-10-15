@@ -268,20 +268,14 @@ class TestTaskAuctionLive(unittest.TestCase):
             amr_01_alive()
             self.publish_robot_state(state_pub, 'amr_02', x=9.0, y=0.0, battery=80.0)
 
-        # #155·#171 원인: bid_window_s(마감 여유) 문제가 아니라 "준비 안 된 상태"였다 - amr_02는
-        # 공고를 받고 33ms 안에 입찰을 발행했는데, 그 입찰이 amr_01에 전혀 도착하지 않은 적이
-        # 있었다(amr_01 쪽에 수신 로그 자체가 없음, 임시 로깅으로 확인). amr_02의 입찰 발행은
-        # 재전송 없는 1회성이라, 그 순간 amr_01의 task_bids 구독이 amr_02의 퍼블리셔와 아직
-        # 매칭 전이면(DDS 디스커버리가 아직 안 끝났으면) 그 메시지는 그대로 버려지고 다시
-        # 오지 않는다. 기존에는 task_auctions·robot_states 구독자 수만 보고 공고를
-        # 보냈는데, task_bids 쪽 매칭은 그걸로 안 보장됐다 - 양쪽 로봇의 task_bids
-        # 퍼블리셔(둘 다 노드 생성 시점에 이미 만들어져 있다)까지 이 노드가 셀 수 있는지
-        # 확인하고 나서야 공고를 보낸다.
-        # bid_window_s는 기본값으로 못 내렸다 - 이 확인을 넣은 뒤에도 1초·2초로는 50회 중
-        # 몇 번씩 간헐적 실패가 남았다(count_publishers>=2가 "그래프에 올라옴"은 보장해도
-        # "매칭까지 완전히 끝남"을 100% 보장하진 않는 듯하고, 50회를 한 컨테이너에서 연달아
-        # 돌리는 측정 자체도 반복될수록 CPU 경쟁이 쌓여 실제 단발 실행보다 가혹하다) - 지난
-        # 라운드에서 가장 안정적으로 나온 5초를 그대로 둔다.
+        # #155·#171 원인: amr_02는 공고를 받고 33ms 안에 입찰을 발행했는데, 그 입찰이 amr_01에
+        # 전혀 도착하지 않은 적이 있었다(amr_01 쪽에 수신 로그 자체가 없음, 임시 로깅으로 확인).
+        # amr_02의 입찰 발행이 재전송 없는 1회성이라, 그 순간 amr_01의 task_bids 구독이 amr_02의
+        # 퍼블리셔와 아직 매칭 전이면(DDS 디스커버리가 아직 안 끝났으면) 그 메시지는 그대로
+        # 버려지고 다시 오지 않았다. 진짜 수정은 노드 쪽(task_auction_node._maybe_resend_bids) -
+        # BID를 마감까지 bid_resend_period_s 간격으로 다시 보내므로 bid_window_s는 기본값
+        # 그대로 둔다. 디스커버리 확인은 그래도 남겨 둔다(기존에는 task_auctions·robot_states
+        # 구독자 수만 보고 공고를 보냈는데, task_bids 쪽 매칭은 그걸로 안 보장됐다).
         def discovery_ready():
             both_alive()  # 기다리는 동안 상태도 흘려줘 늦게 뜬 로봇이 자기 상태를 놓치지 않게
             return (auction_pub.get_subscription_count() >= 3
@@ -289,7 +283,7 @@ class TestTaskAuctionLive(unittest.TestCase):
                     and self.node.count_publishers('/fleet/task_bids') >= 2)
         self.assertTrue(self.spin_until(discovery_ready, 15.0))
 
-        auction = self.make_auction('amr_01', auction_id=100, task_id='task_reclaim', bid_window_s=5)
+        auction = self.make_auction('amr_01', auction_id=100, task_id='task_reclaim', bid_window_s=2)
         auction.header.stamp = self.node.get_clock().now().to_msg()  # 처음 publish 바로 전에 찍는다
 
         def accepted_by_amr_02():
