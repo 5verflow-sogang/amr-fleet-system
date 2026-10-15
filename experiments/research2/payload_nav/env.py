@@ -29,13 +29,15 @@ from gymnasium import spaces
 import numpy as np
 
 from .dynamics import (DEFAULT_PARAMS, RobotParams, RobotState, braking_distance,
-                       footprint_clearance, footprint_corners, step as dynamics_step, wrap_angle)
+                       footprint_clearance, footprint_corners, max_linear_accel, step as dynamics_step,
+                       wrap_angle)
 from .scenarios import Scenario, ScenarioConfig, sample_scenario
 
 K_OBSTACLES = 3
 HISTORY = 4
 OBS_DIM = 3 + 2 + 2 + 6 * K_OBSTACLES + 4 * HISTORY + 2 + 2 + 1 + 2  # 48
 OBS_CLIP = 5.0
+MASS_OBS_MODES = ('mass', 'brake_ratio')
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,9 @@ class EnvConfig:
     norm_rel_speed: float = 3.0
     norm_radius: float = 1.0
     norm_mass: float = 30.0
+    # 질량 칸에 넣는 값 (제안 방법 설계 튜닝, README "질량 입력 튜닝"). 'mass': m / norm_mass,
+    # 'brake_ratio': a_max(m) / a_max(0 kg) (빈 차 대비 제동 능력, B2가 쓰는 a_max(m)과 같은 정보). 모르면 둘 다 (0, 0)
+    mass_obs_mode: str = 'mass'
     norm_lateral: float = 1.0           # m. 경로 옆 오차, 벽까지 거리
     scenario: ScenarioConfig = field(default_factory=ScenarioConfig)
     robot: RobotParams = DEFAULT_PARAMS
@@ -105,6 +110,8 @@ class PayloadNavEnv(gym.Env):
             raise ValueError(f"mass_mode는 'random' 또는 'fixed'여야 한다: {config.mass_mode}")
         if not 0.0 <= config.mass_hide_prob <= 1.0:
             raise ValueError(f'mass_hide_prob는 [0, 1] 범위여야 한다: {config.mass_hide_prob}')
+        if config.mass_obs_mode not in MASS_OBS_MODES:
+            raise ValueError(f'mass_obs_mode는 {MASS_OBS_MODES} 중 하나여야 한다: {config.mass_obs_mode}')
         self.cfg = config
         self.action_space = spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32)
         self.observation_space = spaces.Box(-OBS_CLIP, OBS_CLIP, shape=(OBS_DIM,), dtype=np.float32)
@@ -321,8 +328,14 @@ class PayloadNavEnv(gym.Env):
         obs.append(1.0 - self.steps / c.max_steps)   # 남은 시간 비율
 
         known = c.observe_mass and self.mass_obs is not None
-        obs += [self.mass_obs / c.norm_mass if known else 0.0, 1.0 if known else 0.0]
+        obs += [self._mass_feature() if known else 0.0, 1.0 if known else 0.0]
         return np.clip(np.asarray(obs, dtype=np.float32), -OBS_CLIP, OBS_CLIP)
+
+    def _mass_feature(self) -> float:
+        c = self.cfg
+        if c.mass_obs_mode == 'brake_ratio':
+            return max_linear_accel(self.mass_obs, c.robot) / max_linear_accel(0.0, c.robot)
+        return self.mass_obs / c.norm_mass
 
     def _info(self, outcome: Optional[str], min_clear: float) -> dict:
         po = self.scenario.popout

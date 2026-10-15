@@ -81,6 +81,21 @@ def test_mass_slots(observe, mass_obs, expected):
     assert (obs[MASS], obs[KNOWN]) == pytest.approx(expected)
 
 
+
+@pytest.mark.parametrize('mass_obs', [0.0, 10.0, 25.0, None])
+def test_mass_slot_brake_ratio(mass_obs):
+    # brake_ratio: 질량 대신 빈 차 대비 제동 능력 a_max(m) / a_max(0). 모르면 그대로 (0, 0)
+    env = PayloadNavEnv(EnvConfig(observe_mass=True, mass_obs_mode='brake_ratio'))
+    obs, _ = env.reset(seed=0, options={'payload_kg': 10.0, 'mass_obs_kg': mass_obs})
+    if mass_obs is None:
+        assert (obs[MASS], obs[KNOWN]) == pytest.approx((0.0, 0.0))
+    else:
+        ratio = max_linear_accel(mass_obs) / max_linear_accel(0.0)
+        assert (obs[MASS], obs[KNOWN]) == pytest.approx((ratio, 1.0))
+    with pytest.raises(ValueError, match='mass_obs_mode'):
+        PayloadNavEnv(EnvConfig(mass_obs_mode='speed'))
+
+
 def test_path_wall_and_time_slots():
     scenario = Scenario(goal_distance=20.0, initial_speed=0.0, initial_heading=0.0, popout=None,
                         corridor_width=1.6, initial_y=0.1)
