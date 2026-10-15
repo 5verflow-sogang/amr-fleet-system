@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import bisect
+from collections import Counter
 import math
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, Optional, Sequence
@@ -107,6 +108,8 @@ class AvoidanceParams:
     goal_tolerance: float = 0.3
     # 도착하지 못한 실행을 불합격으로 볼지 (멈춰 있기만 해도 충돌·이탈이 0이 되는 것을 막는다)
     require_goal: bool = True
+    # 장애물을 못 만난 무효 실행 중 로봇 이동 거리가 이보다 짧으면 "거의 안 움직임"(Nav2 실패·정지 등)으로 본다 [m]
+    stuck_travel_m: float = 0.5
     # 원 명세 KPI
     kpi_collisions: int = 0
     kpi_max_deviation: float = 1.0
@@ -434,6 +437,7 @@ def _summarize(samples, episodes, collisions, per_obstacle_min, reference, p: Av
         gx, gy = reference[-1]
         goal_t = next((s.t for s in samples if math.hypot(s.x - gx, s.y - gy) <= p.goal_tolerance), None)
     encounter = min_clear is not None and min_clear[0] < p.interaction_distance
+    travel = sum(math.hypot(b.x - a.x, b.y - a.y) for a, b in zip(samples, samples[1:]))
 
     collision_free = len(collisions) <= p.kpi_collisions
     deviation_ok = max_dev is not None and max_dev[0] <= p.kpi_max_deviation
@@ -445,13 +449,21 @@ def _summarize(samples, episodes, collisions, per_obstacle_min, reference, p: Av
     if not samples:
         reasons.append('로봇 GT 없음')
     if samples and not encounter:
-        reasons.append(f'장애물이 {p.interaction_distance} m 안에 오지 않음 (회피 시험이 안 됨)')
+        # 무효 원인을 나눈다: 시나리오가 장애물과 시간을 못 맞춘 것인지, 로봇이 못 간 것인지
+        if goal_t is not None:
+            cause = '목표 도착'
+        elif travel < p.stuck_travel_m:
+            cause = '로봇이 거의 안 움직임'
+        else:
+            cause = '목표 전에 멈춤'
+        reasons.append(f'장애물이 {p.interaction_distance} m 안에 오지 않음: {cause}')
     valid = not reasons
     return {
         'reference': {'points': len(reference), 'length_m': _r(polyline_length(reference), 3) if reference else None,
                       'start': list(reference[0]) if reference else None,
                       'goal': list(reference[-1]) if reference else None, 'received_t': _r(reference_t, 3)},
         'samples': len(samples),
+        'travel_m': _r(travel, 3),
         't_start': _r(samples[0].t, 3) if samples else None,
         't_end': _r(samples[-1].t, 3) if samples else None,
         'obstacles': {oid: {'min_clearance': _r(v)} for oid, v in sorted(per_obstacle_min.items())},
@@ -479,56 +491,125 @@ def _summarize(samples, episodes, collisions, per_obstacle_min, reference, p: Av
 # --- 여러 실행 ---------------------------------------------------------------------------------------
 
 
+def _binom_cdf(k: int, n: int, p: float) -> float:
+    """P(X ≤ k), X ~ Binomial(n, p)."""
+    return sum(math.comb(n, i) * p ** i * (1.0 - p) ** (n - i) for i in range(k + 1))
+
+
+def clopper_pearson(k: int, n: int, confidence: float = 0.95) -> tuple[Optional[float], Optional[float]]:
+    """성공 k / n회의 성공률 정확 신뢰구간 (Clopper-Pearson). scipy 없이 이분 탐색으로 구한다."""
+    if n <= 0:
+        return None, None
+    alpha = 1.0 - confidence
+
+    def solve(f):
+        a, b = 0.0, 1.0      # f(a) < 0 < f(b)인 p를 찾는다
+        for _ in range(60):
+            m = 0.5 * (a + b)
+            a, b = (m, b) if f(m) < 0 else (a, m)
+        return 0.5 * (a + b)
+
+    # 하한: P(X ≥ k | p) = α/2, 상한: P(X ≤ k | p) = α/2
+    lo = 0.0 if k == 0 else solve(lambda p: (1.0 - _binom_cdf(k - 1, n, p)) - alpha / 2)
+    hi = 1.0 if k == n else solve(lambda p: alpha / 2 - _binom_cdf(k, n, p))
+    return lo, hi
+
+
+def _run_row(name: str, s: dict) -> dict:
+    k = s['kpi']
+    row = {'run': name, 'valid': k['valid'], 'pass': k['pass'], 'collisions': s['collision']['count'],
+           'min_clearance': s['collision']['min_clearance'], 'max_deviation': s['deviation']['max'],
+           'max_return_s': s['avoidance']['max_return_s'], 'unreturned': s['avoidance']['unreturned'],
+           'reached_goal': s['reached_goal'], 'invalid_reasons': list(k['invalid_reasons']),
+           'reasons': list(k['invalid_reasons'])}
+    for key, label in (('collision_free', '충돌'), ('deviation_ok', '이탈 초과'),
+                       ('return_ok', '복귀 초과·미복귀'), ('goal_ok', '목표 미도착')):
+        if not k[key]:
+            row['reasons'].append(label)
+    return row
+
+
 def aggregate(runs: Sequence[tuple[str, Optional[dict]]], params: AvoidanceParams = AvoidanceParams(),
-              failed: Sequence[tuple[str, str]] = ()) -> dict:
+              failed: Sequence[tuple] = ()) -> dict:
     """실행별 요약(avoidance_summary.json) 여러 개 → I17 판정.
 
-    runs: (실행 이름, 요약 또는 None(요약 파일 없음)). failed: 하네스 outcome이 completed가 아닌 (실행, outcome).
-    - valid(기준 경로 있음 + 장애물을 만남) 실행만 KPI 횟수(kpi_runs)에 센다.
-    - 하나라도 KPI를 어기면 FAIL, 어긴 것이 없는데 valid 실행이 kpi_runs보다 적으면 INSUFFICIENT, 아니면 PASS.
-    - 원 명세 KPI는 "30회 모두"라 평균·신뢰구간이 아니라 최악값으로 판정한다.
+    runs: (실행 이름, 요약 또는 None(요약 파일 없음)).
+    failed: 하네스 outcome이 completed가 아닌 (실행, outcome) 또는 (실행, outcome, 요약 또는 None).
+    판정 (원 명세 KPI는 "30회 모두"라 평균·신뢰구간이 아니라 최악값으로 본다):
+    1. 어느 실행에서든(무효·하네스 실패 포함) 충돌이 있으면 FAIL. 충돌은 기준 경로 없이 셀 수 있다
+    2. valid(기준 경로 있음 + 장애물을 만남) 실행 중 KPI를 어긴 것이 있으면 FAIL
+    3. 하네스 실패 실행, 요약이 없는 실행이 있거나 valid 실행이 kpi_runs보다 적으면 INSUFFICIENT.
+       재지 못한 실행을 빼고 PASS를 주면 성공한 실행만 고르는 셈이다
+    4. 그 외 PASS
     """
-    per_run, valid = [], []
+    per_run, valid, measured = [], [], []
+    missing = 0
     for name, s in runs:
         if s is None:
-            per_run.append({'run': name, 'valid': False, 'pass': False, 'reasons': ['요약 없음']})
+            missing += 1
+            per_run.append({'run': name, 'valid': False, 'pass': False, 'invalid_reasons': ['요약 없음'],
+                            'reasons': ['요약 없음']})
             continue
-        k = s['kpi']
-        row = {'run': name, 'valid': k['valid'], 'pass': k['pass'], 'collisions': s['collision']['count'],
-               'min_clearance': s['collision']['min_clearance'], 'max_deviation': s['deviation']['max'],
-               'max_return_s': s['avoidance']['max_return_s'], 'unreturned': s['avoidance']['unreturned'],
-               'reached_goal': s['reached_goal'], 'reasons': list(k['invalid_reasons'])}
-        for key, label in (('collision_free', '충돌'), ('deviation_ok', '이탈 초과'),
-                           ('return_ok', '복귀 초과·미복귀'), ('goal_ok', '목표 미도착')):
-            if not k[key]:
-                row['reasons'].append(label)
+        row = _run_row(name, s)
         per_run.append(row)
-        if k['valid']:
+        measured.append(row)
+        if row['valid']:
             valid.append(row)
+    harness_failed = []
+    for name, outcome, *rest in failed:
+        s = rest[0] if rest else None
+        harness_failed.append({'run': name, 'outcome': outcome})
+        row = (_run_row(name, s) if s is not None
+               else {'run': name, 'valid': False, 'pass': False, 'reasons': []})
+        # 하네스 실패 실행은 유효 횟수에 넣지 않고, 충돌만 판정에 쓴다
+        row.update({'valid': False, 'pass': False, 'harness_outcome': outcome})
+        row['reasons'].insert(0, f'하네스 실패 ({outcome})')
+        per_run.append(row)
+        if s is not None:
+            measured.append(row)
 
     def worst(key):
         vals = [r[key] for r in valid if r.get(key) is not None]
         return max(vals) if vals else None
 
+    collided = [r['run'] for r in measured if r['collisions'] > params.kpi_collisions]
     failing = [r['run'] for r in valid if not r['pass']]
-    if failing:
+    insufficient = []
+    if harness_failed:
+        insufficient.append(f'하네스 실패 {len(harness_failed)}회')
+    if missing:
+        insufficient.append(f'요약 없음 {missing}회')
+    if len(valid) < params.kpi_runs:
+        insufficient.append(f'유효 실행 {len(valid)}/{params.kpi_runs}회')
+    passed = sum(r['pass'] for r in valid)
+    lo, hi = clopper_pearson(passed, len(valid))
+    if collided or failing:
         verdict = 'FAIL'
-    elif len(valid) < params.kpi_runs:
+    elif insufficient:
         verdict = 'INSUFFICIENT'
     else:
         verdict = 'PASS'
     return {
         'verdict': verdict,
         'runs': len(per_run), 'valid_runs': len(valid), 'required_runs': params.kpi_runs,
-        'harness_failed': [{'run': n, 'outcome': o} for n, o in failed],
-        'collisions': sum(r['collisions'] for r in valid),
-        'runs_with_collision': sum(r['collisions'] > 0 for r in valid),
-        'min_clearance': min((r['min_clearance'] for r in valid if r['min_clearance'] is not None), default=None),
+        'harness_failed': harness_failed,
+        'insufficient_reasons': insufficient,
+        # 무효 사유별 실행 수 (하네스 실패는 outcome별로 따로)
+        'invalid_reason_counts': dict(Counter(reason for r in per_run if not r['valid'] and not r.get('harness_outcome')
+                                              for reason in r.get('invalid_reasons', []))),
+        'harness_outcome_counts': dict(Counter(h['outcome'] for h in harness_failed)),
+        # 보고용. 판정은 최악값으로 하고 이 구간은 쓰지 않는다 (30/30이어도 실패율 95% 상한은 약 12%)
+        'pass_rate': {'passed': passed, 'valid': len(valid),
+                      'rate': _r(passed / len(valid), 4) if valid else None,
+                      'ci95': [_r(lo, 4), _r(hi, 4)] if valid else None},
+        'collisions': sum(r['collisions'] for r in measured),
+        'runs_with_collision': sum(r['collisions'] > 0 for r in measured),
+        'min_clearance': min((r['min_clearance'] for r in measured if r['min_clearance'] is not None), default=None),
         'max_deviation': worst('max_deviation'),
         'max_return_s': worst('max_return_s'),
         'unreturned': sum(r['unreturned'] for r in valid),
         'goal_missed': sum(not r['reached_goal'] for r in valid),
-        'failing_runs': failing,
+        'failing_runs': list(dict.fromkeys(collided + failing)),
         'kpi': {'collisions': params.kpi_collisions, 'max_deviation': params.kpi_max_deviation,
                 'return_s': params.kpi_return_s, 'runs': params.kpi_runs},
         'per_run': per_run,
@@ -550,21 +631,32 @@ def aggregate_markdown(a: dict) -> str:
         return '—' if v is None else f'{v:.{nd}f}' if isinstance(v, float) else str(v)
 
     k = a['kpi']
+    pr = a['pass_rate']
+    rate = (f"{pr['passed']}/{pr['valid']} ({100 * pr['ci95'][0]:.1f}~{100 * pr['ci95'][1]:.1f}%)"
+            if pr['valid'] else '—')
     lines = [
         f"## I17 동적 장애물 회피: {a['verdict']}", '',
         f"유효 실행 {a['valid_runs']}/{a['required_runs']}회 (전체 {a['runs']}회, 하네스 실패 {len(a['harness_failed'])}회)", '',
+        *([f"판정 보류 이유: {', '.join(a['insufficient_reasons'])}", '']
+          if a['verdict'] == 'INSUFFICIENT' else []),
         '| 지표 | 값 | KPI |', '| --- | --- | --- |',
-        f"| 충돌 (건, 유효 실행 합) | {a['collisions']} | {k['collisions']} |",
+        f"| 충돌 (건, 모든 실행) | {a['collisions']} | {k['collisions']} |",
         f"| 최대 경로 이탈 [m] (최악 실행) | {f(a['max_deviation'])} | ≤ {k['max_deviation']} |",
         f"| 최대 복귀 시간 [s] (최악 실행) | {f(a['max_return_s'])} | ≤ {k['return_s']} |",
         f"| 복귀 못 한 회피 | {a['unreturned']} | 0 |",
         f"| 목표 미도착 실행 | {a['goal_missed']} | 0 |",
-        f"| 최소 이격 [m] | {f(a['min_clearance'])} | — |", '',
+        f"| 최소 이격 [m] | {f(a['min_clearance'])} | — |",
+        f"| 합격률 (유효 실행, 95% CI, 참고) | {rate} | — |", '',
         '| 실행 | 유효 | 판정 | 충돌 | 최소 이격 | 최대 이탈 | 최대 복귀 | 사유 |',
         '| --- | --- | --- | --- | --- | --- | --- | --- |',
     ]
+    counts = [*(f'{n}회: {reason}' for reason, n in a['invalid_reason_counts'].items()),
+              *(f'{n}회: 하네스 실패 ({o})' for o, n in a['harness_outcome_counts'].items())]
+    if counts:
+        lines[-2:-2] = ['무효·실패 사유: ' + ', '.join(counts), '']
     for r in a['per_run']:
-        lines.append(f"| {r['run']} | {'O' if r['valid'] else 'X'} | {'PASS' if r['pass'] else 'FAIL'} | "
+        verdict = '하네스 실패' if r.get('harness_outcome') else 'PASS' if r['pass'] else 'FAIL'
+        lines.append(f"| {r['run']} | {'O' if r['valid'] else 'X'} | {verdict} | "
                      f"{r.get('collisions', '—')} | {f(r.get('min_clearance'))} | {f(r.get('max_deviation'))} | "
                      f"{f(r.get('max_return_s'))} | {', '.join(r['reasons'])} |")
     return '\n'.join(lines) + '\n'

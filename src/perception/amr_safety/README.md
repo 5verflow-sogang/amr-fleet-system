@@ -107,9 +107,15 @@ launch는 안전 노드와 함께 E-Stop 버튼 노드(`estop_button`)도 띄운
 - **경로 이탈** `deviation`: 로봇 위치에서 기준 경로 꺾은선까지 최소 거리. 기준 경로는 회피 전에 받은 첫 전역 경로다. Nav2는 주기적으로 재계획해 회피 중 경로가 장애물을 돌아가게 바뀌므로 그 경로로 재면 "원래 경로" 대비 이탈이 0에 가깝게 나온다. 재계획 경로는 `plans.csv`에만 남긴다. 고정 경로로 재려면 `reference_mode:=fixed`, `fixed_path:=[x0, y0, x1, y1, ...]`(map 기준). 기준 경로를 받기 전 샘플은 보지 않는다.
 - **회피 구간과 복귀 시간**: 이탈이 `start_deviation`(0.1 m)을 넘은 시각에 구간이 시작한다(`start_on: deviation`). 그 구간에서 이탈이 `return_deviation`(0.2 m)을 마지막으로 넘은 뒤 0.2 m 이하가 `return_hold_s`(1.0 s) 동안 유지되기 시작한 시각이 복귀 시각이고, **복귀 시간 = 복귀 시각 − 시작 시각**이다. 0.2 m 띠를 벗어나지 않았으면 0, 끝까지 못 돌아오면 미복귀(불합격). 시작 2 s 전(`obstacle_lookback_s`)부터 복귀까지 장애물이 `interaction_distance`(1.5 m, 안전 노드 WARNING 근접 기준과 같음) 안에 있었으면 회피 구간, 아니면 추종 오차 구간으로 보고 복귀 KPI에서 뺀다(이탈 KPI에는 넣는다).
   - `start_on: proximity`면 장애물이 1.5 m 안에 들어온 시각부터 잰다(서서 기다린 시간까지 들어간다), `either`면 둘 중 먼저.
-- **유효 실행**: 기준 경로가 있고 장애물이 1.5 m 안에 한 번이라도 들어온 실행. 장애물을 안 만난 실행은 회피를 시험한 것이 아니라 30회에 세지 않는다.
+- **유효 실행**: 기준 경로가 있고 장애물이 1.5 m 안에 한 번이라도 들어온 실행. 장애물을 안 만난 실행은 회피를 시험한 것이 아니라 30회에 세지 않는다. 무효 사유에 원인을 나눠 적는다: `목표 도착`(로봇은 갔는데 장애물과 시간이 안 맞음, 시나리오 문제), `로봇이 거의 안 움직임`(로봇 GT 이동 거리 `travel_m` < `stuck_travel_m` 0.5 m, Nav2 실패·정지 등), `목표 전에 멈춤`(그 외).
 - **실행 합격**: 유효 + 충돌 0건 + 최대 이탈 ≤ 1.0 m + 모든 회피 구간 복귀 ≤ 5.0 s + 목표(기준 경로 끝점 0.3 m 안) 도착. 목표 도착을 넣은 것은 멈춰 서 있기만 해도 충돌·이탈이 0이 되기 때문이다(`require_goal:=false`로 뺄 수 있다).
-- **I17 판정** (`avoidance_report`): 원 명세 KPI가 "30회 모두"라 평균·신뢰구간이 아니라 **최악값**으로 본다. 유효 실행 중 하나라도 불합격이면 FAIL, 불합격이 없는데 유효 실행이 30회보다 적으면 INSUFFICIENT, 아니면 PASS. 하네스 `outcome`이 `completed`가 아닌 실행은 따로 센다.
+- **I17 판정** (`avoidance_report`): 원 명세 KPI가 "30회 모두"라 평균·신뢰구간이 아니라 **최악값**으로 본다. 위에서부터 차례로:
+  1. 어느 실행에서든 충돌이 있으면 FAIL. 무효 실행과 하네스 실패 실행(`outcome`이 `completed`가 아님)도 요약이 있으면 센다. 충돌은 기준 경로 없이 셀 수 있다
+  2. 유효 실행 중 하나라도 불합격(이탈·복귀·목표)이면 FAIL
+  3. 하네스 실패 실행이나 요약이 없는 실행이 있거나, 유효 실행이 30회보다 적으면 INSUFFICIENT(판정 보류, 이유를 `insufficient_reasons`에 남긴다). 재지 못한 실행을 빼고 PASS를 주면 성공한 실행만 고르는 셈이다
+  4. 그 외 PASS
+- 보고서에는 무효 사유별·하네스 실패 outcome별 실행 수와, 유효 실행 합격률의 Clopper-Pearson 95% 신뢰구간을 함께 낸다(`pass_rate`). 판정에는 쓰지 않는 참고값이다. 30/30이어도 구간은 88.4~100%라 실패율 상한이 약 12%다.
+- 하네스 요약(`tools/harness` `avoid.*` 지표)은 판정하지 않고 분포만 보여 준다. `pass`는 유효 실행만 넣고(무효는 `valid` 0), 복귀 못 한 회피 수는 `unreturned`로 늘 넣는다.
 
 기준값은 모두 노드 파라미터(`AvoidanceParams` 필드 이름 그대로, 실수 파라미터는 `5.0`처럼 소수점을 붙인다)이고 `avoidance_summary.json`의 `params`에 남는다. 0.1·0.2 m·1.0 s는 초안이다. DWA 회피 모드가 들어간 뒤 장애물 없는 주행의 추종 오차 분포를 보고 확정한다(추종 오차가 0.1 m를 자주 넘으면 회피 구간이 잘게 쪼개진다).
 
@@ -118,7 +124,7 @@ launch는 안전 노드와 함께 E-Stop 버튼 노드(`estop_button`)도 띄운
 | 파일 | 내용 |
 | --- | --- |
 | `avoidance.csv` | 로봇 GT 시점마다 `timestamp, robot_x, robot_y, robot_yaw, deviation, clearance, nearest_obstacle, obstacle_speed, episode, collision, robot` (world, m·rad·s, 시뮬레이션 시간) |
-| `avoidance_summary.json` | 충돌 건(시각·장애물·속력), 최소 이격, 최대 이탈, 회피 구간별 시작·최대 이탈·복귀 시간·가장 가까운 장애물과 속력, 목표 도착, KPI 판정, 기준값 |
+| `avoidance_summary.json` | 충돌 건(시각·장애물·속력), 최소 이격, 최대 이탈, 회피 구간별 시작·최대 이탈·복귀 시간·가장 가까운 장애물과 속력, 목표 도착, 로봇 이동 거리(`travel_m`), KPI 판정, 기준값 |
 | `robot_gt.csv`, `obstacles_gt.csv`, `plans.csv` | 원자료. 받는 즉시 이어 써서 강제 종료돼도 남는다 |
 | `reference_path.csv`, `avoidance_config.json` | 쓴 기준 경로(world), 기록 설정(`map_origin_in_world`·모양·기준값) |
 

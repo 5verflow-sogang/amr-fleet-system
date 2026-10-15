@@ -277,10 +277,21 @@ def test_avoidance_metrics(tmp_path):
     run = tmp_path / 'r'
     (run / 'avoidance').mkdir(parents=True)
     assert avoidance_metrics(run) == {}
-    (run / 'avoidance' / 'avoidance_summary.json').write_text(json.dumps({
+    summary = run / 'avoidance' / 'avoidance_summary.json'
+    # 유효 실행, 복귀 못 한 회피 1건: max_return_s는 비지만 unreturned로 최악 실행이 남는다
+    summary.write_text(json.dumps({
         'robot': 'amr_01', 'collision': {'count': 0, 'min_clearance': 0.15},
-        'deviation': {'max': 0.6}, 'avoidance': {'max_return_s': None}, 'kpi': {'pass': False}}))
+        'deviation': {'max': 0.6}, 'avoidance': {'max_return_s': None, 'unreturned': 1},
+        'kpi': {'valid': True, 'pass': False}}))
     m = avoidance_metrics(run)
-    assert m == {'avoid.amr_01.collisions': 0, 'avoid.amr_01.min_clearance': 0.15,
-                 'avoid.amr_01.max_deviation': 0.6, 'avoid.amr_01.pass': 0.0}
+    assert m == {'avoid.amr_01.collisions': 0, 'avoid.amr_01.unreturned': 1, 'avoid.amr_01.min_clearance': 0.15,
+                 'avoid.amr_01.max_deviation': 0.6, 'avoid.amr_01.valid': 1.0, 'avoid.amr_01.pass': 0.0}
     assert kpi_verdict('avoid.amr_01.max_deviation', 0.6, 0.7) is None     # 판정은 avoidance_report
+    # 무효 실행은 pass를 넣지 않는다 (합격률이 avoidance_report와 같아지게)
+    summary.write_text(json.dumps({
+        'robot': 'amr_01', 'collision': {'count': 1, 'min_clearance': 0.0},
+        'deviation': {'max': None}, 'avoidance': {'max_return_s': None, 'unreturned': 0},
+        'kpi': {'valid': False, 'pass': False}}))
+    m = avoidance_metrics(run)
+    assert m['avoid.amr_01.valid'] == 0.0 and 'avoid.amr_01.pass' not in m
+    assert m['avoid.amr_01.collisions'] == 1

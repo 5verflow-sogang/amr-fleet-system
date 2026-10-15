@@ -11,6 +11,7 @@ from amr_safety.avoidance_eval import (
     Pose,
     Shape,
     aggregate,
+    aggregate_markdown,
     evaluate_run,
     footprint_clearance,
     load_recorder,
@@ -19,6 +20,7 @@ from amr_safety.avoidance_eval import (
     transform_path,
 )
 from amr_safety.avoidance_eval.cli import report_main
+from amr_safety.avoidance_eval.metrics import clopper_pearson
 
 L, W = 0.6, 0.4
 WORKER = Shape('circle', radius=0.25)
@@ -218,6 +220,79 @@ def test_aggregate_verdicts():
     a = aggregate([(f'r{i}', ok) for i in range(30)] + [('bad', bad)])
     assert a['verdict'] == 'FAIL' and a['failing_runs'] == ['bad']
 
+    # 요약이 없는 실행이 있으면 유효 30회여도 판정 보류 (재지 못한 실행을 빼고 PASS 주지 않는다)
+    a = aggregate([(f'r{i}', ok) for i in range(30)] + [('missing', None)])
+    assert a['verdict'] == 'INSUFFICIENT' and a['insufficient_reasons'] == ['요약 없음 1회']
+
+
+def _collided(summary, valid):
+    s = json.loads(json.dumps(summary))
+    s['collision']['count'] = 1
+    s['kpi'].update({'collision_free': False, 'valid': valid, 'pass': False})
+    if not valid:
+        s['kpi']['invalid_reasons'] = ['기준 경로 없음']
+    return s
+
+
+def test_aggregate_counts_collisions_in_every_run():
+    ok = _run_summary()
+    # 무효 실행(기준 경로를 놓침)에서 난 충돌도 FAIL
+    a = aggregate([(f'r{i}', ok) for i in range(30)] + [('no_plan', _collided(ok, valid=False))])
+    assert a['verdict'] == 'FAIL' and a['failing_runs'] == ['no_plan']
+    assert a['collisions'] == 1 and a['valid_runs'] == 30
+    # 하네스 실패 실행: 요약이 없으면 판정 보류, 요약에 충돌이 있으면 FAIL
+    a = aggregate([(f'r{i}', ok) for i in range(30)], failed=[('crash', 'timeout')])
+    assert a['verdict'] == 'INSUFFICIENT' and a['insufficient_reasons'] == ['하네스 실패 1회']
+    a = aggregate([(f'r{i}', ok) for i in range(30)], failed=[('crash', 'timeout', None)])
+    assert a['verdict'] == 'INSUFFICIENT'
+    a = aggregate([(f'r{i}', ok) for i in range(30)], failed=[('crash', 'timeout', _collided(ok, valid=True))])
+    assert a['verdict'] == 'FAIL' and a['failing_runs'] == ['crash'] and a['valid_runs'] == 30
+    assert a['harness_failed'] == [{'run': 'crash', 'outcome': 'timeout'}]
+    md = aggregate_markdown(a)
+    assert '하네스 실패' in md and '충돌 (건, 모든 실행) | 1' in md
+
+
+
+def test_invalid_cause_when_obstacle_never_met():
+    # 장애물이 멀리 있어 만나지 못한 실행: 목표 도착 / 거의 안 움직임 / 중간에 멈춤으로 나눈다
+    far = {'worker_1': static(3.0, 10.0)}
+
+    def reasons(robot):
+        return evaluate_run(robot, far, {'worker_1': WORKER}, REF).summary['kpi']['invalid_reasons']
+    assert reasons(drive()) == ['장애물이 1.5 m 안에 오지 않음: 목표 도착']
+    assert reasons(drive(x_end=0.3)) == ['장애물이 1.5 m 안에 오지 않음: 로봇이 거의 안 움직임']
+    assert reasons(drive(x_end=3.0)) == ['장애물이 1.5 m 안에 오지 않음: 목표 전에 멈춤']
+    straight = evaluate_run(drive(lambda x: 0.0, x_end=3.0), far, {'worker_1': WORKER}, REF).summary
+    assert straight['travel_m'] == pytest.approx(3.0, abs=1e-3)
+    # 비켜 간 길(x 2.0~2.5에서 0.6 m 올라감)도 이동 거리에 들어간다
+    detour = evaluate_run(drive(x_end=3.0), far, {'worker_1': WORKER}, REF).summary
+    assert detour['travel_m'] == pytest.approx(3.0 + math.hypot(0.5, 0.6) - 0.5, abs=1e-3)
+
+
+def test_aggregate_counts_invalid_reasons_and_pass_rate():
+    ok = _run_summary()
+    far = {'worker_1': static(3.0, 10.0)}
+    stuck = evaluate_run(drive(x_end=0.3), far, {'worker_1': WORKER}, REF).summary
+    a = aggregate([(f'r{i}', ok) for i in range(30)] + [('stuck1', stuck), ('stuck2', stuck), ('none', None)],
+                  failed=[('crash', 'timeout')])
+    assert a['invalid_reason_counts'] == {'장애물이 1.5 m 안에 오지 않음: 로봇이 거의 안 움직임': 2, '요약 없음': 1}
+    assert a['harness_outcome_counts'] == {'timeout': 1}
+    assert a['pass_rate']['passed'] == 30 and a['pass_rate']['valid'] == 30
+    assert a['pass_rate']['ci95'] == [pytest.approx(0.025 ** (1 / 30), abs=1e-4), 1.0]
+    md = aggregate_markdown(a)
+    assert '2회: 장애물이 1.5 m 안에 오지 않음: 로봇이 거의 안 움직임' in md and '1회: 하네스 실패 (timeout)' in md
+    assert '30/30 (88.4~100.0%)' in md
+
+
+def test_clopper_pearson_known_values():
+    lo, hi = clopper_pearson(30, 30)
+    assert lo == pytest.approx(0.025 ** (1 / 30), abs=1e-6) and hi == 1.0      # 0.884: 실패율 상한 약 12%
+    lo, hi = clopper_pearson(0, 30)
+    assert lo == 0.0 and hi == pytest.approx(1 - 0.025 ** (1 / 30), abs=1e-6)
+    lo, hi = clopper_pearson(15, 30)
+    assert lo == pytest.approx(0.3130, abs=1e-3) and hi == pytest.approx(0.6870, abs=1e-3)
+    assert clopper_pearson(0, 0) == (None, None)
+
 
 # --- 기록·재계산 ---
 
@@ -267,8 +342,25 @@ def test_report_cli(tmp_path, capsys):
     out = tmp_path / 'report.json'
     code = report_main([str(p) for p in sorted(tmp_path.iterdir()) if p.is_dir()]
                        + ['--runs', '3', '--json', str(out)])
-    assert code == 0
+    # 하네스 실패 실행(요약 없음)이 있으면 유효 3회를 채워도 판정 보류
+    assert code == 1
     result = json.loads(out.read_text(encoding='utf-8'))
-    assert result['verdict'] == 'PASS' and result['valid_runs'] == 3
+    assert result['verdict'] == 'INSUFFICIENT' and result['valid_runs'] == 3
     assert result['harness_failed'] == [{'run': 'nav_avoidance_9', 'outcome': 'timeout'}]
     assert 'I17' in capsys.readouterr().out
+    # 실패 실행의 요약은 읽는다: 그 안의 충돌은 FAIL
+    (failed / 'avoidance').mkdir()
+    collided = _run_summary(**{'collision_free': False, 'pass': False})
+    collided['collision']['count'] = 1
+    (failed / 'avoidance' / 'avoidance_summary.json').write_text(json.dumps(collided))
+    code = report_main([str(p) for p in sorted(tmp_path.iterdir()) if p.is_dir()]
+                       + ['--runs', '3', '--json', str(out)])
+    result = json.loads(out.read_text(encoding='utf-8'))
+    assert code == 1 and result['verdict'] == 'FAIL'
+    assert result['failing_runs'] == ['nav_avoidance_9/avoidance']
+    # 실패 실행 없이 3회면 PASS
+    for p in (failed / 'avoidance' / 'avoidance_summary.json', failed / 'meta.json'):
+        p.unlink()
+    (failed / 'avoidance').rmdir()
+    failed.rmdir()
+    assert report_main([str(p) for p in sorted(tmp_path.iterdir()) if p.is_dir()] + ['--runs', '3']) == 0

@@ -59,24 +59,32 @@ def offline_main(argv: Optional[list[str]] = None) -> int:
     return 0
 
 
-def find_summaries(run_dirs: list[str]) -> tuple[list[tuple[str, Optional[dict]]], list[tuple[str, str]]]:
-    """하네스 실행 폴더(또는 기록 폴더)마다 요약을 찾는다. meta.json outcome이 completed가 아니면 실패로 뺀다."""
+def find_summaries(run_dirs: list[str]) -> tuple[list[tuple[str, Optional[dict]]],
+                                                 list[tuple[str, str, Optional[dict]]]]:
+    """하네스 실행 폴더(또는 기록 폴더)마다 요약을 찾는다.
+
+    meta.json outcome이 completed가 아니면 실패 목록 (실행, outcome, 요약 또는 None)으로 따로 낸다.
+    실패 실행도 요약이 있으면 읽는다. 그 안의 충돌은 판정에 들어간다 (aggregate).
+    """
     runs, failed = [], []
     for d in sorted(Path(x) for x in run_dirs):
         if not d.is_dir():
             continue
+        outcome = 'completed'
         meta_path = d / 'meta.json'
         if meta_path.exists():
-            outcome = json.loads(meta_path.read_text(encoding='utf-8')).get('outcome')
-            if outcome != 'completed':
-                failed.append((d.name, str(outcome)))
-                continue
+            outcome = str(json.loads(meta_path.read_text(encoding='utf-8')).get('outcome'))
         paths = [d / SUMMARY] if (d / SUMMARY).exists() else sorted(d.glob(f'**/{SUMMARY}'))
-        if not paths:
+        found = [(d.name if p.parent == d else f'{d.name}/{p.parent.relative_to(d)}',
+                  json.loads(p.read_text(encoding='utf-8'))) for p in paths]
+        if outcome != 'completed':
+            failed.extend((name, outcome, s) for name, s in found)
+            if not found:
+                failed.append((d.name, outcome, None))
+        elif found:
+            runs.extend(found)
+        else:
             runs.append((d.name, None))
-        for p in paths:
-            name = d.name if p.parent == d else f'{d.name}/{p.parent.relative_to(d)}'
-            runs.append((name, json.loads(p.read_text(encoding='utf-8'))))
     return runs, failed
 
 

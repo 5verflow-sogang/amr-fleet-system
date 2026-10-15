@@ -279,18 +279,23 @@ def avoidance_metrics(run_dir: Path) -> dict[str, float]:
 
     I17 KPI는 "30회 모두"라 평균·CI가 아니라 최악값으로 판정한다. 판정은 `avoidance_report`가 하고,
     여기서는 실행별 값의 분포만 보여 준다 (KPI 열은 비운다).
+    - pass는 유효 실행만 넣는다. 무효 실행을 0으로 넣으면 합격률이 avoidance_report와 달라진다 (valid로 따로 센다)
+    - max_return_s는 복귀 못 한 회피가 있으면 비어 있다. 최악 실행이 분포에서 빠지지 않게 unreturned를 늘 넣는다
     """
     out = {}
     for path in sorted(run_dir.glob('**/avoidance_summary.json')):
         s = json.loads(path.read_text(encoding='utf-8'))
         prefix = f"avoid.{s.get('robot', 'robot')}"
         out[f'{prefix}.collisions'] = s['collision']['count']
+        out[f'{prefix}.unreturned'] = s['avoidance']['unreturned']
         for key, value in (('min_clearance', s['collision']['min_clearance']),
                            ('max_deviation', s['deviation']['max']),
                            ('max_return_s', s['avoidance']['max_return_s'])):
             if value is not None:
                 out[f'{prefix}.{key}'] = value
-        out[f'{prefix}.pass'] = 1.0 if s['kpi']['pass'] else 0.0
+        out[f'{prefix}.valid'] = 1.0 if s['kpi']['valid'] else 0.0
+        if s['kpi']['valid']:
+            out[f'{prefix}.pass'] = 1.0 if s['kpi']['pass'] else 0.0
     return out
 
 
