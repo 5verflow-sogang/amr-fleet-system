@@ -10,8 +10,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harness.runner import fault_meta, render  # noqa: E402
-from harness.summary import (fleet_metrics, kidnap_metrics, kpi_verdict, nav_kpi_metrics, nav_metrics,  # noqa: E402
-                             summarize, to_markdown)
+from harness.summary import (avoidance_metrics, fleet_metrics, kidnap_metrics, kpi_verdict,  # noqa: E402
+                             nav_kpi_metrics, nav_metrics, summarize, to_markdown)
 
 
 def make_run(root: Path, name: str, scenario='loc_basic', label='', outcome='completed', rmse=0.02):
@@ -271,3 +271,27 @@ def test_failure_causes_by_error_code(tmp_path):
     (run / 'task_outcomes.csv').write_text('task_id,request_time,first_assign_time,robots,final_state,end_time\n'
                                            't1,0,1,amr_01,FAILED,10\n')
     assert not [k for k in fleet_metrics(run) if k.startswith('fleet.tasks_failed_')]
+
+
+def test_avoidance_metrics(tmp_path):
+    run = tmp_path / 'r'
+    (run / 'avoidance').mkdir(parents=True)
+    assert avoidance_metrics(run) == {}
+    summary = run / 'avoidance' / 'avoidance_summary.json'
+    # 유효 실행, 복귀 못 한 회피 1건: max_return_s는 비지만 unreturned로 최악 실행이 남는다
+    summary.write_text(json.dumps({
+        'robot': 'amr_01', 'collision': {'count': 0, 'min_clearance': 0.15},
+        'deviation': {'max': 0.6}, 'avoidance': {'max_return_s': None, 'unreturned': 1},
+        'kpi': {'valid': True, 'pass': False}}))
+    m = avoidance_metrics(run)
+    assert m == {'avoid.amr_01.collisions': 0, 'avoid.amr_01.unreturned': 1, 'avoid.amr_01.min_clearance': 0.15,
+                 'avoid.amr_01.max_deviation': 0.6, 'avoid.amr_01.valid': 1.0, 'avoid.amr_01.pass': 0.0}
+    assert kpi_verdict('avoid.amr_01.max_deviation', 0.6, 0.7) is None     # 판정은 avoidance_report
+    # 무효 실행은 pass를 넣지 않는다 (합격률이 avoidance_report와 같아지게)
+    summary.write_text(json.dumps({
+        'robot': 'amr_01', 'collision': {'count': 1, 'min_clearance': 0.0},
+        'deviation': {'max': None}, 'avoidance': {'max_return_s': None, 'unreturned': 0},
+        'kpi': {'valid': False, 'pass': False}}))
+    m = avoidance_metrics(run)
+    assert m['avoid.amr_01.valid'] == 0.0 and 'avoid.amr_01.pass' not in m
+    assert m['avoid.amr_01.collisions'] == 1

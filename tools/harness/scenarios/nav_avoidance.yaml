@@ -1,0 +1,74 @@
+# 동적 장애물 회피 KPI 시나리오 (test-plan I17, 연우·이진). **초안: 아직 한 번도 돌려 보지 않았다.**
+# DWA 회피 모드(TTC 3 s 미만, 이진)와 안전 노드 cmd_vel 체인 통합 뒤 실행해 고친다.
+#
+#   python3 tools/harness/run.py nav_avoidance -n 30
+#   ros2 run amr_safety avoidance_report tools/harness/results/nav_avoidance_<시각>_*   # 30회 판정 (README)
+#
+# 로봇 1대가 world (0, 1.5) → map (goal_x, goal_y)로 가는 동안 작업자 1명이 경로를 가로지른다.
+# 장애물 설정은 실행마다 시드로 만든다 (amr_safety avoidance_obstacles): 건너는 위치 x 2.5~4.0 m, 방향, 처음 위치,
+# 속도(시드 3개 중 1개는 원 명세 1.0 m/s, 나머지 0.5~1.5 m/s). avoidance_eval이 GT로 충돌·경로 이탈·복귀 시간을 잰다.
+#
+# 확인할 것 (첫 실행 때):
+# - 목표는 Nav2가 active가 된 뒤 드라이버가 보낸다(send_goal:=false, nav_compare와 같은 방식). avoidance_eval을
+#   먼저 띄워 첫 전역 경로(/amr_01/plan)를 놓치지 않게 했다
+# - 데모는 지도 warehouse_v1(0.05 m)에 map->odom 항등이라 map 원점 = 스폰 위치 = world (0, 1.5)다(map_origin).
+#   위치 추정(AMCL·EKF)을 켠 전체 스택으로 재면 정렬값(0.025 m 지도 [-0.0562, 1.5317, 0.00009],
+#   amr_localization README)으로 바꾼다. 안 바꾸면 약 6 cm가 경로 이탈에 섞인다
+# - 데모에는 EKF가 없어 odom이 diff_drive/odom이다. 추적 노드 odom을 그쪽으로 돌렸다
+# - 안전 노드(amr_safety)는 아직 이 데모의 cmd_vel 체인에 없다 (I17은 DWA + 추적 + 안전 노드). 통합 launch가 생기면 바꾼다
+name: nav_avoidance
+num_robots: 1
+use_sim_time: true
+seed_base: 1
+timeout_s: 600
+params:
+  # 목표 (map 기준). world = map + (0, 1.5) (warehouse_v1, 데모의 map->odom 항등)
+  goal_x: 6.0
+  goal_y: 0.0
+  map_origin: "[0.0, 1.5, 0.0]"
+  # 목표 결과를 받은 뒤 더 기록하는 시간 [s] (복귀 판정 return_hold_s 1.0 s + 여유)
+  after_goal_s: 5
+processes:
+  # 기록을 가장 먼저 띄운다: 첫 전역 경로가 기준 경로다. 장애물 토픽은 1초마다 찾아 붙는다
+  - name: avoidance_eval
+    cmd: >-
+      ros2 run amr_safety avoidance_eval --ros-args -r __ns:=/amr_01
+      -p use_sim_time:=true -p "map_origin_in_world:={map_origin}" -p output_dir:={run_dir}/avoidance
+    stop_first: true
+    wait_files: ["{run_dir}/avoidance/avoidance_summary.json"]
+    settle_s: 2
+  - name: nav
+    cmd: ros2 launch amr_bringup nav2_dwa_demo.launch.py gui:=false send_goal:=false
+    ready_topic: /amr_01/ground_truth/odom
+    ready_timeout_s: 300
+    # 컨트롤러·플래너·BT가 active여야 목표를 받는다 (nav_compare와 같다)
+    ready_cmds:
+      - ros2 lifecycle get /amr_01/controller_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/planner_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/bt_navigator | grep -q '^active'
+      - ros2 lifecycle get /map_server | grep -q '^active'
+    settle_s: 3
+  - name: obstacles
+    # 실행마다 시드로 장애물 설정을 만들어 띄운다 (실행 폴더에 남는다)
+    cmd: >-
+      ros2 run amr_safety avoidance_obstacles --seed {seed} --out {run_dir}/obstacles.yaml
+      && exec ros2 launch amr_gazebo dynamic_obstacles.launch.py config:={run_dir}/obstacles.yaml
+      seed:={seed} use_sim_time:=true
+    ready_topic: /dynamic_obstacles/worker_cross/ground_truth/odom
+  - name: tracking
+    cmd: >-
+      ros2 run amr_tracking tracking_node --ros-args -r __ns:=/amr_01 -r __node:=tracking -r odom:=diff_drive/odom
+      --params-file $(ros2 pkg prefix amr_tracking)/share/amr_tracking/config/tracking.yaml -p use_sim_time:=true
+    ready_topic: /amr_01/perception/obstacles
+driver:
+  # 목표를 보내고 결과(도착·실패)를 기다린 뒤 조금 더 기록한다. 목표가 실패해도 기록은 남긴다(판정은 avoidance_report)
+  mode: command
+  use_sim_time: true
+  timeout_s: 540
+  cmd: >-
+    ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose
+    "{{pose: {{header: {{frame_id: map}}, pose: {{position: {{x: {goal_x}, y: {goal_y}}}, orientation: {{w: 1.0}}}}}}}}";
+    sleep {after_goal_s}
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true

@@ -1,0 +1,18 @@
+# 회피 KPI(test-plan I17)를 손으로 돌릴 때 쓰는 고정 예시 동적 장애물.
+# 하네스 nav_avoidance는 이 파일 대신 실행마다 시드로 설정을 만든다 (avoidance_eval/obstacles.py, #162 리뷰).
+# amr_gazebo dynamic_obstacles.launch.py config:=<이 파일>로 넘긴다. 형식은 amr_gazebo/config/dynamic_obstacles.yaml과 같다.
+#
+# 로봇은 world (0, 1.5)에서 출발해 world (6, 1.5)(map (6, 0))로 A–B 통로(y 0.4~4.4)를 따라 동쪽으로 간다.
+# 작업자 1명이 x = 3에서 통로를 남북으로 1.0 m/s(원 명세 "1.0 m/s 장애물")로 계속 가로지른다.
+# 왕복 한 번 3.2 m / 1.0 m/s = 3.2 s라 로봇이 언제 오든 경로 위에서 만난다.
+# id 앞부분(worker)으로 avoidance_eval이 충돌체 모양(원 r 0.25 m)을 정한다.
+obstacles:
+  - id: worker_cross
+    type: worker
+    pattern: straight
+    speed_range_mps: [1.0, 1.0]
+    spawn: {x: 3.0, y: 4.0, yaw: -1.5708}
+    waypoints:
+      - {x: 3.0, y: 4.0}
+      - {x: 3.0, y: 0.8}
+    note: "A–B 통로를 x=3에서 남북으로 가로지름. 통로 벽(y 0.4·4.4)과 0.15 m 이상 이격 (반경 0.25)"
