@@ -41,7 +41,58 @@ double normalizeAngle(double angle)
   return angle;
 }
 
+std::size_t closestPathIndex(const std::vector<Point2D> & path, double x, double y)
+{
+  std::size_t best_index = 0;
+  double best_distance = std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < path.size(); ++i) {
+    const double d = std::hypot(path[i].x - x, path[i].y - y);
+    if (d < best_distance) {
+      best_distance = d;
+      best_index = i;
+    }
+  }
+  return best_index;
+}
+
+// path가 비어 있지 않고 start가 로봇에 가장 가까운 점일 때의 pathPointAhead.
+PathTarget pathPointAheadFrom(
+  const std::vector<Point2D> & path, std::size_t start, double robot_x, double robot_y,
+  double distance)
+{
+  PathTarget target;
+  const double to_start = std::hypot(path[start].x - robot_x, path[start].y - robot_y);
+  double accumulated = 0.0;
+  Point2D previous = path[start];
+  for (std::size_t i = start; i < path.size(); ++i) {
+    accumulated += std::hypot(path[i].x - previous.x, path[i].y - previous.y);
+    if (accumulated >= distance) {
+      target.point = path[i];
+      target.distance_from_robot = to_start + accumulated;
+      return target;
+    }
+    previous = path[i];
+  }
+  target.point = path.back();
+  target.distance_from_robot = to_start + accumulated;
+  target.at_path_end = true;
+  return target;
+}
+
 }  // namespace
+
+PathTarget pathPointAhead(
+  const std::vector<Point2D> & path, double robot_x, double robot_y, double distance)
+{
+  if (path.empty()) {
+    PathTarget target;
+    target.point = Point2D{robot_x, robot_y};
+    target.at_path_end = true;
+    return target;
+  }
+  return pathPointAheadFrom(
+    path, closestPathIndex(path, robot_x, robot_y), robot_x, robot_y, distance);
+}
 
 DwaPlanner::DwaPlanner(DwaConfig config)
 : config_(config)
@@ -249,7 +300,33 @@ DwaCommand DwaPlanner::computeVelocityCommand(
   const std::vector<DynamicObstacle> & dynamic_obstacles,
   const std::optional<Point2D> & final_goal) const
 {
+  return selectCommand(state, {goal}, false, grid, dynamic_obstacles, final_goal);
+}
+
+DwaCommand DwaPlanner::computeVelocityCommand(
+  const RobotState & state, const std::vector<Point2D> & path, const Grid & grid,
+  const std::vector<DynamicObstacle> & dynamic_obstacles) const
+{
+  if (path.empty()) {
+    DwaCommand result;
+    result.status = DwaStatus::kGoalReached;
+    return result;
+  }
+  return selectCommand(state, path, true, grid, dynamic_obstacles, path.back());
+}
+
+DwaCommand DwaPlanner::selectCommand(
+  const RobotState & state, const std::vector<Point2D> & path, bool follow_path,
+  const Grid & grid, const std::vector<DynamicObstacle> & dynamic_obstacles,
+  const std::optional<Point2D> & final_goal) const
+{
   DwaCommand result;
+
+  const std::size_t path_start = closestPathIndex(path, state.x, state.y);
+  const double base_distance = follow_path ? config_.lookahead_distance : 0.0;
+  const Point2D goal =
+    pathPointAheadFrom(path, path_start, state.x, state.y, base_distance).point;
+  const bool adaptive = follow_path && config_.adaptive_lookahead;
 
   const double dx = goal.x - state.x;
   const double dy = goal.y - state.y;
@@ -278,6 +355,23 @@ DwaCommand DwaPlanner::computeVelocityCommand(
 
   for (int vi = 0; vi < config_.v_samples; ++vi) {
     const double v = sampleValue(window.min_v, window.max_v, vi, config_.v_samples);
+
+    // heading 기준점: 고정이면 goal, adaptive면 이 속도의 궤적 길이만큼 앞의 경로 점.
+    // 궤적이 경로 끝점을 지나치면 그 앞(goal_tolerance만큼 짧게)까지만 보고 heading을 잰다.
+    Point2D heading_target = goal;
+    std::size_t heading_steps = std::numeric_limits<std::size_t>::max();
+    if (adaptive) {
+      const double travel = std::abs(v) * config_.sim_time;
+      const PathTarget target = pathPointAheadFrom(
+        path, path_start, state.x, state.y, std::max(config_.lookahead_distance, travel));
+      heading_target = target.point;
+      const double step_length = std::abs(v) * config_.dt;
+      if (target.at_path_end && target.distance_from_robot < travel && step_length > 0.0) {
+        const double before_end = target.distance_from_robot - config_.goal_tolerance;
+        heading_steps =
+          static_cast<std::size_t>(std::max(1.0, std::floor(before_end / step_length)));
+      }
+    }
 
     for (int wi = 0; wi < config_.w_samples; ++wi) {
       const double w = sampleValue(window.min_w, window.max_w, wi, config_.w_samples);
@@ -330,8 +424,9 @@ DwaCommand DwaPlanner::computeVelocityCommand(
       }
 
       // 닿는 궤적은 설 수 있는 마지막 점(닿기 직전)에서 heading을 본다.
-      const TrajectoryPoint & trajectory_end = trajectory[free_steps - 1];
-      const double cost = evaluateCost(trajectory_end, goal, v, max_cell_cost) +
+      const TrajectoryPoint & trajectory_end =
+        trajectory[std::min(free_steps, heading_steps) - 1];
+      const double cost = evaluateCost(trajectory_end, heading_target, v, max_cell_cost) +
         config_.dynamic_weight * dynamicObstacleCost(min_dynamic_surface_distance);
       const int tier = collides ? 1 : 0;
       if (cost < best_cost[tier]) {

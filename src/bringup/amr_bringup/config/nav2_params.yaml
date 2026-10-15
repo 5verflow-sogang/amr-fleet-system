@@ -273,6 +273,9 @@ controller_server:
       use_admissible_velocity: True
       # 목표 앞 감속: 최종 목표까지 직선 거리 d에서 v <= sqrt(2*acc_v*d) (navigation.md 4-7절)
       use_goal_slowdown: True
+      # heading 기준점을 궤적마다 max(lookahead_distance, |v|*sim_time) 앞의 경로 점으로 잡는다.
+      # false면 lookahead_distance 고정 - 그러면 v <= lookahead_distance/sim_time(0.25 m/s)으로 묶인다.
+      adaptive_lookahead: True
 
 # --- TEB (DWA 비교 대상, #110 underlay·(10) 작업) ---
 # 원 명세 "DWA 직접구현 vs TEB" 비교. teb_local_planner는 apt에 없어 /opt/teb_ws에 소스로

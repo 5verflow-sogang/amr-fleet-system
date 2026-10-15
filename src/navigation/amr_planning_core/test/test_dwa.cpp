@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <optional>
@@ -745,6 +746,162 @@ TEST(DwaPlannerTest, GoalSlowdownDisabledKeepsPreviousBehavior)
   EXPECT_EQ(on_without_final.status, without_final.status);
   EXPECT_EQ(on_without_final.v, without_final.v);
   EXPECT_EQ(on_without_final.w, without_final.w);
+}
+
+namespace
+{
+
+// (x0, y) -> (x1, y) 직선 경로, 0.05m 간격(전역 경로 해상도와 비슷하게).
+std::vector<Point2D> straightPath(double x0, double x1, double y)
+{
+  std::vector<Point2D> path;
+  for (double x = x0; x <= x1 + 1e-9; x += 0.05) {
+    path.push_back(Point2D{x, y});
+  }
+  path.back().x = x1;
+  return path;
+}
+
+struct PathRunResult
+{
+  bool reached = false;
+  double max_v = 0.0;
+  double stop_x = 0.0;              // kGoalReached 뒤 acc_v로 감속해 서는 x
+  double slowdown_distance = 0.0;   // 최고 속도보다 0.05 m/s 넘게 줄어든 시점의 경로 끝까지 거리
+};
+
+// 빈 지도에서 직선 경로를 따라가는 닫힌 루프(명령을 그대로 따른다고 보고 적분).
+PathRunResult followStraightPath(const DwaConfig & config, double v0, double goal_x)
+{
+  TestGrid test_grid(200, 40, 0.1);  // 20m x 4m, 빈 지도라 거칠게(테스트 시간 단축)
+  const DwaPlanner planner(config);
+  const std::vector<Point2D> path = straightPath(1.0, goal_x, 2.0);
+
+  RobotState state;
+  state.x = 1.0;
+  state.y = 2.0;
+  state.v = v0;
+
+  PathRunResult result;
+  result.max_v = v0;
+  bool slowed = false;
+  for (int step = 0; step < 2000; ++step) {
+    const DwaCommand command = planner.computeVelocityCommand(state, path, test_grid.grid());
+    if (command.status == DwaStatus::kGoalReached) {
+      result.reached = true;
+      result.stop_x = state.x + state.v * state.v / (2.0 * config.acc_v);
+      break;
+    }
+    if (command.status != DwaStatus::kOk) {
+      break;
+    }
+    // 경로를 다시 맞추는 작은 조향(w)으로 생기는 0.01 m/s 수준의 흔들림은 감속으로 안 본다.
+    if (!slowed && command.v < result.max_v - 0.05) {
+      slowed = true;
+      result.slowdown_distance = goal_x - state.x;
+    }
+    result.max_v = std::max(result.max_v, command.v);
+    state.x += command.v * std::cos(state.yaw) * config.dt;
+    state.y += command.v * std::sin(state.yaw) * config.dt;
+    state.yaw += command.w * config.dt;
+    state.v = command.v;
+    state.w = command.w;
+  }
+  return result;
+}
+
+}  // namespace
+
+TEST(DwaPlannerTest, AdaptiveLookaheadReachesNearMaxSpeedOnStraightPath)
+{
+  DwaConfig config = makeFastConfig();
+  config.v_samples = 11;
+
+  const PathRunResult adaptive = followStraightPath(config, 0.0, 15.0);
+  ASSERT_TRUE(adaptive.reached);
+  EXPECT_GE(adaptive.max_v, 0.95 * config.max_v);
+  EXPECT_LE(adaptive.stop_x, 15.0 + config.goal_tolerance);
+
+  // 고정 기준점이면 궤적 끝이 lookahead_distance 앞 점을 넘는 순간 heading 비용이 최대라
+  // lookahead_distance/sim_time(0.25 m/s) 근처에 묶인다(Gazebo에서 0.246 m/s).
+  config.adaptive_lookahead = false;
+  const PathRunResult fixed = followStraightPath(config, 0.0, 15.0);
+  EXPECT_LE(fixed.max_v, config.lookahead_distance / config.sim_time + 0.1);
+}
+
+TEST(DwaPlannerTest, AdaptiveLookaheadUsesFixedTargetAtLowSpeed)
+{
+  // |v|*sim_time <= lookahead_distance면 기준점이 고정 lookahead 점과 같다.
+  const std::vector<Point2D> path = {
+    {1.0, 2.0}, {1.2, 2.0}, {1.4, 2.0}, {1.4, 2.2}, {1.4, 2.4}, {1.4, 2.6}, {1.4, 2.8}};
+  EXPECT_EQ(pathPointAhead(path, 1.0, 2.0, 0.5).point.x, 1.4);
+  EXPECT_EQ(pathPointAhead(path, 1.0, 2.0, 0.5).point.y, 2.2);
+  EXPECT_EQ(pathPointAhead(path, 1.0, 2.0, 10.0).point.y, 2.8);
+  EXPECT_TRUE(pathPointAhead(path, 1.0, 2.0, 10.0).at_path_end);
+
+  TestGrid test_grid(80, 80, 0.05);
+  test_grid.setRegion(1.7, 1.9, 1.6, 2.4, 254);
+  DwaConfig on = makeFastConfig();
+  DwaConfig off = on;
+  off.adaptive_lookahead = false;
+  for (const double v0 : {0.0, 0.05, 0.1}) {  // 윈도우 최고 속도 <= 0.2 -> 궤적 길이 <= 0.4m
+    RobotState state;
+    state.x = 1.0;
+    state.y = 2.0;
+    state.v = v0;
+    const DwaCommand a = DwaPlanner(on).computeVelocityCommand(state, path, test_grid.grid());
+    const DwaCommand b = DwaPlanner(off).computeVelocityCommand(state, path, test_grid.grid());
+    EXPECT_EQ(a.status, b.status) << "v0=" << v0;
+    EXPECT_EQ(a.v, b.v) << "v0=" << v0;
+    EXPECT_EQ(a.w, b.w) << "v0=" << v0;
+  }
+}
+
+TEST(DwaPlannerTest, AdaptiveLookaheadDisabledMatchesFixedWaypointCall)
+{
+  // 끄면 경로 버전이 이전 플러그인 흐름(lookahead_distance 앞 점 하나 + 최종 목표)과 같다.
+  TestGrid test_grid(160, 80, 0.05);
+  test_grid.setRegion(2.6, 2.8, 1.7, 2.3, 254);
+  DwaConfig off = makeFastConfig();
+  off.adaptive_lookahead = false;
+  const DwaPlanner planner(off);
+  const std::vector<Point2D> path = straightPath(0.5, 6.0, 2.0);
+
+  for (const double v0 : {0.0, 0.5, 1.0, 1.9}) {
+    RobotState state;
+    state.x = 0.5;
+    state.y = 2.0;
+    state.v = v0;
+    const Point2D waypoint = pathPointAhead(path, state.x, state.y, off.lookahead_distance).point;
+    const DwaCommand by_path = planner.computeVelocityCommand(state, path, test_grid.grid());
+    const DwaCommand by_point = planner.computeVelocityCommand(
+      state, waypoint, test_grid.grid(), {}, path.back());
+    EXPECT_EQ(by_path.status, by_point.status) << "v0=" << v0;
+    EXPECT_EQ(by_path.v, by_point.v) << "v0=" << v0;
+    EXPECT_EQ(by_path.w, by_point.w) << "v0=" << v0;
+  }
+}
+
+TEST(DwaPlannerTest, AdaptiveLookaheadLetsGoalSlowdownTakeEffect)
+{
+  // 켜면 경로 끝 앞의 속도를 heading이 아니라 목표 앞 감속(sqrt(2*acc_v*d))이 정한다:
+  // 2 m/s에서 v^2/(2*acc_v) 앞부터 줄인다 - acc_v=1.0이면 2m, 0.6이면 3.33m. 감속 판정은
+  // 0.05 m/s 넘게 줄었을 때라 (2-0.05)^2/(2*acc_v), 한 스텝(0.2m) 오차를 둔다.
+  DwaConfig strong = makeFastConfig();
+  strong.v_samples = 11;
+  strong.acc_v = 1.0;
+  DwaConfig weak = strong;
+  weak.acc_v = 0.6;
+
+  const PathRunResult strong_result = followStraightPath(strong, 2.0, 15.0);
+  const PathRunResult weak_result = followStraightPath(weak, 2.0, 15.0);
+  ASSERT_TRUE(strong_result.reached);
+  ASSERT_TRUE(weak_result.reached);
+  EXPECT_NEAR(strong_result.slowdown_distance, 1.95 * 1.95 / 2.0, 0.25);
+  EXPECT_NEAR(weak_result.slowdown_distance, 1.95 * 1.95 / 1.2, 0.25);
+  EXPECT_GT(weak_result.slowdown_distance, strong_result.slowdown_distance);
+  EXPECT_LE(strong_result.stop_x, 15.0 + strong.goal_tolerance);
+  EXPECT_LE(weak_result.stop_x, 15.0 + weak.goal_tolerance);
 }
 
 }  // namespace amr_planning_core
