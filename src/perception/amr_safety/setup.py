@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'safety_node = amr_safety.safety_node:main',
+            'estop_button = amr_safety.estop_button_node:main',
         ],
     },
 )

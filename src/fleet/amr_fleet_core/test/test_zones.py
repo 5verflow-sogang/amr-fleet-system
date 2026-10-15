@@ -5,6 +5,7 @@ import pytest
 from amr_fleet_core.traffic import (GRANT_GRANTED, GRANT_QUEUED, GRANT_REJECTED, GRANT_REVOKED,
                                     REASON_DEADLOCK_RESOLUTION, REASON_OCCUPIED, REASON_PRIORITY_YIELD, STRATEGY_AVOID,
                                     ZoneManager, ZoneSpec)
+from amr_fleet_core.viz import draw_wait_for, draw_zones
 
 LEASE = 5.0
 RELEASE_TIMEOUT = 30.0
@@ -157,7 +158,7 @@ def zones(*ids):
     return make(*[ZoneSpec(z) for z in ids])
 
 
-def test_two_robot_deadlock_revokes_lower_priority():
+def test_two_robot_deadlock_revokes_lower_priority(viz):
     # 좁은 통로 양 끝에서 마주 본 두 대: 각자 한 구역을 점유하고 상대 구역을 기다린다
     zm = zones('narrow_01', 'narrow_02')
     zm.request('amr_01', 'narrow_01', 1, 0.0, priority=5)
@@ -166,8 +167,12 @@ def test_two_robot_deadlock_revokes_lower_priority():
     zm.request('amr_01', 'narrow_02', 2, 1.0, priority=5)
     zm.request('amr_02', 'narrow_01', 8, 1.0, priority=1)
     assert zm.wait_for() == {'amr_01': {'amr_02': 'narrow_02'}, 'amr_02': {'amr_01': 'narrow_01'}}
+    viz('two_robot_1_deadlock', lambda ax: draw_zones(ax, zm), lambda ax: draw_wait_for(ax, zm.wait_for()))
 
     [d] = zm.resolve_deadlocks(1.5)
+    viz('two_robot_2_revoked', lambda ax: draw_zones(ax, zm, [d]),
+        lambda ax: draw_wait_for(ax, {'amr_01': {'amr_02': 'narrow_02'}, 'amr_02': {'amr_01': 'narrow_01'}},
+                                 victim=d.robot_id))
     assert (d.robot_id, d.zone_id, d.request_id, d.grant, d.reason, d.holder_robot_id) == \
         ('amr_02', 'narrow_02', 7, GRANT_REVOKED, REASON_DEADLOCK_RESOLUTION, 'amr_01')
     # 해소 중인 교착은 다시 잡지 않는다
@@ -183,17 +188,21 @@ def test_two_robot_deadlock_revokes_lower_priority():
     [d] = zm.release('amr_02', 'narrow_02', 3.0)
     assert (d.robot_id, d.zone_id, d.grant, d.request_id) == ('amr_01', 'narrow_02', GRANT_GRANTED, 2)
     assert zm.wait_for() == {}
+    viz('two_robot_3_handover', lambda ax: draw_zones(ax, zm), lambda ax: draw_wait_for(ax, zm.wait_for()))
 
 
-def test_three_robot_deadlock():
+def test_three_robot_deadlock(viz):
     zm = zones('z1', 'z2', 'z3')
     for robot, held in (('amr_01', 'z1'), ('amr_02', 'z2'), ('amr_03', 'z3')):
         zm.request(robot, held, 1, 0.0, priority=3)
     for robot, wanted in (('amr_01', 'z2'), ('amr_02', 'z3'), ('amr_03', 'z1')):
         zm.request(robot, wanted, 2, 1.0, priority=3)
+    edges = zm.wait_for()
 
     # 우선순위가 같으면 robot_id가 가장 뒤인 로봇이 물러난다. 그 로봇이 점유한 z3를 기다리던 amr_02에게 양보
     [d] = zm.resolve_deadlocks(1.5)
+    viz('three_robot_revoked', lambda ax: draw_zones(ax, zm, [d]),
+        lambda ax: draw_wait_for(ax, edges, victim=d.robot_id))
     assert (d.robot_id, d.zone_id, d.grant, d.holder_robot_id) == ('amr_03', 'z3', GRANT_REVOKED, 'amr_02')
     assert zm.resolve_deadlocks(2.0) == []
     [d] = zm.release('amr_03', 'z3', 3.0)
@@ -252,7 +261,7 @@ def test_avoid_rejects_request_closing_two_robot_cycle():
     assert (d.robot_id, d.zone_id, d.grant) == ('amr_01', 'narrow_02', GRANT_GRANTED)
 
 
-def test_avoid_rejects_request_closing_three_robot_cycle():
+def test_avoid_rejects_request_closing_three_robot_cycle(viz):
     zm = avoid_zones('z1', 'z2', 'z3')
     for robot, held in (('amr_01', 'z1'), ('amr_02', 'z2'), ('amr_03', 'z3')):
         zm.request(robot, held, 1, 0.0)
@@ -261,6 +270,8 @@ def test_avoid_rejects_request_closing_three_robot_cycle():
     [d] = zm.request('amr_03', 'z1', 2, 1.0)
     assert (d.grant, d.reason) == (GRANT_REJECTED, REASON_DEADLOCK_RESOLUTION)
     assert zm.wait_for() == {'amr_01': {'amr_02': 'z2'}, 'amr_02': {'amr_03': 'z3'}}
+    viz('avoid_three_robot_rejected', lambda ax: draw_zones(ax, zm, title='Zones (amr_03 -> z1 REJECTED)'),
+        lambda ax: draw_wait_for(ax, zm.wait_for()))
 
 
 def test_avoid_keeps_plain_queue():
@@ -271,7 +282,7 @@ def test_avoid_keeps_plain_queue():
     assert zm.request('amr_02', 'z1', 1, 1.0)[0].grant == GRANT_QUEUED
 
 
-def test_avoid_still_revokes_cycle_from_queue_promotion():
+def test_avoid_still_revokes_cycle_from_queue_promotion(viz):
     # 회피는 대기열에 넣을 때 지금 점유 로봇만 보고 판단한다. amr_02가 두 구역을 함께 기다리다 그중 하나로
     # 승격되면, 그 구역을 기다리던 amr_03과 순환이 생긴다. 이때는 구역 안 로봇도 REVOKED를 받는다
     zm = avoid_zones('z1', 'z2', 'z3')
@@ -285,7 +296,10 @@ def test_avoid_still_revokes_cycle_from_queue_promotion():
     [d] = zm.release('amr_01', 'z1', 2.0)
     assert (d.robot_id, d.zone_id, d.grant) == ('amr_02', 'z1', GRANT_GRANTED)
     assert zm.wait_for() == {'amr_02': {'amr_03': 'z3'}, 'amr_03': {'amr_02': 'z1'}}
+    edges = zm.wait_for()
     # 우선순위가 같으면 robot_id가 뒤인 amr_03이 물러난다
     [r] = zm.resolve_deadlocks(2.5)
+    viz('avoid_promotion_revoked', lambda ax: draw_zones(ax, zm, [r]),
+        lambda ax: draw_wait_for(ax, edges, victim=r.robot_id))
     assert (r.robot_id, r.zone_id, r.grant, r.reason, r.holder_robot_id) == \
         ('amr_03', 'z3', GRANT_REVOKED, REASON_DEADLOCK_RESOLUTION, 'amr_02')

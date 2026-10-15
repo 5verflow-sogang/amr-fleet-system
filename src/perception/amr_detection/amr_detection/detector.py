@@ -1,8 +1,8 @@
 """ultralytics YOLO를 감싸 '영상 → 검출 목록'만 노드에 내보낸다.
 
 모델 클래스 이름을 팀 클래스 이름(docs/api.md 4-3절 class_name 허용 값)으로 바꾸고, 매핑에 없는
-클래스는 버린다. COCO 사전학습 모델(yolov8n)은 person·stop sign만 우리 클래스에 대응하고 화물은 없다.
-화물·표지판을 학습한 모델로 바꾸면 설정의 매핑만 바꾼다.
+클래스는 버린다. 기본 모델(yolov8n_amr_v1)은 person·cargo·sign 3종을 그대로 낸다. COCO 원본(yolov8n)을 쓰면
+person·stop sign만 우리 클래스에 대응하고 화물은 없다. 모델을 바꾸면 설정의 매핑만 바꾼다.
 """
 
 from dataclasses import dataclass

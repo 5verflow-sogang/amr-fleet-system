@@ -40,6 +40,11 @@ RUN pip3 install --no-cache-dir ultralytics==8.4.164 "numpy<2" "opencv-python<4.
     && pip3 install --no-cache-dir setuptools==58.2.0
 # 기본 모델(yolov8n)을 빌드 시 받아 두어 실행할 때 인터넷 없이 같은 모델을 쓴다.
 ADD https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.pt /opt/models/yolov8n.pt
+# 사람·화물·표지판 3종 모델(v1, amr_detection 기본). 시뮬레이터 영상으로 yolov8n을 파인튜닝했다.
+# 출처·학습 기록: https://github.com/ye0n-w0/yolov8n-fine-tuning (AGPL-3.0), experiments/yolo/README.md
+ADD --checksum=sha256:b623606a497cb0d00b78ff28e938c06d8b7b3d20f13cc3e82237b94a513d53a0 \
+    https://github.com/ye0n-w0/yolov8n-fine-tuning/releases/download/yolov8n-amr-v1/yolov8n_amr_v1.pt \
+    /opt/models/yolov8n_amr_v1.pt
 
 # TEB 로컬 플래너 underlay (DWA 비교 대상). Humble 바이너리가 없어 소스로 빌드하고 SHA로 고정한다.
 # 체인: /opt/ros/humble → /opt/tracing_ws → /opt/teb_ws → /ros2_ws. 우리 src와 따로 빌드해 CI 경고 검사에서 빠진다.

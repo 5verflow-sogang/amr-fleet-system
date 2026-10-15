@@ -212,4 +212,26 @@ ROS 비의존 라이브러리이므로 파라미터는 함수/생성자 인자�
 
 ```bash
 colcon test --packages-select amr_fleet_core
+# ROS 없이 (scipy·pytest. 그림까지 보려면 matplotlib)
+PYTHONPATH=src/fleet/amr_fleet_core python3 -m pytest src/fleet/amr_fleet_core/test
 ```
+
+### 알고리즘 그림 (`viz.py`)
+
+`FLEET_VIZ=<폴더>`로 테스트를 돌리면 대표 테스트가 알고리즘 상태를 PNG로 남긴다 (`<폴더>/<테스트 파일>/<이름>.png`). 설정하지 않으면 그리지 않고 matplotlib도 부르지 않는다.
+
+```bash
+FLEET_VIZ=/tmp/fleet_viz PYTHONPATH=src/fleet/amr_fleet_core python3 -m pytest src/fleet/amr_fleet_core/test
+open /tmp/fleet_viz
+```
+
+| 함수 | 그림 | 남기는 테스트 |
+| --- | --- | --- |
+| `draw_assignment(ax, robots, tasks, result)` | 로봇(원)·작업 시작 지점(사각형), 할당(로봇 → 작업 곡선 화살표)과 비용, 픽업 → 목적지(점선), 할당 못 한 작업(회색 X) | `test_assignment`: `greedy_vs_hungarian`, `algorithms`(세 알고리즘 나란히) |
+| `draw_zones(ax, manager, decisions)` | 구역마다 상자, 안에 점유 로봇, 아래에 대기열(허가 순서). `decisions`의 회수(REVOKED)는 주황 빗금 | `test_zones`: 2대·3대 교착 회수, 회피 거부, 대기열 승격 교착 |
+| `draw_wait_for(ax, edges, victim)` | wait-for 그래프. 교착 순환은 빨강, 물러날 로봇은 빨간 테두리, 화살표에 구역 이름 | `test_zones`, `test_deadlock`: 꼬리 달린 순환, 따로 떨어진 순환 |
+
+- 그림 함수는 `ax`(matplotlib Axes)만 받아 그린다. 이 모듈을 import해도 matplotlib을 부르지 않으므로 라이브러리 본체는 matplotlib에 의존하지 않는다. 노드에서 쓰려면 그 패키지가 matplotlib을 의존성에 넣는다.
+- 새 테스트에 그림을 남기려면 `viz` fixture(`test/conftest.py`)를 인자로 받아 `viz('이름', lambda ax: draw_...(ax, ...), ...)`로 부른다. 함수를 여러 개 주면 왼쪽부터 한 장에 나란히 그린다.
+- `test_viz.py`가 CI에서 그림 함수를 한 번씩 그려 깨지지 않았는지 확인한다.
+- 그림 글자는 한글 글꼴 문제를 피하려고 영어로 쓴다.

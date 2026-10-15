@@ -31,6 +31,14 @@ ZONE_LONG_WAIT_S = 30.0
 COUNT_ZERO_KPI = ('fleet.zone_long_waits', 'fleet.stalls')
 # 시나리오가 일부러 만드는 상황이라 판정하면 오해되는 지표 (fleet_deadlock은 교착을 유도한다)
 NO_VERDICT = {'fleet_deadlock': set(COUNT_ZERO_KPI)}
+# 작업 실패 원인 묶음 (ErrorInfo.code 대역, docs/api.md). 위치(203)를 주행(201·202)과 나눠 센다 (#148 지수 합의)
+FAILURE_CAUSES = {'localization': {'203'}, 'nav': {'201', '202'}, 'traffic': {'301', '302', '303'},
+                  'comm': {'401', '402'}, 'task_timeout': {'501'}, 'charge': {'502'},
+                  'docking': {str(c) for c in range(900, 1000)}}
+# 원 명세 경로 계획(4장)·경로 추종(5장) KPI: (기준, 방향). min = 클수록 좋음 (CI 하한으로 판정), max = 작을수록 좋음
+NAV_KPI = {'navkpi.plan_success_rate': (0.98, 'min'), 'navkpi.replan_p95_ms': (500.0, 'max'),
+           'navkpi.pred_err_mean': (0.15, 'max'), 'navkpi.cte_straight_mean_m': (0.05, 'max'),
+           'navkpi.cte_curve_mean_m': (0.10, 'max')}
 
 
 def load_meta(run_dir: Path) -> dict:
@@ -127,6 +135,11 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
         if dist:
             out['fleet.distance_m.total'] = sum(dist)
             out['fleet.distance_m.mean'] = sum(dist) / len(dist)
+        # 실패 원인 (amr_msgs ErrorInfo 코드, #173). task_outcomes.csv에 error_code 열이 있을 때만 (fleet_metrics, 하연)
+        if 'error_code' in tasks[0]:
+            failed = [r for r in tasks if r['final_state'] == 'FAILED']
+            for name, codes in FAILURE_CAUSES.items():
+                out[f'fleet.tasks_failed_{name}'] = sum(r['error_code'] in codes for r in failed)
     # 구역 허가 대기와 교착 해소 (구역을 쓰는 시나리오만 파일이 있다)
     if (run_dir / 'zone_waits.csv').exists():
         zones = _read_csv(run_dir / 'zone_waits.csv')
@@ -242,10 +255,29 @@ def kidnap_metrics(run_dir: Path) -> dict[str, float]:
     return out
 
 
+def nav_kpi_metrics(run_dir: Path) -> dict[str, float]:
+    """nav_kpi.json(하네스 nav_kpi, experiments/nav_kpi/nav_kpi.py) → navkpi.* 지표.
+
+    CTE는 path_tracker로 잰 실행(definition.cte_kpi)만 KPI 이름(navkpi.cte_*)으로 넣고, DWA(Nav2)로 잰 값은
+    참고 지표(navkpi.ref_cte_*)로 넣어 판정하지 않는다 (CTE KPI는 5장 모션 제어, 이진 10/13).
+    """
+    out = {}
+    for path in sorted(run_dir.glob('**/nav_kpi.json')):
+        k = json.loads(path.read_text(encoding='utf-8'))
+        cte_kpi = (k.get('definition') or {}).get('cte_kpi', False)
+        for key in ('plan_success_rate', 'nav_success_rate', 'replan_p95_ms', 'replan_max_ms', 'pred_err_mean',
+                    'pred_err_median', 'pred_err_no_recovery_mean', 'cte_straight_mean_m', 'cte_curve_mean_m'):
+            v = k.get(key)
+            if isinstance(v, (int, float)) and not math.isnan(v):
+                name = key if cte_kpi or not key.startswith('cte_') else 'ref_' + key
+                out[f'navkpi.{name}'] = float(v)
+    return out
+
+
 def run_metrics(run_dir: Path) -> dict[str, float]:
     meta = load_meta(run_dir)
     out = {**localization_metrics(run_dir), **fleet_metrics(run_dir), **nav_metrics(run_dir),
-           **kidnap_metrics(run_dir), **cpu_metrics(run_dir)}
+           **kidnap_metrics(run_dir), **nav_kpi_metrics(run_dir), **cpu_metrics(run_dir)}
     rtf = meta.get('real_time_factor')
     if isinstance(rtf, (int, float)):
         out['run.real_time_factor'] = float(rtf)
@@ -258,8 +290,13 @@ def group_key(meta: dict) -> str:
     return f"{meta.get('scenario', '?')}{'/' + label if label else ''}"
 
 
-def kpi_verdict(metric: str, mean: float, ci_high: Optional[float], scenario: str = '') -> Optional[str]:
-    """KPI가 있는 지표만 판정한다. CI 상한까지 기준 안이면 PASS, 평균만 안이면 MARGINAL, 아니면 FAIL."""
+def kpi_verdict(metric: str, mean: float, ci_high: Optional[float], ci_low: Optional[float] = None,
+                scenario: str = '') -> Optional[str]:
+    """KPI가 있는 지표만 판정한다. CI 상한까지 기준 안이면 PASS, 평균만 안이면 MARGINAL, 아니면 FAIL.
+
+    클수록 좋은 지표(성공률)는 거꾸로 CI 하한까지 기준 이상이면 PASS다. 시나리오가 일부러 만드는 상황의
+    지표(NO_VERDICT)는 판정하지 않는다.
+    """
     if metric in NO_VERDICT.get(scenario, ()):
         return None
     threshold = None
@@ -272,6 +309,12 @@ def kpi_verdict(metric: str, mean: float, ci_high: Optional[float], scenario: st
         threshold = 0.0
     elif metric == 'sys.cpu_pct.mean':
         threshold = CPU_KPI_PCT
+    elif metric in NAV_KPI:
+        threshold, kind = NAV_KPI[metric]
+        if kind == 'min':
+            if ci_low is not None and ci_low >= threshold:
+                return 'PASS'
+            return 'MARGINAL' if mean >= threshold else 'FAIL'
     if threshold is None:
         return None
     if ci_high is not None and ci_high <= threshold:
@@ -303,7 +346,7 @@ def summarize(run_dirs: Iterable[Path]) -> dict:
             if iv is None:
                 continue
             d = iv.as_dict()
-            verdict = kpi_verdict(metric, iv.mean, iv.ci_high, g.get('scenario', ''))
+            verdict = kpi_verdict(metric, iv.mean, iv.ci_high, iv.ci_low, g.get('scenario', ''))
             n_key = RESPONSE_KPI.get(metric)
             samples = int(sum(g['values'].get(n_key, []))) if n_key else 0
             if verdict and n_key and samples < RESPONSE_MIN_N:

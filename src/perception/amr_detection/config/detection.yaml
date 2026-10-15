@@ -1,11 +1,13 @@
 # YOLO 인식 노드 파라미터 (detection_node). 원 명세 6장 AI 인지
 /**/detection:
   ros__parameters:
-    # 모델. Dockerfile이 빌드할 때 받아 둔 COCO 사전학습 모델
-    model_path: /opt/models/yolov8n.pt
+    # 모델. Dockerfile이 빌드할 때 받아 둔 3종 모델(사람·화물·표지판, v1, experiments/yolo/README.md).
+    # COCO 원본(/opt/models/yolov8n.pt)도 이미지에 남아 있다 (model_classes: ["person", "stop sign"])
+    model_path: /opt/models/yolov8n_amr_v1.pt
     device: cpu                # GPU 컨테이너(docker-compose.gpu.yml)면 cuda:0
     # 추론 입력 크기 [px]. 카메라 640×480. 원 명세 KPI는 CPU 10 FPS.
-    # Docker CPU(8코어, Gazebo 없이) 실측: 640 입력 약 99 ms, 320 입력 약 39 ms (스레드 4).
+    # Docker CPU(10코어, 스레드 4) 실측: 640 입력 약 35 ms (Gazebo 없이, v1 모델).
+    # Mac Docker에서 Gazebo가 카메라를 CPU로 렌더링하면 120~150 ms로 늘어난다 (렌더링이 CPU를 3코어 넘게 쓴다).
     # Gazebo와 함께 10 FPS가 안 나오면 낮춘다. 작게 하면 먼 물체 검출 거리가 줄어든다
     image_size: 640
     # torch CPU 스레드 수. 0이면 torch 기본값(컨테이너에서 1개로 잡혀 640 입력 141 ms였다)
@@ -13,9 +15,9 @@
     confidence_threshold: 0.5
     iou_threshold: 0.45        # NMS
     # 모델 클래스 → 팀 클래스 (docs/api.md 4-3절). 같은 순서로 짝을 이룬다.
-    # COCO에는 화물이 없고 표지판은 stop sign뿐이다. 화물·표지판 학습 모델로 바꾸면 이 두 목록만 바꾼다
-    model_classes: ["person", "stop sign"]
-    output_classes: ["person", "sign"]
+    # 모델을 바꾸면 이 두 목록만 바꾼다
+    model_classes: ["person", "cargo", "sign"]
+    output_classes: ["person", "cargo", "sign"]
 
     # bbox 안 대표 깊이 (amr_perception_core depth_sampling)
     roi_scale: 0.5             # bbox 중심 50%만 본다 (가장자리 배경 제외)

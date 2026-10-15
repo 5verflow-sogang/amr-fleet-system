@@ -374,7 +374,7 @@ camera/color/image_raw + camera/depth/image_raw (같은 촬영 시각, 픽셀 1:
 - 타이머(`max_rate` 30 Hz)가 새 짝이 있는지 보고 처리한다. 실제 FPS는 추론 속도가 정한다.
 - K를 받기 전에는 처리하지 않는다.
 
-검출은 ultralytics YOLO(`model_path`, 기본 COCO 사전학습 `yolov8n.pt`)로 한다 (`detector.YoloDetector`).
+검출은 ultralytics YOLO(`model_path`, 기본 `yolov8n_amr_v1.pt`: COCO `yolov8n`을 시뮬레이터 영상으로 파인튜닝한 사람·화물·표지판 3종 모델, [experiments/yolo](../../experiments/yolo/README.md))로 한다 (`detector.YoloDetector`).
 
 | 단계 | 방법 | 파라미터 |
 | --- | --- | --- |
@@ -385,10 +385,10 @@ camera/color/image_raw + camera/depth/image_raw (같은 촬영 시각, 픽셀 1:
 | 클래스 이름 바꾸기 | 모델 클래스 이름 → 팀 클래스 이름(docs/api.md 4-3절 `class_name`). 매핑에 없으면 버린다 | `model_classes` → `output_classes` |
 
 - 매핑은 두 목록을 같은 순서로 짝짓는다 (`build_class_map`). 길이가 다르거나, 비었거나, `model_classes`에 중복이 있으면 시작할 때 `ValueError`를 낸다. 모델에 없는 클래스 이름이 있어도 `ValueError`다.
-- 기본 매핑은 `person → person`, `stop sign → sign`이다. COCO에는 화물이 없어 지금 모델로는 `cargo`가 나오지 않는다. 화물·표지판을 학습한 모델로 바꾸면 이 두 목록만 바꾼다.
+- 기본 매핑은 `person`·`cargo`·`sign`을 그대로 낸다. COCO 원본(`yolov8n.pt`, 이미지에 함께 있음)을 쓰면 `person → person`, `stop sign → sign`이고 `cargo`는 나오지 않는다. 모델을 바꾸면 이 두 목록만 바꾼다.
 - 검출 하나는 `Detection(class_name, class_id, confidence, xyxy)`다. `xyxy`는 YOLO 출력 그대로의 픽셀 경계 관례 bbox다 (4-2절).
 - 시작할 때 빈 영상으로 한 번 추론해 둔다. 첫 추론은 모델 준비로 오래 걸려(`detector.py` 주석: Docker CPU 약 13 s) 첫 카메라 프레임이 그만큼 늦어지는 것을 막는다.
-- `num_threads` 4: 컨테이너에서 torch 기본 스레드가 1개로 잡혀 CPU 추론이 느렸다(`detection.yaml` 주석: 640 입력 141 ms → 스레드 4에서 약 99 ms, Gazebo 없이).
+- `num_threads` 4: 컨테이너에서 torch 기본 스레드가 1개로 잡혀 CPU 추론이 느렸다(8코어 PC, 640 입력 141 ms). v1 모델은 10코어 컨테이너, 스레드 4에서 약 35 ms다(Gazebo 없이). Mac Docker에서 Gazebo가 카메라를 CPU로 렌더링하는 중에는 120~150 ms로 늘고, 스레드를 2개보다 늘려도 빨라지지 않는다([experiments/yolo 기록](../../experiments/yolo/README.md#기록)).
 
 ### 4-2. Pinhole 카메라 모델
 

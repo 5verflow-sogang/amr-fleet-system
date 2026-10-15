@@ -39,9 +39,9 @@ class DetectionNode(Node):
         super().__init__('detection')
         p = self.declare_parameter
         self.detector = YoloDetector(
-            model_path=p('model_path', '/opt/models/yolov8n.pt').value,
-            class_map=build_class_map(p('model_classes', ['person', 'stop sign']).value,
-                                      p('output_classes', ['person', 'sign']).value),
+            model_path=p('model_path', '/opt/models/yolov8n_amr_v1.pt').value,
+            class_map=build_class_map(p('model_classes', ['person', 'cargo', 'sign']).value,
+                                      p('output_classes', ['person', 'cargo', 'sign']).value),
             device=p('device', 'cpu').value,
             image_size=p('image_size', 640).value,
             confidence=p('confidence_threshold', 0.5).value,

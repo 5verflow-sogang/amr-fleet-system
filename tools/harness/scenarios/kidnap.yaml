@@ -1,4 +1,4 @@
-# Kidnapped Robot 복구 성공률 (민지, 작업 8). 로봇 1대, 창고 월드, 지도 v1 (0.05 m).
+# Kidnapped Robot 복구 성공률 (민지, 작업 8). 로봇 1대, 창고 월드, 지도 v1 0.025 m (기본 지도, #157).
 # 정지 5초 → 직진 3 m → 정지 → (멈춘 지 2초 뒤) Gazebo에서 순간 이동 → 복구 노드가 감지·복구 → 판정.
 # 판정 기준은 docs/algorithms/localization.md 4-4절: 감지 5초, 감지 뒤 60초 안에 진행 0.3 m·옆 0.1 m·방향 0.1 rad를 3초 유지.
 #
@@ -14,12 +14,13 @@ timeout_s: 400
 params:
   # near: 같은 통로 안 1~2.5 m·±0.6 rad / far: 다른 통로(B–C) 무작위 위치·방향
   mode: near
-  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1.yaml
-  # 지도↔월드 정합값(#98, v1 0.05 m). 옆 방향 기준(0.1 m)이 작아 지도 밀림(약 6 cm)을 빼고 잰다
-  map_origin: "[-0.0571, 1.5167, 0.00013]"
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1_0025.yaml
+  # 지도↔월드 정합값(#98, v1 0.025 m). 옆 방향 기준(0.1 m)이 작아 지도 밀림(약 6 cm)을 빼고 잰다.
+  # 0.05 m로 재려면 map=…/warehouse_v1.yaml map_origin=[-0.0571,1.5167,0.00013] initial_x=0.0571 initial_y=-0.0167
+  map_origin: "[-0.0562, 1.5317, 0.00009]"
   # 스폰 자세 world (0, 1.5, 0)을 위 원점 기준 map 좌표로 바꾼 AMCL 초기 위치
-  initial_x: "0.0571"
-  initial_y: "-0.0167"
+  initial_x: "0.0562"
+  initial_y: "-0.0317"
 processes:
   - name: sim
     cmd: >-

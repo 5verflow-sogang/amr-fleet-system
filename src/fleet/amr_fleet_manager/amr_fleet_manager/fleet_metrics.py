@@ -1,4 +1,4 @@
-"""rosbag 기록 → Fleet 지표 CSV (fleet_latency.csv, response_time.csv). rclpy를 import하지 않는다.
+"""rosbag 기록 → Fleet 지표 CSV (fleet_latency.csv, response_time.csv 등). rclpy를 import하지 않는다.
 
 형식과 규칙은 tools/harness/README.md "지표 CSV"·"연구 1 지연"을 따른다.
 - 시각은 모두 bag에 저장된 수신 시각(실제 시간, s)이다. 메시지의 header.stamp(시뮬레이션 시간)는
@@ -43,6 +43,7 @@ ASSIGNMENTS_TOPIC = '/fleet/task_assignments'
 ACKS_TOPIC = '/fleet/task_assignment_acks'
 REQUESTS_TOPIC = '/fleet/task_requests'
 STATUS_TOPIC = '/fleet/task_status'
+STATES_TOPIC = '/fleet/robot_states'
 # TaskStatus.STATE_*
 STATE_COMPLETED = 2
 STATE_FAILED = 3
@@ -77,6 +78,7 @@ STALLS_HEADER = ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duratio
 RECOVERY_HEADER = ['robot', 'kill_time', 'task_id', 'reassign_time', 'reassigned_robot', 'recovery_s', 'completed']
 # latency_ms: 서버 발행 → 첫 움직임 (원 명세 측정 표 "작업 명령 발행"). 통신 지연 포함
 # latency_recv_ms: 로봇 수신(중계본 도착) → 첫 움직임 (원 명세 성능 요구사항 "명령 수신 ~ 로봇 반응"). 통신 지연 제외
+ROBOT_STATES_HEADER = ['time', 'robot', 'x', 'y', 'mode', 'task_id']
 RESPONSE_TIME_HEADER = ['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms',
                         'assignment_id', 'ack_time', 'ack_rtt_ms', 'resends', 'recv_time', 'latency_recv_ms',
                         'moving_at_cmd']
@@ -421,6 +423,15 @@ def recovery(records: Sequence[Record], kills: Sequence[tuple[float, str]]) -> l
     return rows
 
 
+def robot_states(records: Sequence[Record]) -> list[list]:
+    """robot_states.csv 행. RobotState 1건마다 1행 (그림용: fleet_plot의 궤적·작업 타임라인)."""
+    rows = []
+    for r in sorted((r for r in records if r.topic == STATES_TOPIC), key=lambda r: r.t):
+        p = r.msg.pose.position
+        rows.append([_fmt(r.t), r.msg.robot_id, _fmt(p.x, 3), _fmt(p.y, 3), r.msg.mode, r.msg.current_task_id])
+    return rows
+
+
 def write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('w', newline='', encoding='utf-8') as f:
@@ -440,7 +451,8 @@ def update_meta(path: Path, cutoff: Cutoff) -> None:
 def convert(records: Sequence[Record], out_dir: Path, delay_ms: float, grace_s: float = 1.0,
             resend_grace_s: float = 5.0, robots: Optional[Iterable[str]] = None,
             meta_path: Optional[Path] = None, fault_events: Optional[Path] = None) -> Cutoff:
-    """기록 → out_dir/fleet_latency.csv, response_time.csv, task_outcomes.csv, meta.json observation_cutoff.
+    """기록 → out_dir/fleet_latency.csv, response_time.csv, task_outcomes.csv, robot_states.csv,
+    meta.json observation_cutoff.
 
     fault_events(기본 out_dir/fault_events.csv)에 로봇 강제종료가 있으면 recovery.csv도 쓴다.
     """
@@ -456,6 +468,7 @@ def convert(records: Sequence[Record], out_dir: Path, delay_ms: float, grace_s: 
         write_csv(out_dir / 'zone_waits.csv', ZONE_WAITS_HEADER, zone_waits(records, cutoff.end))
     if any(ODOM_TOPIC.match(r.topic) for r in records):
         write_csv(out_dir / 'stalls.csv', STALLS_HEADER, stalls(records))
+    write_csv(out_dir / 'robot_states.csv', ROBOT_STATES_HEADER, robot_states(records))
     kills = read_kill_events(fault_events or out_dir / 'fault_events.csv')
     if kills:
         write_csv(out_dir / 'recovery.csv', RECOVERY_HEADER, recovery(records, kills))

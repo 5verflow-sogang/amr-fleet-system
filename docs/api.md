@@ -129,7 +129,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 추적 | `perception/obstacles` | 토픽 | `amr_msgs/msg/TrackedObstacleArray` | `amr_tracking` | `amr_safety`, DWA | 추적 주기마다 |
 | 추적 | `perception/collision_risks` | 토픽 | `amr_msgs/msg/CollisionRiskArray` | `amr_tracking` | `amr_safety`, DWA(`amr_nav2_plugins`, 회피 모드 예정) | 추적 주기마다 |
 | 안전 | `safety/status` | 토픽 | `amr_msgs/msg/SafetyStatus` | `amr_safety` | `amr_control`, `amr_bt`, `amr_fleet_manager`, 대시보드 | 바뀌면 즉시, 그 외 10 Hz |
-| 안전 | `safety/estop` | 서비스 | `std_srvs/srv/SetBool` | `amr_safety` | 대시보드, 운영자 | 요청 시 |
+| 안전 | `safety/estop` | 서비스 | `std_srvs/srv/SetBool` | `amr_safety` | 대시보드, 운영자, RViz2 E-Stop 버튼(`amr_safety` `estop_button`) | 요청 시 |
 | Fleet | `/fleet/task_requests` | 토픽 | `amr_msgs/msg/Task` | 작업 생성기(`amr_fleet_manager` `task_generator`), 대시보드 | `amr_fleet_manager` | 요청 시 |
 | Fleet | `/fleet/task_assignments` | 토픽 | `amr_msgs/msg/TaskAssignment` | `amr_fleet_manager` | `amr_bt` | 할당·취소 시, Ack 없으면 재전송 |
 | Fleet | `/fleet/heartbeat` | 토픽 | `amr_msgs/msg/FleetHeartbeat` | `amr_fleet_manager` | 각 로봇, `amr_fleet_decentralized` | 고정 주기 |
@@ -161,7 +161,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 서버 재시작 | `FleetHeartbeat.epoch`가 바뀌면 로봇은 명령 번호 기준을 초기화한다 |
 | 응답 시간 KPI | 실제 시간으로 잰다. 노드의 `header.stamp`는 시뮬레이션 시간이라 쓰지 않고, 하네스 기록기가 메시지를 받은 시각을 쓴다. `cmd_time`은 `TaskAssignment` 수신 시각, 확인 왕복 시간은 `TaskAssignment` → `TaskAssignmentAck` 수신 시각 차이. 둘 다 같은 `assignment_id`의 첫 수신 기준이라 재전송 시간이 들어간다 ([하네스 로그 포맷](../tools/harness/README.md#지표-csv)) |
 | 작업 로그 | `TaskStatus`의 마지막 이벤트(COMPLETED·FAILED)가 로그 한 줄이 된다. 소요 시간은 `end_time - start_time` |
-| 오류 코드 | `ErrorInfo.code` 대역: 100 할당 / 200 주행 / 300 교통 / 400 통신 / 900 도킹 (`Dock` 결과의 `error_code`, Nav2 DockRobot과 같은 값). 오류가 없으면 `NONE`(0) |
+| 오류 코드 | `ErrorInfo.code` 대역: 100 할당 / 200 주행 / 300 교통 / 400 통신 / 500 작업 수행 / 900 도킹 (`Dock` 결과의 `error_code`, Nav2 DockRobot과 같은 값). 오류가 없으면 `NONE`(0) |
 
 **`class_name` 허용 값**
 
@@ -277,6 +277,9 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | Publish | `safety/status` | `amr_msgs/msg/SafetyStatus` | 바뀌면 즉시, 그 외 10 Hz |
 | Publish | `safety/markers` | `visualization_msgs/msg/MarkerArray` | 차체·0.3 m 경계(단계 색)·1.5 m 경계·상태 글자 (RViz 확인용) |
 | Service | `safety/estop` | `std_srvs/srv/SetBool` | `true` 걸기, `false` 해제 요청 (해제 뒤 0.5 s 지나 단계 재판정) |
+
+같은 패키지의 `estop_button` 노드는 RViz2 E-Stop 버튼이다. interactive marker 서버 `estop_button`(`estop_button/update` 등)을 열고, 클릭하면 `safety/status`의 ESTOP 여부에 따라 `safety/estop`에 `true`/`false`를 보낸다.
+
 ### amr_fleet_manager
 
 | 종류 | 이름 | 타입 | 설명 |

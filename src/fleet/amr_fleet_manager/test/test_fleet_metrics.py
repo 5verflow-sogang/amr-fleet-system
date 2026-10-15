@@ -7,9 +7,9 @@ from types import SimpleNamespace as NS
 import pytest
 
 from amr_fleet_manager.fleet_metrics import (robot_ids, FLEET_LATENCY_HEADER, RECOVERY_HEADER, RESPONSE_TIME_HEADER,
-                                             STALLS_HEADER, TASK_OUTCOMES_HEADER, ZONE_WAITS_HEADER, Cutoff, Record,
-                                             convert, fleet_latency, observation_start, read_kill_events, recovery,
-                                             response_time, stalls, task_outcomes, zone_waits)
+                                             ROBOT_STATES_HEADER, STALLS_HEADER, TASK_OUTCOMES_HEADER, ZONE_WAITS_HEADER,
+                                             Cutoff, Record, convert, fleet_latency, observation_start, read_kill_events,
+                                             recovery, response_time, robot_states, stalls, task_outcomes, zone_waits)
 
 
 def stamp(sec, nanosec=0):
@@ -268,6 +268,21 @@ def test_convert_writes_outcomes_and_recovery(tmp_path):
     other = tmp_path / 'other'
     convert(kill_scenario(), other, delay_ms=0.0)
     assert not (other / 'recovery.csv').exists()
+
+
+def robot_state(robot, x, y, mode=0, task_id=''):
+    return NS(robot_id=robot, pose=NS(position=NS(x=x, y=y)), mode=mode, current_task_id=task_id)
+
+
+def test_robot_states_sorted_by_time(tmp_path):
+    records = [rec('/fleet/robot_states', 2.0, robot_state('amr_02', 4.0, 2.0, mode=1, task_id='t1')),
+               rec('/fleet/robot_states', 1.5, robot_state('amr_01', 1.23456, -2.0)),
+               rec('/fleet/heartbeat', 1.0, heartbeat(0))]
+    assert robot_states(records) == [['1.500000', 'amr_01', '1.235', '-2.000', 0, ''],
+                                     ['2.000000', 'amr_02', '4.000', '2.000', 1, 't1']]
+    convert(records, tmp_path, delay_ms=0.0)
+    with (tmp_path / 'robot_states.csv').open(newline='') as f:
+        assert next(csv.reader(f)) == ROBOT_STATES_HEADER
 
 
 def test_robot_ids_follow_naming_rule():
