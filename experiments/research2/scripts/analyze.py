@@ -33,6 +33,8 @@ from typing import Iterable, Optional
 
 RESAMPLES = 10_000
 MARGIN = 0.02          # 비열등 마진 (충돌률, experiment_design.md 7절)
+# 시간 초과율 보조 기준 (7절): 충돌을 줄이는 대신 도착을 못 하는 정책이 통과하지 않게, 비교군보다 이만큼 넘게 늘면 안 된다
+TIMEOUT_MARGIN = 0.05
 TRAIN_MASSES = (0.0, 2.0, 10.0, 25.0)
 UNSEEN_MASSES = (15.0, 30.0)
 INFO_ERRORS = ('plus30', 'minus30', 'unknown')
@@ -102,6 +104,11 @@ def collision_rate(eps: list[dict]) -> Optional[float]:
     return sum(e['collision'] for e in den) / len(den) if den else None
 
 
+def timeout_rate(eps: list[dict]) -> Optional[float]:
+    """충돌도 도착도 아닌 에피소드(시간 초과) 비율. 분모는 에피소드 전체."""
+    return sum(not e['collision'] and not e['success'] for e in eps) / len(eps) if eps else None
+
+
 def success_rate(eps: list[dict]) -> Optional[float]:
     return sum(e['success'] for e in eps) / len(eps) if eps else None
 
@@ -163,6 +170,65 @@ def bootstrap(values: list[float], seed: int = 0) -> dict:
     return {'n': n, 'mean': mean, 'ci_low': lo, 'ci_high': hi, 'p_ge0': sum(m >= 0 for m in means) / RESAMPLES}
 
 
+def _betacf(a: float, b: float, x: float) -> float:
+    """불완전 베타 함수의 연분수 (Numerical Recipes betacf). t 분포 누적확률에 쓴다."""
+    tiny = 1e-300
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    d = 1.0 / (d if abs(d) > tiny else tiny)
+    h = d
+    for m in range(1, 300):
+        m2 = 2 * m
+        for aa in (m * (b - m) * x / ((qam + m2) * (a + m2)), -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))):
+            d = 1.0 + aa * d
+            d = 1.0 / (d if abs(d) > tiny else tiny)
+            c = 1.0 + aa / c
+            c = c if abs(c) > tiny else tiny
+            h *= d * c
+        if abs(d * c - 1.0) < 1e-12:
+            break
+    return h
+
+
+def t_cdf(t: float, df: int) -> float:
+    """스튜던트 t 분포 누적확률 P(T <= t). 표준 라이브러리만 쓴다 (scipy 없이)."""
+    if t == 0.0:
+        return 0.5
+    x = df / (df + t * t)
+    a, b = df / 2.0, 0.5
+    bt = math.exp(math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x) + b * math.log1p(-x))
+    tail = bt * _betacf(a, b, x) / a if x < (a + 1) / (a + b + 2) else 1.0 - bt * _betacf(b, a, 1 - x) / b
+    tail = min(max(tail, 0.0), 1.0)          # P(|T| >= |t|)
+    return 1.0 - tail / 2 if t > 0 else tail / 2
+
+
+def t_quantile(q: float, df: int) -> float:
+    """t 분포 분위수 (이분법)."""
+    lo, hi = -100.0, 100.0
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if t_cdf(mid, df) < q else (lo, mid)
+    return (lo + hi) / 2
+
+
+def paired_t(values: list[float], bound: float) -> dict:
+    """짝지은 차이 Δ_k의 t 검정. H0: 평균 ≥ bound, 대립: 평균 < bound (한쪽).
+
+    시드 k끼리 같은 평가 목록을 풀어 짝지어졌으므로 Welch(독립 표본)가 아니라 짝지은 t다 (#100 연우 리뷰).
+    95% CI 상한 < bound ⇔ 한쪽 p < 0.025. 값이 2개 미만이거나 분산이 0이면 None.
+    """
+    n = len(values)
+    if n < 2:
+        return {'t_ci_high': None, 'p_t': None}
+    mean = sum(values) / n
+    sd = math.sqrt(sum((v - mean) ** 2 for v in values) / (n - 1))
+    if sd == 0.0:
+        return {'t_ci_high': mean, 'p_t': 0.0 if mean < bound else 1.0}
+    se = sd / math.sqrt(n)
+    return {'t_ci_high': mean + t_quantile(0.975, n - 1) * se, 'p_t': t_cdf((mean - bound) / se, n - 1)}
+
+
 def holm(pvalues: list[Optional[float]], alpha: float = 0.05) -> list[Optional[bool]]:
     """Holm 보정. 기각(True) 여부. p가 None이면 None."""
     idx = sorted((i for i, p in enumerate(pvalues) if p is not None), key=lambda i: pvalues[i])
@@ -176,10 +242,28 @@ def holm(pvalues: list[Optional[float]], alpha: float = 0.05) -> list[Optional[b
 
 
 def check(name: str, condition: str, values: list[float], bound: float, seed: int) -> dict:
-    """CI 상한 < bound면 통과."""
+    """부트스트랩 CI 상한과 짝지은 t CI 상한이 둘 다 bound보다 작으면 통과 (둘이 다르면 보수적인 쪽, 6절)."""
     b = bootstrap(values, seed)
-    passed = None if b['ci_high'] is None else b['ci_high'] < bound
-    return {'hypothesis': name, 'condition': condition, 'bound': bound, **b, 'pass': passed}
+    t = paired_t(values, bound)
+    highs = [h for h in (b['ci_high'], t['t_ci_high']) if h is not None]
+    passed = None if b['ci_high'] is None else all(h < bound for h in highs)
+    return {'hypothesis': name, 'condition': condition, 'bound': bound, **b, **t, 'pass': passed}
+
+
+def hypothesis_verdicts(results: list[dict]) -> dict:
+    """가설마다 판정. 조건이 여럿이면 모두 통과해야 통과다 (H1 "10·25 kg 각각" 등, #100 연우 리뷰).
+
+    모든 조건을 다 통과해야 하는 판정(intersection-union)은 조건마다 유의수준 0.025(한쪽)로 봐도 가설 전체의
+    1종 오류가 0.025를 넘지 않는다. 그래서 다중 비교 보정 없이 조건별 판정을 그대로 쓴다 (Berger 1982).
+    Holm 열은 "어느 조건이 따로 유의한가"를 볼 때만 쓴다.
+    """
+    groups: dict[str, list] = {}
+    for r in results:
+        groups.setdefault(r['hypothesis'], []).append(r['pass'])
+    out = {}
+    for name, passes in groups.items():
+        out[name] = False if False in passes else (None if None in passes else True)
+    return out
 
 
 def judge(rows: list[dict]) -> list[dict]:
@@ -193,11 +277,18 @@ def judge(rows: list[dict]) -> list[dict]:
         results.append(check(name, cond, values, bound, seed=k))
         k += 1
 
+    def guard(name, other, mass):
+        # 시간 초과율 보조 기준: 제안 − 비교군 < +TIMEOUT_MARGIN (#184 G 보상에서 시간 초과가 8~10%로 늘어서)
+        add(name, f'{mass:g} kg 시간 초과율 Δ(제안 − {other.upper()}) [보조]', paired(
+            per_seed(g, 'proposed', 'exact', mass, timeout_rate),
+            per_seed(g, other, 'exact', mass, timeout_rate)), TIMEOUT_MARGIN)
+
     if {'proposed', 'b1'} <= variants:
         for mass in (10.0, 25.0):
             add('H1', f'{mass:g} kg 충돌률 Δ(제안 − B1)', paired(
                 per_seed(g, 'proposed', 'exact', mass, collision_rate),
                 per_seed(g, 'b1', 'exact', mass, collision_rate)), 0.0)
+            guard('H1', 'b1', mass)
     if {'proposed', 'b2'} <= variants:
         for mass in TRAIN_MASSES:
             add('H2-a', f'{mass:g} kg 충돌률 Δ(제안 − B2)', paired(
@@ -214,12 +305,12 @@ def judge(rows: list[dict]) -> list[dict]:
                 per_seed(g, 'r2', 'exact', mass, collision_rate)), MARGIN)
             add('H3', f'{mass:g} kg 도착 시간 Δ(제안 − R2) [s]',
                 arrival_diffs(g, 'proposed', 'r2', 'exact', mass), 0.0)
+            guard('H3', 'r2', mass)
 
-    # 가설 하나 안의 여러 조건은 Holm 보정 (보조 지표, 판정은 CI)
+    # 가설 하나 안의 여러 조건을 따로 볼 때의 Holm 보정 (보조 지표). 짝지은 t의 한쪽 p, 유의수준 0.025
     for name in sorted({r['hypothesis'] for r in results}):
         sub = [r for r in results if r['hypothesis'] == name]
-        # H1·H2-b·H3 도착 시간은 "Δ < 0", 비열등 조건은 "Δ < 마진"이라 p는 Δ − bound ≥ 0인 비율로 근사한다
-        for r, rej in zip(sub, holm([r['p_ge0'] if r['bound'] == 0.0 else None for r in sub])):
+        for r, rej in zip(sub, holm([r['p_t'] for r in sub], alpha=0.025)):
             r['holm_reject'] = rej
     return results
 
@@ -251,14 +342,17 @@ def to_markdown(results: list[dict], warn: set) -> str:
         lines.append(f'> 경고: {w}')
     if warn:
         lines.append('')
-    lines += ['| 가설 | 조건 | 시드 | 평균 | 95% CI | 기준 (CI 상한 <) | 판정 | Holm |',
-              '| --- | --- | --- | --- | --- | --- | --- | --- |']
+    lines += ['| 가설 | 판정 (조건 모두 통과해야 PASS) |', '| --- | --- |']
+    for name, v in hypothesis_verdicts(results).items():
+        lines.append(f"| {name} | {({True: 'PASS', False: 'FAIL', None: '—'})[v]} |")
+    lines += ['', '| 가설 | 조건 | 시드 | 평균 | 95% CI (부트스트랩) | t CI 상한 | 기준 (CI 상한 <) | 판정 | Holm |',
+              '| --- | --- | --- | --- | --- | --- | --- | --- | --- |']
     for r in results:
         verdict = {True: 'PASS', False: 'FAIL', None: '—'}[r['pass']]
         holm_mark = {True: '기각', False: '유지', None: ''}[r.get('holm_reject')]
         ci = '—' if r['ci_low'] is None else f"{fmt(r['ci_low'])} ~ {fmt(r['ci_high'])}"
         lines.append(f"| {r['hypothesis']} | {r['condition']} | {r['n']} | {fmt(r['mean'])} | {ci} | "
-                     f"{r['bound']:g} | {verdict} | {holm_mark} |")
+                     f"{fmt(r.get('t_ci_high'))} | {r['bound']:g} | {verdict} | {holm_mark} |")
     lines += ['', '충돌률 분모는 돌발 장애물이 나타난 에피소드 전체다(popout_appeared). 충돌 원인(설 수 있었는데 / 너무 빨라)은 per_seed.csv에 있다. '
               '도착 시간은 두 비교군이 모두 성공한 같은 시나리오끼리 비교한다.']
     return '\n'.join(lines) + '\n'
