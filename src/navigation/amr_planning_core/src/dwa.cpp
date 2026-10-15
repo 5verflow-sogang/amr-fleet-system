@@ -246,7 +246,8 @@ DwaCommand DwaPlanner::rotateToGoalYaw(
 
 DwaCommand DwaPlanner::computeVelocityCommand(
   const RobotState & state, const Point2D & goal, const Grid & grid,
-  const std::vector<DynamicObstacle> & dynamic_obstacles) const
+  const std::vector<DynamicObstacle> & dynamic_obstacles,
+  const std::optional<Point2D> & final_goal) const
 {
   DwaCommand result;
 
@@ -257,7 +258,14 @@ DwaCommand DwaPlanner::computeVelocityCommand(
     return result;
   }
 
-  const DynamicWindow window = computeDynamicWindow(state);
+  DynamicWindow window = computeDynamicWindow(state);
+  if (config_.use_goal_slowdown && final_goal.has_value()) {
+    // 목표 앞 감속: acc_v로 줄여 최종 목표에 서는 속도까지만 샘플링한다. 그만큼 빨리 못
+    // 줄이면(윈도우 최저 속도가 더 높으면) 최대 감속인 최저 속도만 남긴다.
+    const double d_goal = std::hypot(final_goal->x - state.x, final_goal->y - state.y);
+    const double goal_cap = admissibleVelocity(d_goal);
+    window.max_v = std::max(window.min_v, std::min(window.max_v, goal_cap));
+  }
 
   // [0]: 장애물에 안 닿는 궤적, [1]: 닿지만 허용 속도 조건으로 그 앞에 설 수 있는 궤적.
   // [0]이 하나라도 있으면 [1]은 보지 않는다 - 닿는 궤적까지 비용으로 겨루게 하면 heading이

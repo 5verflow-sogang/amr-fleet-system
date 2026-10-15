@@ -1,6 +1,7 @@
 #ifndef AMR_PLANNING_CORE__DWA_HPP_
 #define AMR_PLANNING_CORE__DWA_HPP_
 
+#include <optional>
 #include <vector>
 
 #include "amr_planning_core/grid.hpp"
@@ -152,6 +153,14 @@ struct DwaConfig
   // 하나도 없을 때만 그중에서 고른다(이전에는 kNoValidTrajectory로 바로 정지).
   // false면 sim_time 안에서 닿는 궤적을 모두 빼는 기존 동작과 결과가 완전히 같다.
   bool use_admissible_velocity = true;
+
+  // --- 목표 앞 감속 ---
+
+  // true면 최종 목표(computeVelocityCommand의 final_goal, 지역 waypoint가 아님)까지 직선
+  // 거리 d_goal에서 샘플 선속도를 |v| <= sqrt(2*acc_v*d_goal)로 제한한다 - acc_v로 감속해
+  // 목표에 서는 속도. 동적 윈도우의 최저 속도가 이보다 높으면(그만큼 빨리 못 줄이면) 최저
+  // 속도 하나만 샘플링한다. final_goal을 안 넘기거나 false면 기존 동작과 결과가 같다.
+  bool use_goal_slowdown = true;
 };
 
 // ROS 비의존 DWA 로컬 컨트롤러 코어. 2~3주차에 amr_nav2_plugins에서
@@ -169,9 +178,12 @@ public:
 
   // 4단계를 모두 실행해 다음 제어 주기에 낼 (v, w)를 고른다. dynamic_obstacles가
   // 비어 있으면(기본값) 2주차 정적 장애물 전용 동작과 결과가 완전히 같다.
+  // goal은 추종할 지역 지점(waypoint), final_goal은 전역 경로의 최종 목표다 - 주면
+  // use_goal_slowdown에 따라 최종 목표 앞에서 감속한다(안 주면 감속 없음).
   DwaCommand computeVelocityCommand(
     const RobotState & state, const Point2D & goal, const Grid & grid,
-    const std::vector<DynamicObstacle> & dynamic_obstacles = {}) const;
+    const std::vector<DynamicObstacle> & dynamic_obstacles = {},
+    const std::optional<Point2D> & final_goal = std::nullopt) const;
 
   // 최종 접근: 위치는 이미 도착했다고 보고(xy 오차 확인은 호출 쪽 책임 - computeVelocityCommand의
   // goal_tolerance는 웨이포인트 추종용이라 각도까지는 안 본다, DwaConfig::goal_tolerance 주석

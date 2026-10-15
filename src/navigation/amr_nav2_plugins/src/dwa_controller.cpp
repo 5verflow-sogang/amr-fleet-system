@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -66,6 +67,7 @@ void DwaController::configure(
     node, prefix + "dynamic_obstacle_influence_radius", config.dynamic_obstacle_influence_radius);
   declareAndGet(node, prefix + "dynamic_weight", config.dynamic_weight);
   declareAndGet(node, prefix + "use_admissible_velocity", config.use_admissible_velocity);
+  declareAndGet(node, prefix + "use_goal_slowdown", config.use_goal_slowdown);
   declareAndGet(node, prefix + "v_samples", config.v_samples);
   declareAndGet(node, prefix + "w_samples", config.w_samples);
   declareAndGet(node, prefix + "lookahead_distance", lookahead_distance_);
@@ -217,6 +219,14 @@ geometry_msgs::msg::TwistStamped DwaController::computeVelocityCommands(
   goal.x = waypoint.pose.position.x - origin_x;
   goal.y = waypoint.pose.position.y - origin_y;
 
+  // 목표 앞 감속은 지역 waypoint가 아니라 전역 경로의 최종 목표 기준이다.
+  std::optional<amr_planning_core::Point2D> final_goal;
+  if (!global_plan_.poses.empty()) {
+    final_goal = amr_planning_core::Point2D{
+      global_plan_.poses.back().pose.position.x - origin_x,
+      global_plan_.poses.back().pose.position.y - origin_y};
+  }
+
   std::vector<amr_planning_core::DynamicObstacle> obstacles;
   {
     std::lock_guard<std::mutex> lock(obstacles_mutex_);
@@ -230,7 +240,7 @@ geometry_msgs::msg::TwistStamped DwaController::computeVelocityCommands(
   }
 
   const amr_planning_core::DwaCommand command =
-    planner_->computeVelocityCommand(state, goal, grid, obstacles);
+    planner_->computeVelocityCommand(state, goal, grid, obstacles, final_goal);
 
   if (command.status == amr_planning_core::DwaStatus::kNoValidTrajectory) {
     RCLCPP_WARN_THROTTLE(
