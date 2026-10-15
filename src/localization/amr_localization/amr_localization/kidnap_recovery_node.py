@@ -8,7 +8,8 @@
       각 시도마다 움직이지 않고 갱신 요청 → (허용 시) 제자리 회전 → 수렴 확인.
 
 구독: /map, scan, odometry/filtered, amcl_pose
-호출: reinitialize_global_localization, request_nomotion_update (AMCL, std_srvs/Empty)
+호출: reinitialize_global_localization, request_nomotion_update (AMCL, std_srvs/Empty),
+      amcl/set_parameters (재초기화 직전 max_particles를 boost_particles로, 복구 뒤 normal_particles로)
 발행: cmd_vel_recovery (탐색 중에만), initialpose (국소 재초기화),
       kidnap_recovery/state (std_msgs/String, tracking·settling·rotating·failed 단어만. BT가 비교한다),
       kidnap_recovery/match_ratio (std_msgs/Float32, 스캔-지도 일치율)
@@ -16,6 +17,7 @@
       넣어 구역 허가·안전 노드를 그대로 거친다(#79 이진 리뷰). 복구 중 내비 목표 중지는 BT가 한다
 """
 
+import csv
 import math
 import os
 
@@ -24,6 +26,8 @@ import tf2_ros
 from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.executors import ExternalShutdownException
+from rcl_interfaces.msg import Parameter as ParameterMsg, ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
@@ -51,10 +55,18 @@ class KidnapRecoveryNode(Node):
         self.events_file = d('events_file', '').value
         cfg = RecoveryConfig(
             lost_ratio=d('lost_ratio', 0.5).value, lost_checks=d('lost_checks', 3).value,
-            ok_ratio=d('ok_ratio', 0.8).value, ok_std_m=d('ok_std_m', 0.15).value, ok_checks=d('ok_checks', 3).value,
+            ok_ratio=d('ok_ratio', 0.9).value, ok_std_m=d('ok_std_m', 0.3).value, ok_checks=d('ok_checks', 3).value,
             settle_s=d('settle_s', 10.0).value, allow_rotate=d('allow_rotate', True).value,
             rotate_s=d('rotate_s', 15.0).value, max_attempts=d('max_attempts', 3).value,
-            local_first=d('local_first', True).value)
+            local_first=d('local_first', True).value, nomotion_max=d('nomotion_max', 4).value,
+            confirm_s=d('confirm_s', 3.0).value)
+        # 재초기화 때만 파티클을 늘린다. AMCL은 재초기화 순간 max_particles개를 뿌리고 KLD로 곧 줄이므로 평소 정확도에는
+        # 영향이 없다. 설정 전체를 10,000으로 두면 직진 RMSE가 2.02 → 2.38 cm로 나빠졌다 (localization.md 4-5절).
+        # 0이면 끈다. 되돌린 뒤에는 필터가 다시 초기화될 수 있어 복구된 자세를 작은 공분산으로 다시 넣는다
+        self.boost_particles = d('boost_particles', 10000).value
+        self.normal_particles = d('normal_particles', 2000).value
+        self.restore_std_m = d('restore_std_m', 0.1).value
+        self.restore_std_yaw = d('restore_std_yaw', 0.05).value
         # 국소 재초기화 때 뿌리는 파티클 범위 (1σ). 바퀴 미끄러짐·충돌로 몇 m 어긋난 경우를 덮는다.
         # 1.0 m에서는 1.9 m 이동을 못 찾았고(통로 방향 1.5 m 오차 남음) 2.5 m에서 9.5초에 복구했다 (10/6)
         self.local_std_m = d('local_std_m', 2.5).value
@@ -81,6 +93,7 @@ class KidnapRecoveryNode(Node):
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self._on_amcl, 10)
         self.reinit = self.create_client(Empty, 'reinitialize_global_localization')
         self.nomotion = self.create_client(Empty, 'request_nomotion_update')
+        self.amcl_params = self.create_client(SetParameters, d('amcl_node', 'amcl').value + '/set_parameters')
         self.cmd_pub = self.create_publisher(Twist, d('cmd_vel_topic', 'cmd_vel_recovery').value, 10)
         self.initialpose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
         self.state_pub = self.create_publisher(String, 'kidnap_recovery/state', 10)
@@ -131,9 +144,9 @@ class KidnapRecoveryNode(Node):
         n_events = len(self.machine.events)
         for action in self.machine.step(self._now(), self.ratio, self.amcl_std):
             if action == LOCAL_REINIT:
-                self._local_reinit()
+                self._with_particles(self.boost_particles, self._local_reinit)
             elif action == REINIT and self.reinit.service_is_ready():
-                self.reinit.call_async(Empty.Request())
+                self._with_particles(self.boost_particles, lambda: self.reinit.call_async(Empty.Request()))
             elif action == NOMOTION and self.nomotion.service_is_ready():
                 self.nomotion.call_async(Empty.Request())
             elif action == STOP:
@@ -141,12 +154,32 @@ class KidnapRecoveryNode(Node):
         for e in self.machine.events[n_events:]:
             self.get_logger().warn(f'[kidnap] {e.kind} {e.detail}')
             self._log_event(e)
+            if e.kind in ('recovered', 'restored'):
+                pose = self.pose
+                self._with_particles(self.normal_particles, lambda p=pose: self._set_pose(p, self.restore_std_m,
+                                                                                         self.restore_std_yaw))
         self.state_pub.publish(String(data=self.machine.state))
         self.ratio_pub.publish(Float32(data=float(self.ratio)))
 
+    def _with_particles(self, count: int, then):
+        """AMCL max_particles를 바꾼 뒤 then()을 부른다. 끄거나(0) 서비스가 없으면 바로 부른다."""
+        if not count or not self.amcl_params.service_is_ready():
+            then()
+            return
+        req = SetParameters.Request()
+        req.parameters = [ParameterMsg(name='max_particles', value=ParameterValue(
+            type=ParameterType.PARAMETER_INTEGER, integer_value=int(count)))]
+        self.amcl_params.call_async(req).add_done_callback(lambda _: then())
+
     def _local_reinit(self):
         """마지막으로 확실했던 자세 주변에 파티클을 넓게 뿌린다 (AMCL initialpose). 없으면 지금 자세."""
-        x, y, yaw = self.last_good or self.pose
+        self._set_pose(self.last_good or self.pose, self.local_std_m, self.local_std_yaw)
+
+    def _set_pose(self, pose, std_m: float, std_yaw: float):
+        """AMCL initialpose: pose(map) 주변 σ std_m·std_yaw로 파티클을 다시 뿌린다."""
+        if pose is None:
+            return
+        x, y, yaw = pose
         msg = PoseWithCovarianceStamped()
         msg.header.frame_id = 'map'
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -154,8 +187,8 @@ class KidnapRecoveryNode(Node):
         _, _, qz, qw = quaternion_from_yaw(yaw)
         msg.pose.pose.orientation.z, msg.pose.pose.orientation.w = qz, qw
         cov = [0.0] * 36
-        cov[0] = cov[7] = self.local_std_m ** 2
-        cov[35] = self.local_std_yaw ** 2
+        cov[0] = cov[7] = std_m ** 2
+        cov[35] = std_yaw ** 2
         msg.pose.covariance = cov
         self.initialpose_pub.publish(msg)
 
@@ -184,10 +217,11 @@ class KidnapRecoveryNode(Node):
             return
         new = not os.path.exists(self.events_file)
         os.makedirs(os.path.dirname(self.events_file) or '.', exist_ok=True)
-        with open(self.events_file, 'a', encoding='utf-8') as f:
+        with open(self.events_file, 'a', encoding='utf-8', newline='') as f:
+            w = csv.writer(f)   # detail에 쉼표가 들어가므로 따옴표 처리
             if new:
-                f.write('time,event,detail,ratio,amcl_std\n')
-            f.write(f'{e.t:.3f},{e.kind},{e.detail},{self.ratio:.3f},{self.amcl_std:.3f}\n')
+                w.writerow(['time', 'event', 'detail', 'ratio', 'amcl_std'])
+            w.writerow([f'{e.t:.3f}', e.kind, e.detail, f'{self.ratio:.3f}', f'{self.amcl_std:.3f}'])
 
 
 def main(args=None):

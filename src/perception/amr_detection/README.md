@@ -23,6 +23,16 @@
 
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
 
+## 모델
+
+| 모델 | 경로 (이미지 안) | 클래스 | 비고 |
+| --- | --- | --- | --- |
+| **v1 (기본)** | `/opt/models/yolov8n_amr_v1.pt` | `person`, `cargo`, `sign` | 시뮬레이터 영상으로 파인튜닝한 3종 모델. 출처 [ye0n-w0/yolov8n-fine-tuning](https://github.com/ye0n-w0/yolov8n-fine-tuning), 학습 기록 [experiments/yolo](../../../experiments/yolo/README.md) |
+| COCO 원본 | `/opt/models/yolov8n.pt` | `person`, `stop sign` → `sign` | 화물이 없다. 쓰려면 `model_path`와 `model_classes: ["person", "stop sign"]`, `output_classes: ["person", "sign"]` |
+
+- 두 모델 모두 `docker/Dockerfile`이 이미지를 만들 때 받는다. v1은 해시(`ADD --checksum`)가 다르면 빌드가 멈춘다.
+- 모델을 바꾸면 `model_path`, `model_classes`, `output_classes`만 바꾼다. 모델에 없는 클래스 이름을 적으면 시작할 때 `ValueError`다.
+
 ## 실행
 
 ```bash
@@ -34,6 +44,32 @@ ros2 launch amr_detection detection.launch.py device:=cuda:0            # GPU �
 
 - 로봇 네임스페이스 안에서 띄워야 로봇 카메라(`/<ns>/camera/...`)를 받는다. `amr_bringup`은 `namespace:=<이름>`을 넘긴다.
 - 이미지에 `cv_bridge`가 없으면 `apt install ros-humble-cv-bridge`가 필요하다.
+
+## 학습 데이터 수집 (`collect_dataset`, 시뮬 전용)
+
+화물·표지판 클래스를 학습할 데이터를 Gazebo에서 만든다. 라벨은 라벨 카메라(`label_camera:=true`)가 낸 **화면에 보이는 부분의 2D 상자**라 사람이 라벨을 달지 않는다([amr_gazebo README "라벨 카메라"](../../simulation/amr_gazebo/README.md)). 학습과 결과 기록은 [experiments/yolo](../../../experiments/yolo/README.md).
+
+```bash
+# 결과를 호스트에 남기려고 데이터 폴더만 붙인다 (git 제외 폴더)
+docker compose run --rm -v $PWD/experiments/yolo/raw:/data dev bash
+# 컨테이너 안
+cd /ros2_ws && colcon build --packages-up-to amr_detection && source install/setup.bash
+ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false label_camera:=true cargo:=true dynamic_obstacles:=true obstacle_seed:=1 &
+ros2 run amr_detection collect_dataset --out /data --count 2500 --seed 1
+```
+
+| Gazebo 라벨 | YOLO 클래스 | 모델 |
+| --- | --- | --- |
+| 1 | 0 `person` | 작업자 (`dynamic_worker`) |
+| 2 | 1 `cargo` | 화물 상자 24개 (`cargo:=true`) |
+| 3 | 2 `sign` | 표지판 13개 (월드) |
+
+- 로봇을 지도 v1의 빈 자리(장애물에서 0.6 m 넘게)로 순간이동(`/world/warehouse/set_pose`)하며 찍는다. 70%는 표지판·화물·작업자 하나를 1.5~8 m에서 바라보는 자리, 30%는 아무 데나다.
+- 순간이동 뒤 sim 0.3 s가 지난 라벨과 **같은 시각(±5 ms)** RGB 영상을 짝짓는다. 로봇이 요청한 자리에서 0.1 m 넘게 밀려 있으면(충돌) 버린다.
+- 물체 없는 사진은 10%만 남긴다. 한 변 4 px 미만 상자만 뺀다. 작은 상자를 빼면 사진에는 물체가 있는데 라벨이 없어 "작은 건 무시"를 배운다 (10 px 기준이면 첫 20장에서 상자 31개 중 5개가 빠졌다).
+- 학습·검증은 **장소(5 m 칸)로 나눈다**(검증 약 15%). 같은 장소의 비슷한 사진이 양쪽에 들어가면 검증 성능이 부풀려진다.
+- 결과: `<out>/<시각>/` — `images/{train,val}`, `labels/{train,val}` (YOLO 형식), `data.yaml`, `frames.jsonl`(사진마다 자리·상자 수), `meta.json`, `preview/`(처음 30장에 상자를 그린 것).
+- 라벨 변환·장소 분할은 `amr_detection/dataset.py`(ROS 비의존, `test/test_dataset.py`), 노드는 `dataset_collector.py`.
 
 ## 테스트
 

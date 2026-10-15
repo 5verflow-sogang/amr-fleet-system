@@ -16,8 +16,13 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 IMAGE="${HARNESS_IMAGE:-amr-fleet-system:latest}"
-# HARNESS_PACKAGES: 빌드할 패키지(--packages-up-to). 시나리오가 다른 패키지를 쓰면 덮어쓴다 (예: nav_compare)
-PACKAGES="${HARNESS_PACKAGES:-amr_gazebo amr_odometry amr_localization amr_fleet_manager amr_fault_injector}"
+# HARNESS_PACKAGES: 빌드할 패키지(--packages-up-to). 없으면 시나리오 파일의 packages: 줄, 그것도 없으면 아래 기본값
+# (loc_basic·fleet_fake용). 실제 로봇 스택 시나리오(fleet_stack 등)는 packages: amr_bringup을 적어 둔다
+SCENARIO_PACKAGES=""
+if [ $# -ge 1 ] && [ -f "$REPO/tools/harness/scenarios/$1.yaml" ]; then
+  SCENARIO_PACKAGES="$(sed -n 's/^packages:[[:space:]]*//p' "$REPO/tools/harness/scenarios/$1.yaml" | head -1)"
+fi
+PACKAGES="${HARNESS_PACKAGES:-${SCENARIO_PACKAGES:-amr_gazebo amr_odometry amr_localization amr_fleet_manager amr_fault_injector}}"
 
 # $1: 추가 docker 인자(공백 구분), 나머지: run.py 인자
 run_container() {

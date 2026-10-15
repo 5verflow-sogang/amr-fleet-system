@@ -40,7 +40,7 @@
 
   <!-- 동역학 제한 (명세: 최대 속도 2.0 m/s, 가속도 1.0 m/s², 회전 1.5 rad/s) -->
   <xacro:property name="max_linear_velocity" value="2.0"/>
-  <xacro:property name="max_linear_acceleration" value="1.0"/>
+  <xacro:property name="max_linear_acceleration" value="$(arg max_linear_acceleration)"/>
   <xacro:property name="max_angular_velocity" value="1.5"/>
   <!-- 명세에 없는 임시값. Nav2 DWB acc_lim_theta(amr_bringup/config/nav2_params.yaml)와 맞춘다 -->
   <xacro:property name="max_angular_acceleration" value="3.2"/>

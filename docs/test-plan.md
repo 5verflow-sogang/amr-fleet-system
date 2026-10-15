@@ -35,8 +35,8 @@
 | --- | --- | --- | --- | --- |
 | I6 | 위치추정 스택 기동 | 가짜 `odom`·`imu/data`·`scan` 입력으로 map_server·AMCL lifecycle active, TF `map→odom→base_footprint` 연결, `odometry/filtered` 50 Hz 이상 | 민지 | 4주차 |
 | I7 | 센서 전처리 파이프라인 | `scan_raw → scan`, `imu/data_raw → imu/data` 주기·공분산 채움·바이어스 보정 (인계 계약 항목, #81) | 지수 | 4주차 |
-| I13 | 장애물 추적 | 녹화 rosbag 재생 → `TrackedObstacleArray` 개수·위치 | 연우 | P1 |
-| I14 | 안전 감속 | 가짜 근접 장애물 → `SafetyStatus` 감속 한계 | 연우 | P1 |
+| I13 | 장애물 추적 (`test_tracking_launch`, amr_tracking) | 녹화 rosbag 대신 테스트가 합성 LiDAR 스캔(10 Hz)을 그려 넣는다(결정적, Gazebo 없음): 정지 로봇 앞 2 m를 1.0 m/s로 가로지르는 다리 두 개 + 벽 + 기둥 → `TrackedObstacleArray`에 동적 트랙이 사람 하나뿐이고 위치 0.3 m·속력 0.3 m/s 안, 기둥은 정적, 벽·벽 조각은 동적이 아니다. `collision_risks`에 같은 트랙 | 연우 | P1 |
+| I14 | 안전 감속 (`test_safety_launch`, amr_safety) | 가짜 스캔·odom·추적·TTC·명령 입력 → `SafetyStatus`·최종 `cmd_vel`: 빈 장면 NORMAL(명령 그대로), 진행 경로 0.2 m 앞 점 CRITICAL(0), TTC 1.5 s 움직이는 트랙 WARNING(0.6, 곡률 유지), 스캔 끊김 CRITICAL(0) | 연우 | P1 |
 
 **추가 제안: B층 (원 명세 KPI 하나당 하나)**
 

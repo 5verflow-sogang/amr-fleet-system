@@ -34,9 +34,9 @@
 | `IDLE` | 남은 거리 ≤ `trigger_distance_m` | `APPROACHING` | `TYPE_ACCESS` (새 `request_id`) |
 | `APPROACHING` | 위치가 구역 안 **and** 유효한 `GRANTED` | `INSIDE` | — |
 | `APPROACHING` | `GRANT_REJECTED` 응답 | `BLOCKED` | — |
-| `APPROACHING` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 | `IDLE` | `TYPE_RELEASE` |
+| `APPROACHING` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 **and** (빠진 지 `drop_grace_s` 초과 **or** 직선 거리 > `trigger_distance_m`) | `IDLE` | `TYPE_RELEASE` |
 | `BLOCKED` | `retry_period_s` 경과, 경로에 구역이 남아 있음 | `APPROACHING` | `TYPE_ACCESS` (새 `request_id`) |
-| `BLOCKED` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 | `IDLE` | (반납 없음 — 서버가 쥔 적이 없다) |
+| `BLOCKED` | 경로에서 구역이 빠짐 **and** 위치가 구역 밖 **and** (빠진 지 `drop_grace_s` 초과 **or** 직선 거리 > `trigger_distance_m`) | `IDLE` | (반납 없음 — 서버가 쥔 적이 없다) |
 | `INSIDE` | 위치가 구역 밖으로 나감 | `IDLE` | `TYPE_RELEASE` |
 | `APPROACHING` | `GRANT_REVOKED` 응답(교착 해소), 응답 시점에 아직 구역 밖 | `BLOCKED` | `TYPE_RELEASE` (다음 틱) |
 | `APPROACHING` | `GRANT_REVOKED` 응답(교착 해소), 응답 시점에 이미 구역 안 | `BACKING` | — |
@@ -45,7 +45,7 @@
 | `BACKING` | `backing_max_distance_m`·`backing_timeout_s` 중 하나라도 초과 | `FAILED` | (없음 — 반납하지 않는다) |
 
 표에 없는 조합(예: `APPROACHING`에서 유효한 허가 없이 경계를 넘었거나, 구역 밖에서 lease가 지난
-경우)은 상태를 그대로 유지하면서 같은 `request_id`로 계속 요청하고 정지 상한을 다시 건다 — 아래
+경우, 경로에서 빠졌지만 아직 grace 안인 경우)은 상태를 그대로 유지하면서 같은 `request_id`로 계속 요청하고 정지 상한을 다시 건다 — 아래
 설명 참고.
 
 - **IDLE → APPROACHING**: 계획 경로를 따라(로봇과 가장 가까운 경로 점부터, 뒤쪽 점은 안 본다) 구역
@@ -64,11 +64,18 @@
   걸지 않는다 — **lease가 지나도 멈추지 않고 빠져나간다** (서버도 반납 전까지 구역을 쥐고 있는다).
 - **BLOCKED**: 재시도 없이 경고만 남기던 걸 바꿔서, 경로에 그 구역이 남아 있으면 `retry_period_s`
   (기본 5 s) 뒤 새 `request_id`로 다시 요청하며 `APPROACHING`으로 돌아간다 (영원히 막힌 채로 안 둔다).
-  경로가 바뀌어 그 구역을 더는 지나지 않고 로봇도 구역 밖이면 반납 없이 바로 `IDLE`로 돌아간다 — REJECTED는
-  서버가 자리를 쥔 적이 없어서 반납할 게 없다.
-- **APPROACHING/INSIDE → IDLE (경로 변경)**: 전역 경로가 바뀌어 대기·통과 허가 중인 구역이 경로에서
-  빠지고 로봇도 그 구역 밖이면, 서버가 자리를 계속 쥐고 있지 않도록 `TYPE_RELEASE`를 보내고 `IDLE`로
-  돌아간다.
+  경로가 바뀌어 그 구역을 더는 지나지 않으면 아래 "경로에서 빠진 구역" 규칙을 따르고, 끝내 `IDLE`로 갈 때는
+  반납 없이 간다 — REJECTED는 서버가 자리를 쥔 적이 없어서 반납할 게 없다. 경로에서 빠져 있는 동안은
+  재시도하지 않는다.
+- **경로에서 빠진 구역 (APPROACHING·BLOCKED, 10/15 하연·이진)**: #66에서 정한 "경로에서 빠지면 즉시 반납"을
+  바꿨다. 전역 경로가 바뀌어 아직 들어가지 않은 구역이 경로에서 빠져도, 로봇이 그 구역에서
+  `trigger_distance_m`(직선 거리) 안에 있으면 바로 반납하지 않는다 — 같은 `request_id`로 계속 요청해 대기열
+  순서를 지키고, 정지 상한은 경로 거리 대신 로봇 → 구역 사각형 **직선 거리**(경로 거리보다 짧아 보수적)로
+  건다. 경로가 `drop_grace_s`(기본 3 s) 넘게 계속 빠져 있거나 로봇이 `trigger_distance_m` 밖으로 멀어지면
+  그때 `TYPE_RELEASE`(BLOCKED는 반납 없이)를 보내고 `IDLE`로 돌아간다. 그 전에 경로가 다시 그 구역을
+  지나면 그대로 이어간다(새 `request_id`를 쓰지 않는다). 교착 중 상대 로봇이 통로를 막자 Nav2가 잠깐 우회
+  경로를 냈고, 그 사이 정지 상한이 사라져 허가 없이 구역에 들어간 문제(fleet_deadlock 실험) 때문이다.
+  `INSIDE` 구역은 그대로다(아래).
 - **INSIDE → IDLE**: 위치가 구역을 벗어나면 그 즉시 `TYPE_RELEASE`를 보내고 상태를 초기화한다.
 - **`GRANT_REVOKED`(교착 해소, 10/11 결정)**: 서버가 교착을 풀려고 우선순위 낮은 로봇의 허가를
   회수할 때 쓴다(`REASON_DEADLOCK_RESOLUTION`).
@@ -160,7 +167,8 @@ TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BAC
 | --- | --- | --- |
 | `robot_id` | 노드 네임스페이스(`/amr_03` → `amr_03`, 없으면 `amr_01`) | `ZoneRequest.robot_id`, `ZoneGrant` 필터링 기준. 파라미터로 주면 그 값이 우선한다 |
 | `zones_file` | `''` | 구역 목록 yaml 경로. 서버(`amr_fleet_manager`)와 같은 파일을 가리켜야 한다. 비어 있으면 구역 없음 |
-| `map_frame` | `map` | TF 대상 좌표계 이름. `zones.yaml`의 `area_world`도 이 좌표계 기준으로 본다 |
+| `map_frame` | `map` | TF 대상 좌표계 이름 |
+| `zones_frame` | `''` | `zones.yaml` `area_world`의 좌표계. `world`면 TF `map ← world`로 바꿔 쓴다(시뮬레이션). 비우면 `map_frame` 그대로 (아래 "좌표계에 대해") |
 | `base_frame` | `base_footprint` | TF 로봇 좌표계 이름 |
 | `plan_topic` | `plan` | Nav2 전역 경로 (상대 이름) |
 | `zone_grants_topic` | `fleet/zone_grants` | 상대 이름 (네임스페이스 → 장애 주입기 중계본) |
@@ -172,6 +180,7 @@ TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BAC
 | `decel_mps2` | `1.0` | 정지 속도 프로파일 기준 감속 |
 | `resend_period_s` | `1.0` | 재전송(연장) 주기 |
 | `retry_period_s` | `5.0` | `BLOCKED`(REJECTED·REVOKED) 뒤 재시도까지 기다리는 시간 |
+| `drop_grace_s` | `3.0` | 아직 안 들어간 구역이 경로에서 빠진 채 이 시간이 지나면 반납·`IDLE` (그 전엔 trigger 거리 안이면 요청·정지 상한 유지) |
 | `backing_speed_mps` | `0.15` | `BACKING` 후진 속도 (10/11 결정) |
 | `backing_margin_m` | `0.3` | 구역 경계를 벗어난 뒤 이만큼 더 나가면 정지·반납 |
 | `backing_max_distance_m` | `6.0` | `BACKING` 안전장치: 총 후진 거리 한도(fail-closed). 가장 긴 구역(`narrow_02`, 5.0 m) + `backing_margin_m` 여유 (#137 하연 두 번째 리뷰) |
@@ -219,9 +228,15 @@ controller_server (Nav2) → cmd_vel_nav → [velocity_smoother, 아직 없음] 
 
 ## 좌표계에 대해
 
-`zones.yaml`의 `area_world`는 Gazebo world 좌표다. 지금은 world 원점과 `map` 원점이 같다고 보고 TF
-`map_frame`(기본 `map`) 좌표를 그대로 비교한다. 지도 v1(10/9 인계) 뒤 둘이 어긋나면 `map_frame` 파라미터
-이름만 바꾸거나, `zones.yaml` 쪽 좌표를 실제 `map` 좌표로 다시 맞추면 된다 — 코드 변경은 필요 없다.
+`zones.yaml`의 `area_world`는 Gazebo world 좌표다. 그런데 `map` 원점은 world (0, 1.5)라(지도 매핑 시작 자세),
+`area_world`를 `map` 좌표로 그대로 비교하면 구역이 1.5 m 북쪽(통로 옆 랙 위)에 있는 것으로 보여 로봇이 실제 통로
+앞에서 허가를 요청하지 않는다 (10/13 발견).
+
+- `zones_frame:=world`이면 시작할 때 TF `map ← world`를 조회해 구역을 `map` 좌표로 바꾼 뒤 판단한다.
+  TF는 `amr_bringup system.launch.py`가 지도 원점으로 한 번 발행한다(`world → map` 정적 TF). 원점 값을 이 노드가
+  따로 들고 있지 않아 지도를 바꿔도 여기는 고칠 게 없다.
+- TF가 오기 전에는 구역이 어디인지 모르므로 위치를 모를 때와 같이 속도 상한 0으로 멈춘다 (fail-closed).
+- `zones_frame`을 비우면(기본) `map` 좌표로 그대로 본다. TF 없는 단위·launch 테스트용이다.
 
 ## 실행
 

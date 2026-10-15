@@ -4,7 +4,7 @@
 
 - 같은 시나리오를 N회 반복해 KPI의 평균·신뢰구간을 산출한다.
 - 장애 조건(지연·손실)별 결과와 ros2_tracing 데이터를 수집한다.
-- `.github/workflows/fleet-test.yml`이 GCP 러너에서 `docker_run.sh`로 이 하네스를 돌린다 (입력: 시나리오, 반복 횟수, 지연·손실, 라벨, 시간).
+- `.github/workflows/fleet-test.yml`이 GCP 러너에서 `docker_run.sh`로 이 하네스를 돌린다 (입력: 시나리오, 반복 횟수, 지연·손실, 로봇 강제종료, 라벨, 시나리오 값 `params`, 새 컨테이너 모드). 로컬 명령의 `docker_run.sh`를 `gcp_run.sh`로 바꾸면 같은 인자로 GCP에서 돈다 ([GCP README](../infra/gcp/README.md) "3. 실행").
 - 로그 포맷은 명세서 1-4절 "성능 지표 측정 절차" 표를 따른다.
 
 ## 실행 (하네스 v1)
@@ -19,6 +19,9 @@ python3 tools/harness/run.py fleet_fake -n 10 --set delay_ms=200 --set loss_pct=
 # 호스트에서 컨테이너로 (필요한 패키지만 빌드하고 run.py를 부른다)
 tools/harness/docker_run.sh loc_basic -n 10
 HARNESS_FRESH=1 tools/harness/docker_run.sh loc_basic -n 10   # 반복마다 새 컨테이너
+
+# GCP 러너로 (같은 인자, 지금 브랜치의 PR 코드. RTF 1.0, 결과는 버킷)
+tools/harness/gcp_run.sh loc_basic -n 10
 
 # 실행 목록(index.csv)에 한 줄 더하기 (fleet-test.yml이 버킷에 올리며 쓴다, ROS 불필요)
 python3 tools/harness/index_run.py tools/harness/results/<out 폴더> --index index.csv --path <결과 위치>
@@ -56,13 +59,22 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 | 이름 | 내용 | 주요 결과 |
 | --- | --- | --- |
 | `loc_basic` | 로봇 1대, 지도 v0. 정지 → 직진 3 m → 한 바퀴 → 반 바퀴 → 복귀 직진 → 정지. 약 1분 | `eval_ekf/`·`eval_amcl/`의 `localization.csv`·궤적 |
-| `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분. `kill_robot`으로 로봇 장애 | `fleet_latency.csv`, `response_time.csv`(Ack), `task_outcomes.csv`, `recovery.csv`(로봇 장애 시), `tasks.json`, `assignments.csv`, `fault_events.csv` |
+| `kidnap` | 로봇 1대, 지도 v1. 직진 3 m 후 정지하면 Gazebo `set_pose`로 순간 이동, 복구 노드(`kidnap_recovery`)가 감지·복구. `--set mode=far`면 다른 통로로 옮긴다. 약 2분 | `kidnap/kidnap.json`(판정), `kidnap_samples.csv`(진행·옆·방향 오차), `kidnap_states.csv`, `events.csv`. 요약 `kidnap.success` 평균 = 성공률 |
+| `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분. `kill_robot`으로 로봇 장애 | `fleet_latency.csv`, `response_time.csv`(Ack), `task_outcomes.csv`, `recovery.csv`(로봇 장애 시), `tasks.json`, `assignments.csv`, `fault_events.csv`, `robot_states.csv`, `plots/` |
 | `nav_compare` | 로봇 1대, 지도 v1, Nav2 데모 + 목표 1곳. `--set controller=dwa\|teb --set scenario=clear\|obstacle`. 약 1분. `HARNESS_PACKAGES="amr_bringup amr_nav2_plugins"` 필요 | `nav_result.json`(성공·도착 시간·최소 장애물 거리·경로 길이·CTE, GT), `nav_series.csv` ([experiments/teb_compare](../../experiments/teb_compare/README.md)) |
 | `nav_avoidance` (**초안, 미실행**) | 로봇 1대 DWA 데모 + 1.0 m/s로 경로를 가로지르는 작업자 1명 + 추적 노드. 약 1분. test-plan I17 | `avoidance/`의 `avoidance.csv`·`avoidance_summary.json`·GT 원자료 ([amr_safety README](../../src/perception/amr_safety/README.md#회피-평가-i17)) |
 
 `fleet_fake`는 Fleet 계층(지연·손실·Ack)만 잰다. 가짜 로봇은 `odom`을 내지 않아 응답 시간 KPI(200 ms)는 비어 있으므로, 그 Before 데이터는 실제 로봇 스택 시나리오가 따로 필요하다. 서버 강제종료 `kill_at_s`는 서버 launch 시작 기준이라 작업 시작보다 약 10초 빠르다.
 
 시나리오 파일은 `processes`(띄울 명령, `ready_topic`으로 준비 확인, `stop_first`·`wait_files`로 기록 노드를 먼저 끝냄), `driver`(`segments`: `cmd_vel` 구간 / `wait`: 시간만 기다림 / `command`: 셸 명령이 끝날 때까지, 0이 아닌 종료 코드면 주행 실패), `postprocess`(예: `fleet_metrics`), `cleanup`으로 이루어진다. 명령 안의 `{run_dir}`, `{seed}`, `params` 이름은 실행마다 채워진다.
+
+**그림과 녹화** (`loc_basic`, `nav_kpi`, `fleet_fake`)
+
+- 실행이 끝나면 `postprocess`가 `plot_run.py`로 `plots/*.png`를 남긴다. 위치추정: `loc_traj.png`(지도 위 GT·EKF·AMCL 궤적), `loc_error.png`(시간에 따른 오차, 구간 색, KPI 점선). Nav KPI: `nav_map.png`(지도 위 계획 경로·GT 궤적·성공/실패 목표), `nav_time.png`(예측·실제 주행시간). 그림이 실패해도 실행 결과는 그대로다(늘 0으로 끝남). 지난 결과도 `python3 tools/harness/plot_run.py <실행 폴더> --map <지도 yaml>`로 다시 그린다 (ROS 불필요)
+- `fleet_fake`는 `fleet_metrics` 다음에 `fleet_plot`(`amr_fleet_manager`)이 `plots/timeline.png`(로봇별 작업 구간·상태 끊김·강제종료·회수된 작업의 재할당)를 남긴다. 실패 정책은 같다(늘 0으로 끝남). 지난 결과는 `PYTHONPATH=src/fleet/amr_fleet_manager python3 -m amr_fleet_manager.fleet_plot <실행 폴더>` (ROS 불필요). 가짜 로봇은 스테이션 사이를 직선으로 움직여 지도 위 궤적은 그리지 않는다
+- `rosbag/`에 가벼운 토픽만 녹화한다: `/map`, `/tf`, `/tf_static`, `amcl_pose`, GT (`nav_kpi`는 `plan`·`cmd_vel` 추가). 스캔·카메라는 뺀다. Foxglove·Lichtblick에 `rosbag_0.db3`를 끌어다 놓으면 열린다. 이미지에 mcap 저장 플러그인이 없어 sqlite3로 남긴다
+- 크기: `loc_basic` 1회 약 9 MB(0.025 m 지도 4 MB + GT). `nav_kpi`는 50쌍이면 수백 MB라 기본으로 끄고, 실패한 쌍을 볼 때 `--set record=true`. `--set record=false`로 끈다
+- 추천 흐름: N회 돌린 뒤 `plots/`로 이상한 실행을 고르고, 그 실행의 bag을 열어 자세히 본다
 
 **seed 규칙** (하연 제안, 10/6)
 
@@ -80,6 +92,8 @@ seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도
 
 **요약** (`summary_<시나리오>-<라벨>_<시각>.md`): 지표마다 실행별 값의 평균·표준편차·범위와 95% 신뢰구간. KPI가 있는 지표는 CI 상한까지 기준 안이면 PASS, 평균만 기준 안이면 MARGINAL, 아니면 FAIL이다.
 
+`nav_kpi`는 `navkpi.*`로 요약한다: 경로 계획 성공률(≥ 98 %, 클수록 좋아 CI **하한**으로 판정), 재계획 P95(≤ 500 ms), 주행시간 예측 오차 평균(≤ 15 %), CTE 직선·곡선(≤ 5·10 cm). CTE는 `controller=pp`(path_tracker) 실행만 KPI로 판정하고 DWA로 잰 값은 `navkpi.ref_cte_*`(참고)로 남는다. 실행 1회면 CI가 없어 기준 안이어도 MARGINAL로 나온다.
+
 주의:
 
 - 위치 오차는 로봇이 **처음 움직인 뒤부터** 센다(`eval_node`의 `skip_initial_stationary`, 기본 켬). 초기 위치를 정답으로 주므로 그 전 구간은 오차가 0이라 정지 RMSE를 낮춘다(10/6 실측: 대기 60초가 5.5 → 2.4 cm로 낮춤).
@@ -95,6 +109,7 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
 
 - 조건 묶음마다 embed 하나: ✅ KPI 모두 PASS, ⚠️ MARGINAL 또는 실패한 반복 있음, ❌ KPI FAIL 또는 완료 0회, ℹ️ KPI 없음. KPI 지표와 Fleet 주요 지표(지연·손실률·Ack)의 평균·95% CI를 싣고 `summary.md`를 첨부한다.
 - 첫 줄에 git SHA, 호스트, 장애 조건, seed 범위를 적는다.
+- 실행 폴더에 `plots/timeline.png`(Fleet 시나리오, `fleet_plot`)가 있으면 **작업 완료율이 가장 낮은 실행의 그림 한 장**을 그 조건의 embed 안에 붙이고, 어느 실행인지 적는다. 반복마다 다 보내면 채널이 그림으로 덮이므로 "어디를 열어 볼지"만 알린다. 나머지 그림은 각 실행 폴더에 있다. 그림을 붙인 전송이 실패하면(413 크기 초과 등) 그림 없이 한 번 더 보낸다.
 - 보내기가 실패해도 실험 결과에는 영향이 없다 (경고만 출력).
 - CI 실패 알림(`DISCORD_WEBHOOK_URL`, [workflows/README](../../.github/workflows/README.md))과 다른 채널을 쓰려고 이름을 따로 둔다.
 
@@ -129,6 +144,8 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
 | `rosbag/` | rosbag2 (mcap) | 시나리오에서 정한 토픽 기록 (선택). 단 Fleet 시나리오는 `/fleet/*`, `/<robot>/fleet/*` 녹화가 필수 (`fleet_latency.csv`·Ack 컬럼의 원자료) | 시나리오 작성자, Fleet 토픽은 하연 |
 | `trace/` | LTTng CTF | ros2_tracing 원본 (UST `ros2:*` 이벤트). `hop_latency.csv`의 원자료 | 하연 (수집 절차는 [runbook](../../docs/runbook.md) "트레이싱") |
 | `fault_events.csv` | CSV `time, event` | 서버 강제종료·재시작 시각 (실제 시간, UNIX 초). 서버 장애 시나리오에서만 | 하연 (`fleet_manager.launch.py`의 `fault_events_file`) |
+| `robot_states.csv` | CSV `time, robot, x, y, mode, task_id` | `/fleet/robot_states` 1건마다 1행 (map 좌표, bag 수신 시각). 그림의 원자료 | 하연 (`fleet_metrics`) |
+| `plots/` | PNG | 보기용 그림. 판정에 쓰지 않는다. 위치추정·Nav KPI는 `plot_run.py`, Fleet은 `timeline.png` (위 "그림과 녹화") | 민지 (`plot_run.py`), 하연 (`fleet_plot`, [amr_fleet_manager README](../../src/fleet/amr_fleet_manager/README.md) "작업 타임라인 그림") |
 
 - TUM 궤적 형식: 한 줄에 `timestamp x y z qx qy qz qw` (공백 구분, 초·m·쿼터니언). evo가 그대로 읽는다.
 - **좌표계 정렬**: GT(Gazebo world)와 추정값(`map`)은 서로 다른 좌표계다. 두 좌표계 사이 변환을 시나리오 설정에 고정값으로 두고, 정렬 방식을 `meta.json`에 기록한다. 평가 도구가 임의로 최적 정렬(Umeyama 등)을 하면 오차가 실제보다 작게 나올 수 있으므로 KPI 산출에는 고정 변환만 쓴다.
@@ -140,12 +157,15 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
 | --- | --- | --- | --- | --- |
 | `localization.csv` | `timestamp, gt_x, gt_y, est_x, est_y, error` | `segment` (`stationary`·`straight`·`rotation`), `yaw_error`, `robot` | 시나리오당 100개 시점 이상 | 민지 |
 | `cte.csv` | `timestamp, planned_x, planned_y, actual_x, actual_y, cte` | `segment` (`straight`·`curve`), `robot` | 구간별 분리 | 이진 |
-| `response_time.csv` | `cmd_time, response_time, latency_ms` | `robot`, `task_id`, `latency_sim_ms`, `assignment_id`, `ack_time`, `ack_rtt_ms`, `resends` | 50회 이상 | 하연 |
+| `response_time.csv` | `cmd_time, response_time, latency_ms` | `robot`, `task_id`, `latency_sim_ms`, `assignment_id`, `ack_time`, `ack_rtt_ms`, `resends`, `recv_time`, `latency_recv_ms`, `moving_at_cmd` | 50회 이상 | 하연 |
+| `zone_waits.csv` | `robot, zone, request_id, request_time, grant_time, wait_s, outcome, release_time` | — | 구역 진입 요청마다 1행 (구역 기록이 있을 때만) | 하연 (`fleet_metrics`) |
+| `stalls.csv` | `robot, task_id, phase, start_time, end_time, duration_s` | — | 이동 단계에서 60 s 넘게 멈춘 구간마다 1행 (odom 기록이 있을 때만) | 하연 (`fleet_metrics`) |
+| `cpu.csv` | `time, cores, allowed_cores, cpu_pct, host_cpu_pct` | `cores_<묶음>` (sim·nav2·localization·fleet·perception·other) | 1초마다 1행 | 하연 (`cpu_monitor.py`) |
 | `fleet_latency.csv` | — (연구 1, 아래) | — | 메시지 1건 × 로봇 1대마다 1행 | 하연 정의, 하네스 기록기 (민지) |
 | `hop_latency.csv` | — (연구 1, 아래) | — | 구독 수신 1건마다 1행 | 하연 (트레이스 변환) |
 | `tasks.csv` | 명세서 작업 로그 필드 (아래) | — | 작업마다 1행 | 하네스 기록기 (민지) |
 | `assignments.csv` | — (팀 정의, 아래) | — | 할당 호출마다 | 하연 (`amr_fleet_manager`) |
-| `task_outcomes.csv` | — (팀 정의) | `task_id, request_time, first_assign_time, robots, final_state, end_time` | 작업마다 1행 | 하연 (`fleet_metrics`, bag에서 만든 Fleet 쪽 결과. 로봇 BT 작업 로그 `tasks.csv`와 별개) |
+| `task_outcomes.csv` | — (팀 정의) | `task_id, request_time, first_assign_time, robots, final_state, end_time, task_time_s, distance_m, error_code` | 작업마다 1행 | 하연 (`fleet_metrics`, bag에서 만든 Fleet 쪽 결과. 로봇 BT 작업 로그 `tasks.csv`와 별개) |
 | `recovery.csv` | — (연구 1 로봇 장애) | `robot, kill_time, task_id, reassign_time, reassigned_robot, recovery_s, completed` | 로봇 강제종료 × 하던 작업마다 1행 | 하연 (`fleet_metrics`) |
 | `coverage/` | `colcon test --coverage` 텍스트·HTML | 모듈별 하위 폴더 | — | 전원 |
 
@@ -271,6 +291,11 @@ tools/harness/results/<run_id>/
 | `cte.csv` 부가 컬럼 | `segment`, `robot` 확정. `meta.json`에 `controller` 추가 | 이진, #5 |
 | 위치 오차 KPI 판정 | 구간별 **RMSE**로 판정, Max는 함께 보고 | 하연, #28 |
 | `response_time.csv` Ack 컬럼 | `assignment_id`, `ack_time`, `ack_rtt_ms`, `resends`. 첫 발송 기준이라 재전송 시간 포함 | 하연·민지, #33 |
+| 응답 시간 두 기준 (10/13) | `latency_ms`는 서버 발행 → 첫 움직임(원 명세 측정 표 "작업 명령 발행", 통신 지연 포함), `latency_recv_ms`는 로봇이 받은 중계본 도착 → 첫 움직임(성능 요구사항 "명령 수신 ~ 로봇 반응"). 둘 다 보고하고 판정 기준은 측정 뒤 회의에서 | 하연 |
+| 응답 시간 보조 지표 (10/15, #171 리뷰) | 판정 기준은 10/19 회의에서 정하고, 그 전에 볼 값만 더한다. `fleet.response_sim_ms`(시뮬레이션 시간, RTF < 1이면 실제 시간 값이 부푼다), `fleet.response_coverage`(움직임을 찾은 명령 ÷ 명령. 못 찾은 명령은 평균에서 빠진다), `fleet.response_moving_at_cmd`(명령 순간 이미 움직이던 경우 수. 지연이 0에 가깝고 `latency_recv_ms`는 음수도 나온다. 빼지 않고 표시만). 실행을 모두 합쳐 움직임을 찾은 명령이 50건 미만이면 응답 시간 판정을 비우고 "보류 (n=…<50)"로 적는다 | 하연·민지 |
+| 교착 판정 (10/13) | 구역 허가를 30 s(서버 `release_timeout_s`) 넘게 못 받은 요청 0건(`fleet.zone_long_waits`)과 이동 단계 60 s 넘는 정체 0건(`fleet.stalls`). 정체는 구역 밖 교착도 잡는다. 수치는 측정 뒤 조정 가능 | 하연 |
+| CPU 판정 (10/13) | `sys.cpu_pct.mean` ≤ 80. 컨테이너가 쓸 수 있는 코어 기준이라 기준 기기는 `docker --cpus`로 맞춘다. 기기와 덜 상관있는 `sys.cpu_cores`(사용 코어 수)와 시뮬레이터를 뺀 `sys.cpu_cores_no_sim`을 같이 보고. 작업이 끝난 뒤 쉬는 구간도 평균에 들어가므로 `sys.cpu_pct.p95`도 본다. 작업 구간만 자를지와 기준 기기는 10/19 회의 | 하연 |
+| 판정하지 않는 지표 | `fleet_deadlock`은 교착을 일부러 만드는 시나리오라 `fleet.zone_long_waits`·`fleet.stalls`를 판정하지 않는다(값만 보고). 이 시나리오의 기준("유도된 교착이 풀린 시간" 등)은 회의에서 | 하연·민지 |
 | 연구 1 지연 파일 | `fleet_latency.csv`(끝에서 끝, 손실 포함), `hop_latency.csv`(구간별, `trace/`에서 변환) | 하연·민지, #33 |
 | Fleet 지연 기록 방법 | rclpy 기록 노드 대신 rosbag2로 녹화 후 오프라인 변환 (Python 수신 시각 지연 방지) | 하연·민지, #33 |
 | 손실 판정 | 관측 마감(종료 − 주입 지연 − 여유) 이후 보낸 메시지는 지연·손실에서 제외 | 하연·민지, #33 |

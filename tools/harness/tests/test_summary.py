@@ -10,8 +10,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harness.runner import fault_meta, render  # noqa: E402
-from harness.summary import (avoidance_metrics, fleet_metrics, kpi_verdict, nav_metrics,  # noqa: E402
-                             summarize, to_markdown)
+from harness.summary import (avoidance_metrics, fleet_metrics, kidnap_metrics, kpi_verdict,  # noqa: E402
+                             nav_kpi_metrics, nav_metrics, summarize, to_markdown)
 
 
 def make_run(root: Path, name: str, scenario='loc_basic', label='', outcome='completed', rmse=0.02):
@@ -133,6 +133,144 @@ def test_nav_metrics(tmp_path):
                     path_length_m=1.0)
     assert nav_metrics(bad) == {'nav.success': 0.0, 'nav.min_obstacle_m': 0.12, 'nav.path_length_m': 1.0}
     assert nav_metrics(tmp_path / 'none') == {}
+
+
+def test_kidnap_metrics_success_rate(tmp_path):
+    def trial(name, **k):
+        run = tmp_path / name
+        (run / 'kidnap').mkdir(parents=True)
+        (run / 'meta.json').write_text(json.dumps({'scenario': 'kidnap', 'label': 'near', 'outcome': 'completed'}))
+        (run / 'kidnap' / 'kidnap.json').write_text(json.dumps(k))
+        return run
+
+    ok = dict(error=None, success=True, detected=True, recovered=True, detect_s=1.5, recover_s=9.5, false_alarms=0)
+    lost = dict(error=None, success=False, detected=True, recovered=False, detect_s=2.0, recover_s=None, false_alarms=0)
+    runs = [trial('r0', **ok), trial('r1', **ok), trial('r2', **lost), trial('r3', error='set_pose 실패'),
+            trial('r4', **{**ok, 'valid': False})]   # 순간 이동 때 이미 복구 중 → 분모에서 뺌
+    assert kidnap_metrics(runs[0]) == {'kidnap.valid': 1.0, 'kidnap.success': 1.0, 'kidnap.detected': 1.0,
+                                       'kidnap.recovered': 1.0, 'kidnap.late_recovered': 0.0,
+                                       'kidnap.false_alarms': 0.0, 'kidnap.detect_s': 1.5, 'kidnap.recover_s': 9.5}
+    assert 'kidnap.recover_s' not in kidnap_metrics(runs[2])
+    assert kidnap_metrics(runs[3]) == {}   # 시험이 안 된 실행은 성공률 분모에서 뺀다
+    assert kidnap_metrics(runs[4]) == {'kidnap.valid': 0.0}
+    m = summarize(runs)['kidnap/near']['metrics']
+    assert m['kidnap.success']['n'] == 3
+    assert m['kidnap.success']['mean'] == pytest.approx(2 / 3)
+    assert m['kidnap.recover_s']['n'] == 2
+
+
+def _csv(path, header, rows):
+    with path.open('w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(rows)
+
+
+def test_fleet_stack_metrics(tmp_path):
+    # 응답 시간 두 기준, 작업 시간·이동 거리, 구역 대기·교착, 정체 (fleet_stack 시나리오의 지표 파일)
+    _csv(tmp_path / 'response_time.csv',
+         ['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms', 'assignment_id',
+          'ack_time', 'ack_rtt_ms', 'resends', 'recv_time', 'latency_recv_ms'],
+         [['1.0', '1.3', '300.0', 'amr_01', 't1', '', '1', '1.2', '200.0', '0', '1.1', '200.0'],
+          ['2.0', '2.25', '250.0', 'amr_02', 't2', '', '2', '2.2', '200.0', '0', '2.1', '150.0']])
+    _csv(tmp_path / 'task_outcomes.csv',
+         ['task_id', 'request_time', 'first_assign_time', 'robots', 'final_state', 'end_time', 'task_time_s',
+          'distance_m'],
+         [['t1', '0', '1', 'amr_01', 'COMPLETED', '100', '100.0', '40.0'],
+          ['t2', '0', '2', 'amr_02', 'COMPLETED', '60', '60.0', '20.0'],
+          ['t3', '0', '', '', '', '', '', '']])
+    _csv(tmp_path / 'zone_waits.csv',
+         ['robot', 'zone', 'request_id', 'request_time', 'grant_time', 'wait_s', 'outcome', 'release_time'],
+         [['amr_01', 'narrow_01', '1', '0', '5', '5.0', 'granted', '20'],
+          ['amr_02', 'narrow_01', '1', '0', '', '45.0', 'waiting', ''],
+          ['amr_03', 'narrow_02', '1', '0', '', '0.0', 'rejected', ''],
+          ['amr_04', 'narrow_02', '2', '0', '1', '0.0', 'revoked', '9']])
+    _csv(tmp_path / 'stalls.csv', ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s'], [])
+    m = fleet_metrics(tmp_path)
+    assert m['fleet.response_ms.mean'] == pytest.approx(275.0)
+    assert m['fleet.response_recv_ms.mean'] == pytest.approx(175.0)
+    assert (m['fleet.task_time_s.mean'], m['fleet.distance_m.total']) == (pytest.approx(80.0), pytest.approx(60.0))
+    assert (m['fleet.zone_requests'], m['fleet.zone_long_waits']) == (4, 1)
+    assert (m['fleet.deadlock_rejects'], m['fleet.deadlock_revokes']) == (1, 1)
+    assert m['fleet.stalls'] == 0 and 'fleet.stall_s.max' not in m
+    # KPI: 수신 기준 200 ms 안, 장기 대기 1건은 FAIL, 정체 0건은 PASS
+    assert kpi_verdict('fleet.response_recv_ms.mean', 175.0, 190.0) == 'PASS'
+    assert kpi_verdict('fleet.zone_long_waits', 1.0, 1.0) == 'FAIL'
+    assert kpi_verdict('fleet.stalls', 0.0, 0.0) == 'PASS'
+    # 교착을 일부러 만드는 시나리오에서는 판정하지 않는다
+    assert kpi_verdict('fleet.zone_long_waits', 1.0, 1.0, scenario='fleet_deadlock') is None
+    assert kpi_verdict('fleet.response_recv_ms.mean', 175.0, 190.0, scenario='fleet_deadlock') == 'PASS'
+
+
+def _stack_run(root, name, n, latency_ms=150.0, scenario='fleet_stack'):
+    """응답 시간 n건 (그중 1건은 명령 순간 움직이던 로봇) + 움직임을 못 찾은 명령 1건."""
+    run = root / name
+    run.mkdir()
+    (run / 'meta.json').write_text(json.dumps({'scenario': scenario, 'label': '', 'outcome': 'completed'}))
+    rows = [['1.0', '1.2', f'{latency_ms}', 'amr_01', f't{i}', '120.0', str(i), '', '', '0', '1.1',
+             f'{latency_ms - 50}', '1' if i == 0 else '0'] for i in range(n)]
+    rows.append(['9.0', '', '', 'amr_02', 'tx', '', '99', '', '', '0', '', '', ''])
+    _csv(run / 'response_time.csv',
+         ['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms', 'assignment_id',
+          'ack_time', 'ack_rtt_ms', 'resends', 'recv_time', 'latency_recv_ms', 'moving_at_cmd'], rows)
+    return run
+
+
+def test_response_extras_and_min_samples(tmp_path):
+    m = fleet_metrics(_stack_run(tmp_path, 'one', 4))
+    assert m['fleet.response_sim_ms.mean'] == pytest.approx(120.0)
+    assert m['fleet.response_coverage'] == pytest.approx(4 / 5)
+    assert m['fleet.response_moving_at_cmd'] == 1
+    # 실행 3회 × 움직임 20건 = 60건이면 판정, 2회 × 20건 = 40건이면 보류 (명세서 "50회 이상")
+    enough = summarize([_stack_run(tmp_path, f'a{i}', 20) for i in range(3)])['fleet_stack']['metrics']
+    assert enough['fleet.response_recv_ms.mean']['kpi'] == 'PASS'
+    short = summarize([_stack_run(tmp_path, f'b{i}', 20, scenario='fleet_short') for i in range(2)])
+    d = short['fleet_short']['metrics']['fleet.response_ms.mean']
+    assert 'kpi' not in d and d['kpi_note'] == '보류 (n=40<50)'
+    assert '보류 (n=40<50)' in to_markdown(short)
+
+
+def test_nav_kpi_metrics_and_verdict(tmp_path):
+    def run(name, cte_kpi, plan):
+        d = tmp_path / name / 'nav_kpi'
+        d.mkdir(parents=True)
+        (tmp_path / name / 'meta.json').write_text(json.dumps({'scenario': 'nav_kpi', 'label': name[:-1],
+                                                               'outcome': 'completed'}))
+        (d / 'nav_kpi.json').write_text(json.dumps({
+            'plan_success_rate': plan, 'nav_success_rate': 0.9, 'replan_p95_ms': 13.0, 'replan_max_ms': 39.0,
+            'pred_err_mean': 0.055, 'pred_err_median': 0.05, 'pred_err_no_recovery_mean': float('nan'),
+            'cte_straight_mean_m': 0.063, 'cte_curve_mean_m': 0.067, 'definition': {'cte_kpi': cte_kpi}}))
+        return tmp_path / name
+    pp = nav_kpi_metrics(run('pp0', True, 1.0))
+    assert pp['navkpi.cte_straight_mean_m'] == 0.063 and 'navkpi.pred_err_no_recovery_mean' not in pp
+    dwa = nav_kpi_metrics(run('dwa0', False, 1.0))
+    assert 'navkpi.cte_straight_mean_m' not in dwa and dwa['navkpi.ref_cte_straight_mean_m'] == 0.063
+    # 클수록 좋은 지표는 CI 하한으로
+    assert kpi_verdict('navkpi.plan_success_rate', 1.0, 1.0, 0.99) == 'PASS'
+    assert kpi_verdict('navkpi.plan_success_rate', 0.99, 1.0, 0.96) == 'MARGINAL'
+    assert kpi_verdict('navkpi.plan_success_rate', 0.95, 0.97, 0.93) == 'FAIL'
+    assert kpi_verdict('navkpi.cte_straight_mean_m', 0.063, 0.07, 0.05) == 'FAIL'
+    assert kpi_verdict('navkpi.ref_cte_straight_mean_m', 0.063, 0.07, 0.05) is None
+    m = summarize([run('pp1', True, 1.0), run('pp2', True, 1.0)])['nav_kpi/pp']['metrics']
+    assert m['navkpi.replan_p95_ms']['kpi'] == 'PASS' and m['navkpi.cte_straight_mean_m']['kpi'] == 'FAIL'
+
+
+def test_failure_causes_by_error_code(tmp_path):
+    run = tmp_path / 'r'
+    run.mkdir()
+    (run / 'task_outcomes.csv').write_text(
+        'task_id,request_time,first_assign_time,robots,final_state,end_time,error_code\n'
+        't1,0,1,amr_01,COMPLETED,10,0\n'
+        't2,0,1,amr_01,FAILED,10,203\n'
+        't3,0,1,amr_02,FAILED,10,202\n'
+        't4,0,1,amr_03,FAILED,10,904\n')
+    m = fleet_metrics(run)
+    assert m['fleet.tasks_failed_localization'] == 1 and m['fleet.tasks_failed_nav'] == 1
+    assert m['fleet.tasks_failed_docking'] == 1 and m['fleet.tasks_failed_traffic'] == 0
+    # 열이 없던 예전 결과는 원인 지표를 내지 않는다
+    (run / 'task_outcomes.csv').write_text('task_id,request_time,first_assign_time,robots,final_state,end_time\n'
+                                           't1,0,1,amr_01,FAILED,10\n')
+    assert not [k for k in fleet_metrics(run) if k.startswith('fleet.tasks_failed_')]
 
 
 def test_avoidance_metrics(tmp_path):

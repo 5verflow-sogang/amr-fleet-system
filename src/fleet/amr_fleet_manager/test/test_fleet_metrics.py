@@ -6,10 +6,10 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from amr_fleet_manager.fleet_metrics import (FLEET_LATENCY_HEADER, RECOVERY_HEADER, RESPONSE_TIME_HEADER,
-                                             TASK_OUTCOMES_HEADER, Cutoff, Record, convert, fleet_latency,
-                                             observation_start, read_kill_events, recovery, response_time,
-                                             task_outcomes)
+from amr_fleet_manager.fleet_metrics import (robot_ids, FLEET_LATENCY_HEADER, RECOVERY_HEADER, RESPONSE_TIME_HEADER,
+                                             ROBOT_STATES_HEADER, STALLS_HEADER, TASK_OUTCOMES_HEADER, ZONE_WAITS_HEADER,
+                                             Cutoff, Record, convert, fleet_latency, observation_start, read_kill_events,
+                                             recovery, response_time, robot_states, stalls, task_outcomes, zone_waits)
 
 
 def stamp(sec, nanosec=0):
@@ -107,7 +107,20 @@ def test_response_time_with_ack_resend_and_odom():
     assert dict(zip(RESPONSE_TIME_HEADER, row)) == {
         'cmd_time': '10.000000', 'response_time': '10.300000', 'latency_ms': '300.000', 'robot': 'amr_01',
         'task_id': 'task_s0_0001', 'latency_sim_ms': '0.000', 'assignment_id': 3,
-        'ack_time': '11.200000', 'ack_rtt_ms': '1200.000', 'resends': 1}
+        'ack_time': '11.200000', 'ack_rtt_ms': '1200.000', 'resends': 1,
+        # 장애 주입기 중계본이 없으면 수신 기준은 비운다
+        'recv_time': '', 'latency_recv_ms': '',
+        # 명령 직전 odom(9.0 s)이 움직이는 중이었다
+        'moving_at_cmd': '1'}
+
+
+def test_response_time_marks_robot_moving_at_command():
+    a = assignment(1, 'amr_01', 20)
+    stopped = [rec('/amr_01/odom', 19.9, odom(0.0, 19)), rec('/fleet/task_assignments', 20.0, a),
+               rec('/amr_01/odom', 20.2, odom(0.3, 20))]
+    no_odom_before = [rec('/fleet/task_assignments', 20.0, a), rec('/amr_01/odom', 20.2, odom(0.3, 20))]
+    assert response_time(stopped, CUTOFF)[0][-1] == '0'
+    assert response_time(no_odom_before, CUTOFF)[0][-1] == ''   # 판단할 odom이 없으면 비운다
 
 
 def test_response_time_separates_epochs_and_skips():
@@ -181,8 +194,9 @@ def request(task_id):
     return NS(task_id=task_id)
 
 
-def status(task_id, robot, state):
-    return NS(task_id=task_id, robot_id=robot, state=state)
+def status(task_id, robot, state, phase='', distance=0.0, error_code=0):
+    return NS(task_id=task_id, robot_id=robot, state=state, phase=phase, distance_traveled=distance,
+              error=NS(code=error_code))
 
 
 COMPLETED, FAILED, IN_PROGRESS = 2, 3, 1
@@ -195,12 +209,12 @@ def kill_scenario():
         rec('/fleet/task_requests', 0.5, request('t1')),
         rec('/fleet/task_assignments', 1.0, a1),
         rec('/fleet/task_assignments', 2.0, a1),                  # 재전송은 한 번만 센다
-        rec('/fleet/task_status', 8.0, status('t1', 'amr_01', COMPLETED)),
+        rec('/fleet/task_status', 8.0, status('t1', 'amr_01', COMPLETED, distance=12.5)),
         rec('/fleet/task_requests', 10.5, request('t2')),
         rec('/fleet/task_assignments', 11.0, a2),
         rec('/fleet/task_status', 12.0, status('t2', 'amr_01', IN_PROGRESS)),
         rec('/fleet/task_assignments', 21.0, a2b),
-        rec('/fleet/task_status', 40.0, status('t2', 'amr_02', COMPLETED)),
+        rec('/fleet/task_status', 40.0, status('t2', 'amr_02', COMPLETED, distance=30.0)),
         rec('/fleet/task_requests', 50.0, request('t3')),
     ]
 
@@ -208,9 +222,18 @@ def kill_scenario():
 def test_task_outcomes():
     rows = task_outcomes(kill_scenario())
     assert [r[0] for r in rows] == ['t1', 't2', 't3']
-    assert rows[0][3:] == ['amr_01', 'COMPLETED', '8.000000']
-    assert rows[1][2:] == ['11.000000', 'amr_01 amr_02', 'COMPLETED', '40.000000']
-    assert rows[2][2:] == ['', '', '', '']
+    # 작업 시간 = 요청 → 끝 보고, 이동 거리 = 끝 보고의 distance_traveled (최적성 지표)
+    assert rows[0][3:] == ['amr_01', 'COMPLETED', '8.000000', '7.500', '12.500', '']
+    assert rows[1][2:] == ['11.000000', 'amr_01 amr_02', 'COMPLETED', '40.000000', '29.500', '30.000', '']
+    assert rows[2][2:] == ['', '', '', '', '', '', '']
+
+
+def test_task_outcome_failed_keeps_error_code():
+    # 끝내 FAILED면 그 보고의 ErrorInfo.code (#173: 203 위치를 잃음). 하네스 요약이 원인별로 센다 (#180)
+    records = [rec('/fleet/task_assignments', 1.0, assignment(1, 'amr_01', 1, 't1')),
+               rec('/fleet/task_status', 5.0, status('t1', 'amr_01', FAILED, error_code=203))]
+    row = task_outcomes(records)[0]
+    assert (row[4], row[-1]) == ('FAILED', '203')
 
 
 def test_task_outcome_failed_then_retried_is_not_final():
@@ -245,3 +268,95 @@ def test_convert_writes_outcomes_and_recovery(tmp_path):
     other = tmp_path / 'other'
     convert(kill_scenario(), other, delay_ms=0.0)
     assert not (other / 'recovery.csv').exists()
+
+
+def robot_state(robot, x, y, mode=0, task_id=''):
+    return NS(robot_id=robot, pose=NS(position=NS(x=x, y=y)), mode=mode, current_task_id=task_id)
+
+
+def test_robot_states_sorted_by_time(tmp_path):
+    records = [rec('/fleet/robot_states', 2.0, robot_state('amr_02', 4.0, 2.0, mode=1, task_id='t1')),
+               rec('/fleet/robot_states', 1.5, robot_state('amr_01', 1.23456, -2.0)),
+               rec('/fleet/heartbeat', 1.0, heartbeat(0))]
+    assert robot_states(records) == [['1.500000', 'amr_01', '1.235', '-2.000', 0, ''],
+                                     ['2.000000', 'amr_02', '4.000', '2.000', 1, 't1']]
+    convert(records, tmp_path, delay_ms=0.0)
+    with (tmp_path / 'robot_states.csv').open(newline='') as f:
+        assert next(csv.reader(f)) == ROBOT_STATES_HEADER
+
+
+def test_robot_ids_follow_naming_rule():
+    assert robot_ids(3) == ['amr_01', 'amr_02', 'amr_03']
+    assert robot_ids(10)[-1] == 'amr_10'
+    with pytest.raises(ValueError):
+        robot_ids(0)
+
+
+def test_response_time_from_robot_receipt():
+    # 서버 발행 10.0 s → 로봇 앞 중계본 10.1 s (지연 100 ms) → 첫 움직임 10.25 s
+    a = assignment(1, 'amr_01', 50)
+    records = [
+        rec('/fleet/task_assignments', 10.0, a),
+        rec('/amr_02/fleet/task_assignments', 10.1, a),    # 다른 로봇 앞 중계본은 무시 (명령의 robot_id가 amr_01)
+        rec('/amr_01/fleet/task_assignments', 10.1, a),
+        rec('/amr_01/fleet/task_assignments', 11.1, a),    # 재전송 중계본은 첫 도착만
+        rec('/amr_01/odom', 10.25, odom(0.3, 50)),
+    ]
+    row = dict(zip(RESPONSE_TIME_HEADER, response_time(records, CUTOFF)[0]))
+    assert (row['latency_ms'], row['recv_time'], row['latency_recv_ms']) == ('250.000', '10.100000', '150.000')
+
+
+def zone_request(robot, zone, request_id, kind=0):
+    return NS(robot_id=robot, zone_id=zone, request_id=request_id, type=kind)
+
+
+def zone_grant(robot, zone, request_id, grant, reason=0):
+    return NS(robot_id=robot, zone_id=zone, request_id=request_id, grant=grant, reason=reason)
+
+
+def test_zone_waits_outcomes():
+    queued, granted, rejected, revoked, release = 1, 0, 2, 3, 1
+    records = [
+        # amr_01: 대기 5 s 뒤 허가, 반납
+        rec('/fleet/zone_requests', 1.0, zone_request('amr_01', 'narrow_01', 7)),
+        rec('/fleet/zone_grants', 1.0, zone_grant('amr_01', 'narrow_01', 7, queued, 1)),
+        rec('/fleet/zone_requests', 2.0, zone_request('amr_01', 'narrow_01', 7)),   # 다시 요청해도 첫 요청 기준
+        rec('/fleet/zone_grants', 6.0, zone_grant('amr_01', 'narrow_01', 7, granted)),
+        rec('/fleet/zone_requests', 20.0, zone_request('amr_01', 'narrow_01', 7, release)),
+        # amr_02: 교착 회피로 거절
+        rec('/fleet/zone_requests', 3.0, zone_request('amr_02', 'narrow_02', 1)),
+        rec('/fleet/zone_grants', 3.0, zone_grant('amr_02', 'narrow_02', 1, rejected, 3)),
+        # amr_03: 허가 뒤 교착 회수
+        rec('/fleet/zone_requests', 4.0, zone_request('amr_03', 'narrow_01', 2)),
+        rec('/fleet/zone_grants', 4.0, zone_grant('amr_03', 'narrow_01', 2, granted)),
+        rec('/fleet/zone_grants', 9.0, zone_grant('amr_03', 'narrow_01', 2, revoked, 3)),
+        # amr_04: 끝까지 대기 (실행 끝 100 s → 90 s 대기)
+        rec('/fleet/zone_requests', 10.0, zone_request('amr_04', 'narrow_02', 5)),
+    ]
+    rows = {r[0]: dict(zip(ZONE_WAITS_HEADER, r)) for r in zone_waits(records, end=100.0)}
+    assert (rows['amr_01']['wait_s'], rows['amr_01']['outcome'], rows['amr_01']['release_time']) == \
+        ('5.000', 'granted', '20.000000')
+    assert rows['amr_02']['outcome'] == 'rejected'
+    assert (rows['amr_03']['wait_s'], rows['amr_03']['outcome']) == ('0.000', 'revoked')
+    assert (rows['amr_04']['wait_s'], rows['amr_04']['outcome']) == ('90.000', 'waiting')
+
+
+def test_stalls_only_long_stops_while_moving_phase():
+    records = [rec('/fleet/task_status', 0.0, status('t1', 'amr_01', IN_PROGRESS, 'move_to_pickup')),
+               rec('/fleet/task_status', 200.0, status('t1', 'amr_01', IN_PROGRESS, 'loading'))]
+    # 0~10 s 움직임, 10~80 s 멈춤(70 s → 정체), 80~100 s 움직임, 100~110 s 멈춤(10 s → 정상 대기),
+    # 110~200 s 움직임, 200~300 s 멈춤이지만 loading 단계라 정체 아님
+    for t in range(0, 300):
+        stopped = 10 <= t < 80 or 100 <= t < 110 or t >= 200
+        records.append(rec('/amr_01/odom', float(t), odom(0.0 if stopped else 0.5, t)))
+    rows = [dict(zip(STALLS_HEADER, r)) for r in stalls(records)]
+    assert [(r['task_id'], r['phase'], r['start_time'], r['duration_s']) for r in rows] == \
+        [('t1', 'move_to_pickup', '10.000000', '70.000')]
+
+
+def test_convert_writes_zone_and_stall_files_only_when_recorded(tmp_path):
+    convert([rec('/fleet/heartbeat', 1.0, heartbeat(1))], tmp_path, delay_ms=0.0)
+    assert not (tmp_path / 'zone_waits.csv').exists() and not (tmp_path / 'stalls.csv').exists()
+    convert([rec('/fleet/zone_requests', 1.0, zone_request('amr_01', 'narrow_01', 1)),
+             rec('/amr_01/odom', 1.0, odom(0.0, 1))], tmp_path, delay_ms=0.0)
+    assert (tmp_path / 'zone_waits.csv').exists() and (tmp_path / 'stalls.csv').exists()

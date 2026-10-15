@@ -1,4 +1,4 @@
-# 위치추정 KPI 기본 시나리오 (민지). 로봇 1대, 창고 월드, 지도 v1 (0.05 m).
+# 위치추정 KPI 기본 시나리오 (민지). 로봇 1대, 창고 월드, 지도 v1 0.025 m + 지도 정렬 원점 (10/12 회의 B안).
 # 정지 → 직진 3 m → 제자리 한 바퀴 → 반 바퀴 → 돌아오는 직진 3 m → 정지 (0.5 m/s, 0.5 rad/s)
 # 정지·직선·회전 구간이 각각 100개 시점 이상 나온다 (EKF 50 Hz).
 name: loc_basic
@@ -8,11 +8,16 @@ use_sim_time: true
 seed_base: 1
 timeout_s: 300
 params:
-  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1.yaml
-  # world에서 본 map 원점 (지도 인계 때 받은 매핑 시작 자세)
-  map_origin: "[0.0, 1.5, 0.0]"
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1_0025.yaml
+  # world에서 본 map 원점. 지도↔월드 정렬값 (amr_mapping README "지도 정렬", #98)
+  map_origin: "[-0.0562, 1.5317, 0.00009]"
+  # AMCL 초기 위치 (map 좌표). 스폰 자세 world (0, 1.5, 0)을 map_origin 기준으로 바꾼 값
+  initial_x: "0.0562"
+  initial_y: "-0.0317"
   # 동적 장애물 (amr_gazebo #58). 켜면 obstacle_seed로 같은 seed를 쓴다
   dynamic_obstacles: "false"
+  # 녹화 (rosbag/, 1회 약 8 MB: 0.025 m 지도 4 MB + GT). 추정 자세는 /tf에 있다. 그림은 plots/
+  record: "true"
 processes:
   - name: sim
     cmd: >-
@@ -26,7 +31,7 @@ processes:
     # IMU 바이어스 보정(정지 2초)
     settle_s: 3
   - name: localization
-    cmd: ros2 launch amr_localization localization.launch.py map:={map}
+    cmd: ros2 launch amr_localization localization.launch.py map:={map} initial_x:={initial_x} initial_y:={initial_y}
     ready_topic: /amr_01/odometry/filtered
     # lifecycle 전환 응답이 가끔 유실돼 지도 서버나 AMCL이 inactive로 남는다(10/6 하네스 30회 중 3회).
     # 둘 다 active인지 확인하고, 아니면 기동 실패로 보고 다시 시도한다
@@ -34,6 +39,14 @@ processes:
       - ros2 lifecycle get /map_server | grep -q '^active'
       - ros2 lifecycle get /amr_01/amcl | grep -q '^active'
     settle_s: 5
+  # 가벼운 토픽만 녹화 (Foxglove·Lichtblick으로 열어 보기용, 하연 10/14 제안). 스캔·카메라는 뺀다.
+  # 이미지에 mcap 저장 플러그인이 없어 sqlite3(.db3)로 남긴다. record=false면 녹화하지 않는다
+  - name: rosbag
+    cmd: >-
+      if [ "{record}" = true ];
+      then exec ros2 bag record -o {run_dir}/rosbag /map /tf /tf_static /amr_01/amcl_pose /amr_01/ground_truth/odom;
+      else exec sleep infinity; fi
+    stop_first: true
   - name: eval_ekf
     cmd: >-
       ros2 run amr_localization eval_node --ros-args -r __ns:=/amr_01 -r __node:=eval_ekf
@@ -63,6 +76,10 @@ driver:
     - [0.0, 0.0, 2.0]
     - [0.5, 0.0, 6.0]
     - [0.0, 0.0, 5.0]
+# 실행 폴더에 plots/loc_traj.png(지도 위 GT·EKF·AMCL 궤적), plots/loc_error.png(시간에 따른 오차). 실패해도 실행은 그대로
+postprocess:
+  - name: plot
+    cmd: python3 /repo/tools/harness/plot_run.py {run_dir} --map {map}
 # 프로세스 그룹 정리 뒤에도 남을 수 있는 Gazebo 서버
 cleanup:
   - pkill -9 -f "[i]gn gazebo" || true

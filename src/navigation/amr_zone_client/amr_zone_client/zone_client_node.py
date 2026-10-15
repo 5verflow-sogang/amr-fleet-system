@@ -15,6 +15,7 @@ cmd_vel_zone_limited로 낸다 - README '동작 규칙' 절, core.py 모듈 설�
 
 from __future__ import annotations
 
+import math
 import signal
 from typing import List, Optional
 
@@ -32,7 +33,7 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from .core import TYPE_RELEASE, ZoneClientConfig, ZoneClientCore
-from .zones_config import load_zone_configs
+from .zones_config import load_zone_configs, transform_zones
 
 _STATE_TOPIC = 'zone_client/state'
 _STATE_PUBLISH_PERIOD_S = 1.0
@@ -49,6 +50,9 @@ class ZoneClientNode(Node):
         self._robot_id = p('robot_id', default_robot_id).value
         zones_file = p('zones_file', '').value
         self._map_frame = p('map_frame', 'map').value
+        # zones.yaml area_world의 좌표계. 비우면 map_frame 좌표로 그대로 본다 (TF 없는 테스트).
+        # 'world'면 TF map ← world로 바꿔 쓴다 - 지도 원점이 world와 달라 그대로 쓰면 구역이 어긋난다
+        self._zones_frame = p('zones_frame', '').value
         self._base_frame = p('base_frame', 'base_footprint').value
         plan_topic = p('plan_topic', 'plan').value
         # 서버 → 로봇(zone_grants)은 장애 주입기가 중계하므로 네임스페이스 안 상대 이름을 기본값으로 쓴다.
@@ -74,22 +78,27 @@ class ZoneClientNode(Node):
         lookahead_m = p('lookahead_m', 0.0).value
 
         zones = load_zone_configs(zones_file)
-        self._core = ZoneClientCore(ZoneClientConfig(
+        self._raw_zones = zones
+        # zones_frame이 있으면 TF가 들어온 뒤(_update) 구역을 map 좌표로 바꿔 core를 만든다. 그때까지 None
+        self._core: Optional[ZoneClientCore] = None
+        self._core_params = dict(
             robot_id=self._robot_id,
-            zones=zones,
             trigger_distance_m=p('trigger_distance_m', 3.0).value,
             stop_margin_m=p('stop_margin_m', 0.5).value,
             waiting_margin_m=p('waiting_margin_m', 0.15).value,
             decel_mps2=p('decel_mps2', 1.0).value,
             resend_period_s=p('resend_period_s', 1.0).value,
             retry_period_s=p('retry_period_s', 5.0).value,
+            drop_grace_s=p('drop_grace_s', 3.0).value,
             lookahead_m=lookahead_m if lookahead_m > 0.0 else None,
             max_linear_velocity_mps=p('max_linear_velocity_mps', 2.0).value,
             backing_speed_mps=p('backing_speed_mps', 0.15).value,
             backing_margin_m=p('backing_margin_m', 0.3).value,
             backing_max_distance_m=p('backing_max_distance_m', 6.0).value,
             backing_timeout_s=p('backing_timeout_s', 45.0).value,
-        ))
+        )
+        if not self._zones_frame or self._zones_frame == self._map_frame:
+            self._core = ZoneClientCore(ZoneClientConfig(zones=zones, **self._core_params))
 
         self._path_xy: List[tuple] = []
         self._speed_cap: Optional[float] = None
@@ -134,6 +143,9 @@ class ZoneClientNode(Node):
     def _on_grant(self, msg: ZoneGrant):
         if self._shutting_down:
             return
+        if self._core is None:
+            # 구역 좌표를 아직 못 바꿨다 = 아직 요청을 보낸 적이 없다. 받을 답이 없다
+            return
         lease_expiry = None
         if msg.grant == ZoneGrant.GRANT_GRANTED:
             lease_expiry = Time.from_msg(msg.lease_expiry).nanoseconds * 1e-9
@@ -163,6 +175,18 @@ class ZoneClientNode(Node):
         self._cmd_vel_pub.publish(out)
         self._last_cmd_vel_mps = out.linear.x
 
+    def _set_speed_cap(self, cap: Optional[float]):
+        """속도 상한을 바꾼다. 0이 아닌 값(제한 없음 포함)에서 0으로 바뀌는 순간에만 정지 명령을 한 번 낸다.
+
+        상한은 cmd_vel_nav가 들어올 때(_on_cmd_vel)만 적용되므로, Nav2가 0이 아닌 명령을 낸 뒤 발행을
+        멈추면 상한이 0이 돼도 마지막 명령이 그대로 남는다(fleet_deadlock 조사). 계속 0인 동안은 다시 내지
+        않는다. BACKING 중이면 _update가 후진 명령을 직접 내므로 건너뛴다.
+        """
+        dropped_to_zero = cap is not None and cap <= 0.0 and (self._speed_cap is None or self._speed_cap > 0.0)
+        self._speed_cap = cap
+        if dropped_to_zero and self._backing_linear_x is None:
+            self._publish_cmd(0.0)
+
     def _publish_cmd(self, linear_x: float):
         out = Twist()
         out.linear.x = linear_x
@@ -177,8 +201,32 @@ class ZoneClientNode(Node):
             return None
         return (tf.transform.translation.x, tf.transform.translation.y)
 
+    def _ensure_core(self) -> bool:
+        """zones_frame → map_frame TF로 구역을 바꿔 core를 만든다. 아직 TF가 없으면 False."""
+        if self._core is not None:
+            return True
+        try:
+            tf = self._tf_buffer.lookup_transform(self._map_frame, self._zones_frame, rclpy.time.Time())
+        except TransformException as e:
+            self.get_logger().warn(
+                f'구역 좌표 변환 대기 ({self._zones_frame}→{self._map_frame} TF 없음, 그동안 정지): {e}',
+                throttle_duration_sec=5.0)
+            return False
+        t, q = tf.transform.translation, tf.transform.rotation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        zones = transform_zones(self._raw_zones, t.x, t.y, yaw)
+        self._core = ZoneClientCore(ZoneClientConfig(zones=zones, **self._core_params))
+        self.get_logger().info(
+            f'구역 좌표 {self._zones_frame}→{self._map_frame} 변환 (dx={t.x:.3f}, dy={t.y:.3f}, '
+            f'dyaw={yaw:.5f}): ' + ', '.join(f'{z.zone_id} {tuple(round(v, 3) for v in z.area)}' for z in zones))
+        return True
+
     def _update(self):
         if self._shutting_down:
+            return
+        if not self._ensure_core():
+            # 구역이 어디인지 모르면 fail-closed: 위치를 모를 때와 같은 규칙으로 상한을 0으로 묶는다
+            self._set_speed_cap(0.0)
             return
         robot_xy = self._lookup_robot_xy()
         if robot_xy is None:
@@ -186,7 +234,7 @@ class ZoneClientNode(Node):
             # 이미 throttle해서 남긴다 (#66). BACKING 중이면(위치가 있어야 후진 거리를 재므로)
             # 같은 규칙으로 바로 정지한다 - core 상태는 그대로 두고(이번 틱만 건너뜀) TF가
             # 돌아오면 이어서 재개한다.
-            self._speed_cap = 0.0
+            self._set_speed_cap(0.0)
             if self._backing_linear_x is not None:
                 self._publish_cmd(0.0)
             return
@@ -199,8 +247,8 @@ class ZoneClientNode(Node):
             safety_limit = None
         outgoing, speed_cap, backing_linear_x, errors = self._core.update(
             now, self._path_xy, robot_xy, safety_limit, self._last_cmd_vel_mps)
-        self._speed_cap = speed_cap
         self._backing_linear_x = backing_linear_x
+        self._set_speed_cap(speed_cap)
         for error in errors:
             self.get_logger().error(error)
         for item in outgoing:

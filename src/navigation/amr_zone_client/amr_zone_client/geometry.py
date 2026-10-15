@@ -21,6 +21,16 @@ def distance(a: Point, b: Point) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
+def distance_to_rect(xy: Point, rect: Rect) -> float:
+    """점에서 사각형까지의 직선 거리 (안이면 0). 경로를 따라 잰 거리보다 항상 짧거나 같아서,
+    경로가 그 구역을 잠깐 안 지나는 동안 정지 상한을 보수적으로 계산하는 데 쓴다."""
+    x, y = xy
+    x_min, x_max, y_min, y_max = rect
+    dx = max(x_min - x, 0.0, x - x_max)
+    dy = max(y_min - y, 0.0, y - y_max)
+    return (dx * dx + dy * dy) ** 0.5
+
+
 def _segment_rect_entry(a: Point, b: Point, rect: Rect) -> Optional[Point]:
     """a→b 선분이 rect 밖에서 안으로 들어가는 첫 지점. a가 이미 안이거나 안 만나면 None (Liang-Barsky)."""
     x_min, x_max, y_min, y_max = rect

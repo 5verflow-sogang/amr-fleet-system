@@ -136,13 +136,48 @@ def leftover_processes() -> list[str]:
             and not LEFTOVER_IGNORE_RE.search(args)]
 
 
+CLI_TIMEOUT_S = 30.0
+
+
+def run_cli(cmd, timeout_s: float = CLI_TIMEOUT_S) -> tuple[Optional[int], str]:
+    """준비 확인용 명령을 자기 프로세스 그룹으로 돌린다. (종료 코드, stdout). 시간 초과면 (None, '').
+
+    shell=True로 띄운 명령이 멈추면 subprocess.run의 timeout은 셸만 죽이고 그 아래 ros2 CLI는 남아 재시도마다 쌓인다
+    (#148 하연 리뷰). 그래서 새 세션으로 띄우고 시간 초과면 그룹째 죽인다.
+    """
+    shell = isinstance(cmd, str)
+    proc = subprocess.Popen(cmd, shell=shell, executable='/bin/bash' if shell else None, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=timeout_s)
+        return proc.returncode, out
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+        return None, ''
+
+
+def _warn_cli_timeout(what: str, warned: list) -> None:
+    # CLI가 DDS 발견을 못 끝내 멈춘 것이다. 실행 전체 시간 초과로 번지지 않게 "아직 준비 안 됨"으로 보고 다시 확인한다.
+    # 같은 대기에서 한 번만 알린다
+    if not warned:
+        print(f'  경고: 준비 확인 명령이 {CLI_TIMEOUT_S:.0f}s 응답 없음, 다시 확인한다: {what}', flush=True)
+        warned.append(True)
+
+
 def wait_topic(topic: str, timeout_s: float, proc: Optional[Proc] = None) -> float:
     """토픽이 보일 때까지 기다린다. 걸린 시간(s)을 돌려준다. 기다리는 동안 proc이 끝나면 바로 실패한다."""
     t0 = time.monotonic()
+    warned = []
     while time.monotonic() - t0 < timeout_s:
         if proc is not None and proc.popen.poll() is not None:
             raise RunError('error', f'{proc.name}이(가) 끝남 (로그: {proc.log})', startup=True)
-        out = subprocess.run(['ros2', 'topic', 'list'], capture_output=True, text=True, timeout=30).stdout
+        code, out = run_cli(['ros2', 'topic', 'list'])
+        if code is None:
+            _warn_cli_timeout('ros2 topic list', warned)
         if topic in out.split():
             return time.monotonic() - t0
         time.sleep(1.0)
@@ -152,9 +187,13 @@ def wait_topic(topic: str, timeout_s: float, proc: Optional[Proc] = None) -> flo
 def wait_cmd(cmd: str, timeout_s: float) -> float:
     """명령이 성공(종료 코드 0)할 때까지 다시 실행한다. 예: lifecycle 노드가 active인지 확인."""
     t0 = time.monotonic()
+    warned = []
     while time.monotonic() - t0 < timeout_s:
-        if subprocess.run(cmd, shell=True, executable='/bin/bash', capture_output=True, timeout=30).returncode == 0:
+        code, _ = run_cli(cmd)
+        if code == 0:
             return time.monotonic() - t0
+        if code is None:
+            _warn_cli_timeout(cmd, warned)
         time.sleep(1.0)
     raise RunError('error', f'준비 확인 실패: {cmd} ({timeout_s:.0f}s)', startup=True)
 
@@ -205,6 +244,36 @@ class ConfigOverrides:
 
     def meta(self) -> dict:
         return {target: {'file': str(source), 'sha256': sha256(source)} for target, _, source in self.items}
+
+
+def patch_yaml(source: Path, sets: dict, dest: Path) -> Path:
+    """source YAML에서 sets의 값만 바꿔 dest에 쓴다. 키는 점으로 이은 경로 (예: controller_server.ros__parameters.DWA.max_v).
+
+    시나리오 config_patch가 쓴다: 설정 파일을 통째로 복사해 두면 원본이 바뀔 때 어긋나므로 바꿀 값만 적는다.
+    """
+    import yaml
+    data = yaml.safe_load(source.read_text(encoding='utf-8'))
+    for key, value in sets.items():
+        node, parts = data, key.split('.')
+        for part in parts[:-1]:
+            if not isinstance(node, dict) or part not in node:
+                raise KeyError(f'{source.name}에 {key}가 없다 ({part})')
+            node = node[part]
+        if parts[-1] not in node:
+            raise KeyError(f'{source.name}에 {key}가 없다')
+        node[parts[-1]] = value
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding='utf-8')
+    return dest
+
+
+def installed_path(target: str) -> Path:
+    """'<패키지>/<share 아래 경로>' → 설치된 파일 경로."""
+    pkg, _, rel = target.partition('/')
+    prefix = subprocess.run(['ros2', 'pkg', 'prefix', pkg], capture_output=True, text=True).stdout.strip()
+    if not prefix:
+        raise ValueError(f'패키지를 찾지 못함: {pkg}')
+    return Path(prefix) / 'share' / pkg / rel
 
 
 def host_info() -> dict:
@@ -263,7 +332,9 @@ def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[Co
         'run_id': run_dir.name, 'scenario': scenario['name'], 'label': params.get('label', ''),
         'repeat': params['repeat'], 'seed': params['seed'], 'git_sha': git_sha(),
         'params': {k: v for k, v in params.items() if k not in ('run_dir',)},
-        'num_robots': scenario.get('num_robots', 1), 'use_sim_time': scenario.get('use_sim_time', True),
+        # --set num_robots로 대수를 바꾸는 시나리오(fleet_fake)는 params 값이 실제 대수다
+        'num_robots': int(params.get('num_robots', scenario.get('num_robots', 1))),
+        'use_sim_time': scenario.get('use_sim_time', True),
         'fault': fault_meta(params), 'host': host_info(),
         'versions': {'ros_distro': os.environ.get('ROS_DISTRO', ''), 'image': os.environ.get('HARNESS_IMAGE', ''),
                      'rmw_implementation': os.environ.get('RMW_IMPLEMENTATION', 'rmw_fastrtps_cpp (기본)'),

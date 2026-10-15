@@ -94,3 +94,47 @@ def test_run_once_records_ready_time(tmp_path, monkeypatch):
     meta = run_once(scenario, {'repeat': 0, 'seed': 1}, tmp_path / 'r0', reset_dds=False)
     assert list(meta['ready_s']) == ['sim', 'quick']
     assert 'leftover_processes' in meta
+
+
+def test_patch_yaml_changes_only_named_values(tmp_path):
+    src = tmp_path / 'nav2_params.yaml'
+    src.write_text('controller_server:\n  ros__parameters:\n    DWA:\n      max_v: 2.0\n      max_w: 1.5\n')
+    out = runner.patch_yaml(src, {'controller_server.ros__parameters.DWA.max_v': 0.5}, tmp_path / 'p' / 'n.yaml')
+    import yaml
+    assert yaml.safe_load(out.read_text()) == {'controller_server': {'ros__parameters': {'DWA': {'max_v': 0.5, 'max_w': 1.5}}}}
+    # 없는 키는 조용히 새로 만들지 않고 거부한다 (오타로 아무 효과 없는 실험을 막는다)
+    import pytest
+    with pytest.raises(KeyError):
+        runner.patch_yaml(src, {'controller_server.ros__parameters.DWA.max_vv': 0.5}, tmp_path / 'q.yaml')
+
+
+def test_ready_check_timeout_is_not_run_timeout(monkeypatch):
+    # 준비 확인 명령이 멈춰도(TimeoutExpired) 실행 전체 시간 초과가 아니라 기동 실패(startup)로 끝나야 재시도된다
+    monkeypatch.setattr(runner, 'run_cli', lambda *a, **k: (None, ''))
+    monkeypatch.setattr(runner.time, 'sleep', lambda s: None)
+    for wait in (lambda: runner.wait_topic('/x', 0.05), lambda: runner.wait_cmd('ros2 lifecycle get /amcl', 0.05)):
+        try:
+            wait()
+        except runner.RunError as e:
+            assert e.startup
+        else:
+            raise AssertionError('RunError가 나야 한다')
+
+
+def test_run_cli_kills_whole_group_on_timeout(tmp_path):
+    # 셸이 띄운 자식(sleep)까지 같이 죽어야 재시도마다 쌓이지 않는다
+    marker = tmp_path / 'child_pid'
+    code, out = runner.run_cli(f'sleep 30 & echo $! > {marker}; wait', timeout_s=0.5)
+    assert code is None and out == ''
+    pid = int(marker.read_text())
+    import time
+    for _ in range(40):
+        # 죽은 자식은 부모(셸)가 먼저 죽어 init에 넘어가는데, CI 컨테이너의 1번 프로세스는 거두지 않아 좀비(Z)로 남는다.
+        # 좀비는 아무것도 안 하므로 죽은 것으로 본다
+        state = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
+        if not state or state.startswith('Z'):
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError(f'자식 프로세스가 남았다 (상태 {state})')
+    assert runner.run_cli('echo hi') == (0, 'hi\n')

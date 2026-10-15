@@ -21,7 +21,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness.runner import ConfigOverrides, dds_domain, dds_reset, run_once  # noqa: E402
+from harness.runner import ConfigOverrides, dds_domain, dds_reset, installed_path, patch_yaml, run_once  # noqa: E402
 from harness.notify import notify  # noqa: E402
 from harness.summary import summarize, to_markdown  # noqa: E402
 
@@ -33,6 +33,11 @@ def load_scenario(name: str) -> dict:
     if not path.exists():
         path = HERE / 'scenarios' / f'{name}.yaml'
     scenario = yaml.safe_load(path.read_text(encoding='utf-8'))
+    if 'extends' in scenario:
+        # 다른 시나리오를 그대로 쓰고 이름·params만 바꾼다 (예: loc_kpi_*는 loc_basic + 지도·원점)
+        base = load_scenario(scenario.pop('extends'))
+        params = {**(base.get('params') or {}), **(scenario.get('params') or {})}
+        scenario = {**base, **scenario, 'params': params}
     for key in ('name', 'processes', 'driver'):
         if key not in scenario:
             raise ValueError(f'{path}: {key}가 없다')
@@ -45,6 +50,16 @@ def parse_set(items):
         key, sep, value = item.partition('=')
         if not sep:
             raise ValueError(f'--set은 이름=값 형식 (지금 {item!r})')
+        out[key] = value
+    return out
+
+
+def render_patch(sets: dict, params: dict) -> dict:
+    """config_patch 값 안의 {이름}을 params로 채운다. 문자열이면 YAML 값으로 읽어 숫자·불도 제 타입이 되게 한다."""
+    out = {}
+    for key, value in sets.items():
+        if isinstance(value, str) and '{' in value:
+            value = yaml.safe_load(value.format_map(params))
         out[key] = value
     return out
 
@@ -83,7 +98,14 @@ def main(argv=None) -> int:
     if isolate:
         dds_reset()  # 이전 작업이 남긴 흔적부터 지우고 시작한다
     attempts = args.repeat_offset
-    with ConfigOverrides(args.config) as overrides:
+    # 시나리오 config_patch: 설치된 설정 파일에서 몇 값만 바꾼 사본을 실행 동안 끼운다 (--config와 같은 방식, meta에 해시)
+    configs = list(args.config)
+    # 값에 {이름}을 쓰면 시나리오 params로 채운 뒤 YAML 값으로 읽는다 (예: count: "{task_count}" → 120)
+    for target, sets in (scenario.get('config_patch') or {}).items():
+        dest = out / f'_config_{tag}_{stamp}' / Path(target).name
+        patch_yaml(installed_path(target), render_patch(sets, params), dest)
+        configs.append(f'{target}={dest}')
+    with ConfigOverrides(configs) as overrides:
         for i in range(args.repeat_offset, args.repeat_offset + args.repeats):
             run_dir = out / f'{tag}_{stamp}_{i:02d}'
             run_params = {**params, 'repeat': i, 'seed': seed_base + i}

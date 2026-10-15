@@ -157,7 +157,7 @@
 | `priority` | 0~255 |
 | `deadline_s` | 요청 후 마감까지 (s). 0이면 마감 없음 |
 
-- 스테이션 자세는 world 좌표로 적고 발행할 때 `map_origin_in_world`(기본 `[0.0, 1.5, 0.0]`, warehouse_v0 지도)로 map 좌표로 바꾼다. 스테이션 목록은 **제안**이다. 도킹 자세는 지수가 ArUco 마커에 맞춰 확정한다.
+- 스테이션 자세는 world 좌표로 적고 발행할 때 `map_origin_in_world`(기본 `[-0.0562, 1.5317, 0.00009]`, 지도 v1 0.025 m 정렬값, 위치추정과 같은 값)로 map 좌표로 바꾼다. 스테이션 목록은 **제안**이다. 도킹 자세는 지수가 ArUco 마커에 맞춰 확정한다.
 - 시각은 노드 시계(`use_sim_time`이면 시뮬레이션 시간)다. 시뮬레이터가 느려져도 로봇 속도에 비해 작업이 몰리지 않는다.
 - Fleet 서버(`server_node`, 기본 `fleet_manager`)가 `/fleet/task_requests`를 구독해야 일정을 시작한다. rosbag 녹화 같은 다른 구독자가 먼저 떠도 시작하지 않는다.
 - **seed 0도 고정 seed다.** 0을 넣으면 매번 같은 일정이 나온다(무작위가 아님). 장애 주입기의 `seed`도 같다. 지수 쪽 `encoder_seed`·`obstacle_seed`는 0이 "매번 무작위"라 의미가 다르므로, 하네스는 반복 번호를 그대로 넘기면 된다.
@@ -181,7 +181,7 @@
 | `task_table_period_s` | `1.0` | 작업표 방송 주기 (s) |
 | `traffic.lease_s` | `5.0` | 구역 허가 유효 시간 (노드 시계, s) |
 | `traffic.release_timeout_s` | `30.0` | 점유 로봇이 이 시간 동안 요청·반납이 없으면 구역을 푼다 (노드 시계, s) |
-| `traffic.deadlock_strategy` | `revoke` | 교착 해소 전략. `revoke`(순환이 생기면 우선순위 낮은 로봇 허가 회수) / `avoid`(순환을 닫는 대기 요청 거부). [amr_fleet_core README](../amr_fleet_core/README.md) '교착 탐지' |
+| `traffic.deadlock_strategy` | `revoke` | 교착 해소 전략. `revoke`(순환이 생기면 우선순위 낮은 로봇 허가 회수) / `avoid`(순환을 닫는 대기 요청 거부). [amr_fleet_core README](../amr_fleet_core/README.md) '교착 탐지'. launch 인자 `deadlock_strategy` |
 | `traffic.zones_file` | `''` | 구역 목록 파일. 비우면 모든 구역 요청을 거부. launch 인자 `zones_file` (기본 `config/zones.yaml`) |
 | `tick_s` | `0.05` | 재전송·구역 만료 확인 주기 (s) |
 | `epoch_file` | `''` | 서버 재시작 번호 파일. launch 인자 `epoch_file` (기본 `/tmp/amr_fleet_manager/epoch`) |
@@ -211,7 +211,7 @@
 | `seed` | `0` | 일정 난수 seed. 하네스 반복 번호. 0도 고정 seed |
 | `stations_file` | `config/stations.yaml` | 스테이션 자세 (world) |
 | `schedule_out` | `''` | 만든 일정을 JSON Task 파일로 남길 경로 |
-| `map_origin_in_world` | `[0.0, 1.5, 0.0]` | world에서 본 map 원점 `[x, y, yaw]`. 실수로 적는다. 지도가 바뀌면 그 지도의 매핑 시작 자세를 넣는다 |
+| `map_origin_in_world` | `[-0.0562, 1.5317, 0.00009]` | world에서 본 map 원점 `[x, y, yaw]`. 실수로 적는다. 위치추정(`amr_localization`)과 같은 값이어야 한다 |
 | `server_node` | `fleet_manager` | 이 노드가 구독해야 일정을 시작한다. 비우면 아무 구독자나 |
 
 ## 실행
@@ -238,6 +238,13 @@ ros2 launch amr_fault_injector fault_injector.launch.py delay_ms:=200.0 loss_pct
 ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 relayed:=true
 ```
 
+가짜 로봇은 10대까지 띄울 수 있다(`config/fake_robots.yaml`에 시작 위치가 있는 수). 6대 이상이면 장애 주입기도 같은 수로 띄워야 6번 이후 로봇에 중계본이 간다.
+
+```bash
+ros2 launch amr_fault_injector fault_injector.launch.py num_robots:=10
+ros2 launch amr_fleet_manager fake_robots.launch.py count:=10 relayed:=true
+```
+
 하네스는 이 상태에서 `/fleet/*`, `/<robot>/fleet/*`를 rosbag2로 녹화하면 `response_time.csv`(Ack 컬럼)·`fleet_latency.csv`의 원자료가 된다. 가짜 로봇은 `/<robot>/odom`을 내지 않으므로 응답 시간(`response_time`) 자체는 실제 로봇 스택에서만 잰다.
 
 ### Fleet 지표 변환 (`fleet_metrics`)
@@ -253,8 +260,9 @@ ros2 run amr_fleet_manager fleet_metrics /tmp/run1/rosbag --out /tmp/run1 --dela
 | --- | --- |
 | `fleet_latency.csv` | 원본 메시지 1건 × 로봇 1대마다 1행 (`topic, robot, key, send_time, recv_time, latency_ms, delivered`) |
 | `response_time.csv` | 할당 명령 1건마다 1행 (명세서 컬럼 + `robot, task_id, latency_sim_ms, assignment_id, ack_time, ack_rtt_ms, resends`) |
-| `task_outcomes.csv` | 작업 1건마다 1행 (`task_id, request_time, first_assign_time, robots, final_state, end_time`). `robots`는 맡았던 로봇 순서(공백 구분), `final_state`는 마지막 할당 뒤 그 로봇의 끝 보고(`COMPLETED`·`FAILED`), 없으면 빈칸 |
+| `task_outcomes.csv` | 작업 1건마다 1행 (`task_id, request_time, first_assign_time, robots, final_state, end_time, task_time_s, distance_m, error_code`). `robots`는 맡았던 로봇 순서(공백 구분), `final_state`는 마지막 할당 뒤 그 로봇의 끝 보고(`COMPLETED`·`FAILED`), 없으면 빈칸. `error_code`는 `FAILED`일 때 그 보고의 `ErrorInfo.code`(예: 203 위치, 501 작업 시간 초과) |
 | `recovery.csv` | `fault_events.csv`에 `robot_kill:<로봇>`이 있을 때만. 강제종료 1건 × 그 로봇이 하던 작업 1건마다 1행 (`robot, kill_time, task_id, reassign_time, reassigned_robot, recovery_s, completed`). `recovery_s` = 다른 로봇에 다시 할당된 시각 − 죽은 시각. 놀던 로봇이면 `task_id`가 빈 행 1개 |
+| `robot_states.csv` | `/fleet/robot_states` 1건마다 1행 (`time, robot, x, y, mode, task_id`). 아래 `fleet_plot`의 원자료 |
 | `meta.json` | `observation_cutoff` (`end, delay_ms, grace_s, resend_grace_s, cutoff, ack_cutoff, start`). 다른 키는 그대로 둔다 |
 
 형식과 정의는 [하네스 README](../../../tools/harness/README.md#지표-csv)를 따르고, 아래는 구현에서 정한 것이다.
@@ -265,6 +273,28 @@ ros2 run amr_fleet_manager fleet_metrics /tmp/run1/rosbag --out /tmp/run1 --dela
 - 관측 마감: `cutoff` = 끝 − `delay_ms` − `grace_s`(1초) 뒤에 보낸 메시지는 `delivered`를 비운다. `ack_cutoff` = `cutoff` − `resend_grace_s`(5초 = 서버 재전송 1초 × 5회) 뒤에 보낸 명령은 `response_time.csv`에 행을 만들지 않는다.
 - `response_time`은 `/<robot>/odom`이 bag에 있을 때만 채운다. 임계값: 선속도 0.01 m/s 또는 각속도 0.05 rad/s.
 - 로봇 → 서버 방향은 장애를 걸지 않는다(D8 제안). 걸게 되면 Ack 원본·중계본 짝짓기를 추가한다.
+
+### 작업 타임라인 그림 (`fleet_plot`)
+
+GUI(rviz·Gazebo) 없이 실행 하나를 눈으로 보는 그림. 하네스 `fleet_fake`가 `fleet_metrics` 다음에 부른다. 보기용이라 판정에는 쓰지 않는다.
+
+```bash
+ros2 run amr_fleet_manager fleet_plot /tmp/run1            # → /tmp/run1/plots/timeline.png
+# ROS 없이 (matplotlib만). GCP 결과 폴더를 받아 맥에서 다시 그릴 때
+PYTHONPATH=src/fleet/amr_fleet_manager python3 -m amr_fleet_manager.fleet_plot <실행 폴더>
+```
+
+`timeline.png`는 로봇마다 한 줄이다.
+
+- 작업 구간: `current_task_id`가 같은 동안. 작업마다 색이 다르고, 막대가 넓으면 작업 이름을 쓴다
+- ERROR·E-Stop: 막대 아래 빨간 띠
+- RobotState가 3초 넘게 끊긴 구간: 빗금 (죽고 다시 뜨지 않은 로봇은 실행 끝까지)
+- 로봇 강제종료: 그 로봇 줄의 빨간 세로선. 서버 강제종료·재시작: 전체 점선
+- 회수된 작업의 재할당: 죽은 로봇 → 넘겨받은 로봇 화살표 (`recovery.csv`, 작업 이름 + 회수 시간)
+
+- 읽는 파일이 없으면 그 부분만 빼고 그린다. `robot_states.csv`가 없거나 비면 그림을 쓰지 않는다.
+- 그림이 실패해도(matplotlib 없음, 읽기 오류 등) traceback만 찍고 늘 0으로 끝난다. 그림 때문에 하네스 실행이 실패(`outcome: error`)가 되어 측정 결과까지 버려지지 않게 하기 위해서다 (하네스 `plot_run.py`와 같은 정책). 잘린 줄(쓰는 도중 강제종료 등)은 건너뛰고 나머지로 그린다.
+- 그림 글자는 한글 글꼴 문제를 피하려고 영어로 쓴다.
 
 ## 테스트
 

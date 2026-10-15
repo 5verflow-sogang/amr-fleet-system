@@ -1,9 +1,12 @@
 # 구역 진입 처리 노드 파라미터 (zone_client_node)
 /**/zone_client:
   ros__parameters:
-    # 좌표계 이름 (TF map_frame → base_frame, zones.yaml area_world도 이 프레임 기준으로 본다).
-    # 지금은 Gazebo world와 map 원점이 같다고 본다. 지도 v1(10/9) 인계 뒤 틀어지면 이 값만 바꾸면 된다
+    # 좌표계 이름 (TF map_frame → base_frame).
     map_frame: map
+    # zones.yaml area_world의 좌표계 (10/13 수정). area_world는 Gazebo world 좌표인데 지도 원점은 world (0, 1.5)라,
+    # map 좌표로 그대로 쓰면 구역이 1.5 m 어긋난다. 'world'면 TF map ← world(amr_bringup system.launch가 발행)로 바꿔 쓴다.
+    # 비우면 map 좌표로 그대로 본다 (TF 없는 단위·launch 테스트). launch 인자 zones_frame으로 준다
+    zones_frame: ''
     base_frame: base_footprint
     # Nav2 전역 계획 경로. amr_bringup이 붙이는 상대 이름 (/<ns>/plan)
     plan_topic: plan
@@ -28,6 +31,10 @@
     resend_period_s: 1.0
     # REJECTED 뒤 경로에 구역이 남아 있으면 이 시간 뒤 새 request_id로 재시도한다 (#66 하연 리뷰)
     retry_period_s: 5.0
+    # 아직 들어가지 않은 구역이 전역 경로에서 빠져도, 로봇이 trigger_distance_m(직선) 안에 있으면 이 시간(s)
+    # 동안은 반납하지 않고 같은 request_id로 계속 요청하며 직선 거리로 정지 상한을 건다. 넘으면 반납·IDLE
+    # (10/15 하연·이진, #66의 "경로에서 빠지면 즉시 반납"을 바꿈 - 교착 중 Nav2의 잠깐 우회로 정지선을 넘던 문제)
+    drop_grace_s: 3.0
     # 아직 안 건드린 구역은 로봇 앞 이 거리(m)까지만 찾아본다. 0.0이면 trigger_distance_m + 2.0m로
     # 알아서 정한다(core.py _DEFAULT_LOOKAHEAD_MARGIN_M) - 긴 경로를 매번 끝까지 훑지 않게 한다 (#66)
     lookahead_m: 0.0

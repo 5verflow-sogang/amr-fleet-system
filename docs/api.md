@@ -41,10 +41,14 @@ map
 
 | TF | 발행 노드 | 입력 | 끄는 설정 |
 | --- | --- | --- | --- |
+| `world → map` | `amr_bringup system.launch.py` (`static_transform_publisher`, 10/13) | `map_origin_in_world` | `localization:=false`면 안 띄움 |
 | `map → odom` | `ekf_global` (민지) | `odom`, `imu/data`, `amcl_pose` | AMCL `tf_broadcast: false` |
 | `odom → base_footprint` | `ekf_local` (민지) | `odom`, `imu/data` (전역 입력 없음) | `amr_odometry` `publish_tf: false`, Gazebo DiffDrive `publish_odom_tf:=false` |
 
 - EKF의 `base_link_frame`은 `base_footprint`로 둔다 (위 TF 트리 기준).
+- `world → map`은 지도 원점(Gazebo world에서 본 `map` 원점)을 TF 하나로 내는 것이다. world 좌표로 적은 설정(`zones.yaml`
+  등)을 쓰는 노드는 원점 값을 복사하지 말고 이 TF를 조회한다 (구역 클라이언트 `zones_frame:=world`). `world`는 TF 트리의 새
+  뿌리가 되고, Gazebo 정답 토픽(`ground_truth/odom`)의 `frame_id`와 같은 이름이다.
 - `amr_odometry`의 `publish_tf`는 기본 `false`다. EKF 없이 오도메트리만 단독으로 시험할 때만 `true`로 켠다.
 - EKF 없이 sim만 띄우면 Gazebo DiffDrive가 `odom → base_footprint`를 발행한다 (`publish_odom_tf` 기본 `true`). EKF를 띄울 때는 `sim.launch.py publish_odom_tf:=false`로 끈다.
 
@@ -125,7 +129,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 추적 | `perception/obstacles` | 토픽 | `amr_msgs/msg/TrackedObstacleArray` | `amr_tracking` | `amr_safety`, DWA | 추적 주기마다 |
 | 추적 | `perception/collision_risks` | 토픽 | `amr_msgs/msg/CollisionRiskArray` | `amr_tracking` | `amr_safety`, DWA(`amr_nav2_plugins`, 회피 모드 예정) | 추적 주기마다 |
 | 안전 | `safety/status` | 토픽 | `amr_msgs/msg/SafetyStatus` | `amr_safety` | `amr_control`, `amr_bt`, `amr_fleet_manager`, 대시보드 | 바뀌면 즉시, 그 외 10 Hz |
-| 안전 | `safety/estop` | 서비스 | `std_srvs/srv/SetBool` | `amr_safety` | 대시보드, 운영자 | 요청 시 |
+| 안전 | `safety/estop` | 서비스 | `std_srvs/srv/SetBool` | `amr_safety` | 대시보드, 운영자, RViz2 E-Stop 버튼(`amr_safety` `estop_button`) | 요청 시 |
 | Fleet | `/fleet/task_requests` | 토픽 | `amr_msgs/msg/Task` | 작업 생성기(`amr_fleet_manager` `task_generator`), 대시보드 | `amr_fleet_manager` | 요청 시 |
 | Fleet | `/fleet/task_assignments` | 토픽 | `amr_msgs/msg/TaskAssignment` | `amr_fleet_manager` | `amr_bt` | 할당·취소 시, Ack 없으면 재전송 |
 | Fleet | `/fleet/heartbeat` | 토픽 | `amr_msgs/msg/FleetHeartbeat` | `amr_fleet_manager` | 각 로봇, `amr_fleet_decentralized` | 고정 주기 |
@@ -157,7 +161,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 서버 재시작 | `FleetHeartbeat.epoch`가 바뀌면 로봇은 명령 번호 기준을 초기화한다 |
 | 응답 시간 KPI | 실제 시간으로 잰다. 노드의 `header.stamp`는 시뮬레이션 시간이라 쓰지 않고, 하네스 기록기가 메시지를 받은 시각을 쓴다. `cmd_time`은 `TaskAssignment` 수신 시각, 확인 왕복 시간은 `TaskAssignment` → `TaskAssignmentAck` 수신 시각 차이. 둘 다 같은 `assignment_id`의 첫 수신 기준이라 재전송 시간이 들어간다 ([하네스 로그 포맷](../tools/harness/README.md#지표-csv)) |
 | 작업 로그 | `TaskStatus`의 마지막 이벤트(COMPLETED·FAILED)가 로그 한 줄이 된다. 소요 시간은 `end_time - start_time` |
-| 오류 코드 | `ErrorInfo.code` 대역: 100 할당 / 200 주행 / 300 교통 / 400 통신 / 900 도킹 (`Dock` 결과의 `error_code`, Nav2 DockRobot과 같은 값). 오류가 없으면 `NONE`(0) |
+| 오류 코드 | `ErrorInfo.code` 대역: 100 할당 / 200 주행 / 300 교통 / 400 통신 / 500 작업 수행 / 900 도킹 (`Dock` 결과의 `error_code`, Nav2 DockRobot과 같은 값). 오류가 없으면 `NONE`(0) |
 
 **`class_name` 허용 값**
 
@@ -273,6 +277,9 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | Publish | `safety/status` | `amr_msgs/msg/SafetyStatus` | 바뀌면 즉시, 그 외 10 Hz |
 | Publish | `safety/markers` | `visualization_msgs/msg/MarkerArray` | 차체·0.3 m 경계(단계 색)·1.5 m 경계·상태 글자 (RViz 확인용) |
 | Service | `safety/estop` | `std_srvs/srv/SetBool` | `true` 걸기, `false` 해제 요청 (해제 뒤 0.5 s 지나 단계 재판정) |
+
+같은 패키지의 `estop_button` 노드는 RViz2 E-Stop 버튼이다. interactive marker 서버 `estop_button`(`estop_button/update` 등)을 열고, 클릭하면 `safety/status`의 ESTOP 여부에 따라 `safety/estop`에 `true`/`false`를 보낸다.
+
 ### amr_fleet_manager
 
 | 종류 | 이름 | 타입 | 설명 |
@@ -305,7 +312,8 @@ dot -Tpng frames_*.gv -o tf_tree.png
 안 지남) 전엔 경계 0.5 m 앞에 감속 정지, 허가 없이 넘어가도 상한 0 유지) → `INSIDE`(위치가 구역 안
 **and** 유효한 허가일 때만 전환, 안에서는 lease가 지나도 안 멈춘다) → `IDLE`(벗어나며 반납). `REJECTED`면
 `BLOCKED`로 가 경고를 남기고, 경로에 구역이 남아 있으면 `retry_period_s` 뒤 새 번호로 재시도한다. 경로가
-바뀌어 대기·통과 허가 중이던 구역이 빠지고 로봇도 구역 밖이면 반납하고 `IDLE`로 돌아간다. 자세한
+바뀌어 아직 안 들어간 구역이 빠져도 로봇이 그 구역 trigger 거리 안이면 `drop_grace_s`(3 s) 동안은 같은 번호로
+요청·정지 상한을 유지하고, 그 뒤에도 빠져 있거나 멀어지면 반납하고 `IDLE`로 돌아간다(10/15, #66 규칙 변경). 자세한
 흐름·파라미터는 [amr_zone_client README](../src/navigation/amr_zone_client/README.md).
 
 cmd_vel 체인: 최종 `cmd_vel`을 가로채는 건 안전 노드(`amr_safety`)의 몫으로 합의했으므로(4-4절
