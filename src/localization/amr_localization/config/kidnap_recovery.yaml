@@ -1,0 +1,30 @@
+# Kidnapped Robot 감지·복구 노드 (kidnap_recovery_node.py) 파라미터. 근거는 docs/algorithms/localization.md 4절
+/**:
+  ros__parameters:
+    check_hz: 2.0
+    # 감지: 스캔-지도 일치율이 lost_ratio 아래로 lost_checks번 연속이면 위치를 잃음
+    match_tol: 0.1
+    lost_ratio: 0.5
+    lost_checks: 3
+    # 수렴: 멈춘 상태에서 일치율 ≥ ok_ratio이고 AMCL σ ≤ ok_std_m가 ok_checks번 연속 (4-6절, 옆 통로 오수렴 0.87)
+    ok_ratio: 0.9
+    ok_std_m: 0.3
+    ok_checks: 3
+    # 시도 1번 = 정지 settle_s(제자리 갱신은 nomotion_max번까지) → 회전 rotate_s → 정지 확인 confirm_s.
+    # 최대 max_attempts번 (1차 국소, 2차부터 전역). 전부 실패하면 failed (BT는 바로 FAILED, LOCALIZATION_LOST)
+    settle_s: 10.0
+    nomotion_max: 4
+    allow_rotate: true
+    rotate_s: 15.0
+    rotate_speed: 0.5
+    confirm_s: 3.0
+    max_attempts: 3
+    local_first: true
+    local_std_m: 2.5
+    local_std_yaw: 0.8
+    # 재초기화 때만 AMCL max_particles를 늘리고 복구 뒤 되돌린다 (normal은 amcl.yaml과 같게, 0이면 끔)
+    boost_particles: 10000
+    normal_particles: 2000
+    restore_std_m: 0.1
+    restore_std_yaw: 0.05
+    explore_forward: false
