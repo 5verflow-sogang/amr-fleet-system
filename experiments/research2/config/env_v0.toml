@@ -33,7 +33,7 @@ norm_obs_dist = 10.0
 norm_rel_speed = 3.0
 norm_radius = 1.0
 norm_mass = 30.0
-mass_obs_mode = "mass"     # 질량 칸: "mass"(m / norm_mass) 또는 "brake_ratio"(a_max(m) / a_max(0 kg))
+mass_obs_mode = "mass"     # 질량 칸: "mass"(m / norm_mass) 또는 "brake_ratio"(a_max(m) / a_max(0 kg)). 제안 방법은 [variants.proposed]
 norm_lateral = 1.0       # m. 경로 옆 오차, 벽까지 거리
 
 [env.scenario]
@@ -81,3 +81,4 @@ observe_mass = false
 mass_mode = "random"
 observe_mass = true
 mass_hide_prob = 0.2
+mass_obs_mode = "brake_ratio"    # 빈 차 대비 제동 능력. 제안 방법 질량 입력 튜닝(README)에서 규칙대로 골랐다
