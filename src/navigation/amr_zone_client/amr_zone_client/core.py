@@ -25,8 +25,11 @@
   상한이 사라져 허가 없이 구역에 들어갔다). 그동안은 같은 request_id로 계속 요청해 대기열 순서를 지키고,
   정지 상한은 경로 거리 대신 로봇 → 구역 사각형 직선 거리(보수적)로 계산한다. 경로가 drop_grace_s 넘게
   계속 빠져 있거나 로봇이 trigger_distance_m 밖으로 멀어지면 그때 반납(TYPE_RELEASE, BLOCKED는 쥔 자리가
-  없으니 반납 없이)하고 IDLE로 돌아간다. 그 전에 경로가 다시 그 구역을 지나면 그대로 이어간다.
-  INSIDE 구역은 그대로다(구역을 벗어나면 반납).
+  없으니 반납 없이)하고 IDLE로 돌아간다. 그 전에 경로가 다시 이 구역을 lookahead_m 안에서 지나면 그대로
+  이어간다(grace 카운트를 취소) - lookahead_m보다 먼 재방문(이미 다루는 구역은 거리를 안 끊으므로 뒤
+  경유점에서나 다시 지나는 먼 미래 구간도 찾아낸다)은 지금 당장과 무관해 카운트를 취소하지 않는다(10/16
+  fleet_deadlock #177 회귀 수정 - 경로 일시 유실과 먼 미래 재방문 발견이 반복되면 카운트가 매번 취소돼
+  무기한 붙들린 채 정지 상한이 매 틱 오락가락할 수 있었다). INSIDE 구역은 그대로다(구역을 벗어나면 반납).
 - 남은 거리는 경로의 시작점이 아니라 로봇과 가장 가까운 경로 점부터 잰다(경로가 로봇 뒤쪽 점도
   담고 있을 수 있어서 - geometry.remaining_distance_to_rect).
 - ZoneGrant는 모든 로봇에 방송되므로 robot_id로 거른다 (on_grant).
@@ -356,8 +359,15 @@ class ZoneClientCore:
                     dropped_from_path = False
                     detouring = True
                     remaining = straight
-            else:
-                state.off_path_since = None  # 경로가 다시 이 구역을 지난다 - 그대로 이어간다
+            elif remaining is not None and remaining <= self._lookahead_m:
+                # 경로가 다시 이 구역을 "가까운 미래"(lookahead_m) 안에서 지난다 - 그대로 이어간다.
+                # remaining이 lookahead_m보다 멀면(뒤 경유점에서나 다시 지나는 먼 미래 재방문 -
+                # 이미 다루고 있는 구역은 거리를 안 끊으므로 remaining_distance_to_rect가 그런 것도
+                # 찾아낸다) 지금 당장 지나는 게 아니므로 off_path_since를 리셋하지 않는다 - 안 그러면
+                # "경로 일시 유실(재계획 중 등) ↔ 먼 미래 재방문 발견"이 반복될 때마다 drop_grace_s
+                # 카운트가 매번 취소돼, 실제로는 당장 지나지 않는 구역을 무기한 붙들고 정지 상한을
+                # 매 틱 오락가락(먼 거리=제한 없음 ↔ 직선 거리=거의 0) 시킬 수 있다.
+                state.off_path_since = None
         state.last_remaining = remaining  # state_label의 waiting 판정용 (#137 지수 리뷰)
 
         if state.phase is Phase.IDLE:
