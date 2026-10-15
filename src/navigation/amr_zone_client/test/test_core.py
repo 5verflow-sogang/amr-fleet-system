@@ -203,6 +203,9 @@ def _queued_core():
 DETOUR = straight_path(2.0, 10.0, y=5.0)  # z1을 안 지나는 경로 (y=5로 우회)
 
 
+ON_PATH_CONFIRM_S = ZoneClientConfig(robot_id='amr_01').on_path_confirm_s
+
+
 def test_path_detour_near_zone_keeps_request_and_stop_cap_during_grace():
     core, rid = _queued_core()
     # 로봇은 그대로 z1 3 m 앞(직선 거리 3.0 = trigger 거리 안), 경로만 우회로 바뀐다
@@ -213,12 +216,14 @@ def test_path_detour_near_zone_keeps_request_and_stop_cap_during_grace():
     # 같은 request_id로 연장 요청을 계속 보낸다 (대기열 순서 유지)
     outgoing, _, _, _ = core.update(1.0, DETOUR, (2.0, 0.0))
     assert [(o.zone_id, o.request_id, o.type) for o in outgoing] == [('z1', rid, TYPE_ACCESS)]
-    # 그 사이 경로가 다시 z1을 지나면 그대로 이어간다 (새 request_id 없음)
-    outgoing, _, _, _ = core.update(2.0, straight_path(2.0, 10.0), (2.0, 0.0))
-    assert [(o.request_id, o.type) for o in outgoing] == [(rid, TYPE_ACCESS)]
+    # 그 사이 경로가 다시 z1을 지나면(on_path_confirm_s 동안 끊기지 않고 계속) 그대로 이어간다
+    # (새 request_id 없음) - 한 틱만 보고 바로 믿지 않는다(10/16 fleet_deadlock 재현, 재계획
+    # 주기로 한 틱만 잡혔다 다시 빠지는 흔들림에 매번 속지 않으려고)
+    core.update(2.0, straight_path(2.0, 10.0), (2.0, 0.0))
+    core.update(2.0 + ON_PATH_CONFIRM_S + 0.01, straight_path(2.0, 10.0), (2.0, 0.0))
     assert core.request_id('z1') == rid and core.grant('z1') == GRANT_QUEUED
     # 이어간 뒤 다시 우회해도 grace는 새로 잰다 (앞의 우회 시간을 이어 세지 않는다)
-    outgoing, _, _, _ = core.update(4.5, DETOUR, (2.0, 0.0))
+    outgoing, _, _, _ = core.update(2.0 + ON_PATH_CONFIRM_S + 0.01 + 2.0, DETOUR, (2.0, 0.0))
     assert all(o.type != TYPE_RELEASE for o in outgoing)
     assert core.phase('z1') is Phase.APPROACHING
 
@@ -838,4 +843,34 @@ def test_dropped_from_path_grace_does_not_reset_on_far_future_revisit():
 
     # drop_grace_s(3 초)가 지났으니 반납하고 IDLE로 돌아가야 한다 - 무기한 붙들려 있으면 안 된다
     assert core.phase('z1') is Phase.IDLE
+
+
+def test_dropped_from_path_grace_does_not_reset_on_single_tick_near_flicker():
+    # fleet_deadlock #177 두 번째 회귀(10/16 Gazebo 재현 - 먼 재방문 수정 뒤에도 재현됨): 전역
+    # 재계획 주기(약 1 Hz)로 경로가 구역을 짧게 잡았다 다음 주기에 다시 놓치는 식으로 흔들리면,
+    # 한 틱만 보고 바로 "돌아왔다"고 믿어서는(on_path_confirm_s 없이) 매번 off_path_since가
+    # 리셋돼 drop_grace_s가 한 번도 다 차지 않아 영원히(무한 반복) 반납하지 못했다 - amr_01이
+    # narrow_01 경계에서 멈춰 선 채 컨트롤러가 ~1.1~1.15 s 간격으로 진행 실패를 반복했다(실제
+    # 재현 로그와 일치). 로봇이 그대로 trigger 거리 안에 있으면(이 테스트처럼) 반납 뒤 바로
+    # 다시 트리거돼 또 반납하는 주기를 반복할 수 있지만(그건 서버 쪽에서 다시 다루면 된다),
+    # 적어도 drop_grace_s 안에 반납은 한 번 일어나야 한다 - 안 그러면 진짜 무한 정지다.
+    core = make_core(drop_grace_s=3.0, on_path_confirm_s=0.3, resend_period_s=1.0)
+    core.update(0.0, straight_path(2.0, 10.0), (2.0, 0.0))
+    assert core.phase('z1') is Phase.APPROACHING
+
+    near_path = straight_path(2.0, 10.0)
+    off_path = []
+    now = 0.0
+    released = False
+    # 10 Hz 틱(0.1 s)에서, 재계획 주기(1 s)마다 "경로에 잡힘"이 딱 한 틱만 지속되고 바로 다시
+    # 놓치는 가장 가혹한 흔들림
+    for i in range(1, 50):
+        now += 0.1
+        path = near_path if i % 10 == 0 else off_path
+        core.update(now, path, (2.0, 0.0))
+        if 'z1' not in core._state or core.phase('z1') is Phase.IDLE:
+            released = True
+            break
+
+    assert released, '한 틱짜리 근접 재방문이 반복돼도 drop_grace_s 안에 반납(IDLE)해야 한다'
 

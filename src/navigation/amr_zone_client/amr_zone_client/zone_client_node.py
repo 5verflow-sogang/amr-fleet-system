@@ -90,6 +90,7 @@ class ZoneClientNode(Node):
             resend_period_s=p('resend_period_s', 1.0).value,
             retry_period_s=p('retry_period_s', 5.0).value,
             drop_grace_s=p('drop_grace_s', 3.0).value,
+            on_path_confirm_s=p('on_path_confirm_s', 0.3).value,
             lookahead_m=lookahead_m if lookahead_m > 0.0 else None,
             max_linear_velocity_mps=p('max_linear_velocity_mps', 2.0).value,
             backing_speed_mps=p('backing_speed_mps', 0.15).value,

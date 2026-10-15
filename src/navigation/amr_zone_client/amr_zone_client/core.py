@@ -121,9 +121,15 @@ class _ZoneState:
     # 가장 최근 update() 틱에서 구한 경계까지 남은 거리 (state_label의 waiting 판정용, #137 지수 리뷰) -
     # remaining_distance_to_rect가 매 틱 _update_zone에 넘겨주는 값을 그대로 적어 둔다.
     last_remaining: Optional[float] = None
-    # 경로에서 이 구역이 빠지기 시작한 시각 (APPROACHING·BLOCKED만, drop_grace_s 기준). 경로가 다시 이
-    # 구역을 지나면 None으로 돌린다.
+    # 경로에서 이 구역이 빠지기 시작한 시각 (APPROACHING·BLOCKED만, drop_grace_s 기준). 경로가
+    # lookahead_m 안에서 다시 이 구역을 "계속"(on_path_confirm_s 동안 끊기지 않고) 지나야 None으로
+    # 돌린다 - 전역 재계획 주기(약 1 Hz)로 반납 쪽이 매 번 끊겼다 다시 잡혔다 하면, 한 틱만 보고
+    # 바로 리셋해서는 drop_grace_s가 한 번도 다 안 차 구역을 무기한 붙들 수 있다(10/16 fleet_deadlock
+    # 재현).
     off_path_since: Optional[float] = None
+    # lookahead_m 안에서 이 구역을 계속 지나는 중인 시각 (off_path_since 리셋 판단용). 한 틱이라도
+    # 빠지면 None으로 돌아간다.
+    on_path_since: Optional[float] = None
     # BLOCKED 전환 뒤 아직 못 보낸 RELEASE가 있는지 (REVOKED면 REJECTED와 달리 반납해야 한다) - 다음
     # update() 틱에 한 번 보내고 지운다.
     pending_release: bool = False
@@ -162,6 +168,11 @@ class ZoneClientConfig:
     # 아직 들어가지 않은 구역(APPROACHING·BLOCKED)이 경로에서 빠진 채로 이 시간(s)이 지나면 반납·IDLE.
     # 그 전에는 로봇이 trigger_distance_m(직선) 안에 있는 한 요청·정지 상한을 유지한다 (10/15, #66 규칙 변경).
     drop_grace_s: float = 3.0
+    # 경로에서 빠진 구역이 lookahead_m 안에서 다시 잡혀도, 이 시간(s) 동안 끊기지 않고 계속
+    # 잡혀야 "진짜 돌아왔다"고 보고 off_path_since를 리셋한다(10/16 fleet_deadlock 재현) - 전역
+    # 재계획 주기(약 1 Hz)로 반납 쪽이 한 틱만 잡혔다 다음 틱에 다시 빠지는 식으로 흔들리면, 한
+    # 틱만 보고 바로 리셋해서는 drop_grace_s가 한 번도 다 안 차 구역을 무기한 붙들 수 있었다.
+    on_path_confirm_s: float = 0.3
     # 구역 검사를 로봇 앞 이 거리(m)까지만 한다. None이면 trigger_distance_m + 여유로 정한다 (#66).
     lookahead_m: Optional[float] = None
     # SafetyStatus.speed_limit 램프의 "제한 없음" 기준값(ramp_cap_down). nav2_params.yaml
@@ -351,6 +362,7 @@ class ZoneClientCore:
             if dropped_from_path:
                 # 경로에서 빠졌다 - 가까이 있는 동안은 drop_grace_s까지 기다린다(10/15, #66 규칙 변경).
                 # 그동안 남은 거리는 직선 거리로 본다(경로 거리보다 짧아 정지 상한이 보수적이다)
+                state.on_path_since = None
                 if state.off_path_since is None:
                     state.off_path_since = now
                 straight = distance_to_rect(robot_xy, spec.area)
@@ -360,14 +372,21 @@ class ZoneClientCore:
                     detouring = True
                     remaining = straight
             elif remaining is not None and remaining <= self._lookahead_m:
-                # 경로가 다시 이 구역을 "가까운 미래"(lookahead_m) 안에서 지난다 - 그대로 이어간다.
-                # remaining이 lookahead_m보다 멀면(뒤 경유점에서나 다시 지나는 먼 미래 재방문 -
-                # 이미 다루고 있는 구역은 거리를 안 끊으므로 remaining_distance_to_rect가 그런 것도
-                # 찾아낸다) 지금 당장 지나는 게 아니므로 off_path_since를 리셋하지 않는다 - 안 그러면
-                # "경로 일시 유실(재계획 중 등) ↔ 먼 미래 재방문 발견"이 반복될 때마다 drop_grace_s
-                # 카운트가 매번 취소돼, 실제로는 당장 지나지 않는 구역을 무기한 붙들고 정지 상한을
-                # 매 틱 오락가락(먼 거리=제한 없음 ↔ 직선 거리=거의 0) 시킬 수 있다.
-                state.off_path_since = None
+                # 경로가 다시 이 구역을 "가까운 미래"(lookahead_m) 안에서 지난다 - remaining이
+                # lookahead_m보다 멀면(뒤 경유점에서나 다시 지나는 먼 미래 재방문 - 이미 다루고
+                # 있는 구역은 거리를 안 끊으므로 remaining_distance_to_rect가 그런 것도 찾아낸다)
+                # 지금 당장 지나는 게 아니므로 이 분기에 안 들어온다.
+                #
+                # on_path_confirm_s 동안 끊기지 않고 계속 잡혀야 off_path_since를 리셋한다(10/16
+                # fleet_deadlock 재현) - 전역 재계획 주기(약 1 Hz)로 반납 쪽이 한 틱만 잡혔다 다음
+                # 틱에 다시 빠지는 식으로 흔들리면, 한 틱만 보고 바로 리셋해서는 drop_grace_s가
+                # 한 번도 다 안 차 구역을 무기한 붙들고 정지 상한이 매 틱 오락가락할 수 있었다.
+                if state.on_path_since is None:
+                    state.on_path_since = now
+                if now - state.on_path_since >= self._config.on_path_confirm_s:
+                    state.off_path_since = None
+            else:
+                state.on_path_since = None
         state.last_remaining = remaining  # state_label의 waiting 판정용 (#137 지수 리뷰)
 
         if state.phase is Phase.IDLE:

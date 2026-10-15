@@ -181,6 +181,7 @@ TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BAC
 | `resend_period_s` | `1.0` | 재전송(연장) 주기 |
 | `retry_period_s` | `5.0` | `BLOCKED`(REJECTED·REVOKED) 뒤 재시도까지 기다리는 시간 |
 | `drop_grace_s` | `3.0` | 아직 안 들어간 구역이 경로에서 빠진 채 이 시간이 지나면 반납·`IDLE` (그 전엔 trigger 거리 안이면 요청·정지 상한 유지) |
+| `on_path_confirm_s` | `0.3` | 경로에서 빠진 구역이 다시 잡혀도 이 시간 동안 끊기지 않아야 `drop_grace_s` 카운트를 취소 (10/16 fleet_deadlock 재현 - 재계획 주기로 흔들리면 매번 취소돼 무기한 붙들 수 있었다) |
 | `backing_speed_mps` | `0.15` | `BACKING` 후진 속도 (10/11 결정) |
 | `backing_margin_m` | `0.3` | 구역 경계를 벗어난 뒤 이만큼 더 나가면 정지·반납 |
 | `backing_max_distance_m` | `6.0` | `BACKING` 안전장치: 총 후진 거리 한도(fail-closed). 가장 긴 구역(`narrow_02`, 5.0 m) + `backing_margin_m` 여유 (#137 하연 두 번째 리뷰) |
