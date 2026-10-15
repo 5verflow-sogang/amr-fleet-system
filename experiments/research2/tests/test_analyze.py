@@ -42,7 +42,7 @@ def by_cond(results, prefix):
 def test_h1_pass_when_proposed_is_safer(tmp_path):
     write_csv(tmp_path / 'e.csv', {'proposed': 0.05, 'b1': 0.30})
     rows, _ = analyze.load([tmp_path / 'e.csv'])
-    h1 = [r for r in analyze.judge(rows) if r['hypothesis'] == 'H1']
+    h1 = [r for r in analyze.judge(rows) if r['hypothesis'] == 'H1' and '충돌률' in r['condition']]
     assert len(h1) == 2 and all(r['pass'] for r in h1)
     assert all(r['n'] == 10 and r['mean'] < -0.2 for r in h1)
     assert all(r['holm_reject'] for r in h1)
@@ -51,7 +51,7 @@ def test_h1_pass_when_proposed_is_safer(tmp_path):
 def test_h1_fail_when_no_difference(tmp_path):
     write_csv(tmp_path / 'e.csv', {'proposed': 0.2, 'b1': 0.2})
     rows, _ = analyze.load([tmp_path / 'e.csv'])
-    h1 = [r for r in analyze.judge(rows) if r['hypothesis'] == 'H1']
+    h1 = [r for r in analyze.judge(rows) if r['hypothesis'] == 'H1' and '충돌률' in r['condition']]
     assert not any(r['pass'] for r in h1)
 
 
@@ -68,7 +68,7 @@ def test_dwa_without_seed_is_fixed_value(tmp_path):
                             'popout_appeared': True, 'popout_stoppable': True})
     rows, _ = analyze.load([tmp_path / 'p.csv', tmp_path / 'b.csv'])
     analyze.FIXED_WARNINGS.clear()
-    h1 = [r for r in analyze.judge(rows) if r['hypothesis'] == 'H1']
+    h1 = [r for r in analyze.judge(rows) if r['hypothesis'] == 'H1' and '충돌률' in r['condition']]
     assert all(r['n'] == 10 and r['mean'] == pytest.approx(0.05 - 0.30, abs=0.03) for r in h1)
     # 목록 번호 없는 고정값 짝짓기는 시드 간 흔들림이 빠지므로 경고한다
     assert any('고정값' in w for w in analyze.FIXED_WARNINGS)
@@ -152,7 +152,7 @@ def test_dwa_lists_pair_with_seeds_one_by_one(tmp_path):
                 rows.append(row('b1', k, 'S1', ep, k == 0, 15.0, train_seed='', mass=mass))
     write_rows(tmp_path / 'e.csv', rows)
     loaded, _ = analyze.load([tmp_path / 'e.csv'])
-    h1 = [r for r in analyze.judge(loaded) if r['hypothesis'] == 'H1']
+    h1 = [r for r in analyze.judge(loaded) if r['hypothesis'] == 'H1' and '충돌률' in r['condition']]
     assert len(h1) == 2
     assert all(r['n'] == 10 and r['mean'] == pytest.approx(-0.1) for r in h1)
     assert not any(r['pass'] for r in h1)
@@ -186,3 +186,30 @@ def test_check_uses_more_conservative_interval():
     # 값 둘: 부트스트랩 구간은 두 값 사이라 좁지만 t 구간은 넓다 → t 기준으로 FAIL
     r = analyze.check('H1', 'x', [-0.10, -0.01], 0.0, seed=0)
     assert r['ci_high'] < 0 and r['t_ci_high'] > 0 and r['pass'] is False
+
+
+def test_timeout_guard_blocks_policy_that_stops_instead_of_colliding(tmp_path):
+    # 제안이 충돌은 적지만 시간 초과가 훨씬 많으면 H1 보조 기준에서 걸려 H1 전체가 FAIL
+    import csv as _csv
+    rng = random.Random(3)
+    with (tmp_path / 'e.csv').open('w', newline='') as f:
+        w = _csv.DictWriter(f, fieldnames=FIELDS)
+        w.writeheader()
+        for variant, (pc, pt) in {'proposed': (0.02, 0.25), 'b1': (0.30, 0.0)}.items():
+            for s in range(10):
+                for mass in (10.0, 25.0):
+                    for ep in range(100):
+                        u = rng.random()
+                        coll, timeout = u < pc, pc <= u < pc + pt
+                        w.writerow({'run': f'{variant}_s{s}', 'variant': variant, 'train_seed': s, 'eval_list': s,
+                                    'scenario': 'S1', 'scenario_seed': 1000 * s + ep, 'mass_obs': 'true',
+                                    'episode': ep, 'payload_kg': mass, 'collision': coll,
+                                    'success': not coll and not timeout, 'time_s': 15.0,
+                                    'popout_appeared': True, 'popout_stoppable': True})
+    rows, _ = analyze.load([tmp_path / 'e.csv'])
+    res = analyze.judge(rows)
+    h1 = [r for r in res if r['hypothesis'] == 'H1']
+    assert len([r for r in h1 if '시간 초과율' in r['condition']]) == 2
+    assert all(r['pass'] for r in h1 if '충돌률' in r['condition'])
+    assert not any(r['pass'] for r in h1 if '시간 초과율' in r['condition'])
+    assert analyze.hypothesis_verdicts(res)['H1'] is False

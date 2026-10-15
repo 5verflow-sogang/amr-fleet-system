@@ -33,6 +33,8 @@ from typing import Iterable, Optional
 
 RESAMPLES = 10_000
 MARGIN = 0.02          # 비열등 마진 (충돌률, experiment_design.md 7절)
+# 시간 초과율 보조 기준 (7절): 충돌을 줄이는 대신 도착을 못 하는 정책이 통과하지 않게, 비교군보다 이만큼 넘게 늘면 안 된다
+TIMEOUT_MARGIN = 0.05
 TRAIN_MASSES = (0.0, 2.0, 10.0, 25.0)
 UNSEEN_MASSES = (15.0, 30.0)
 INFO_ERRORS = ('plus30', 'minus30', 'unknown')
@@ -100,6 +102,11 @@ def collision_rate(eps: list[dict]) -> Optional[float]:
     """돌발 장애물이 나타난 에피소드 중 충돌 비율."""
     den = [e for e in eps if e['appeared']]
     return sum(e['collision'] for e in den) / len(den) if den else None
+
+
+def timeout_rate(eps: list[dict]) -> Optional[float]:
+    """충돌도 도착도 아닌 에피소드(시간 초과) 비율. 분모는 에피소드 전체."""
+    return sum(not e['collision'] and not e['success'] for e in eps) / len(eps) if eps else None
 
 
 def success_rate(eps: list[dict]) -> Optional[float]:
@@ -270,11 +277,18 @@ def judge(rows: list[dict]) -> list[dict]:
         results.append(check(name, cond, values, bound, seed=k))
         k += 1
 
+    def guard(name, other, mass):
+        # 시간 초과율 보조 기준: 제안 − 비교군 < +TIMEOUT_MARGIN (#184 G 보상에서 시간 초과가 8~10%로 늘어서)
+        add(name, f'{mass:g} kg 시간 초과율 Δ(제안 − {other.upper()}) [보조]', paired(
+            per_seed(g, 'proposed', 'exact', mass, timeout_rate),
+            per_seed(g, other, 'exact', mass, timeout_rate)), TIMEOUT_MARGIN)
+
     if {'proposed', 'b1'} <= variants:
         for mass in (10.0, 25.0):
             add('H1', f'{mass:g} kg 충돌률 Δ(제안 − B1)', paired(
                 per_seed(g, 'proposed', 'exact', mass, collision_rate),
                 per_seed(g, 'b1', 'exact', mass, collision_rate)), 0.0)
+            guard('H1', 'b1', mass)
     if {'proposed', 'b2'} <= variants:
         for mass in TRAIN_MASSES:
             add('H2-a', f'{mass:g} kg 충돌률 Δ(제안 − B2)', paired(
@@ -291,6 +305,7 @@ def judge(rows: list[dict]) -> list[dict]:
                 per_seed(g, 'r2', 'exact', mass, collision_rate)), MARGIN)
             add('H3', f'{mass:g} kg 도착 시간 Δ(제안 − R2) [s]',
                 arrival_diffs(g, 'proposed', 'r2', 'exact', mass), 0.0)
+            guard('H3', 'r2', mass)
 
     # 가설 하나 안의 여러 조건을 따로 볼 때의 Holm 보정 (보조 지표). 짝지은 t의 한쪽 p, 유의수준 0.025
     for name in sorted({r['hypothesis'] for r in results}):
