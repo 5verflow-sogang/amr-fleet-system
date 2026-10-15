@@ -816,3 +816,26 @@ def test_adjacent_zone_queued_detour_path_keeps_stop_cap():
         x += v * dt
     assert x <= EAST[0] - 0.5 + 0.05, f'허가 없이 정지선을 넘음: x={x:.3f}'
 
+
+def test_dropped_from_path_grace_does_not_reset_on_far_future_revisit():
+    # fleet_deadlock #177 회귀(10/16): 이미 다루는 구역은 remaining_distance_to_rect가 거리를 안 끊어
+    # 뒤쪽 경유점에서 다시 지나는 먼 미래 구간도 찾아낸다. 경로가 일시적으로 끊기는 틱(재계획 등)과
+    # 그런 먼 재방문이 발견되는 틱이 반복되면, 예전 코드는 "경로가 다시 이 구역을 지난다"로 보고
+    # off_path_since를 매번 리셋해 drop_grace_s가 한 번도 다 차지 않았다 - 구역을 무기한 붙든 채
+    # 정지 상한이 매 틱 오락가락(먼 거리=제한 없음 ↔ 직선 거리=거의 0)해, amr_01이 영원히 멈춰 있었다.
+    core = make_core(drop_grace_s=3.0)
+    core.update(0.0, straight_path(2.0, 10.0), (2.0, 0.0))
+    assert core.phase('z1') is Phase.APPROACHING
+
+    # lookahead_m(기본 5.0)보다 훨씬 먼 재방문 - 로봇 바로 앞(2.0, 0.1)부터 시작해 멀리 돌아
+    # 22.5 m 뒤에야 구역에 닿는다(_closest_index가 로봇과 가장 가까운 점부터 걷게 하려고 앞쪽에
+    # 가까운 점을 둔다)
+    far_revisit = [(2.0, 0.1), (2.0, 5.0), (2.0, 10.0), (5.5, 10.0), (5.5, 0.0)]
+    for i in range(1, 15):
+        now = float(i)
+        path = [] if i % 2 else far_revisit  # 홀수 틱: 경로 일시 끊김 / 짝수 틱: 먼 재방문 발견
+        core.update(now, path, (2.0, 0.0))
+
+    # drop_grace_s(3 초)가 지났으니 반납하고 IDLE로 돌아가야 한다 - 무기한 붙들려 있으면 안 된다
+    assert core.phase('z1') is Phase.IDLE
+
