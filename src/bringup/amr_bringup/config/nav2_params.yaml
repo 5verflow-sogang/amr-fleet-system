@@ -268,6 +268,9 @@ controller_server:
       dynamic_obstacle_safety_margin: 0.2
       dynamic_obstacle_influence_radius: 1.0
       dynamic_weight: 0.3
+      # 허용 속도(Fox 1997): 궤적상 장애물까지 거리 dist에서 v <= sqrt(2*acc_v*dist)인 샘플만 남긴다
+      # (docs/algorithms/navigation.md 4-7절). false면 sim_time 안에서 닿는 궤적을 모두 빼는 이전 동작
+      use_admissible_velocity: True
 
 # --- TEB (DWA 비교 대상, #110 underlay·(10) 작업) ---
 # 원 명세 "DWA 직접구현 vs TEB" 비교. teb_local_planner는 apt에 없어 /opt/teb_ws에 소스로

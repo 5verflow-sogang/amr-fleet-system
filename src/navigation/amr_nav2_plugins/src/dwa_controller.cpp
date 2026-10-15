@@ -65,6 +65,7 @@ void DwaController::configure(
   declareAndGet(
     node, prefix + "dynamic_obstacle_influence_radius", config.dynamic_obstacle_influence_radius);
   declareAndGet(node, prefix + "dynamic_weight", config.dynamic_weight);
+  declareAndGet(node, prefix + "use_admissible_velocity", config.use_admissible_velocity);
   declareAndGet(node, prefix + "v_samples", config.v_samples);
   declareAndGet(node, prefix + "w_samples", config.w_samples);
   declareAndGet(node, prefix + "lookahead_distance", lookahead_distance_);

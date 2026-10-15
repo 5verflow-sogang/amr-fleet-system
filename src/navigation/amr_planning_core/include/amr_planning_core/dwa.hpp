@@ -142,6 +142,16 @@ struct DwaConfig
   // ([0,1] 정규화)라 더하는 값이며, 네 가중치의 합이 1이어야 하는 제약은 없다
   // (비교 대상인 (v, w) 샘플끼리 상대적으로만 비교하므로 절대 스케일은 상관없다).
   double dynamic_weight = 0.3;
+
+  // --- 허용 속도 (Fox 1997의 admissible velocity) ---
+
+  // true면 궤적을 따라 장애물(Grid lethal 셀·동적 장애물)에 닿기 전까지 이동 거리 dist를
+  // 재서 |v| <= sqrt(2*acc_v*dist)인 샘플만 남긴다(acc_v로 감속해 장애물 앞에 설 수 있는
+  // 속도). 장애물에 안 닿는 궤적은 호라이즌 밖을 모르므로 끝(|v|*sim_time)에 장애물이
+  // 있다고 본다. sim_time 안에서 닿는 궤적도 이 조건을 만족하면 남기되, 안 닿는 궤적이
+  // 하나도 없을 때만 그중에서 고른다(이전에는 kNoValidTrajectory로 바로 정지).
+  // false면 sim_time 안에서 닿는 궤적을 모두 빼는 기존 동작과 결과가 완전히 같다.
+  bool use_admissible_velocity = true;
 };
 
 // ROS 비의존 DWA 로컬 컨트롤러 코어. 2~3주차에 amr_nav2_plugins에서
@@ -188,11 +198,16 @@ public:
     const std::vector<DynamicObstacle> & obstacles, double t, double x, double y,
     double yaw) const;
 
+  // 장애물까지 이동 거리 obstacle_distance(m) 안에 acc_v로 감속해 설 수 있는 최대 선속도
+  // sqrt(2*acc_v*obstacle_distance). use_admissible_velocity가 켜져 있으면 이 값보다 빠른
+  // 샘플은 후보에서 빠진다.
+  double admissibleVelocity(double obstacle_distance) const;
+
   const DwaConfig & config() const noexcept {return config_;}
 
 private:
-  // footprintCollides의 내부 버전. 충돌 여부와 함께(비충돌 시) 샘플링한 셀 중
-  // 가장 높은 비용값을 clearance 비용 계산에 쓰도록 돌려준다.
+  // footprintCollides의 내부 버전. 충돌 여부와 함께 샘플링한 셀 중 가장 높은
+  // 비용값(충돌 시 닿은 셀의 비용)을 clearance 비용 계산에 쓰도록 돌려준다.
   bool evaluateFootprint(
     const Grid & grid, double x, double y, double yaw, double * max_cell_cost) const;
 

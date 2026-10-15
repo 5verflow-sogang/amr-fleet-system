@@ -496,4 +496,121 @@ TEST(DwaPlannerTest, RotateToGoalYawConvergesWithoutOvershootOscillation)
     << "목표 각도를 지나쳐 반대쪽으로 넘어감(오버슈트)";
 }
 
+namespace
+{
+
+// 허용 속도 테스트용: 직진만(max_w=0) 남겨 장애물까지 거리와 선속도만 보게 하고,
+// 선속도는 촘촘히(0.01 m/s 간격) 샘플링한다.
+DwaConfig makeStraightOnlyConfig(double acc_v)
+{
+  DwaConfig config;
+  config.acc_v = acc_v;
+  config.max_w = 0.0;
+  config.w_samples = 1;
+  config.v_samples = 21;
+  return config;
+}
+
+// 로봇(x=1.0, 앞면 x=1.3)에서 앞면까지 gap(m) 떨어진 벽. gap이 음수면 벽 없음.
+// 목표는 벽 너머 정면이라 모든 직진 궤적의 heading 비용이 같다.
+DwaCommand driveTowardWall(const DwaConfig & config, double gap, double v0 = 1.0)
+{
+  TestGrid test_grid(200, 80, 0.05);
+  if (gap >= 0.0) {
+    const double wall_x = 1.3 + gap;
+    test_grid.setRegion(wall_x + 0.01, wall_x + 0.2, 1.5, 2.5, 254);
+  }
+  DwaPlanner planner(config);
+  RobotState state;
+  state.x = 1.0;
+  state.y = 2.0;
+  state.v = v0;
+  return planner.computeVelocityCommand(state, Point2D{8.0, 2.0}, test_grid.grid());
+}
+
+}  // namespace
+
+TEST(DwaPlannerTest, AdmissibleVelocityDropsFastSamplesNearObstacle)
+{
+  const DwaConfig config = makeStraightOnlyConfig(1.0);
+  const DwaPlanner planner(config);
+  RobotState state;
+  state.v = 1.0;
+  const DynamicWindow window = planner.computeDynamicWindow(state);  // [0.9, 1.1]
+
+  // 장애물이 없으면 윈도우 최고 속도.
+  const DwaCommand open = driveTowardWall(config, -1.0);
+  ASSERT_EQ(open.status, DwaStatus::kOk);
+  EXPECT_NEAR(open.v, window.max_v, 1e-9);
+
+  // 앞면 0.5m 앞 벽: 윈도우 안 모든 직진 궤적이 sim_time 안에 닿지만, sqrt(2*acc_v*dist)
+  // 이하인 샘플은 설 수 있어 남는다. 그보다 빠른 샘플은 빠진다.
+  const DwaCommand near = driveTowardWall(config, 0.5);
+  ASSERT_EQ(near.status, DwaStatus::kOk);
+  EXPECT_LT(near.v, window.max_v - 0.05);
+  // 풋프린트 샘플링 간격(해상도/2)만큼 여유를 둔다.
+  EXPECT_LE(near.v, planner.admissibleVelocity(0.5 + 0.025) + 1e-9);
+  EXPECT_GE(near.v, window.min_v);
+}
+
+TEST(DwaPlannerTest, AdmissibleVelocityShrinksWithSmallerAcceleration)
+{
+  EXPECT_LT(DwaPlanner(makeStraightOnlyConfig(0.7)).admissibleVelocity(1.0),
+    DwaPlanner(makeStraightOnlyConfig(1.0)).admissibleVelocity(1.0));
+  EXPECT_LT(DwaPlanner(makeStraightOnlyConfig(1.0)).admissibleVelocity(1.0),
+    DwaPlanner(makeStraightOnlyConfig(1.3)).admissibleVelocity(1.0));
+  EXPECT_NEAR(DwaPlanner(makeStraightOnlyConfig(0.5)).admissibleVelocity(1.0), 1.0, 1e-12);
+
+  // 같은 벽(앞면 1.05m 앞)에서 acc_v=1.0이면 윈도우 최고 속도(1.1)도 설 수 있어 그대로
+  // 고르고, acc_v=0.5면 허용 최대 속도(~1.0)가 윈도우 최고 속도(1.05)보다 낮아 더
+  // 느린 샘플을 고른다.
+  const DwaCommand strong = driveTowardWall(makeStraightOnlyConfig(1.0), 1.05);
+  const DwaCommand weak = driveTowardWall(makeStraightOnlyConfig(0.5), 1.05);
+  ASSERT_EQ(strong.status, DwaStatus::kOk);
+  ASSERT_EQ(weak.status, DwaStatus::kOk);
+  EXPECT_NEAR(strong.v, 1.1, 1e-9);
+  EXPECT_LT(weak.v, 1.05 - 1e-6);
+  EXPECT_LE(weak.v, DwaPlanner(makeStraightOnlyConfig(0.5)).admissibleVelocity(1.05 + 0.025));
+  EXPECT_LT(weak.v, strong.v);
+}
+
+TEST(DwaPlannerTest, AdmissibleVelocityDisabledKeepsPreviousBehavior)
+{
+  DwaConfig config = makeStraightOnlyConfig(1.0);
+  config.use_admissible_velocity = false;
+
+  // 이전 동작: sim_time 안에서 닿는 궤적은 설 수 있어도 모두 뺀다.
+  const DwaCommand near = driveTowardWall(config, 0.5);
+  EXPECT_EQ(near.status, DwaStatus::kNoValidTrajectory);
+  EXPECT_EQ(near.v, 0.0);
+  EXPECT_EQ(near.w, 0.0);
+
+  // 호라이즌 안에 장애물이 없으면 켜든 끄든 같다(기본 acc_v·sim_time이면 2*acc_v*sim_time
+  // > max_v라 허용 조건이 늘 성립).
+  DwaConfig on_config = config;
+  on_config.use_admissible_velocity = true;
+  const DwaCommand off_open = driveTowardWall(config, -1.0);
+  const DwaCommand on_open = driveTowardWall(on_config, -1.0);
+  EXPECT_EQ(off_open.status, on_open.status);
+  EXPECT_EQ(off_open.v, on_open.v);
+  EXPECT_EQ(off_open.w, on_open.w);
+
+  // 기존 회피 시나리오(FrontObstacleTurnsAway)를 끄고 돌리면 고른 궤적이 충돌하지 않는다.
+  TestGrid test_grid(160, 80, 0.05);
+  test_grid.setRegion(2.6, 2.8, 1.7, 2.3, 254);
+  DwaConfig legacy;
+  legacy.use_admissible_velocity = false;
+  const DwaPlanner planner(legacy);
+  RobotState state;
+  state.x = 0.5;
+  state.y = 2.0;
+  state.v = 1.0;
+  const DwaCommand command =
+    planner.computeVelocityCommand(state, Point2D{6.0, 2.0}, test_grid.grid());
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  for (const TrajectoryPoint & point : planner.simulateTrajectory(state, command.v, command.w)) {
+    EXPECT_FALSE(planner.footprintCollides(test_grid.grid(), point.x, point.y, point.yaw));
+  }
+}
+
 }  // namespace amr_planning_core

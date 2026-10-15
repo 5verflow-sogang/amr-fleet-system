@@ -106,6 +106,7 @@ bool DwaPlanner::evaluateFootprint(
 
       const uint8_t cost = grid.cost(cell);
       if (cost >= config_.lethal_cost_threshold) {
+        *max_cell_cost = static_cast<double>(cost);
         return true;
       }
       *max_cell_cost = std::max(*max_cell_cost, static_cast<double>(cost));
@@ -183,6 +184,11 @@ double DwaPlanner::dynamicObstacleCost(double min_surface_distance) const
   return std::clamp(cost, 0.0, 1.0);
 }
 
+double DwaPlanner::admissibleVelocity(double obstacle_distance) const
+{
+  return std::sqrt(2.0 * std::max(config_.acc_v, 0.0) * std::max(obstacle_distance, 0.0));
+}
+
 double DwaPlanner::headingCost(const TrajectoryPoint & trajectory_end, const Point2D & goal) const
 {
   const double desired_yaw = std::atan2(goal.y - trajectory_end.y, goal.x - trajectory_end.x);
@@ -253,10 +259,14 @@ DwaCommand DwaPlanner::computeVelocityCommand(
 
   const DynamicWindow window = computeDynamicWindow(state);
 
-  bool found = false;
-  double best_cost = std::numeric_limits<double>::infinity();
-  double best_v = 0.0;
-  double best_w = 0.0;
+  // [0]: 장애물에 안 닿는 궤적, [1]: 닿지만 허용 속도 조건으로 그 앞에 설 수 있는 궤적.
+  // [0]이 하나라도 있으면 [1]은 보지 않는다 - 닿는 궤적까지 비용으로 겨루게 하면 heading이
+  // 압도적이라 벽으로 곧장 가다 막판에 못 꺾는다(기존 폐루프 테스트가 실패했다).
+  bool found[2] = {false, false};
+  double best_cost[2] = {
+    std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+  double best_v[2] = {0.0, 0.0};
+  double best_w[2] = {0.0, 0.0};
 
   for (int vi = 0; vi < config_.v_samples; ++vi) {
     const double v = sampleValue(window.min_v, window.max_v, vi, config_.v_samples);
@@ -266,53 +276,74 @@ DwaCommand DwaPlanner::computeVelocityCommand(
 
       const std::vector<TrajectoryPoint> trajectory = simulateTrajectory(state, v, w);
 
+      // 충돌 검사와 함께 장애물에 닿기 전까지 남은 궤적 점 개수(free_steps)를 센다 -
+      // 허용 속도 조건의 dist는 |v|*dt*free_steps다(닿는 점 바로 앞까지, 보수적).
       bool collides = false;
+      std::size_t free_steps = trajectory.size();
       double max_cell_cost = 0.0;
       double min_dynamic_surface_distance = std::numeric_limits<double>::infinity();
       for (std::size_t i = 0; i < trajectory.size(); ++i) {
         const TrajectoryPoint & point = trajectory[i];
         double point_max_cost = 0.0;
-        if (evaluateFootprint(grid, point.x, point.y, point.yaw, &point_max_cost)) {
+        const bool static_hit =
+          evaluateFootprint(grid, point.x, point.y, point.yaw, &point_max_cost);
+        max_cell_cost = std::max(max_cell_cost, point_max_cost);
+        if (static_hit) {
           collides = true;
+          free_steps = i;
           break;
         }
-        max_cell_cost = std::max(max_cell_cost, point_max_cost);
 
         if (!dynamic_obstacles.empty()) {
           const double t = static_cast<double>(i + 1) * config_.dt;
           double point_min_distance = std::numeric_limits<double>::infinity();
-          if (evaluateDynamicObstacles(
-              dynamic_obstacles, t, point.x, point.y, point.yaw, &point_min_distance))
-          {
+          const bool dynamic_hit = evaluateDynamicObstacles(
+            dynamic_obstacles, t, point.x, point.y, point.yaw, &point_min_distance);
+          min_dynamic_surface_distance = std::min(min_dynamic_surface_distance, point_min_distance);
+          if (dynamic_hit) {
             collides = true;
+            free_steps = i;
             break;
           }
-          min_dynamic_surface_distance = std::min(min_dynamic_surface_distance, point_min_distance);
         }
       }
-      if (collides || trajectory.empty()) {
+      if (trajectory.empty()) {
+        continue;
+      }
+      if (config_.use_admissible_velocity) {
+        // 첫 점부터 닿으면 멈출 거리가 없다. 그 밖에는 닿는 궤적도 acc_v로 그 앞에 설 수
+        // 있으면 [1] 후보로 남긴다.
+        const double dist = std::abs(v) * config_.dt * static_cast<double>(free_steps);
+        if (free_steps == 0 || std::abs(v) > admissibleVelocity(dist)) {
+          continue;
+        }
+      } else if (collides) {
         continue;
       }
 
-      const double cost = evaluateCost(trajectory.back(), goal, v, max_cell_cost) +
+      // 닿는 궤적은 설 수 있는 마지막 점(닿기 직전)에서 heading을 본다.
+      const TrajectoryPoint & trajectory_end = trajectory[free_steps - 1];
+      const double cost = evaluateCost(trajectory_end, goal, v, max_cell_cost) +
         config_.dynamic_weight * dynamicObstacleCost(min_dynamic_surface_distance);
-      if (cost < best_cost) {
-        best_cost = cost;
-        best_v = v;
-        best_w = w;
-        found = true;
+      const int tier = collides ? 1 : 0;
+      if (cost < best_cost[tier]) {
+        best_cost[tier] = cost;
+        best_v[tier] = v;
+        best_w[tier] = w;
+        found[tier] = true;
       }
     }
   }
 
-  if (!found) {
+  const int tier = found[0] ? 0 : 1;
+  if (!found[tier]) {
     result.status = DwaStatus::kNoValidTrajectory;
     return result;
   }
 
   result.status = DwaStatus::kOk;
-  result.v = best_v;
-  result.w = best_w;
+  result.v = best_v[tier];
+  result.w = best_w[tier];
   return result;
 }
 

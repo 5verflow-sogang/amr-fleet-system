@@ -119,7 +119,7 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
    velocity(속도)를 각각 [0, 1]로 정규화해 가중합한다.
 4. **충돌 궤적 제외 후 최소 비용 선택** (`computeVelocityCommand`): 궤적 위 모든 점에서
    사각 풋프린트가 치명 비용 셀과 겹치면 그 (v, w)는 후보에서 뺀다. 남은 후보 중 비용이
-   가장 낮은 (v, w)를 반환한다. 전부 충돌하면 `kNoValidTrajectory`.
+   가장 낮은 (v, w)를 반환한다. 전부 충돌하면 `kNoValidTrajectory`. (허용 속도 조건을 켜면 4-7절)
 
 ### 4-2. 파라미터 (`DwaConfig`, 기본값)
 
@@ -137,6 +137,7 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
 | `lethal_cost_threshold` | 253 | `AStarConfig`와 동일한 nav2 costmap 관례 |
 | `heading_weight` / `clearance_weight` / `velocity_weight` | 0.8 / 0.1 / 0.1 | 4-3절 |
 | `goal_tolerance` | 0.15 m | 전역 경로의 다음 지점 추종이 목적이라 각도 허용오차는 두지 않았다(최종 도킹 정밀도는 범위 밖) |
+| `use_admissible_velocity` | true | 4-7절. false면 이전 동작(호라이즌 안 충돌 궤적 전부 제외)과 같다 |
 
 ### 4-3. 비용 함수 가중치 근거와 "제자리 정지" 함정
 
@@ -196,6 +197,24 @@ nav2_dwa_demo.launch.py`, `use_static_map`은 없어졌다 - 바로 아래 참�
 조용히 멈춰 있던 것이었다 - 토픽을 맞추고 나니(+ bt_navigator가 찾는 컨트롤러
 이름 불일치, 최종 접근 시 목표 각도까지 회전하지 않던 버그도 같이 고쳐서)
 static_layer(지도 v0) 그대로도 바로 된다. rolling_window는 그래서 다시 뺐다.
+
+### 4-7. 허용 속도 (Fox 1997)
+
+원래 DWA의 허용 속도 조건 `v <= sqrt(2·acc_v·dist)`를 넣었다(`use_admissible_velocity`, 기본 true).
+`dist`는 궤적을 따라 장애물(Grid 치명 셀·동적 장애물 안전 여유)에 닿기 전까지 이동 거리로,
+이미 하는 충돌 검사 루프에서 닿기 직전 점까지 센 개수로 구한다(`|v|·dt·free_steps`, 보수적).
+장애물에 안 닿는 궤적은 호라이즌 밖을 모르므로 끝(`|v|·sim_time`)에 장애물이 있다고 본다.
+
+이전에는 `sim_time` 안에서 닿는 궤적을 전부 뺐다. 이러면 남는 궤적은 항상 `dist >= |v|·sim_time`이라
+`|v| <= 2·acc_v·sim_time`(기본값 4 m/s > `max_v`)인 한 허용 조건이 늘 성립해서 `acc_v`는 동적 윈도우
+에만 쓰이고, 질량(가속 한계)을 틀리게 줘도 결과가 거의 안 변했다. 그래서 원래 DWA처럼 닿는 궤적도
+"acc_v로 감속해 장애물 앞에 설 수 있으면" 남긴다(heading은 닿기 직전 점에서 본다, 첫 점부터 닿으면
+뺀다). 다만 안 닿는 궤적이 하나라도 있으면 그중에서만 고르고, 닿는 궤적은 안 닿는 궤적이 하나도 없을
+때(이전에는 `kNoValidTrajectory`로 바로 정지)만 고른다. 닿는 궤적까지 같은 비용으로 겨루게 했더니
+heading 비중(0.8)이 압도적이라 벽으로 곧장 가다 막판에 못 꺾어 `ClosedLoopReachesGoalWithOneObstacle`,
+`FrontObstacleTurnsAway`, `FrontApproachingObstacleIsAvoidedOnlyWithPrediction`이 실패했다.
+그래서 질량 정보는 "모든 궤적이 호라이즌 안에서 장애물에 닿는" 상황(정면이 막혀 감속·정지해야 할 때)의
+감속 프로파일에 반영된다. 감속 한계는 `acc_v`를 그대로 쓴다.
 
 ## 5. Pure Pursuit · Stanley · PID
 
