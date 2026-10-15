@@ -11,6 +11,8 @@
      (Nav2 BT도 1 Hz로 다시 계획하지만 그 시간을 밖에서 볼 수 없어서 같은 planner_server를 직접 부른다)
   3. 예측 주행시간 = 계획 경로 길이를 순항 속도·가속도의 사다리꼴로 간 시간. 실제 = 목표 수락 → 결과 (시뮬레이션 시간)
   4. CTE: GT 위치(world → map)를 그 시각의 전역 경로(/<ns>/plan, BT가 1 Hz로 다시 계획)에 투영.
+     같은 시각의 추정 위치(odometry/filtered, map)로도 재서(cte_est_m) 위치추정 오차(loc_err_m)와 추종 오차를 나눈다.
+     전역 경로는 추정 위치에서 계획되므로 GT CTE ≈ 추종 오차(추정 기준 CTE) + 위치추정 오차의 경로 수직 성분이다.
      투영점의 경로 곡률이 curve_kappa 넘으면 곡선. 평균은 도착한 쌍만, 복구 동작(spin·backup·wait) 중과 끝난 뒤
      recovery_grace_s는 뺀다. DWA CTE는 참고 지표다 (CTE KPI는 5장 모션 제어 = path_tracker, 이진 10/13)
   5. 복구 동작: NavigateToPose 피드백의 number_of_recoveries. 예측 오차는 도착한 쌍 전체와 복구 없이 도착한 쌍을 따로 낸다
@@ -66,6 +68,8 @@ class NavKpi(Node):
         self.plan = ActionClient(self, ComputePathToPose, f'/{ns}/compute_path_to_pose')
         self.gt = None
         self.create_subscription(Odometry, f'/{ns}/ground_truth/odom', self._on_gt, qos_profile_sensor_data)
+        self.est = None   # 추정 위치 (odometry/filtered, map)
+        self.create_subscription(Odometry, f'/{ns}/odometry/filtered', self._on_est, qos_profile_sensor_data)
         self.plan_now = None   # (경로, 누적 길이, 곡률) - 지금 따라가는 전역 경로
         self.create_subscription(PathMsg, f'/{ns}/plan', self._on_plan, 10)
         # 복구 동작이 도는 중인지 (behavior_server 액션 상태). CTE에서 그 구간을 뺀다
@@ -80,6 +84,22 @@ class NavKpi(Node):
         # pp 방식: 멈출 때 빈 경로와 정지 명령을 낸다
         self.plan_pub = self.create_publisher(PathMsg, f'/{ns}/plan', 10)
         self.stop_pub = self.create_publisher(Twist, f'/{ns}/cmd_vel', 10)
+
+    def _on_est(self, msg):
+        p = msg.pose.pose.position
+        self.est = (p.x, p.y)
+
+    def cte_sample(self, i, t, gm):
+        """지금 따라가는 전역 경로 기준 CTE 한 점: (시각, 쌍, GT CTE, 구간, 남은 길이, 추정 CTE, 위치 오차). 없으면 None."""
+        cur, cur_cum, cur_kappa = self.plan_now
+        pr = project(gm, cur, cur_cum, 0, search=120)
+        if pr is None:
+            return None
+        seg = 'curve' if cur_kappa[pr.index] > self.args.curve_kappa else 'straight'
+        pe = project(self.est, cur, cur_cum, 0, search=120) if self.est is not None else None
+        return (round(t, 3), i, round(pr.distance, 4), seg, round(cur_cum[-1] - pr.s, 3),
+                '' if pe is None else round(pe.distance, 4),
+                '' if self.est is None else round(math.hypot(gm[0] - self.est[0], gm[1] - self.est[1]), 4))
 
     def _on_gt(self, msg):
         p = msg.pose.pose.position
@@ -180,11 +200,9 @@ class NavKpi(Node):
                 break
             if t >= next_cte and self.plan_now is not None:
                 next_cte = t + 1.0 / a.cte_hz
-                cur, cur_cum, cur_kappa = self.plan_now
-                pr = project(gm, cur, cur_cum, 0, search=120)
-                if pr is not None:
-                    seg = 'curve' if cur_kappa[pr.index] > a.curve_kappa else 'straight'
-                    pair_cte.append((round(t, 3), i, round(pr.distance, 4), seg, round(cur_cum[-1] - pr.s, 3)))
+                row = self.cte_sample(i, t, gm)
+                if row is not None:
+                    pair_cte.append(row)
             if t >= next_replan:
                 next_replan = t + a.replan_period_s
                 r_ok, r_ms, r_wall, _ = self.compute_path(self.goal_pose(mx, my, yaw))
@@ -271,11 +289,9 @@ class NavKpi(Node):
                 if t >= next_cte and self.gt is not None and self.plan_now is not None and not self.in_recovery(t):
                     next_cte = t + 1.0 / a.cte_hz
                     # 전역 경로는 계획 순간의 로봇 위치에서 시작하므로 앞 3 m(선분 120개)만 찾는다
-                    cur, cur_cum, cur_kappa = self.plan_now
-                    pr = project(self.to_map(*self.gt), cur, cur_cum, 0, search=120)
-                    if pr is not None:
-                        seg = 'curve' if cur_kappa[pr.index] > a.curve_kappa else 'straight'
-                        pair_cte.append((round(t, 3), i, round(pr.distance, 4), seg, round(cur_cum[-1] - pr.s, 3)))
+                    row = self.cte_sample(i, t, self.to_map(*self.gt))
+                    if row is not None:
+                        pair_cte.append(row)
                 if t >= next_replan:
                     next_replan = t + a.replan_period_s
                     r_ok, r_ms, r_wall, _ = self.compute_path(self.goal_pose(mx, my, yaw))
@@ -312,9 +328,17 @@ class NavKpi(Node):
         with (out / 'paths.csv').open('w', newline='') as f:
             csv.writer(f).writerows([('pair', 'x', 'y', 'kappa'), *path_rows])
         with (out / 'cte.csv').open('w', newline='') as f:
-            csv.writer(f).writerows([('time', 'pair', 'cte_m', 'segment', 'remaining_m', 'pair_success'), *cte_rows])
+            csv.writer(f).writerows([('time', 'pair', 'cte_m', 'segment', 'remaining_m', 'cte_est_m', 'loc_err_m',
+                                      'pair_success'), *cte_rows])
         # CTE 판정은 도착한 쌍만 (못 간 쌍은 성공률로 따로 본다)
-        summary = summarize(pairs, replans, [(r[2], r[3]) for r in cte_rows if r[5]], cte_kpi=a.cte_kpi)
+        arrived = [r for r in cte_rows if r[7]]
+        summary = summarize(pairs, replans, [(r[2], r[3]) for r in arrived], cte_kpi=a.cte_kpi)
+        # 원인 나누기 (참고): 추정 위치 기준 CTE = 추종 오차, 위치추정 오차
+        for seg in ('straight', 'curve'):
+            est = [r[5] for r in arrived if r[3] == seg and r[5] != '']
+            loc = [r[6] for r in arrived if r[3] == seg and r[6] != '']
+            summary[f'cte_est_{seg}_mean_m'] = sum(est) / len(est) if est else None
+            summary[f'loc_err_{seg}_mean_m'] = sum(loc) / len(loc) if loc else None
         summary['definition'] = {k: getattr(a, k) for k in (
             'cruise_mps', 'accel_mps2', 'curve_kappa', 'kappa_window_m', 'replan_period_s', 'planner_id',
             'recovery_grace_s', 'cte_kpi', 'controller')}
