@@ -28,6 +28,11 @@ params:
   num_robots: 5
   # 작업 생성기 basic.yaml: 첫 작업 5초 + 10초 간격 60건 ≈ 600초. 마지막 Ack까지 여유를 둔다
   duration_s: 620
+  # 작업 수·간격 (basic.yaml count·interval_s를 실행 동안 바꿔 끼움, config_patch). 규모 곡선의 작업 부하 규칙:
+  #   총 부하 고정(A): 대수와 상관없이 60건·10초 (기본)
+  #   로봇당 부하 고정(B): 12 × N건, 50 / N초 간격 → 같은 600초 동안 로봇마다 약 12건 (experiments/research1/scale_curve.md)
+  task_count: 60
+  task_interval_s: 10.0
 processes:
   - name: fleet_manager
     cmd: >-
@@ -56,6 +61,10 @@ driver:
   mode: wait
   use_sim_time: false
   duration_s: "{duration_s}"
+config_patch:
+  amr_fleet_manager/config/scenarios/basic.yaml:
+    count: "{task_count}"
+    interval_s: "{task_interval_s}"
 postprocess:
   - name: fleet_metrics
     cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots {num_robots}

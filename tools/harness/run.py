@@ -54,6 +54,16 @@ def parse_set(items):
     return out
 
 
+def render_patch(sets: dict, params: dict) -> dict:
+    """config_patch 값 안의 {이름}을 params로 채운다. 문자열이면 YAML 값으로 읽어 숫자·불도 제 타입이 되게 한다."""
+    out = {}
+    for key, value in sets.items():
+        if isinstance(value, str) and '{' in value:
+            value = yaml.safe_load(value.format_map(params))
+        out[key] = value
+    return out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description='시나리오 N회 반복 실행 + 실행 단위 신뢰구간')
     ap.add_argument('scenario', help='scenarios/<이름>.yaml의 이름 또는 파일 경로')
@@ -90,9 +100,10 @@ def main(argv=None) -> int:
     attempts = args.repeat_offset
     # 시나리오 config_patch: 설치된 설정 파일에서 몇 값만 바꾼 사본을 실행 동안 끼운다 (--config와 같은 방식, meta에 해시)
     configs = list(args.config)
+    # 값에 {이름}을 쓰면 시나리오 params로 채운 뒤 YAML 값으로 읽는다 (예: count: "{task_count}" → 120)
     for target, sets in (scenario.get('config_patch') or {}).items():
         dest = out / f'_config_{tag}_{stamp}' / Path(target).name
-        patch_yaml(installed_path(target), sets, dest)
+        patch_yaml(installed_path(target), render_patch(sets, params), dest)
         configs.append(f'{target}={dest}')
     with ConfigOverrides(configs) as overrides:
         for i in range(args.repeat_offset, args.repeat_offset + args.repeats):
