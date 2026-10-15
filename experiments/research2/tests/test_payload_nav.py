@@ -427,6 +427,19 @@ def test_training_envs_reproducible():
     assert _first_training_scenarios(5) == _first_training_scenarios(5)
 
 
+# ---------------------------------------------------------------- 보상 검증 (scripts/check_reward.py)
+def test_reward_prefers_safe_cruise_speed():
+    # 보상이 안전 순항 속도(규칙 정책, 충돌 0)를 과속(1.5배, 충돌 있음)보다 높게 평가해야 한다
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'check_reward', Path(__file__).resolve().parents[1] / 'scripts' / 'check_reward.py')
+    check_reward = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(check_reward)
+    safe, fast = check_reward.check(CONFIG, lists=(100,), episodes=20, scales=(1.0, 1.5))
+    assert safe['collision_rate'] == 0.0 and fast['collision_rate'] > 0.0
+    assert safe['return'] > fast['return']
+
+
 # ---------------------------------------------------------------- v1 튜닝 옵션
 def test_collision_penalty_scales_with_impact_speed():
     from payload_nav.env import collision_penalty
