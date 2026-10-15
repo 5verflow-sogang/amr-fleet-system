@@ -95,6 +95,7 @@ Nav2는 `nav2_params.yaml`의 DWA를 `FollowPath` 이름으로 등록해 쓴다(
 | `fleet` | `true` | Fleet 서버 + 장애 주입기 |
 | `algorithm`, `delay_ms`, `loss_pct`, `relay_auction` | `nearest`, `100.0`, `0.0`, `false` | Fleet·장애 조건 ([amr_fleet_manager](../../fleet/amr_fleet_manager/README.md), [amr_fault_injector](../../fleet/amr_fault_injector/README.md)) |
 | `assignments_csv`, `epoch_file`, `kill_at_s`, `restart_after_s`, `fault_events_file` | | 하네스용 Fleet 서버 인자 |
+| `zones_file`, `deadlock_strategy` | `amr_fleet_manager/config/zones.yaml`, `revoke` | 구역 목록(서버와 구역 클라이언트가 같이 쓴다)과 교착 해소 전략. 교착 유도 실험([experiments/fleet_deadlock](../../../experiments/fleet_deadlock/README.md))이 바꾼다 |
 
 ## 테스트
 

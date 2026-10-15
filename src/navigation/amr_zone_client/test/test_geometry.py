@@ -5,7 +5,8 @@ import math
 import pytest
 
 from amr_zone_client.geometry import (
-    combine_caps, distance, point_in_rect, ramp_cap_down, ramp_speed, remaining_distance_to_rect,
+    combine_caps, distance, distance_to_rect, point_in_rect, ramp_cap_down, ramp_speed,
+    remaining_distance_to_rect,
     speed_cap_for_stop,
 )
 
@@ -152,3 +153,11 @@ def test_ramp_speed_decreases_within_rate_symmetric():
 
 def test_ramp_speed_dt_zero_keeps_current():
     assert ramp_speed(0.05, 0.15, dt=0.0, rate=1.0) == 0.05
+
+
+def test_distance_to_rect():
+    rect = (5.0, 6.0, -1.0, 1.0)
+    assert distance_to_rect((5.5, 0.0), rect) == 0.0      # 안
+    assert distance_to_rect((2.0, 0.0), rect) == pytest.approx(3.0)   # 옆
+    assert distance_to_rect((2.0, 5.0), rect) == pytest.approx(5.0)   # 모서리 (3, 4)
+    assert distance_to_rect((5.5, 3.0), rect) == pytest.approx(2.0)   # 위

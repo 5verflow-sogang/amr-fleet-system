@@ -1,0 +1,51 @@
+# 교착 유도 시나리오 (experiments/fleet_deadlock). 로봇 2대를 좁은 통로 ② 양 끝에서 동시에 마주 보낸다.
+# 통로 ②를 두 구역(narrow_02w·narrow_02e)으로 나눠, 각자 가까운 절반을 쥐고 반대쪽을 기다리면 순환 대기가 된다.
+# 서버 교착 해소 전략(revoke: 허가 회수·후진 / avoid: 순환을 닫는 요청 거부)이 풀어내는지 deadlock_result.json으로 본다.
+# Fleet KPI "교착 없음"의 근거: 일부러 만든 교착이 해소되는지 (일반 운용 fleet_stack에서는 zone_waits·stalls 0건).
+#
+#   tools/harness/gcp_run.sh fleet_deadlock -n 3 --label revoke
+#   tools/harness/gcp_run.sh fleet_deadlock -n 3 --set deadlock_strategy=avoid --label avoid
+#
+# 좁은 통로 진입은 #165(DWA lookahead 0.5·lethal 254)가 필요하다. 그 전에는 통로 앞에서 DWA가 멈춘다.
+name: fleet_deadlock
+# 빌드할 패키지 (docker_run.sh가 읽는다. HARNESS_PACKAGES·--packages가 있으면 그쪽이 우선)
+packages: amr_bringup
+num_robots: 2
+use_sim_time: true
+seed_base: 1
+timeout_s: 1200
+params:
+  deadlock_strategy: revoke
+  delay_ms: 100
+  # fleet_stack과 같은 0.05 m 지도 (0.025 m는 경로 계획이 느리다)
+  map: warehouse_v1
+  map_origin: "[-0.0571, 1.5167, 0.00013]"
+processes:
+  - name: stack
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:=2 nav2:=true zone_client:=true seed:={seed}
+      robots_file:=/repo/experiments/fleet_deadlock/robots.yaml
+      zones_file:=/repo/experiments/fleet_deadlock/zones_split.yaml
+      deadlock_strategy:={deadlock_strategy} delay_ms:={delay_ms}
+      epoch_file:={run_dir}/epoch
+      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/{map}.yaml map_origin_in_world:="{map_origin}"
+    ready_topic: /fleet/heartbeat
+    ready_cmds:
+      - for i in 01 02; do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
+    ready_timeout_s: 240
+    settle_s: 5
+  - name: rosbag
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/amr_[0-9][0-9]/odom'
+    settle_s: 3
+driver:
+  mode: command
+  use_sim_time: true
+  timeout_s: 1100
+  cmd: python3 /repo/experiments/fleet_deadlock/drive.py --out {run_dir}/deadlock_result.json --timeout 900
+postprocess:
+  - name: fleet_metrics
+    cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots 2
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
+  - pkill -9 -f "[f]leet_deadlock/drive.py" || true

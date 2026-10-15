@@ -31,6 +31,7 @@ SERVER_ARGS = [
     ('assignment.algorithm', 'algorithm'),
     ('assignments_csv', 'assignments_csv'),
     ('traffic.zones_file', 'zones_file'),
+    ('traffic.deadlock_strategy', 'deadlock_strategy'),
     ('epoch_file', 'epoch_file'),
 ]
 
@@ -93,6 +94,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'zones_file', default_value=os.path.join(share, 'config', 'zones.yaml'),
             description='구역 허가 대상 구역 목록'),
+        DeclareLaunchArgument(
+            'deadlock_strategy', default_value='revoke',
+            description='교착 해소 전략: revoke(우선순위 낮은 로봇 허가 회수·후진) / avoid(순환을 닫는 요청 거부)'),
         DeclareLaunchArgument(
             'epoch_file', default_value='/tmp/amr_fleet_manager/epoch',
             description='서버 재시작 번호 파일. 서버가 뜰 때마다 1씩 올린다'),

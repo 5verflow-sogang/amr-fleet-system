@@ -154,12 +154,15 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
 | --- | --- | --- | --- | --- |
 | `localization.csv` | `timestamp, gt_x, gt_y, est_x, est_y, error` | `segment` (`stationary`·`straight`·`rotation`), `yaw_error`, `robot` | 시나리오당 100개 시점 이상 | 민지 |
 | `cte.csv` | `timestamp, planned_x, planned_y, actual_x, actual_y, cte` | `segment` (`straight`·`curve`), `robot` | 구간별 분리 | 이진 |
-| `response_time.csv` | `cmd_time, response_time, latency_ms` | `robot`, `task_id`, `latency_sim_ms`, `assignment_id`, `ack_time`, `ack_rtt_ms`, `resends` | 50회 이상 | 하연 |
+| `response_time.csv` | `cmd_time, response_time, latency_ms` | `robot`, `task_id`, `latency_sim_ms`, `assignment_id`, `ack_time`, `ack_rtt_ms`, `resends`, `recv_time`, `latency_recv_ms`, `moving_at_cmd` | 50회 이상 | 하연 |
+| `zone_waits.csv` | `robot, zone, request_id, request_time, grant_time, wait_s, outcome, release_time` | — | 구역 진입 요청마다 1행 (구역 기록이 있을 때만) | 하연 (`fleet_metrics`) |
+| `stalls.csv` | `robot, task_id, phase, start_time, end_time, duration_s` | — | 이동 단계에서 60 s 넘게 멈춘 구간마다 1행 (odom 기록이 있을 때만) | 하연 (`fleet_metrics`) |
+| `cpu.csv` | `time, cores, allowed_cores, cpu_pct, host_cpu_pct` | `cores_<묶음>` (sim·nav2·localization·fleet·perception·other) | 1초마다 1행 | 하연 (`cpu_monitor.py`) |
 | `fleet_latency.csv` | — (연구 1, 아래) | — | 메시지 1건 × 로봇 1대마다 1행 | 하연 정의, 하네스 기록기 (민지) |
 | `hop_latency.csv` | — (연구 1, 아래) | — | 구독 수신 1건마다 1행 | 하연 (트레이스 변환) |
 | `tasks.csv` | 명세서 작업 로그 필드 (아래) | — | 작업마다 1행 | 하네스 기록기 (민지) |
 | `assignments.csv` | — (팀 정의, 아래) | — | 할당 호출마다 | 하연 (`amr_fleet_manager`) |
-| `task_outcomes.csv` | — (팀 정의) | `task_id, request_time, first_assign_time, robots, final_state, end_time` | 작업마다 1행 | 하연 (`fleet_metrics`, bag에서 만든 Fleet 쪽 결과. 로봇 BT 작업 로그 `tasks.csv`와 별개) |
+| `task_outcomes.csv` | — (팀 정의) | `task_id, request_time, first_assign_time, robots, final_state, end_time, task_time_s, distance_m, error_code` | 작업마다 1행 | 하연 (`fleet_metrics`, bag에서 만든 Fleet 쪽 결과. 로봇 BT 작업 로그 `tasks.csv`와 별개) |
 | `recovery.csv` | — (연구 1 로봇 장애) | `robot, kill_time, task_id, reassign_time, reassigned_robot, recovery_s, completed` | 로봇 강제종료 × 하던 작업마다 1행 | 하연 (`fleet_metrics`) |
 | `coverage/` | `colcon test --coverage` 텍스트·HTML | 모듈별 하위 폴더 | — | 전원 |
 
@@ -285,6 +288,11 @@ tools/harness/results/<run_id>/
 | `cte.csv` 부가 컬럼 | `segment`, `robot` 확정. `meta.json`에 `controller` 추가 | 이진, #5 |
 | 위치 오차 KPI 판정 | 구간별 **RMSE**로 판정, Max는 함께 보고 | 하연, #28 |
 | `response_time.csv` Ack 컬럼 | `assignment_id`, `ack_time`, `ack_rtt_ms`, `resends`. 첫 발송 기준이라 재전송 시간 포함 | 하연·민지, #33 |
+| 응답 시간 두 기준 (10/13) | `latency_ms`는 서버 발행 → 첫 움직임(원 명세 측정 표 "작업 명령 발행", 통신 지연 포함), `latency_recv_ms`는 로봇이 받은 중계본 도착 → 첫 움직임(성능 요구사항 "명령 수신 ~ 로봇 반응"). 둘 다 보고하고 판정 기준은 측정 뒤 회의에서 | 하연 |
+| 응답 시간 보조 지표 (10/15, #171 리뷰) | 판정 기준은 10/19 회의에서 정하고, 그 전에 볼 값만 더한다. `fleet.response_sim_ms`(시뮬레이션 시간, RTF < 1이면 실제 시간 값이 부푼다), `fleet.response_coverage`(움직임을 찾은 명령 ÷ 명령. 못 찾은 명령은 평균에서 빠진다), `fleet.response_moving_at_cmd`(명령 순간 이미 움직이던 경우 수. 지연이 0에 가깝고 `latency_recv_ms`는 음수도 나온다. 빼지 않고 표시만). 실행을 모두 합쳐 움직임을 찾은 명령이 50건 미만이면 응답 시간 판정을 비우고 "보류 (n=…<50)"로 적는다 | 하연·민지 |
+| 교착 판정 (10/13) | 구역 허가를 30 s(서버 `release_timeout_s`) 넘게 못 받은 요청 0건(`fleet.zone_long_waits`)과 이동 단계 60 s 넘는 정체 0건(`fleet.stalls`). 정체는 구역 밖 교착도 잡는다. 수치는 측정 뒤 조정 가능 | 하연 |
+| CPU 판정 (10/13) | `sys.cpu_pct.mean` ≤ 80. 컨테이너가 쓸 수 있는 코어 기준이라 기준 기기는 `docker --cpus`로 맞춘다. 기기와 덜 상관있는 `sys.cpu_cores`(사용 코어 수)와 시뮬레이터를 뺀 `sys.cpu_cores_no_sim`을 같이 보고. 작업이 끝난 뒤 쉬는 구간도 평균에 들어가므로 `sys.cpu_pct.p95`도 본다. 작업 구간만 자를지와 기준 기기는 10/19 회의 | 하연 |
+| 판정하지 않는 지표 | `fleet_deadlock`은 교착을 일부러 만드는 시나리오라 `fleet.zone_long_waits`·`fleet.stalls`를 판정하지 않는다(값만 보고). 이 시나리오의 기준("유도된 교착이 풀린 시간" 등)은 회의에서 | 하연·민지 |
 | 연구 1 지연 파일 | `fleet_latency.csv`(끝에서 끝, 손실 포함), `hop_latency.csv`(구간별, `trace/`에서 변환) | 하연·민지, #33 |
 | Fleet 지연 기록 방법 | rclpy 기록 노드 대신 rosbag2로 녹화 후 오프라인 변환 (Python 수신 시각 지연 방지) | 하연·민지, #33 |
 | 손실 판정 | 관측 마감(종료 − 주입 지연 − 여유) 이후 보낸 메시지는 지연·손실에서 제외 | 하연·민지, #33 |
