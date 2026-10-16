@@ -90,6 +90,7 @@ def test_fleet_task_and_recovery_metrics(tmp_path):
         't1,0,1,amr_01,COMPLETED,8\nt2,10,11,amr_01 amr_02,COMPLETED,40\nt3,50,,,,\nt4,51,52,amr_03,,\n')
     m = fleet_metrics(run)
     assert (m['fleet.tasks_requested'], m['fleet.tasks_completed'], m['fleet.task_completion_rate']) == (4, 2, 0.5)
+    assert m['fleet.throughput_per_min'] == pytest.approx(3.0)     # 완료 2건 / 첫 요청 0초~마지막 완료 40초
     assert 'fleet.reclaimed_tasks' not in m      # 로봇 장애 없는 실행
 
     (run / 'recovery.csv').write_text(
@@ -104,6 +105,10 @@ def test_fleet_task_and_recovery_metrics(tmp_path):
                                       'amr_03,15,,,,,\n')       # 놀던 로봇이 죽음
     m = fleet_metrics(run)
     assert m['fleet.reclaimed_tasks'] == 0 and 'fleet.recovery_s.mean' not in m
+
+    (run / 'task_outcomes.csv').write_text('task_id,request_time,first_assign_time,robots,final_state,end_time\n'
+                                           't1,0,1,amr_01,,\n')            # 끝난 작업이 없으면 처리량 없음
+    assert 'fleet.throughput_per_min' not in fleet_metrics(run)
 
 
 def write_nav(root: Path, name: str, **result) -> Path:
