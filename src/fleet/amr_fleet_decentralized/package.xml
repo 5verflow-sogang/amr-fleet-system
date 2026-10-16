@@ -16,6 +16,8 @@
   <test_depend>launch_ros</test_depend>
   <test_depend>launch_testing</test_depend>
   <test_depend>launch_testing_ros</test_depend>
+  <!-- 분산 모드 통합 테스트(test_auction_fleet_launch.py)가 가짜 로봇(fake_robot)을 띄운다 -->
+  <test_depend>amr_fleet_manager</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

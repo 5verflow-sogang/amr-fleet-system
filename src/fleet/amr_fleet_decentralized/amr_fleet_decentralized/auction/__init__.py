@@ -8,12 +8,18 @@ from .lifecycle import (
     task_finished_by_state, winner_lost,
 )
 from .params import AuctionParams
+from .trigger import (
+    ASSIGNMENT_ID_BASE, ASSIGNMENT_ID_ROBOT_STRIDE, assignment_id_for, assignment_topic, auction_opener,
+    live_robots, robot_index, task_hash,
+)
 from .types import (
     MODE_BUSY, MODE_CHARGING, MODE_ERROR, MODE_ESTOP, MODE_IDLE, AuctionResult, Bid, RobotInfo,
     TaskInfo,
 )
 
 __all__ = [
+    'ASSIGNMENT_ID_BASE',
+    'ASSIGNMENT_ID_ROBOT_STRIDE',
     'ERROR_CANCELED',
     'MODE_BUSY',
     'MODE_CHARGING',
@@ -41,4 +47,10 @@ __all__ = [
     'should_withdraw_award',
     'task_finished_by_state',
     'winner_lost',
+    'assignment_id_for',
+    'assignment_topic',
+    'auction_opener',
+    'live_robots',
+    'robot_index',
+    'task_hash',
 ]

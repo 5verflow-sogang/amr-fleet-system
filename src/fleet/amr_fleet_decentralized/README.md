@@ -10,6 +10,10 @@
 | --- | --- | --- | --- |
 | Publish | `/fleet/task_auctions` | `amr_msgs/msg/TaskAuction` | 경매 공고. 재경매 때도 여기로 보낸다 |
 | Publish | `/fleet/task_bids` | `amr_msgs/msg/TaskBid` | 입찰(BID)·낙찰 통보(AWARD)·수락(ACCEPT)·포기(WITHDRAW) |
+| Publish | `/<robot_id>/fleet/task_assignments` (파라미터 `relayed_assignments`) | `amr_msgs/msg/TaskAssignment` | ACCEPT한 작업을 자기 로봇(`amr_bt`·가짜 로봇)에게 실행시킨다. 기본은 `relayed:=true` 로봇이 구독하는 중계본 이름 |
+| Publish | `/fleet/task_status` | `amr_msgs/msg/TaskStatus` | 내 TaskAssignment가 거부(REJECTED)되면 FAILED를 보고해 경매인이 재경매하게 한다 |
+| Subscribe | `/fleet/task_requests` (파라미터 `task_requests_topic`) | `amr_msgs/msg/Task` | 작업 방송. 내가 열 차례인 작업이면 경매를 연다(아래 "분산 모드 경매 트리거") |
+| Subscribe | `/fleet/task_assignment_acks` | `amr_msgs/msg/TaskAssignmentAck` | 내가 보낸 TaskAssignment의 Ack. 못 받으면 다시 보낸다 |
 | Subscribe | `/fleet/task_auctions` (파라미터 `auction_topic_prefix`, 기본 `/fleet`) | `amr_msgs/msg/TaskAuction` | 기본은 절대 경로 원본. `relayed:=true`(launch) 또는 `auction_topic_prefix:=fleet`면 상대 이름 → 장애 주입기 `relay_auction` 중계본을 구독 (`amr_bt`·가짜 로봇의 `relayed` 인자와 같은 방식) |
 | Subscribe | `/fleet/task_bids` (파라미터 `auction_topic_prefix`) | `amr_msgs/msg/TaskBid` | 위와 동일 |
 | Subscribe | `/fleet/task_status` | `amr_msgs/msg/TaskStatus` | ACCEPT 뒤 낙찰 로봇이 보낸 FAILED를 보고 재경매 여부 판단 (relay 목록에 없어 항상 절대 경로) |
@@ -21,7 +25,7 @@
 
 | 실행 파일 | 노드 이름 | 역할 |
 | --- | --- | --- |
-| `task_auction_node` | `task_auction` | 공고 수신 → 입찰 판단·발행, 입찰 수집(경매인일 때) → 낙찰·재전송·재경매, 수락/포기 |
+| `task_auction_node` | `task_auction` | 작업 방송 → (내 차례면) 경매 열기, 공고 수신 → 입찰 판단·발행, 입찰 수집(경매인일 때) → 낙찰·재전송·재경매, 수락/포기, 수락한 작업 실행(TaskAssignment) |
 
 ## 경매 흐름
 
@@ -109,16 +113,49 @@
   항상 절대 경로 원본(장애 주입기가 읽어 로봇별로 다시 보낸다). `TaskStatus`는
   장애 주입기 relay 목록에 없어 `relayed`와 무관하게 항상 절대 경로다.
 
+10/16 분산 모드 경매 트리거 (하연 제안):
+
+- **누가 여는지**: 모든 로봇의 노드가 작업 방송(`/fleet/task_requests`, `Task`)을 구독한다.
+  살아 있는 로봇(`RobotState`를 최근 `alive_timeout_s`(3초, 실제 시간) 안에 받은 로봇, 자기 포함)을
+  `robot_id` 순으로 줄 세우고, `crc32(task_id) mod 로봇 수` 번째 로봇 하나만 그 작업의 경매를 연다
+  (`auction.auction_opener`). Python `hash()`는 프로세스마다 값이 달라(PYTHONHASHSEED) 쓰지 않는다 -
+  모든 로봇이 같은 답을 내야 한 번만 열린다. 로봇이 끊기면 남은 로봇 수로 다시 나뉜다.
+- **한 번만**: 작업 방송·다른 로봇의 공고로 한 번 본 `task_id`는 다시 열지 않는다. 살아 있는 로봇
+  목록이 로봇마다 잠깐 달라 두 로봇이 같은 작업을 동시에 열면, 입찰 수집 중에 더 작은 `robot_id`의
+  공고를 본 쪽이 자기 경매를 접는다(두 경매가 각자 낙찰하면 같은 작업이 두 로봇에게 간다).
+- **입찰이 없을 때**: 작업 방송으로 연 경매에 입찰이 하나도 없으면(모두 작업 중) `no_bid_retry_s`(1초)
+  뒤 새 `auction_id`로 다시 연다 - 서버가 미할당 작업을 큐에 두고 다시 할당하는 것과 같은 역할이다.
+  밖에서 들어온 공고(`TaskAuction`)는 기존처럼 입찰이 없으면 끝낸다.
+
+10/16 ACCEPT → 작업 실행 (하연 조건):
+
+- **TaskAssignment**: ACCEPT한 로봇의 노드가 자기에게 `TaskAssignment`(`ACTION_ASSIGN`, 공고에 실린
+  작업 원본 그대로)를 보낸다. 토픽은 원본 `/fleet/task_assignments`가 아니라 `amr_bt`·가짜 로봇이
+  `relayed:=true`로 구독하는 중계본 이름 `/<robot_id>/fleet/task_assignments`다 - 원본으로 보내면
+  장애 주입기가 중계하면서 지연·손실을 한 번 더 건다(경매 메시지는 이미 `relay_auction`으로 걸린다).
+  장애 주입기 없이 원본을 구독하는 로봇이면 `relayed_assignments:=false`.
+- **번호 공간**: `assignment_id = 1,000,000 + 로봇 번호 x 100,000 + 로봇별 순번`(1~99,999).
+  로봇 번호는 `robot_id` 끝 숫자(`amr_03` → 3, 파라미터 `robot_index`로 바꿀 수 있음). 서버
+  (`amr_fleet_manager`)는 1부터 차례로 쓰므로 안 겹친다.
+- **Ack**: 로봇은 서버에 보낼 때와 같은 `/fleet/task_assignment_acks`로 Ack를 보낸다. 서버는 모르는
+  `assignment_id`의 Ack를 무시한다(`Dispatcher.on_ack`가 대기 목록에 없는 번호면 False). 이 노드는
+  Ack가 올 때까지 `award_resend_interval_s`·`award_max_attempts`(1초 x 5회)로 다시 보내고, 거부
+  (REJECTED)면 `TaskStatus` FAILED를 보내 경매인이 재경매하게 한다(`failed_retries` 안에서).
+- **분산 응답 시간**: "첫 공고 → ACCEPT". 경매인이 ACCEPT를 받으면 `경매 (...): amr_xx 수락, 작업 ...
+  확정 - 응답 시간(공고->ACCEPT) N s (이 경매 M s)` 로그를 남긴다(입찰이 없어 다시 연 시간 포함, 괄호는
+  마지막 경매만). 토픽으로는 그 작업의 첫 `TaskAuction.header.stamp` → `TaskBid` ACCEPT의
+  `header.stamp`로 잴 수 있다(`test_auction_fleet_launch.py`가 이렇게 잰다). 공고·ACCEPT 시각도
+  각각 `경매 공고 ... t=`, `... ACCEPT t=` 로그로 남는다.
+
 ## 확인 필요 (하연과 맞출 부분)
 
-- **경매를 언제 새로 여는지**: 이 노드는 아직 "서버 장애 감지 + 미할당 작업 발견 →
-  내가 경매를 연다" 트리거가 없다 - `TaskAuction`을 받았을 때(자기 이름으로 온 것
-  포함) 반응하는 것과, 재전송을 다 쓰고도 ACCEPT가 없을 때 재경매하는 것만 한다.
-  `FleetTaskTable` 미할당 작업 감지, `FleetHeartbeat` 끊김 판단, 여러 로봇이 같은
-  작업을 동시에 경매하지 않게 하는 조정(리더 선출?)은 다음 단계.
-- **여러 경매 동시 진행 시 자원 경합**: 한 로봇이 동시에 여러 경매에 입찰해 둘 다
-  낙찰되면(각 경매는 독립적으로 판단한다) 실제로 둘 다 못 할 수 있다 - 아직 처리
-  안 함.
+- **서버 장애 폴백 트리거**: 지금 트리거는 "분산 모드에서 작업 방송을 받으면"이다. 중앙 서버가 있다가
+  죽었을 때(`FleetHeartbeat` 끊김) 미할당 작업(`FleetTaskTable`)을 넘겨받는 하이브리드 전환은 아직 없다.
+- **경매인이 죽으면**: 경매를 연 로봇이 낙찰 전에 죽으면 그 작업은 다시 안 열린다(다른 로봇은
+  이미 본 task_id라 무시한다).
+- **서버와 섞어 쓸 때**: 가짜 로봇·`amr_bt`는 `assignment_id`가 마지막으로 받은 번호보다 작으면
+  뒤늦은 명령으로 버린다(epoch가 같을 때). 경매 쪽 번호(1,000,000 이상)를 받은 뒤 서버 번호를 받으면
+  버려진다 - 하이브리드에서 한 로봇이 두 쪽 할당을 번갈아 받으면 맞춰야 한다.
 
 ## 파라미터
 
@@ -138,6 +175,13 @@
 | `reclaim_timeout_s` | `5.0` | ACCEPT한 낙찰 로봇의 `RobotState`가 이 시간(실제 시간, s) 동안 끊기면 재경매. 0이면 끄기 (중앙 #132와 같음) |
 | `max_reclaims` | `-1` | 장애 회수 재경매 상한. 음수면 상한 없음 (#132와 같음) |
 | `commit_timeout_s` | `30.0` | ACCEPT 뒤 이 시간(실제 시간, s) 동안 내 `RobotState`가 한 번도 BUSY가 안 되면 맡은 작업을 해제(경고 로그). 0이면 끄기 |
+| `open_auctions` | `true` | 작업 방송을 보고 내 차례면 경매를 연다(분산 모드 트리거) |
+| `task_requests_topic` | `/fleet/task_requests` | 작업 방송 토픽 |
+| `alive_timeout_s` | `3.0` | 이 시간(실제 시간, s) 안에 `RobotState`를 받은 로봇만 살아 있는 로봇으로 센다 |
+| `no_bid_retry_s` | `1.0` | 작업 방송으로 연 경매에 입찰이 없으면 이 시간 뒤 다시 연다. 0이면 끝낸다 |
+| `run_accepted_tasks` | `true` | ACCEPT 뒤 자기에게 `TaskAssignment`를 보낸다 |
+| `relayed_assignments` | `true` | `true`면 `/<robot_id>/fleet/task_assignments`(중계본 이름), `false`면 `/fleet/task_assignments` |
+| `robot_index` | `-1` | `assignment_id` 번호 공간의 로봇 번호. -1이면 `robot_id` 끝 숫자 |
 | `auction_topic_prefix` | `/fleet` | 구독 접두어. `fleet`면 중계본(`relayed:=true`와 동일) |
 | `robot_states_topic` | `/fleet/robot_states` | 내 로봇 상태(위치·배터리·모드) |
 | `update_rate_hz` | `10.0` | 마감 판정·AWARD 재전송·재경매를 확인하는 주기 |
@@ -162,7 +206,10 @@ pytest test/test_auction.py
 `task_auction_node`는 `test/test_task_auction_launch.py`에서 로봇 2대를 실제로
 띄워 공고 → 입찰 → 낙찰 → 수락 전체 흐름을 확인한다. 동시 낙찰 경합은
 `test/test_task_auction_node.py`에서 노드 여러 개를 가짜 버스로 이어 메시지 순서를 정해 놓고
-확인한다(둘 다 rclpy가 필요해 로컬 python으로는 못 돌리고 colcon 환경에서만 된다):
+확인한다(경매 트리거·TaskAssignment 발행도 여기서). `test/test_auction_fleet_launch.py`는 분산 모드
+통합 테스트다 - 가짜 로봇(`amr_fleet_manager` `fake_robot`) 5대와 로봇별 경매 노드를 띄우고 서버 없이
+작업 60건을 방송해 모두 할당·완료되고 중복 할당이 0인지 본다(전용 `ROS_DOMAIN_ID`). 셋 다 rclpy가
+필요해 로컬 python으로는 못 돌리고 colcon 환경에서만 된다:
 
 ```bash
 colcon test --packages-select amr_fleet_decentralized
