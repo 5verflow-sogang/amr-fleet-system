@@ -11,12 +11,15 @@ from amr_fleet_decentralized.auction import (
     can_reclaim,
     can_retry_failed_task,
     can_withdraw,
+    commit_timed_out,
     compute_bid_cost,
     decide_bid,
     decide_winner,
     register_bid,
     should_resend_award,
     should_resend_bid,
+    should_withdraw_award,
+    task_finished_by_state,
     winner_lost,
 )
 
@@ -180,6 +183,46 @@ def test_can_withdraw_only_before_accept():
     assert can_withdraw(accepted=True) is False
 
 
+# --- 동시 낙찰 경합: 이미 ACCEPT한 로봇은 새 AWARD를 WITHDRAW, 경매인은 다음 순위에게 ---
+
+
+def test_should_withdraw_award_when_holding_other_task_or_withdrew_before():
+    assert should_withdraw_award(holding_other_task=False, withdrew_before=False) is False
+    assert should_withdraw_award(holding_other_task=True, withdrew_before=False) is True
+    # 한 번 포기한 경매는 일이 끝난 뒤 재전송 AWARD가 와도 다시 포기한다(다음 순위와 중복 방지)
+    assert should_withdraw_award(holding_other_task=False, withdrew_before=True) is True
+
+
+def test_decide_winner_excluding_withdrawn_picks_next_rank():
+    bids = [bid('amr_01', cost=3.0), bid('amr_02', cost=4.0), bid('amr_03', cost=5.0)]
+    result = decide_winner('t1', bids, 0.0, 2.0, excluded={'amr_01'})
+    assert result.winner_id == 'amr_02'
+    assert result.winning_cost == 4.0
+    assert decide_winner('t1', bids, 0.0, 2.0, excluded={'amr_01', 'amr_02'}).winner_id == 'amr_03'
+
+
+def test_task_finished_by_state_needs_busy_then_idle():
+    # ACCEPT 직후 IDLE(아직 시작 전)은 끝난 게 아니다
+    assert task_finished_by_state(seen_busy=False, mode=MODE_IDLE) is False
+    assert task_finished_by_state(seen_busy=True, mode=MODE_BUSY) is False
+    assert task_finished_by_state(seen_busy=True, mode=MODE_IDLE) is True
+
+
+def test_commit_timed_out_only_without_busy():
+    assert AuctionParams().commit_timeout_s == 30.0
+    assert commit_timed_out(accepted_at=0.0, now_s=29.9, seen_busy=False, commit_timeout_s=30.0) is False
+    assert commit_timed_out(accepted_at=0.0, now_s=30.0, seen_busy=False, commit_timeout_s=30.0) is True
+    # 한 번이라도 BUSY가 됐으면(작업이 시작됨) 시간으로는 안 푼다
+    assert commit_timed_out(accepted_at=0.0, now_s=100.0, seen_busy=True, commit_timeout_s=30.0) is False
+    # 0 이하면 끈다
+    assert commit_timed_out(accepted_at=0.0, now_s=100.0, seen_busy=False, commit_timeout_s=0.0) is False
+
+
+def test_decide_winner_excluding_all_bidders_has_no_winner():
+    result = decide_winner('t1', [bid('amr_01', cost=3.0)], 0.0, 2.0, excluded={'amr_01'})
+    assert result.winner_id is None
+
+
 # --- ACCEPT 뒤 TaskStatus FAILED: 최대 failed_retries번 재경매 (10/9 결정, #107·#108) ---
 
 
@@ -256,3 +299,84 @@ def test_reclaim_limit_parameter():
     ledger = TaskRetryLedger(failed_retries=1, max_reclaims=1)
     assert ledger.on_winner_lost('task_1') is True
     assert ledger.on_winner_lost('task_1') is False
+
+
+# --- 분산 모드 경매 트리거·ACCEPT 뒤 실행 번호 공간 ---
+
+import zlib  # noqa: E402
+
+import pytest  # noqa: E402
+
+from amr_fleet_decentralized.auction import (  # noqa: E402
+    ASSIGNMENT_ID_BASE, ASSIGNMENT_ID_ROBOT_STRIDE, assignment_id_for, assignment_topic,
+    auction_opener, live_robots, robot_index, task_hash,
+)
+
+
+def test_live_robots_sorted_and_recent_only():
+    last_seen = {'amr_03': 9.0, 'amr_01': 10.0, 'amr_02': 5.0, 'amr_04': 7.0}
+    assert live_robots(last_seen, now_s=10.0, alive_timeout_s=3.0) == ['amr_01', 'amr_03', 'amr_04']
+    assert live_robots({}, now_s=10.0, alive_timeout_s=3.0) == []
+
+
+def test_task_hash_is_crc32_not_python_hash():
+    # 프로세스마다 같은 값 - Python hash()(PYTHONHASHSEED마다 다름)가 아니라 crc32
+    assert task_hash('task_0001') == zlib.crc32(b'task_0001')
+    assert task_hash('task_0001') == 137322655
+
+
+def test_auction_opener_is_crc32_mod_live_robot_count():
+    robots = ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05']
+    for i in range(50):
+        task_id = f'task_{i:04d}'
+        assert auction_opener(task_id, robots) == robots[zlib.crc32(task_id.encode()) % 5]
+    assert auction_opener('task_0001', []) is None
+    # 한 작업은 언제나 한 로봇만 연다, 여러 작업은 로봇들에게 고루 나뉜다
+    openers = [auction_opener(f'task_{i:04d}', robots) for i in range(200)]
+    assert set(openers) == set(robots)
+    assert max(openers.count(r) for r in robots) < 200 * 0.35
+
+
+def test_auction_opener_follows_robot_count_change():
+    five = ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05']
+    four = ['amr_01', 'amr_02', 'amr_04', 'amr_05']  # amr_03이 끊김
+    for i in range(50):
+        task_id = f'task_{i:04d}'
+        opener = auction_opener(task_id, four)
+        # 살아 있는 로봇 중에서만 고르고, 남은 4대 기준 mod 4로 다시 정한다
+        assert opener in four
+        assert opener == four[task_hash(task_id) % 4]
+    # 끊긴 로봇에 걸렸던 작업도 누군가는 연다(4대 기준으로 다시 나뉨)
+    moved = [f'task_{i:04d}' for i in range(50) if auction_opener(f'task_{i:04d}', five) == 'amr_03']
+    assert moved and all(auction_opener(t, four) != 'amr_03' for t in moved)
+
+
+def test_robot_index_from_robot_id():
+    assert robot_index('amr_03') == 3
+    assert robot_index('amr_10') == 10
+    with pytest.raises(ValueError):
+        robot_index('robot')
+
+
+def test_assignment_ids_do_not_overlap_between_robots_or_with_server():
+    assert assignment_id_for(1, 1) == 1_100_001
+    assert assignment_id_for(3, 7) == 1_300_007
+    ranges = []
+    for index in range(1, 11):
+        low = assignment_id_for(index, 1)
+        high = assignment_id_for(index, ASSIGNMENT_ID_ROBOT_STRIDE - 1)
+        # 서버 번호(1부터 차례로)와 안 겹치는 공간
+        assert low > ASSIGNMENT_ID_BASE
+        ranges.append((low, high))
+    for (low_a, high_a), (low_b, _) in zip(ranges, ranges[1:]):
+        assert high_a < low_b
+    # 로봇별 순번이 공간을 넘으면 다음 로봇과 겹치므로 막는다
+    with pytest.raises(ValueError):
+        assignment_id_for(1, ASSIGNMENT_ID_ROBOT_STRIDE)
+    with pytest.raises(ValueError):
+        assignment_id_for(1, 0)
+
+
+def test_assignment_topic_is_relayed_name_by_default():
+    assert assignment_topic('amr_02') == '/amr_02/fleet/task_assignments'
+    assert assignment_topic('amr_02', relayed=False) == '/fleet/task_assignments'

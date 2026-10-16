@@ -1,5 +1,5 @@
 """경매인(auctioneer) 쪽 입찰 수집·낙찰 결정."""
-from typing import List, Sequence
+from typing import Collection, List, Sequence
 
 from .types import AuctionResult, Bid
 
@@ -24,6 +24,7 @@ def decide_winner(
     bids: Sequence[Bid],
     announce_time_s: float,
     bid_window_s: float,
+    excluded: Collection[str] = (),
 ) -> AuctionResult:
     """마감(`announce_time_s + bid_window_s`) 전에 들어온 입찰만으로 최저가 낙찰을 정한다.
 
@@ -35,9 +36,12 @@ def decide_winner(
     - 유효한 입찰이 하나도 없으면(아예 없거나 전부 늦게 왔으면) `winner_id=None`.
     - 최저가가 여럿이면 `robot_id`가 사전순으로 가장 앞선 로봇이 이긴다
       (TaskBid.msg 주석: "동점이면 robot_id가 사전순으로 앞선 로봇이 이긴다").
+    - `excluded`(이 경매를 WITHDRAW한 로봇)는 뺀다 - 낙찰자가 포기하면 같은 입찰 목록에서
+      다음 순위를 고르는 데 쓴다(동시 낙찰 경합). 남는 입찰이 없으면 `winner_id=None`
+      (호출 쪽이 재경매한다).
     """
     deadline = announce_time_s + bid_window_s
-    valid_bids = [b for b in bids if b.bid_time <= deadline]
+    valid_bids = [b for b in bids if b.bid_time <= deadline and b.robot_id not in excluded]
 
     if not valid_bids:
         return AuctionResult(task_id=task_id, winner_id=None)
