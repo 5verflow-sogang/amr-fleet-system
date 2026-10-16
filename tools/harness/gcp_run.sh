@@ -100,7 +100,11 @@ if [ "${busy:-0}" -gt 0 ]; then
   echo "  지금 ${busy}개가 돌거나 기다리는 중이다. 같은 슬롯이면 그 뒤에 시작하고, 같은 슬롯에 대기 중인 실행이 있으면 GitHub가 그것을 취소한다"
 fi
 
-before=$(gh run list -R "$REPO_SLUG" --workflow "$WORKFLOW" -L 1 --json databaseId -q '.[0].databaseId // 0')
+# 방금 넣은 실행을 찾을 때 다른 사람이 같은 때 넣은 실행을 잡지 않게, 내 계정·워크플로 브랜치·수동 실행만 본다
+# (10/16 슬롯 스모크 때 2초 뒤 다른 팀원 실행을 잘못 잡았다). 나 혼자 동시에 여러 개 넣는 건 gcp_batch.py가 순서대로 한다
+me=$(gh api user -q .login)
+mine=(--workflow "$WORKFLOW" --branch "$WORKFLOW_REF" --user "$me" --event workflow_dispatch)
+before=$(gh run list -R "$REPO_SLUG" "${mine[@]}" -L 1 --json databaseId -q '.[0].databaseId // 0')
 # 수동 실행은 dev의 워크플로 파일로 돈다(HARNESS_WORKFLOW_REF). 돌릴 코드는 입력 ref로 따로 준다
 gh workflow run "$WORKFLOW" -R "$REPO_SLUG" --ref "$WORKFLOW_REF" \
   -f ref="$ref" -f scenario="$scenario" -f repeats="$repeats" \
@@ -111,7 +115,7 @@ gh workflow run "$WORKFLOW" -R "$REPO_SLUG" --ref "$WORKFLOW_REF" \
 run=""
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 2
-  run=$(gh run list -R "$REPO_SLUG" --workflow "$WORKFLOW" -L 1 --json databaseId -q '.[0].databaseId // 0')
+  run=$(gh run list -R "$REPO_SLUG" "${mine[@]}" -L 1 --json databaseId -q '.[0].databaseId // 0')
   if [ "$run" != "$before" ]; then break; fi
   run=""
 done

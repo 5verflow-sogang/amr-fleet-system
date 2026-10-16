@@ -59,6 +59,26 @@ def test_append_migrates_old_header(tmp_path):
     assert rows[2] == ['new'] * len(INDEX_HEADER)
 
 
+def test_append_fixes_mixed_rows_under_stale_header(tmp_path):
+    """10/16 버킷 모양: 머리줄 10열(장애 열 없음) 아래 10열 줄과 13열 줄이 섞여 있다."""
+    index = tmp_path / 'index.csv'
+    stale = ['date', 'scenario', 'label', 'delay_ms', 'loss_pct', 'repeats', 'completed', 'git_sha', 'path',
+             'actions_url']
+    old_row = ['2026-10-10', 'fleet_fake', 'before', '0', '0', '10', '10', 'abc', 'gs://x/', 'u1']
+    mid_row = ['2026-10-15', 'fleet_deadlock', 'revoke', '100', '0', 'none', '-1', '', '1', '1', 'def',
+               'gs://y/', 'u2']
+    with index.open('w', newline='') as f:
+        csv.writer(f).writerows([stale, old_row, mid_row])
+    append(index, ['n'] * len(INDEX_HEADER))
+    rows = [dict(zip(INDEX_HEADER, r)) for r in list(csv.reader(index.open()))[1:]]
+    assert list(csv.reader(index.open()))[0] == INDEX_HEADER
+    assert (rows[0]['repeats'], rows[0]['git_sha'], rows[0]['kill_robot'], rows[0]['machine_type']) \
+        == ('10', 'abc', '', '')
+    assert (rows[1]['kill_robot'], rows[1]['repeats'], rows[1]['actions_url'], rows[1]['machine_type']) \
+        == ('none', '1', 'u2', '')
+    assert all(len(r) == len(INDEX_HEADER) for r in csv.reader(index.open()))
+
+
 def test_append_rejects_unknown_header(tmp_path):
     index = tmp_path / 'index.csv'
     index.write_text('date,something_else\n')
