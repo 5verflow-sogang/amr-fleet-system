@@ -109,18 +109,27 @@ PauseReason pause_reason(const TaskContext & ctx)
     r.why = "zone_client failed (backing safety stop)";
     return r;
   }
+  // kidnap_recovery/state (#79): failed는 복구 노드가 시도를 다 하고 포기한 상태라 기다리지 않고 바로 실패한다
+  // (#166 민지 리뷰). 쉬는 중이면 amr_bt_node가 MODE_ERROR로 할당에서 빼고, 사람이 다시 잡아 tracking이 되면 돌아온다
+  if (ctx.kidnap_state == "failed") {
+    r.pause = r.abort = true;
+    r.code = ErrorInfo::LOCALIZATION_LOST;
+    r.why = "localization lost (kidnap_recovery failed)";
+    return r;
+  }
   if (zone == "waiting" || zone == "blocked" || zone == "backing") {
     r.pause = true;
     r.code = ErrorInfo::TRAFFIC_LEASE_TIMEOUT;
     r.why = "zone " + zone;
+    r.timeout_s = ctx.pause_timeout_s;
     return r;
   }
-  // kidnap_recovery/state (#79): tracking이 아니면 위치를 다시 잡는 중이라 멈춘다.
-  // failed도 위치가 다시 잡히면 tracking으로 돌아오므로 abort가 아니라 pause_timeout_s까지 기다린다
+  // 그 밖에 tracking이 아니면(settling·rotating) 위치를 다시 잡는 중이라 멈춘다
   if (ctx.kidnap_state != "tracking") {
     r.pause = true;
-    r.code = ErrorInfo::NAV_TIMEOUT;
+    r.code = ErrorInfo::LOCALIZATION_LOST;
     r.why = "localization " + ctx.kidnap_state;
+    r.timeout_s = ctx.kidnap_pause_timeout_s;
   }
   return r;
 }
@@ -210,11 +219,12 @@ BT::NodeStatus MoveTo::onRunning()
   if (reason.abort) {
     return fail(reason.code, reason.why);
   }
-  if (now - paused_since_ > ctx_->pause_timeout_s) {
+  // 상한은 지금 멈춘 이유의 것. 진행 상태로 돌아와 resume_hold_s를 기다리는 중이면 구역 상한(짧은 쪽)
+  const double limit = reason.pause ? reason.timeout_s : ctx_->pause_timeout_s;
+  if (now - paused_since_ > limit) {
     return fail(
       reason.pause ? reason.code : ErrorInfo::NAV_TIMEOUT,
-      "paused over " + std::to_string(ctx_->pause_timeout_s) + " s (" +
-      (reason.pause ? reason.why : "resuming") + ")");
+      "paused over " + std::to_string(limit) + " s (" + (reason.pause ? reason.why : "resuming") + ")");
   }
   if (reason.pause) {
     go_since_.reset();

@@ -195,7 +195,9 @@ public:
     ctx_->nav_timeout_s = declare_parameter<double>("nav_timeout_s", 300.0);
     ctx_->nav_retries = static_cast<int>(declare_parameter<int64_t>("nav_retries", 2));
     ctx_->pause_timeout_s = declare_parameter<double>("pause_timeout_s", 60.0);
+    ctx_->kidnap_pause_timeout_s = declare_parameter<double>("kidnap_pause_timeout_s", 120.0);
     ctx_->resume_hold_s = declare_parameter<double>("resume_hold_s", 0.3);
+    kidnap_stale_s_ = declare_parameter<double>("kidnap_state_stale_s", 5.0);
     ctx_->charge_target = declare_parameter<double>("battery.charge_target_percent", 100.0);
     ctx_->charge_timeout_s = declare_parameter<double>("battery.charge_timeout_s", 600.0);
     ctx_->battery_percent = battery_.percent();
@@ -239,6 +241,7 @@ public:
     kidnap_state_sub_ = create_subscription<std_msgs::msg::String>(
       "kidnap_recovery/state", 10,
       [this](const std_msgs::msg::String & msg) {
+        kidnap_stamp_ = now();
         on_state("kidnap_recovery", ctx_->kidnap_state, msg.data);
       });
 
@@ -248,7 +251,10 @@ public:
       [this]() {tree_.tickRoot();});
     state_timer_ = rclcpp::create_timer(
       this, get_clock(), rclcpp::Duration::from_seconds(1.0 / state_rate_hz),
-      [this]() {publish_state();});
+      [this]() {
+        expire_kidnap_state();
+        publish_state();
+      });
 
     RCLCPP_INFO(
       get_logger(), "amr_bt %s 시작: 구독 %s/task_assignments, 트리 %s", robot_id_.c_str(),
@@ -334,13 +340,45 @@ private:
       use_docking ? dock_action.c_str() : "자리채움");
   }
 
-  bool zone_failed() const {return ctx_->zone_state == "failed";}
+  // 작업을 받아도 움직일 수 없는 상태: 이유(오류 코드, 설명). 없으면 nullopt.
+  // 받으면 MoveTo가 멈춘 채 기다리다 FAILED를 내고, 서버가 IDLE로 돌아온 로봇에 또 할당하는 것을 되풀이한다.
+  // 그래서 이 동안은 RobotState.mode를 MODE_ERROR로 내고(서버는 MODE_IDLE에만 할당) 새 할당을 거부한다
+  std::optional<std::pair<uint16_t, std::string>> unable_reason() const
+  {
+    if (ctx_->zone_state == "failed") {
+      // zone_client가 후진 안전 한도로 멈춰 선 상태(#137): 사람이 확인하기 전엔 움직일 수 없다
+      return std::make_pair(ErrorInfo::TRAFFIC_REVOKED, std::string("zone_client failed, manual check needed"));
+    }
+    if (ctx_->kidnap_state == "failed") {
+      // 위치 복구가 실패한 상태(#79). 복구 노드가 failed에서도 수렴하면 tracking으로 돌아오고 그때 다시 받는다.
+      // 위치 잃음용 ErrorInfo 코드가 없어 MoveTo 멈춤 초과와 같은 NAV_TIMEOUT을 쓴다 (#148)
+      return std::make_pair(ErrorInfo::LOCALIZATION_LOST, std::string("localization lost (kidnap_recovery failed)"));
+    }
+    return std::nullopt;
+  }
 
   void on_state(const char * source, std::string & slot, const std::string & value)
   {
     if (slot != value) {
       RCLCPP_INFO(get_logger(), "%s 상태 %s → %s", source, slot.c_str(), value.c_str());
       slot = value;
+    }
+  }
+
+  // 복구 노드는 check_hz(2 Hz)마다 상태를 낸다. 노드가 죽거나 scan·odom이 끊겨 kidnap_state_stale_s 넘게
+  // 안 오면 마지막 값(failed 등)을 버리고 기본값으로 돌린다. 안 그러면 MODE_ERROR·멈춤이 풀리지 않는다
+  void expire_kidnap_state()
+  {
+    if (!kidnap_stamp_ || ctx_->kidnap_state == "tracking") {
+      return;
+    }
+    const double age = (now() - *kidnap_stamp_).seconds();
+    if (age > kidnap_stale_s_) {
+      RCLCPP_WARN(
+        get_logger(), "kidnap_recovery/state %.1f s 동안 안 옴, %s → tracking (기본값)",
+        age, ctx_->kidnap_state.c_str());
+      ctx_->kidnap_state = "tracking";
+      kidnap_stamp_.reset();
     }
   }
 
@@ -391,12 +429,10 @@ private:
       reply.error_message = "battery " + std::to_string(static_cast<int>(battery_.percent())) + " %";
       return reply;
     }
-    if (zone_failed()) {
-      // zone_client가 후진 안전 한도로 멈춰 선 상태(#137 failed): 사람이 확인하기 전엔 움직일 수 없다.
-      // 받으면 MoveTo가 바로 FAILED를 내고 서버가 또 할당하는 것을 되풀이하므로 거부한다
+    if (const auto unable = unable_reason()) {
       reply.result = TaskAssignmentAck::RESULT_REJECTED;
-      reply.error_code = ErrorInfo::TRAFFIC_REVOKED;
-      reply.error_message = "zone_client failed, manual check needed";
+      reply.error_code = unable->first;
+      reply.error_message = unable->second;
       return reply;
     }
     if (ctx_->busy()) {
@@ -519,10 +555,20 @@ private:
       msg.mode = RobotState::MODE_BUSY;
       msg.current_task_id = ctx_->task->task_id;
       msg.item_type = ctx_->task->item_type;
-    } else if (zone_failed()) {
+    } else if (const auto unable = unable_reason()) {
       msg.mode = RobotState::MODE_ERROR;   // 서버는 MODE_IDLE에만 할당한다
+      if (!error_since_) {
+        error_since_ = now();
+        RCLCPP_WARN(get_logger(), "MODE_ERROR 시작, 할당에서 빠짐: %s", unable->second.c_str());
+      }
     } else {
       msg.mode = RobotState::MODE_IDLE;
+    }
+    // 할당에서 빠진 시간을 로그로 남긴다 (#166 리뷰: 복구가 맞는데 failed로 끝난 로봇이 얼마나 빠지는지)
+    if (msg.mode != RobotState::MODE_ERROR && error_since_) {
+      RCLCPP_INFO(
+        get_logger(), "MODE_ERROR 해제 (%.1f s 동안 할당에서 빠짐)", (now() - *error_since_).seconds());
+      error_since_.reset();
     }
     msg.battery_percent = static_cast<float>(battery_.percent());
     msg.last_assignment_id = filter_.last_id();
@@ -540,6 +586,9 @@ private:
   rclcpp::Time start_time_{0, 0, RCL_ROS_TIME};
   double distance_ = 0.0;
   std::optional<std::pair<double, double>> last_xy_;
+  double kidnap_stale_s_ = 5.0;
+  std::optional<rclcpp::Time> kidnap_stamp_;   // kidnap_recovery/state 마지막 수신 시각
+  std::optional<rclcpp::Time> error_since_;    // MODE_ERROR로 들어간 시각
 
   AssignmentFilter filter_;
   std::shared_ptr<TaskContext> ctx_;

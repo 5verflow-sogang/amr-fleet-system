@@ -424,6 +424,39 @@ TEST_F(TaskCycleTest, ZoneFailedAborts)
   EXPECT_EQ(events.back().code, ErrorInfo::TRAFFIC_REVOKED);
 }
 
+// 위치 복구 failed는 복구 노드가 포기한 상태라 기다리지 않고 바로 실패한다 (#166 민지 리뷰)
+TEST_F(TaskCycleTest, KidnapFailedAbortsImmediately)
+{
+  nav.duration = 1000.0;
+  ctx->assign(make_task("r", Task::TYPE_RETURN));
+  run(1.0);
+  ctx->kidnap_state = "rotating";
+  run(2.0);
+  ASSERT_TRUE(ctx->busy());
+  ctx->kidnap_state = "failed";
+  run(0.3);
+  EXPECT_FALSE(ctx->busy());
+  EXPECT_EQ(events.back().state, TaskStatus::STATE_FAILED);
+  EXPECT_EQ(events.back().code, ErrorInfo::LOCALIZATION_LOST);
+}
+
+// 위치 복구 멈춤은 구역(pause_timeout_s)보다 긴 kidnap_pause_timeout_s까지 기다린다 (#178: 시도 3번 약 84 s)
+TEST_F(TaskCycleTest, KidnapPauseUsesItsOwnTimeout)
+{
+  nav.duration = 1000.0;
+  ctx->pause_timeout_s = 60.0;
+  ctx->kidnap_pause_timeout_s = 120.0;
+  ctx->assign(make_task("r", Task::TYPE_RETURN));
+  run(1.0);
+  ctx->kidnap_state = "rotating";
+  run(90.0);
+  EXPECT_TRUE(ctx->busy());   // 구역 상한 60 s는 넘었지만 위치 복구 상한 120 s 안
+  run(40.0);
+  EXPECT_FALSE(ctx->busy());
+  EXPECT_EQ(events.back().state, TaskStatus::STATE_FAILED);
+  EXPECT_EQ(events.back().code, ErrorInfo::LOCALIZATION_LOST);
+}
+
 TEST_F(TaskCycleTest, KidnapPausesUntilTracking)
 {
   nav.duration = 1000.0;

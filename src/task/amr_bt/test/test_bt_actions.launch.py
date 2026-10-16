@@ -37,6 +37,7 @@ def generate_test_description():
         parameters=[{
             'use_sim_time': False, 'use_nav2': True, 'use_docking': True,
             'dwell_s': 0.3, 'server_wait_s': 5.0, 'resume_hold_s': 0.3,
+            'kidnap_state_stale_s': 3.0,
         }])
     return launch.LaunchDescription([bt, launch_testing.actions.ReadyToTest()])
 
@@ -112,6 +113,7 @@ class TestBtActions(unittest.TestCase):
         cls.node.create_subscription(RobotState, '/fleet/robot_states', cls.states.append, qos)
         cls.assign_pub = cls.node.create_publisher(TaskAssignment, '/fleet/task_assignments', qos)
         cls.zone_pub = cls.node.create_publisher(String, f'/{ROBOT}/zone_client/state', 10)
+        cls.kidnap_pub = cls.node.create_publisher(String, f'/{ROBOT}/kidnap_recovery/state', 10)
         cls.executor = MultiThreadedExecutor(num_threads=4)
         cls.executor.add_node(cls.node)
         cls.spin = threading.Thread(target=cls.executor.spin, daemon=True)
@@ -150,7 +152,14 @@ class TestBtActions(unittest.TestCase):
         msg.task = task
         # 노드가 구독을 붙일 때까지 기다린다
         self.assertTrue(self.wait_until(lambda: self.assign_pub.get_subscription_count() > 0, 20.0))
-        self.assign_pub.publish(msg)
+        # 구독이 보여도 노드 쪽 연결(discovery)이 덜 끝나면 첫 메시지가 버려진다 (volatile).
+        # 서버처럼 Ack가 올 때까지 같은 assignment_id로 다시 보낸다. 노드는 중복이면 같은 Ack만 다시 보낸다
+        for _ in range(10):
+            self.assign_pub.publish(msg)
+            if self.wait_until(
+                    lambda: any(a.assignment_id == msg.assignment_id for a in self.acks), 1.0):
+                return
+        self.fail(f'{task_id} Ack 없음')
 
     def final(self, task_id, timeout):
         def done():
@@ -215,6 +224,58 @@ class TestBtActions(unittest.TestCase):
         ack = [a for a in self.acks if a.assignment_id == ack_id][0]
         self.assertEqual(ack.result, TaskAssignmentAck.RESULT_REJECTED)
         self.assertEqual(ack.error.code, ErrorInfo.TRAFFIC_REVOKED)
+
+    # 위치 복구가 failed인 동안도 MODE_ERROR·할당 거부, tracking으로 돌아오면 다시 받는다 (#148)
+    def test_5_kidnap_failed_rejects_until_tracking(self):
+        # 앞 테스트의 zone failed를 풀고 MODE_IDLE이 된 걸 본 뒤 kidnap failed를 보낸다.
+        # 바로 보내면 zone failed의 MODE_ERROR가 남아 있어 아래 할당이 TRAFFIC_REVOKED로 거부된다
+        self.zone_pub.publish(String(data='idle'))
+        self.assertTrue(self.wait_until(
+            lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_IDLE, 5.0))
+        self.kidnap_pub.publish(String(data='failed'))
+        self.assertTrue(self.wait_until(
+            lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_ERROR, 5.0))
+        self.assign('t5', Task.TYPE_RETURN, '', 'wait_1', dropoff_xy=(1.0, 0.0))
+        ack_id = self.last_assignment_id
+        self.assertTrue(self.wait_until(lambda: any(a.assignment_id == ack_id for a in self.acks), 5.0))
+        ack = [a for a in self.acks if a.assignment_id == ack_id][0]
+        self.assertEqual(ack.result, TaskAssignmentAck.RESULT_REJECTED)
+        self.assertEqual(ack.error.code, ErrorInfo.LOCALIZATION_LOST)
+        self.assertIn('localization', ack.error.message)
+
+        self.kidnap_pub.publish(String(data='tracking'))
+        self.assertTrue(self.wait_until(
+            lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_IDLE, 5.0))
+        with self.servers.lock:
+            self.servers.nav_duration = 0.3
+        self.assign('t6', Task.TYPE_RETURN, '', 'wait_1', dropoff_xy=(1.0, 0.0))
+        self.assertEqual(self.final('t6', 15.0).state, TaskStatus.STATE_COMPLETED)
+
+    # 복구 노드가 failed를 낸 뒤 죽으면(상태가 끊기면) kidnap_state_stale_s 뒤 MODE_IDLE로 돌아온다
+    def test_6_kidnap_failed_expires_when_silent(self):
+        self.kidnap_pub.publish(String(data='failed'))
+        self.assertTrue(self.wait_until(
+            lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_ERROR, 2.0))
+        self.assertTrue(self.wait_until(
+            lambda: self.states[-1].mode == RobotState.MODE_IDLE, 6.0))
+
+    # 작업 중 위치 복구가 failed가 되면 기다리지 않고 바로 FAILED(LOCALIZATION_LOST)
+    def test_7_kidnap_failed_during_task_fails_now(self):
+        self.kidnap_pub.publish(String(data='tracking'))
+        self.assertTrue(self.wait_until(
+            lambda: bool(self.states) and self.states[-1].mode == RobotState.MODE_IDLE, 5.0))
+        with self.servers.lock:
+            self.servers.nav_duration = 30.0
+            before = len(self.servers.nav_goals)
+        self.assign('t7', Task.TYPE_RETURN, '', 'wait_1', dropoff_xy=(1.0, 0.0))
+        self.assertTrue(self.wait_until(lambda: len(self.servers.nav_goals) == before + 1, 10.0))
+        sent = time.monotonic()
+        self.kidnap_pub.publish(String(data='failed'))
+        last = self.final('t7', 10.0)
+        self.assertLess(time.monotonic() - sent, 5.0)
+        self.assertEqual(last.state, TaskStatus.STATE_FAILED)
+        self.assertEqual(last.error.code, ErrorInfo.LOCALIZATION_LOST)
+        self.kidnap_pub.publish(String(data='tracking'))
 
 
 @launch_testing.post_shutdown_test()
