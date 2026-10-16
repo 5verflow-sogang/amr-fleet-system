@@ -48,6 +48,9 @@ class FaultInjector(Node):
         # 연속 끊김: blackout_s > 0이면 시작 blackout_at_s초부터 blackout_s초 동안 (blackout_period_s마다 되풀이)
         # blackout_robot의 링크(all이면 모든 로봇)에 들어온 메시지를 버린다. 명세 밖이라 allow_out_of_spec이 필요하다
         blackout_s = self.declare_parameter('blackout_s', 0.0).value
+        if blackout_s < 0:
+            # 0은 끔. 음수는 확장 조건 입력 실수라 조용히 끄지 않고 시작을 거부한다
+            raise ValueError(f'blackout_s는 0(끔) 이상: {blackout_s}')
         blackout = Blackout(
             at_s=self.declare_parameter('blackout_at_s', 0.0).value,
             duration_s=blackout_s,

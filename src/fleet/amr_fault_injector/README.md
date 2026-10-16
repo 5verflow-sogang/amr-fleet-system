@@ -71,7 +71,9 @@ QoS는 4개 토픽 모두 Reliable, depth 10이다. [api.md 6절](../../../docs/
 - **`drop`**: 끊김 동안 나갈 메시지를 모두 버린다. 실제보다 가혹해서 비교용으로만 쓴다.
 - 손실 난수는 끊김 구간에서도 똑같이 뽑아서, 같은 `seed`면 끊김 밖의 손실 위치가 끊김 없는 실행과 같다. 끊김 유무를 짝지어 비교할 수 있다.
 - **한계: 서버 → 로봇 한 방향만 끊긴다**(D8, 이 주입기는 서버 → 로봇만 중계). 끊긴 로봇도 서버로 RobotState·Ack를 계속 보내서, 서버는 그 로봇이 멀쩡하다고 보고 계속 할당하고 작업 회수(RobotState 5초 끊김)도 걸리지 않는다. 실제 Wi-Fi 끊김은 양방향이다. 양방향은 10/21 이후 작업(아래 미결), 그 전 결과는 이 한계와 함께 보고한다. 분산 경매 토픽도 끊긴 로봇이 받는 쪽만 막히고 보내는 입찰은 그대로 간다.
-- 끊김 시각은 주입기 시작부터 잰 실제 시간(단조 시계)이다. 하네스 `fleet_fake`는 `--set allow_out_of_spec=true --set blackout_s=3 --set blackout_at_s=60 --set blackout_period_s=120`처럼 준다. `meta.json` `fault`에 `allow_out_of_spec`, `blackout`이 남는다.
+- 끊김 시각은 주입기 시작부터 잰 실제 시간(단조 시계)이다. 하네스 `fleet_fake`에서는 주입기 뒤에 가짜 로봇·작업 생성기가 뜨고(설정 대기 몇 초), 작업 생성기는 약 10초 뒤 첫 작업을 낸다. 끊김을 작업 흐름 중간에 걸려면 `blackout_at_s`를 30 s 이상으로 넉넉히 둔다. `blackout_s`는 0이면 끄고, 음수는 입력 실수로 보고 시작을 거부한다.
+- **해석 주의 (`delay`)**: 다시 이어지는 순간 쌓인 메시지(heartbeat 등, 링크당 최대 10개)가 한꺼번에 도착한다. 서버·로봇이 "마지막 수신 시각"으로 연결 상태를 판단하면 끊김 직후가 실제보다 좋아 보일 수 있으니, 끊김 결과를 해석할 때 이 점을 같이 적는다.
+- 하네스 `fleet_fake`는 `--set allow_out_of_spec=true --set blackout_s=3 --set blackout_at_s=60 --set blackout_period_s=120`처럼 준다. `meta.json` `fault`에 `allow_out_of_spec`, `blackout`이 남는다.
 - KPI 판정(명세 9절 지연 100 ms 등)은 명세 범위 결과로만 하고, 확장 조건은 연구 결과로만 보고한다.
 
 ```bash

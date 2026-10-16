@@ -73,7 +73,7 @@ def generate_launch_description():
             description='중계할 로봇 수 (amr_01~). 비우면 fault_injector.yaml의 robot_ids (5대)'),
         DeclareLaunchArgument(
             'allow_out_of_spec', default_value='false',
-            description='연구 1 확장 조건: 손실 50%까지와 연속 끊김(blackout)을 허용한다. 기본은 명세 범위만'),
+            description='연구 1 확장 조건: 손실 70%까지와 연속 끊김(blackout)을 허용한다. 기본은 명세 범위만'),
         DeclareLaunchArgument(
             'blackout_s', default_value='0.0',
             description='연속 끊김 길이 [s]. 0이면 끈다. allow_out_of_spec 필요'),
