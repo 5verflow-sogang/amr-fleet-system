@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "amr_nav2_plugins/obstacles.hpp"
-#include "amr_nav2_plugins/waypoint.hpp"
 #include "nav2_util/node_utils.hpp"
 #include "tf2/exceptions.h"
 #include "tf2/utils.h"
@@ -65,9 +64,13 @@ void DwaController::configure(
   declareAndGet(
     node, prefix + "dynamic_obstacle_influence_radius", config.dynamic_obstacle_influence_radius);
   declareAndGet(node, prefix + "dynamic_weight", config.dynamic_weight);
+  declareAndGet(node, prefix + "use_admissible_velocity", config.use_admissible_velocity);
+  declareAndGet(node, prefix + "use_goal_slowdown", config.use_goal_slowdown);
   declareAndGet(node, prefix + "v_samples", config.v_samples);
   declareAndGet(node, prefix + "w_samples", config.w_samples);
   declareAndGet(node, prefix + "lookahead_distance", lookahead_distance_);
+  config.lookahead_distance = lookahead_distance_;
+  declareAndGet(node, prefix + "adaptive_lookahead", config.adaptive_lookahead);
   declareAndGet(node, prefix + "xy_goal_tolerance", xy_goal_tolerance_);
   declareAndGet(node, prefix + "yaw_goal_tolerance", yaw_goal_tolerance_);
 
@@ -210,11 +213,14 @@ geometry_msgs::msg::TwistStamped DwaController::computeVelocityCommands(
     }
   }
 
-  const geometry_msgs::msg::PoseStamped waypoint =
-    selectLookaheadWaypoint(global_plan_, pose, lookahead_distance_);
-  amr_planning_core::Point2D goal;
-  goal.x = waypoint.pose.position.x - origin_x;
-  goal.y = waypoint.pose.position.y - origin_y;
+  // 전역 경로를 Grid 좌표로 넘긴다. heading 기준점(lookahead_distance, adaptive_lookahead)과
+  // 목표 앞 감속의 최종 목표(경로 마지막 점)는 코어가 이 경로에서 고른다.
+  std::vector<amr_planning_core::Point2D> path;
+  path.reserve(global_plan_.poses.size());
+  for (const geometry_msgs::msg::PoseStamped & plan_pose : global_plan_.poses) {
+    path.push_back(amr_planning_core::Point2D{
+      plan_pose.pose.position.x - origin_x, plan_pose.pose.position.y - origin_y});
+  }
 
   std::vector<amr_planning_core::DynamicObstacle> obstacles;
   {
@@ -229,7 +235,7 @@ geometry_msgs::msg::TwistStamped DwaController::computeVelocityCommands(
   }
 
   const amr_planning_core::DwaCommand command =
-    planner_->computeVelocityCommand(state, goal, grid, obstacles);
+    planner_->computeVelocityCommand(state, path, grid, obstacles);
 
   if (command.status == amr_planning_core::DwaStatus::kNoValidTrajectory) {
     RCLCPP_WARN_THROTTLE(

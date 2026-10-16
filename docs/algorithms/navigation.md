@@ -120,7 +120,7 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
    velocity(속도)를 각각 [0, 1]로 정규화해 가중합한다.
 4. **충돌 궤적 제외 후 최소 비용 선택** (`computeVelocityCommand`): 궤적 위 모든 점에서
    사각 풋프린트가 치명 비용 셀과 겹치면 그 (v, w)는 후보에서 뺀다. 남은 후보 중 비용이
-   가장 낮은 (v, w)를 반환한다. 전부 충돌하면 `kNoValidTrajectory`.
+   가장 낮은 (v, w)를 반환한다. 전부 충돌하면 `kNoValidTrajectory`. (허용 속도 조건을 켜면 4-7절)
 
 ### 4-2. 파라미터 (`DwaConfig`, 기본값)
 
@@ -138,6 +138,9 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
 | `lethal_cost_threshold` | 253 | `AStarConfig`와 동일한 nav2 costmap 관례 |
 | `heading_weight` / `clearance_weight` / `velocity_weight` | 0.8 / 0.1 / 0.1 | 4-3절 |
 | `goal_tolerance` | 0.15 m | 전역 경로의 다음 지점 추종이 목적이라 각도 허용오차는 두지 않았다(최종 도킹 정밀도는 범위 밖) |
+| `use_admissible_velocity` | true | 4-7절. false면 이전 동작(호라이즌 안 충돌 궤적 전부 제외)과 같다 |
+| `use_goal_slowdown` | true | 4-7절. 최종 목표까지 직선 거리로 `v <= sqrt(2·acc_v·d_goal)` |
+| `lookahead_distance` / `adaptive_lookahead` | 0.5 m / true | 4-8절. 경로 버전의 heading 기준점 |
 
 ### 4-3. 비용 함수 가중치 근거와 "제자리 정지" 함정
 
@@ -197,6 +200,60 @@ nav2_dwa_demo.launch.py`, `use_static_map`은 없어졌다 - 바로 아래 참�
 조용히 멈춰 있던 것이었다 - 토픽을 맞추고 나니(+ bt_navigator가 찾는 컨트롤러
 이름 불일치, 최종 접근 시 목표 각도까지 회전하지 않던 버그도 같이 고쳐서)
 static_layer(지도 v0) 그대로도 바로 된다. rolling_window는 그래서 다시 뺐다.
+
+### 4-7. 허용 속도 (Fox 1997)
+
+원래 DWA의 허용 속도 조건 `v <= sqrt(2·acc_v·dist)`를 넣었다(`use_admissible_velocity`, 기본 true).
+`dist`는 궤적을 따라 장애물(Grid 치명 셀·동적 장애물 안전 여유)에 닿기 전까지 이동 거리로,
+이미 하는 충돌 검사 루프에서 닿기 직전 점까지 센 개수로 구한다(`|v|·dt·free_steps`, 보수적).
+장애물에 안 닿는 궤적은 호라이즌 밖을 모르므로 끝(`|v|·sim_time`)에 장애물이 있다고 본다.
+
+이전에는 `sim_time` 안에서 닿는 궤적을 전부 뺐다. 이러면 남는 궤적은 항상 `dist >= |v|·sim_time`이라
+`|v| <= 2·acc_v·sim_time`(기본값 4 m/s > `max_v`)인 한 허용 조건이 늘 성립해서 `acc_v`는 동적 윈도우
+에만 쓰이고, 질량(가속 한계)을 틀리게 줘도 결과가 거의 안 변했다. 그래서 원래 DWA처럼 닿는 궤적도
+"acc_v로 감속해 장애물 앞에 설 수 있으면" 남긴다(heading은 닿기 직전 점에서 본다, 첫 점부터 닿으면
+뺀다). 다만 안 닿는 궤적이 하나라도 있으면 그중에서만 고르고, 닿는 궤적은 안 닿는 궤적이 하나도 없을
+때(이전에는 `kNoValidTrajectory`로 바로 정지)만 고른다. 닿는 궤적까지 같은 비용으로 겨루게 했더니
+heading 비중(0.8)이 압도적이라 벽으로 곧장 가다 막판에 못 꺾어 `ClosedLoopReachesGoalWithOneObstacle`,
+`FrontObstacleTurnsAway`, `FrontApproachingObstacleIsAvoidedOnlyWithPrediction`이 실패했다.
+그래서 질량 정보는 "모든 궤적이 호라이즌 안에서 장애물에 닿는" 상황(정면이 막혀 감속·정지해야 할 때)의
+감속 프로파일에 반영된다. 감속 한계는 `acc_v`를 그대로 쓴다.
+
+허용 속도 조건은 2초 충돌 지평 때문에 대부분 효과가 없다 - 안 닿는 궤적은 `dist = |v|·sim_time`이라
+`acc_v >= v/(2·sim_time)`이면 항상 만족한다(기본 `max_v` 2.0이면 `acc_v >= 0.5`).
+
+**목표 앞 감속** (`use_goal_slowdown`, 기본 true): 최종 목표(전역 경로 끝, 지역 waypoint가 아님)까지
+직선 거리 `d_goal`에서 샘플 선속도를 `v <= sqrt(2·acc_v·d_goal)`로 제한한다(`computeVelocityCommand`의
+`final_goal` 인자. 경로를 받는 버전은 경로 마지막 점을 쓴다). 동적 윈도우 최저 속도가 이보다
+높으면 최저 속도 하나만 샘플링한다. 감속은 `acc_v` 그대로 쓰고, `xy_goal_tolerance` 안에서는 지금처럼
+플러그인이 v=0으로 끊고 `rotateToGoalYaw`로 돈다.
+
+다만 이것도 기존 heading 항에 가려지는 경우가 많다. 궤적 끝이 목표를 넘으면 heading 비용이 최대(1.0)라
+이미 `v <= d_goal/sim_time`으로 줄이고 있었고, 이 값이 `sqrt(2·acc_v·d_goal)`보다 작은 구간
+(`d_goal < 2·acc_v·sim_time²`, 기본 8 m)에서는 그쪽이 먼저 걸린다. 목표 앞 감속이 heading보다 먼저
+시작하려면 `v > 2·acc_v·sim_time`이어야 하는데, 그 속도는 허용 속도 조건이 빼므로 둘 다 켜져 있으면
+목표 앞 감속은 실제로 걸리지 않는다(`GoalSlowdownStartsEarlierWithSmallerAcceleration`는 그래서 허용
+속도 조건을 끄고 작은 `acc_v`로 확인한다). 경로를 받는 버전에서 `adaptive_lookahead`를 켜면 경로 끝에서
+heading을 끝점 앞에서 재므로 이 가림이 없어진다(4-8절).
+
+### 4-8. heading 기준점 (`adaptive_lookahead`)
+
+**원인:** 플러그인은 전역 경로에서 로봇 앞 `lookahead_distance`(0.5 m) 점 하나를 골라 DWA 목표로
+넘겼고, heading 비용은 궤적 끝에서 그 점을 향하는 각도였다. 궤적 끝이 그 점을 지나치면 방향이
+뒤집혀 heading 비용이 최대(1.0, 가중치 0.8)가 되므로, 속도 비용(가중치 0.1)으로는 못 이기고
+`v <= lookahead_distance/sim_time = 0.25 m/s`로 묶였다. Gazebo 목표 (6,0)에서 최고 속도가 0.246 m/s였다.
+같은 이유로 4-7절의 허용 속도·목표 앞 감속도 이 속도에서는 거의 안 걸렸다(목표 3 cm 앞에서야 걸림).
+
+**바꾼 것:** 코어가 전역 경로(점 목록)를 받는 `computeVelocityCommand` 버전을 추가하고, 플러그인이
+경로를 통째로 넘긴다. heading 기준점은 궤적마다 경로를 따라 `max(lookahead_distance, |v|·sim_time)`
+앞의 점이다(로봇에 가장 가까운 경로 점부터 누적, 경로 끝을 넘으면 마지막 점 - 기존
+`selectLookaheadWaypoint`와 같은 규칙인 `pathPointAhead`). `lookahead_distance`는 최솟값으로 남아
+느릴 때(`|v|·sim_time <= 0.5 m`)는 기존과 같은 점을 쓴다 - #165 좁은 통로 진입 동작 유지. 궤적이 경로
+끝점을 지나치면 끝점보다 `goal_tolerance`만큼 앞의 궤적 점에서 heading을 잰다 - 지나친 궤적 끝에서
+재면 다시 방향이 뒤집혀 목표 앞에서 `v <= d_goal/sim_time`으로 묶이고 목표 앞 감속이 가려진다. 도착
+판정(`kGoalReached`)은 기존처럼 `lookahead_distance` 앞 점 기준이다. 점 하나만 넘기는 기존 버전은
+그대로다(경로가 없으면 그 점 기준). `adaptive_lookahead: false`면 경로 버전도 기존 플러그인 흐름과
+결과가 같다(`AdaptiveLookaheadDisabledMatchesFixedWaypointCall`).
 
 ## 5. Pure Pursuit · Stanley · PID
 

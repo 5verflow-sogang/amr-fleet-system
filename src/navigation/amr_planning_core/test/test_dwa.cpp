@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "amr_planning_core/dwa.hpp"
@@ -494,6 +496,412 @@ TEST(DwaPlannerTest, RotateToGoalYawConvergesWithoutOvershootOscillation)
   EXPECT_TRUE(reached) << "200스텝 안에 허용 오차 안으로 들어오지 못함";
   EXPECT_LE(max_abs_error_after_first_entering_tolerance, kGoalYaw + kYawTolerance)
     << "목표 각도를 지나쳐 반대쪽으로 넘어감(오버슈트)";
+}
+
+namespace
+{
+
+// 허용 속도 테스트용: 직진만(max_w=0) 남겨 장애물까지 거리와 선속도만 보게 하고,
+// 선속도는 촘촘히(0.01 m/s 간격) 샘플링한다.
+DwaConfig makeStraightOnlyConfig(double acc_v)
+{
+  DwaConfig config;
+  config.acc_v = acc_v;
+  config.max_w = 0.0;
+  config.w_samples = 1;
+  config.v_samples = 21;
+  return config;
+}
+
+// 로봇(x=1.0, 앞면 x=1.3)에서 앞면까지 gap(m) 떨어진 벽. gap이 음수면 벽 없음.
+// 목표는 벽 너머 정면이라 모든 직진 궤적의 heading 비용이 같다.
+DwaCommand driveTowardWall(const DwaConfig & config, double gap, double v0 = 1.0)
+{
+  TestGrid test_grid(200, 80, 0.05);
+  if (gap >= 0.0) {
+    const double wall_x = 1.3 + gap;
+    test_grid.setRegion(wall_x + 0.01, wall_x + 0.2, 1.5, 2.5, 254);
+  }
+  DwaPlanner planner(config);
+  RobotState state;
+  state.x = 1.0;
+  state.y = 2.0;
+  state.v = v0;
+  return planner.computeVelocityCommand(state, Point2D{8.0, 2.0}, test_grid.grid());
+}
+
+}  // namespace
+
+TEST(DwaPlannerTest, AdmissibleVelocityDropsFastSamplesNearObstacle)
+{
+  const DwaConfig config = makeStraightOnlyConfig(1.0);
+  const DwaPlanner planner(config);
+  RobotState state;
+  state.v = 1.0;
+  const DynamicWindow window = planner.computeDynamicWindow(state);  // [0.9, 1.1]
+
+  // 장애물이 없으면 윈도우 최고 속도.
+  const DwaCommand open = driveTowardWall(config, -1.0);
+  ASSERT_EQ(open.status, DwaStatus::kOk);
+  EXPECT_NEAR(open.v, window.max_v, 1e-9);
+
+  // 앞면 0.5m 앞 벽: 윈도우 안 모든 직진 궤적이 sim_time 안에 닿지만, sqrt(2*acc_v*dist)
+  // 이하인 샘플은 설 수 있어 남는다. 그보다 빠른 샘플은 빠진다.
+  const DwaCommand near = driveTowardWall(config, 0.5);
+  ASSERT_EQ(near.status, DwaStatus::kOk);
+  EXPECT_LT(near.v, window.max_v - 0.05);
+  // 풋프린트 샘플링 간격(해상도/2)만큼 여유를 둔다.
+  EXPECT_LE(near.v, planner.admissibleVelocity(0.5 + 0.025) + 1e-9);
+  EXPECT_GE(near.v, window.min_v);
+}
+
+TEST(DwaPlannerTest, AdmissibleVelocityShrinksWithSmallerAcceleration)
+{
+  EXPECT_LT(DwaPlanner(makeStraightOnlyConfig(0.7)).admissibleVelocity(1.0),
+    DwaPlanner(makeStraightOnlyConfig(1.0)).admissibleVelocity(1.0));
+  EXPECT_LT(DwaPlanner(makeStraightOnlyConfig(1.0)).admissibleVelocity(1.0),
+    DwaPlanner(makeStraightOnlyConfig(1.3)).admissibleVelocity(1.0));
+  EXPECT_NEAR(DwaPlanner(makeStraightOnlyConfig(0.5)).admissibleVelocity(1.0), 1.0, 1e-12);
+
+  // 같은 벽(앞면 1.05m 앞)에서 acc_v=1.0이면 윈도우 최고 속도(1.1)도 설 수 있어 그대로
+  // 고르고, acc_v=0.5면 허용 최대 속도(~1.0)가 윈도우 최고 속도(1.05)보다 낮아 더
+  // 느린 샘플을 고른다.
+  const DwaCommand strong = driveTowardWall(makeStraightOnlyConfig(1.0), 1.05);
+  const DwaCommand weak = driveTowardWall(makeStraightOnlyConfig(0.5), 1.05);
+  ASSERT_EQ(strong.status, DwaStatus::kOk);
+  ASSERT_EQ(weak.status, DwaStatus::kOk);
+  EXPECT_NEAR(strong.v, 1.1, 1e-9);
+  EXPECT_LT(weak.v, 1.05 - 1e-6);
+  EXPECT_LE(weak.v, DwaPlanner(makeStraightOnlyConfig(0.5)).admissibleVelocity(1.05 + 0.025));
+  EXPECT_LT(weak.v, strong.v);
+}
+
+TEST(DwaPlannerTest, AdmissibleVelocityDisabledKeepsPreviousBehavior)
+{
+  DwaConfig config = makeStraightOnlyConfig(1.0);
+  config.use_admissible_velocity = false;
+
+  // 이전 동작: sim_time 안에서 닿는 궤적은 설 수 있어도 모두 뺀다.
+  const DwaCommand near = driveTowardWall(config, 0.5);
+  EXPECT_EQ(near.status, DwaStatus::kNoValidTrajectory);
+  EXPECT_EQ(near.v, 0.0);
+  EXPECT_EQ(near.w, 0.0);
+
+  // 호라이즌 안에 장애물이 없으면 켜든 끄든 같다(기본 acc_v·sim_time이면 2*acc_v*sim_time
+  // > max_v라 허용 조건이 늘 성립).
+  DwaConfig on_config = config;
+  on_config.use_admissible_velocity = true;
+  const DwaCommand off_open = driveTowardWall(config, -1.0);
+  const DwaCommand on_open = driveTowardWall(on_config, -1.0);
+  EXPECT_EQ(off_open.status, on_open.status);
+  EXPECT_EQ(off_open.v, on_open.v);
+  EXPECT_EQ(off_open.w, on_open.w);
+
+  // 기존 회피 시나리오(FrontObstacleTurnsAway)를 끄고 돌리면 고른 궤적이 충돌하지 않는다.
+  TestGrid test_grid(160, 80, 0.05);
+  test_grid.setRegion(2.6, 2.8, 1.7, 2.3, 254);
+  DwaConfig legacy;
+  legacy.use_admissible_velocity = false;
+  const DwaPlanner planner(legacy);
+  RobotState state;
+  state.x = 0.5;
+  state.y = 2.0;
+  state.v = 1.0;
+  const DwaCommand command =
+    planner.computeVelocityCommand(state, Point2D{6.0, 2.0}, test_grid.grid());
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  for (const TrajectoryPoint & point : planner.simulateTrajectory(state, command.v, command.w)) {
+    EXPECT_FALSE(planner.footprintCollides(test_grid.grid(), point.x, point.y, point.yaw));
+  }
+}
+
+namespace
+{
+
+struct GoalApproachResult
+{
+  bool reached = false;
+  double reach_distance = 0.0;      // kGoalReached를 받은 시점의 목표까지 거리
+  double reach_speed = 0.0;         // 그 직전 명령 선속도
+  double stop_x = 0.0;              // 그 뒤 acc_v로 감속해 실제로 서는 x
+  double slowdown_distance = 0.0;   // 선속도가 처음 시작 속도보다 줄어든 시점의 목표까지 거리
+};
+
+// 빈 지도에서 x축을 따라 v0로 달리다 정면의 최종 목표(goal_x, 2.0)에 다가가는 닫힌 루프.
+// 명령을 그대로 따른다고 보고(이상 추종) 상태를 적분한다. kGoalReached가 나오면 거기서
+// v=0 명령을 받은 로봇이 acc_v로 감속해 서는 위치까지 계산한다.
+GoalApproachResult approachGoal(const DwaConfig & config, double v0, double goal_x, bool pass_final)
+{
+  TestGrid test_grid(200, 40, 0.1);  // 20m x 4m, 빈 지도라 거칠게(풋프린트 샘플 수를 줄여 테스트 시간 단축)
+  const DwaPlanner planner(config);
+  const Point2D goal{goal_x, 2.0};
+
+  RobotState state;
+  state.x = 1.0;
+  state.y = 2.0;
+  state.v = v0;
+
+  GoalApproachResult result;
+  bool slowed = false;
+  for (int step = 0; step < 1000; ++step) {
+    const DwaCommand command = planner.computeVelocityCommand(
+      state, goal, test_grid.grid(), {},
+      pass_final ? std::optional<Point2D>(goal) : std::nullopt);
+    const double distance = std::hypot(goal.x - state.x, goal.y - state.y);
+    if (command.status == DwaStatus::kGoalReached) {
+      result.reached = true;
+      result.reach_distance = distance;
+      result.reach_speed = state.v;
+      result.stop_x = state.x + state.v * state.v / (2.0 * config.acc_v);
+      break;
+    }
+    if (command.status != DwaStatus::kOk) {
+      break;
+    }
+    if (!slowed && command.v < v0 - 1e-6) {
+      slowed = true;
+      result.slowdown_distance = distance;
+    }
+    state.x += command.v * std::cos(state.yaw) * config.dt;
+    state.y += command.v * std::sin(state.yaw) * config.dt;
+    state.yaw += command.w * config.dt;
+    state.v = command.v;
+    state.w = command.w;
+  }
+  return result;
+}
+
+}  // namespace
+
+TEST(DwaPlannerTest, GoalSlowdownStopsWithinToleranceFromFullSpeed)
+{
+  DwaConfig config = makeFastConfig();
+  config.v_samples = 11;
+  const double goal_x = 9.0;
+
+  const GoalApproachResult slowed = approachGoal(config, config.max_v, goal_x, true);
+  ASSERT_TRUE(slowed.reached);
+  EXPECT_LE(slowed.reach_distance, config.goal_tolerance + 1e-9);
+  // v=0 명령 뒤 acc_v로 서도 목표를 tolerance 넘게 지나치지 않는다.
+  EXPECT_LE(slowed.stop_x, goal_x + config.goal_tolerance);
+  EXPECT_LE(slowed.reach_speed, std::sqrt(2.0 * config.acc_v * 0.3));
+}
+
+TEST(DwaPlannerTest, GoalSlowdownStartsEarlierWithSmallerAcceleration)
+{
+  // heading 항이 이미 궤적 끝이 목표를 넘지 않게(v <= d_goal/sim_time, 2 m/s면 4m 앞부터)
+  // 줄이므로, 목표 앞 감속(v^2/(2*acc_v) 앞부터)이 먼저 걸리려면 v0 > 2*acc_v*sim_time
+  // 이어야 한다 - 그 속도는 허용 속도 조건이 빼므로 여기서는 끄고 acc_v를 작게 준다
+  // (navigation.md 4-7절).
+  DwaConfig strong = makeFastConfig();
+  strong.v_samples = 11;
+  strong.use_admissible_velocity = false;
+  strong.acc_v = 0.4;
+  DwaConfig weak = strong;
+  weak.acc_v = 0.25;
+
+  const GoalApproachResult strong_result = approachGoal(strong, 2.0, 14.0, true);
+  const GoalApproachResult weak_result = approachGoal(weak, 2.0, 14.0, true);
+  ASSERT_TRUE(strong_result.reached);
+  ASSERT_TRUE(weak_result.reached);
+  // 2 m/s에서 서는 거리 v^2/(2*acc_v): acc_v=0.4면 5m, 0.25면 8m 앞부터 줄인다.
+  EXPECT_NEAR(strong_result.slowdown_distance, 5.0, 0.25);
+  EXPECT_NEAR(weak_result.slowdown_distance, 8.0, 0.25);
+  EXPECT_GT(weak_result.slowdown_distance, strong_result.slowdown_distance);
+  EXPECT_LE(strong_result.stop_x, 14.0 + strong.goal_tolerance);
+  EXPECT_LE(weak_result.stop_x, 14.0 + weak.goal_tolerance);
+
+  // 끄면 둘 다 heading 항 때문에 같은 지점(~4m 앞)부터 줄인다.
+  strong.use_goal_slowdown = false;
+  weak.use_goal_slowdown = false;
+  EXPECT_NEAR(approachGoal(strong, 2.0, 14.0, true).slowdown_distance, 4.0, 0.25);
+  EXPECT_NEAR(approachGoal(weak, 2.0, 14.0, true).slowdown_distance, 4.0, 0.25);
+}
+
+TEST(DwaPlannerTest, GoalSlowdownDisabledKeepsPreviousBehavior)
+{
+  DwaConfig off = makeFastConfig();
+  off.use_goal_slowdown = false;
+  const DwaPlanner planner(off);
+
+  TestGrid test_grid(160, 80, 0.05);
+  test_grid.setRegion(2.6, 2.8, 1.7, 2.3, 254);
+  RobotState state;
+  state.x = 0.5;
+  state.y = 2.0;
+  state.v = 1.9;
+  const Point2D goal{3.5, 2.0};  // 가까운 최종 목표 - 감속이 켜져 있으면 제한이 걸릴 거리
+
+  const DwaCommand with_final = planner.computeVelocityCommand(
+    state, goal, test_grid.grid(), {}, goal);
+  const DwaCommand without_final = planner.computeVelocityCommand(state, goal, test_grid.grid());
+  EXPECT_EQ(with_final.status, without_final.status);
+  EXPECT_EQ(with_final.v, without_final.v);
+  EXPECT_EQ(with_final.w, without_final.w);
+
+  // 켜도 final_goal을 안 넘기면 기존과 같다.
+  const DwaPlanner on_planner(makeFastConfig());
+  const DwaCommand on_without_final =
+    on_planner.computeVelocityCommand(state, goal, test_grid.grid());
+  EXPECT_EQ(on_without_final.status, without_final.status);
+  EXPECT_EQ(on_without_final.v, without_final.v);
+  EXPECT_EQ(on_without_final.w, without_final.w);
+}
+
+namespace
+{
+
+// (x0, y) -> (x1, y) 직선 경로, 0.05m 간격(전역 경로 해상도와 비슷하게).
+std::vector<Point2D> straightPath(double x0, double x1, double y)
+{
+  std::vector<Point2D> path;
+  for (double x = x0; x <= x1 + 1e-9; x += 0.05) {
+    path.push_back(Point2D{x, y});
+  }
+  path.back().x = x1;
+  return path;
+}
+
+struct PathRunResult
+{
+  bool reached = false;
+  double max_v = 0.0;
+  double stop_x = 0.0;              // kGoalReached 뒤 acc_v로 감속해 서는 x
+  double slowdown_distance = 0.0;   // 최고 속도보다 0.05 m/s 넘게 줄어든 시점의 경로 끝까지 거리
+};
+
+// 빈 지도에서 직선 경로를 따라가는 닫힌 루프(명령을 그대로 따른다고 보고 적분).
+PathRunResult followStraightPath(const DwaConfig & config, double v0, double goal_x)
+{
+  TestGrid test_grid(200, 40, 0.1);  // 20m x 4m, 빈 지도라 거칠게(테스트 시간 단축)
+  const DwaPlanner planner(config);
+  const std::vector<Point2D> path = straightPath(1.0, goal_x, 2.0);
+
+  RobotState state;
+  state.x = 1.0;
+  state.y = 2.0;
+  state.v = v0;
+
+  PathRunResult result;
+  result.max_v = v0;
+  bool slowed = false;
+  for (int step = 0; step < 2000; ++step) {
+    const DwaCommand command = planner.computeVelocityCommand(state, path, test_grid.grid());
+    if (command.status == DwaStatus::kGoalReached) {
+      result.reached = true;
+      result.stop_x = state.x + state.v * state.v / (2.0 * config.acc_v);
+      break;
+    }
+    if (command.status != DwaStatus::kOk) {
+      break;
+    }
+    // 경로를 다시 맞추는 작은 조향(w)으로 생기는 0.01 m/s 수준의 흔들림은 감속으로 안 본다.
+    if (!slowed && command.v < result.max_v - 0.05) {
+      slowed = true;
+      result.slowdown_distance = goal_x - state.x;
+    }
+    result.max_v = std::max(result.max_v, command.v);
+    state.x += command.v * std::cos(state.yaw) * config.dt;
+    state.y += command.v * std::sin(state.yaw) * config.dt;
+    state.yaw += command.w * config.dt;
+    state.v = command.v;
+    state.w = command.w;
+  }
+  return result;
+}
+
+}  // namespace
+
+TEST(DwaPlannerTest, AdaptiveLookaheadReachesNearMaxSpeedOnStraightPath)
+{
+  DwaConfig config = makeFastConfig();
+  config.v_samples = 11;
+
+  const PathRunResult adaptive = followStraightPath(config, 0.0, 15.0);
+  ASSERT_TRUE(adaptive.reached);
+  EXPECT_GE(adaptive.max_v, 0.95 * config.max_v);
+  EXPECT_LE(adaptive.stop_x, 15.0 + config.goal_tolerance);
+
+  // 고정 기준점이면 궤적 끝이 lookahead_distance 앞 점을 넘는 순간 heading 비용이 최대라
+  // lookahead_distance/sim_time(0.25 m/s) 근처에 묶인다(Gazebo에서 0.246 m/s).
+  config.adaptive_lookahead = false;
+  const PathRunResult fixed = followStraightPath(config, 0.0, 15.0);
+  EXPECT_LE(fixed.max_v, config.lookahead_distance / config.sim_time + 0.1);
+}
+
+TEST(DwaPlannerTest, AdaptiveLookaheadUsesFixedTargetAtLowSpeed)
+{
+  // |v|*sim_time <= lookahead_distance면 기준점이 고정 lookahead 점과 같다.
+  const std::vector<Point2D> path = {
+    {1.0, 2.0}, {1.2, 2.0}, {1.4, 2.0}, {1.4, 2.2}, {1.4, 2.4}, {1.4, 2.6}, {1.4, 2.8}};
+  EXPECT_EQ(pathPointAhead(path, 1.0, 2.0, 0.5).point.x, 1.4);
+  EXPECT_EQ(pathPointAhead(path, 1.0, 2.0, 0.5).point.y, 2.2);
+  EXPECT_EQ(pathPointAhead(path, 1.0, 2.0, 10.0).point.y, 2.8);
+  EXPECT_TRUE(pathPointAhead(path, 1.0, 2.0, 10.0).at_path_end);
+
+  TestGrid test_grid(80, 80, 0.05);
+  test_grid.setRegion(1.7, 1.9, 1.6, 2.4, 254);
+  DwaConfig on = makeFastConfig();
+  DwaConfig off = on;
+  off.adaptive_lookahead = false;
+  for (const double v0 : {0.0, 0.05, 0.1}) {  // 윈도우 최고 속도 <= 0.2 -> 궤적 길이 <= 0.4m
+    RobotState state;
+    state.x = 1.0;
+    state.y = 2.0;
+    state.v = v0;
+    const DwaCommand a = DwaPlanner(on).computeVelocityCommand(state, path, test_grid.grid());
+    const DwaCommand b = DwaPlanner(off).computeVelocityCommand(state, path, test_grid.grid());
+    EXPECT_EQ(a.status, b.status) << "v0=" << v0;
+    EXPECT_EQ(a.v, b.v) << "v0=" << v0;
+    EXPECT_EQ(a.w, b.w) << "v0=" << v0;
+  }
+}
+
+TEST(DwaPlannerTest, AdaptiveLookaheadDisabledMatchesFixedWaypointCall)
+{
+  // 끄면 경로 버전이 이전 플러그인 흐름(lookahead_distance 앞 점 하나 + 최종 목표)과 같다.
+  TestGrid test_grid(160, 80, 0.05);
+  test_grid.setRegion(2.6, 2.8, 1.7, 2.3, 254);
+  DwaConfig off = makeFastConfig();
+  off.adaptive_lookahead = false;
+  const DwaPlanner planner(off);
+  const std::vector<Point2D> path = straightPath(0.5, 6.0, 2.0);
+
+  for (const double v0 : {0.0, 0.5, 1.0, 1.9}) {
+    RobotState state;
+    state.x = 0.5;
+    state.y = 2.0;
+    state.v = v0;
+    const Point2D waypoint = pathPointAhead(path, state.x, state.y, off.lookahead_distance).point;
+    const DwaCommand by_path = planner.computeVelocityCommand(state, path, test_grid.grid());
+    const DwaCommand by_point = planner.computeVelocityCommand(
+      state, waypoint, test_grid.grid(), {}, path.back());
+    EXPECT_EQ(by_path.status, by_point.status) << "v0=" << v0;
+    EXPECT_EQ(by_path.v, by_point.v) << "v0=" << v0;
+    EXPECT_EQ(by_path.w, by_point.w) << "v0=" << v0;
+  }
+}
+
+TEST(DwaPlannerTest, AdaptiveLookaheadLetsGoalSlowdownTakeEffect)
+{
+  // 켜면 경로 끝 앞의 속도를 heading이 아니라 목표 앞 감속(sqrt(2*acc_v*d))이 정한다:
+  // 2 m/s에서 v^2/(2*acc_v) 앞부터 줄인다 - acc_v=1.0이면 2m, 0.6이면 3.33m. 감속 판정은
+  // 0.05 m/s 넘게 줄었을 때라 (2-0.05)^2/(2*acc_v), 한 스텝(0.2m) 오차를 둔다.
+  DwaConfig strong = makeFastConfig();
+  strong.v_samples = 11;
+  strong.acc_v = 1.0;
+  DwaConfig weak = strong;
+  weak.acc_v = 0.6;
+
+  const PathRunResult strong_result = followStraightPath(strong, 2.0, 15.0);
+  const PathRunResult weak_result = followStraightPath(weak, 2.0, 15.0);
+  ASSERT_TRUE(strong_result.reached);
+  ASSERT_TRUE(weak_result.reached);
+  EXPECT_NEAR(strong_result.slowdown_distance, 1.95 * 1.95 / 2.0, 0.25);
+  EXPECT_NEAR(weak_result.slowdown_distance, 1.95 * 1.95 / 1.2, 0.25);
+  EXPECT_GT(weak_result.slowdown_distance, strong_result.slowdown_distance);
+  EXPECT_LE(strong_result.stop_x, 15.0 + strong.goal_tolerance);
+  EXPECT_LE(weak_result.stop_x, 15.0 + weak.goal_tolerance);
 }
 
 }  // namespace amr_planning_core
