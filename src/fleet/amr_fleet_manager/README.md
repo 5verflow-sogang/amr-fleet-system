@@ -201,6 +201,7 @@
 | `state_rate_hz` | `2.0` | `RobotState` 주기 |
 | `step_hz` | `10.0` | 이동 계산 주기 |
 | `server_topic_prefix` | `/fleet` | 서버 → 로봇 토픽 앞부분. launch 인자 `relayed:=true`면 `fleet` |
+| `claim_timeout_s` | `5.0` | 다른 로봇의 작업 주장을 세는 시간. 그 로봇의 RobotState가 이만큼 끊기면 뺀다 (서버 `reclaim_timeout_s`와 같게, 실제 시간) |
 
 `task_generator` ([launch/task_generator.launch.py](launch/task_generator.launch.py) 인자)
 
@@ -260,7 +261,7 @@ ros2 run amr_fleet_manager fleet_metrics /tmp/run1/rosbag --out /tmp/run1 --dela
 | --- | --- |
 | `fleet_latency.csv` | 원본 메시지 1건 × 로봇 1대마다 1행 (`topic, robot, key, send_time, recv_time, latency_ms, delivered`) |
 | `response_time.csv` | 할당 명령 1건마다 1행 (명세서 컬럼 + `robot, task_id, latency_sim_ms, assignment_id, ack_time, ack_rtt_ms, resends`) |
-| `task_outcomes.csv` | 작업 1건마다 1행 (`task_id, request_time, first_assign_time, robots, final_state, end_time, task_time_s, distance_m, error_code`). `robots`는 맡았던 로봇 순서(공백 구분), `final_state`는 마지막 할당 뒤 그 로봇의 끝 보고(`COMPLETED`·`FAILED`), 없으면 빈칸. `error_code`는 `FAILED`일 때 그 보고의 `ErrorInfo.code`(예: 203 위치, 501 작업 시간 초과) |
+| `task_outcomes.csv` | 작업 1건마다 1행 (`task_id, request_time, first_assign_time, robots, final_state, end_time, task_time_s, distance_m, error_code, runners`). `robots`는 서버가 맡긴 로봇 순서(공백 구분), `final_state`는 어느 로봇이든 `COMPLETED`를 보고했으면 `COMPLETED`(하이브리드에서는 경매로 맡은 로봇이 끝낼 수 있다), 아니면 마지막 할당 뒤 그 로봇의 `FAILED`, 없으면 빈칸. 먼저 맡은 로봇에게 밀려난 `FAILED`(`ASSIGN_TASK_TAKEN`)는 끝으로 보지 않는다. `error_code`는 `FAILED`일 때 그 보고의 `ErrorInfo.code`(예: 203 위치, 501 작업 시간 초과). `runners`는 `IN_PROGRESS`를 보고한 로봇(둘 이상이면 중복 실행) |
 | `recovery.csv` | `fault_events.csv`에 `robot_kill:<로봇>`이 있을 때만. 강제종료 1건 × 그 로봇이 하던 작업 1건마다 1행 (`robot, kill_time, task_id, reassign_time, reassigned_robot, recovery_s, completed`). `recovery_s` = 다른 로봇에 다시 할당된 시각 − 죽은 시각. 놀던 로봇이면 `task_id`가 빈 행 1개 |
 | `robot_states.csv` | `/fleet/robot_states` 1건마다 1행 (`time, robot, x, y, mode, task_id`). 아래 `fleet_plot`의 원자료 |
 | `meta.json` | `observation_cutoff` (`end, delay_ms, grace_s, resend_grace_s, cutoff, ack_cutoff, start`). 다른 키는 그대로 둔다 |
@@ -308,6 +309,14 @@ colcon test --packages-select amr_fleet_manager
 - `test/test_server_kill_launch.py`: 서버를 죽였다 다시 띄워 heartbeat가 끊겼다가 epoch 2로 돌아오는지, `fault_events.csv`가 남는지 확인한다.
 - `test/test_task_generator_launch.py`: JSON Task 일정대로, map 좌표로 바꿔 발행하는지 확인한다.
 
+## 중복 실행 정리 (하이브리드)
+
+같은 작업을 두 로봇이 맡으면 `TaskStatus.start_time`(수락 시각)이 가장 이른 로봇이 계속한다. COMPLETED를 보고한 로봇이 있으면 그 로봇이 주인이다 ([architecture.md 5-2절](../../../docs/architecture.md#5-2-하이브리드-폴백-연구-1-비교군-1016-하연-설계), `claims.py`).
+
+- 서버(`dispatcher`): 맡기지 않은 로봇의 보고라도 그 로봇이 주인이면 장부의 맡은 로봇을 바꾸고, 원래 로봇에게 보내던 재전송을 그만둔다. `ErrorInfo.ASSIGN_TASK_TAKEN`(104)으로 온 FAILED·거부 Ack는 주인에게 넘기고 재시도로 세지 않는다.
+- 가짜 로봇(`fake_robot`): `/fleet/task_status`·`/fleet/robot_states`를 듣고, 다른 로봇이 먼저 맡은 작업은 거부 Ack(`ASSIGN_TASK_TAKEN`)로 돌려보낸다. 하던 작업에 더 이른 주인이 보이면 멈추고 FAILED + `ASSIGN_TASK_TAKEN`을 보낸다. 같은 작업을 다른 출처(서버·경매)에서 또 받으면 다시 시작하지 않고 수락만 한다.
+- 주장은 그 로봇이 살아서 그 작업을 하는 동안만 센다. RobotState가 `reclaim_timeout_s`(가짜 로봇은 `claim_timeout_s`, 둘 다 5초) 넘게 끊기거나, 그 뒤 RobotState의 `current_task_id`가 다른 작업이면 뺀다.
+
 ## 미결
 
 | 쟁점 | 초안 |
@@ -319,6 +328,6 @@ colcon test --packages-select amr_fleet_manager
 | 가짜 로봇의 구역 요청 | `fake_robot`은 구역을 요청하지 않는다 |
 | 작업 취소 | `ACTION_CANCEL` 발행 경로 없음 (가짜 로봇은 받으면 처리한다). 취소로 멈춘 작업은 FAILED + `ErrorInfo.ASSIGN_CANCELED`로 보고받고 다시 할당하지 않는다 |
 | FAILED 작업 | `assignment.failed_retries`(1)번까지 다시 할당한다(10/8, 분산 재경매와 같게). 취소(`ASSIGN_CANCELED`)는 빼고 센다. 다시 맡을 로봇은 고르지 않는다(같은 로봇이 다시 받을 수 있음). "다른 로봇 우선"은 분산과 같이 정한다(10/12 회의) |
-| 로봇 끊김 | `reclaim_timeout_s` 뒤 작업을 회수해 다시 할당한다. 로봇이 살아 돌아와 옛 작업을 계속하면 두 로봇이 같은 작업을 하게 되는데, 그 로봇에 취소(`ACTION_CANCEL`)를 보내는 일은 아직 없다. 분산 경매에는 같은 회수가 없다(비교 실험 전에 이진과 맞춤) |
+| 로봇 끊김 | `reclaim_timeout_s` 뒤 작업을 회수해 다시 할당한다. 로봇이 살아 돌아와 옛 작업을 계속하면 "먼저 수락한 쪽이 주인" 규칙으로 정리한다(아래 "중복 실행 정리"). 분산 경매에는 같은 회수가 없다(비교 실험 전에 이진과 맞춤) |
 | 작업표 크기 | 끝난 작업도 계속 싣는다. 장시간 운용(4시간) 전에 정리 규칙을 정한다 |
 | 로봇 → 서버 토픽 장애 주입 | [api.md 4-4절](../../../docs/api.md#4-4-쟁점-정리) 미결 |
