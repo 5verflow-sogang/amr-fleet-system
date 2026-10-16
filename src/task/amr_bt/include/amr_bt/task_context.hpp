@@ -76,6 +76,10 @@ struct TaskContext
   // 위치 복구 때문에 한 번 멈춘 채 이만큼 지나면 실패 → LOCALIZATION_LOST. 복구 노드가 시도 1번에 최대 28 s
   // (정지 10 + 회전 15 + 확인 3), 3번이면 약 84 s라 구역보다 길게 둔다 (#178)
   double kidnap_pause_timeout_s = 120.0;
+  // 작업 하나의 전체 시간 상한 [s] (0이면 끔) → TASK_TIMEOUT. 멈춤 상한은 멈출 때마다 다시 세고 이동 상한은
+  // 멈춘 시간을 빼서, 구역 대기 59 s → 잠깐 진행을 되풀이하면 작업이 끝나지 않고 BUSY로 남는다 (BT 점검 이슈 2)
+  double task_timeout_s = 1800.0;
+  double task_since = 0.0;        // 지금 작업을 받은 시각 (assign)
   double resume_hold_s = 0.3;     // 진행 상태가 이만큼 이어져야 다시 보낸다 (한 틱짜리 idle 걸러냄)
 
   // ---- 가상 배터리 (amr_bt_node가 battery.hpp 모델로 채운다) ----
@@ -103,6 +107,7 @@ struct TaskContext
   void assign(const amr_msgs::msg::Task & t)
   {
     task = t;
+    task_since = now ? now() : 0.0;
     failure = amr_msgs::msg::ErrorInfo();
     phase.clear();
   }
