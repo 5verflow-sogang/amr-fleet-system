@@ -49,6 +49,7 @@ uv run tensorboard --logdir raw
 ```
 
 - 평가 시나리오 분포(`[env.scenario]`)는 학습한 실행도 `--config`(기본 `config/env_v0.toml`) 것을 쓴다. 학습 시나리오만 바꾼 후보(예: 돌발 장애물을 더 자주)도 기준선·DWA와 같은 시나리오로 짝지어 평가된다. 관측·보상·로봇 설정은 실행의 `config.json` 그대로다. 학습 시나리오가 다르면 실행할 때 알리고 `meta.json`의 `train_scenario_differs`에 남긴다.
+- 학습 시나리오만 바꾼 후보는 `train_ppo.py --val-config config/env_v0.toml`로 학습한다. 검증(`eval/*` 체크포인트 선택, `eval_common/*`)도 기준선과 같은 시나리오로 재서, 효과가 학습 데이터 때문인지 체크포인트 고르는 시험지 때문인지 섞이지 않는다. 쓴 값은 `config.json`의 `args.val_config`·`val_scenario`에 남는다.
 
 | 파일 | 내용 |
 | --- | --- |
