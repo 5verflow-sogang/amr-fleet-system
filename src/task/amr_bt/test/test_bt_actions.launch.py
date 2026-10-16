@@ -5,6 +5,7 @@ zone_client/state가 waiting이면 Nav2 목표 취소 → 진행 상태로 돌�
 """
 
 import itertools
+import os
 import threading
 import time
 import unittest
@@ -24,6 +25,11 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
+
+# 이 테스트만의 ROS 도메인 (11). CI의 colcon test는 패키지 테스트를 병렬로 돌리는데, 같은 도메인이면 동시에 돌던
+# amr_fleet_manager 테스트의 가짜 로봇 amr_01이 여기서 보낸 작업 t1을 같이 수행해 단계 목록이 섞였다 (10/16).
+# rclpy.init(setUpClass)과 launch가 노드를 띄우기 전에 정해진다. 번호 표는 .github/workflows/ci.yml Test 단계 주석
+os.environ['ROS_DOMAIN_ID'] = '11'
 
 ROBOT = 'amr_01'
 ASSIGNMENT_IDS = itertools.count(1)
