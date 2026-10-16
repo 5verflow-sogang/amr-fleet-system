@@ -213,3 +213,19 @@ def test_timeout_guard_blocks_policy_that_stops_instead_of_colliding(tmp_path):
     assert all(r['pass'] for r in h1 if '충돌률' in r['condition'])
     assert not any(r['pass'] for r in h1 if '시간 초과율' in r['condition'])
     assert analyze.hypothesis_verdicts(res)['H1'] is False
+
+
+def test_dwa_variant_names_from_evaluate(tmp_path):
+    # evaluate.py --dwa는 variant를 dwa_b1·dwa_b2로 쓴다. 이름이 달라 H1·H2가 조용히 빠지면 안 된다
+    write_csv(tmp_path / 'e.csv', {'proposed': 0.05, 'dwa_b1': 0.30, 'dwa_b2': 0.30},
+              masses=analyze.TRAIN_MASSES)
+    rows, warn = analyze.load([tmp_path / 'e.csv'])
+    names = {r['hypothesis'] for r in analyze.judge(rows)}
+    assert {'H1', 'H2-a'} <= names
+    assert not any('variant' in w for w in warn)
+
+
+def test_unknown_variant_warns(tmp_path):
+    write_csv(tmp_path / 'e.csv', {'proposed': 0.05, 'dwa_b3': 0.3})
+    _, warn = analyze.load([tmp_path / 'e.csv'])
+    assert any('dwa_b3' in w for w in warn)
