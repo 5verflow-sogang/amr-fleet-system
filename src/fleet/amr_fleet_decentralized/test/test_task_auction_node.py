@@ -92,6 +92,9 @@ class _Bus:
         self.nodes = []
         self.queue = []
         self.log = []
+        # True를 돌려주는 메시지는 유실(아무 노드에도 안 넘기고 dropped에만 남김)
+        self.drop = None
+        self.dropped = []
 
     def publisher(self):
         bus = self
@@ -116,6 +119,9 @@ class _Bus:
     def pump(self):
         while self.queue:
             msg = self.queue.pop(0)
+            if self.drop is not None and self.drop(msg):
+                self.dropped.append(msg)
+                continue
             self.log.append(msg)
             for node in self.nodes:
                 if isinstance(msg, TaskAuction):
@@ -571,6 +577,64 @@ def test_auction_seen_while_holding_task_gets_bid_after_release():
             TaskStatus(task_id='task_a', robot_id='amr_01', state=TaskStatus.STATE_COMPLETED))
         bus.pump()
         assert [m.robot_id for m in bus.bids(TaskBid.TYPE_BID) if m.auction_id == 5] == ['amr_01']
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_lost_accept_is_resent_on_repeated_award_without_reauction():
+    # 첫 ACCEPT 유실 -> 경매인이 AWARD 재전송 -> 같은 ACCEPT 재전송 -> 확정. 재경매 없음, 실행 1번, 중복 할당 0
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+            'amr_02': _make_node('amr_02', bus, clock, (0.0, 0.0), RobotState.MODE_IDLE),
+        }
+        bus.publish(_make_auction('amr_10', 1, 'task_a'))
+
+        lost = []
+
+        def drop_first_accept(msg):
+            if isinstance(msg, TaskBid) and msg.type == TaskBid.TYPE_ACCEPT and not lost:
+                lost.append(msg)
+                return True
+            return False
+        bus.drop = drop_first_accept
+
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+        auctioneer = nodes['amr_10']._auctions[('amr_10', 1)]
+        assert len(lost) == 1 and lost[0].robot_id == 'amr_01'
+        assert auctioneer.phase == 'awarded'  # 경매인은 ACCEPT를 못 받았다
+
+        # AWARD 재전송 간격이 지나면 AWARD를 다시 보내고, amr_01은 같은 ACCEPT를 다시 보낸다
+        for _ in range(8):
+            clock[0] += 1.0
+            for node in nodes.values():
+                node._on_timer()
+            bus.pump()
+        assert (auctioneer.phase, auctioneer.winner_id) == ('done', 'amr_01')
+        accepts = bus.bids(TaskBid.TYPE_ACCEPT)
+        assert [(m.robot_id, m.auction_id, m.task_id) for m in accepts] == [('amr_01', 1, 'task_a')]
+        assert [m for m in bus.log if isinstance(m, TaskAuction) and m.auction_id > 1] == []
+        # 작업 실행(TaskAssignment)은 처음 한 번만, 같은 assignment_id
+        assignments = {(m.robot_id, m.assignment_id) for m in bus.log if isinstance(m, TaskAssignment)}
+        assert assignments == {('amr_01', 1_100_001)}
+        assert all(m.task.task_id == 'task_a' for m in bus.log if isinstance(m, TaskAssignment))
+        assert _accepted_robots_by_task(bus) == {'task_a': {'amr_01'}}
+
+        # 경매인은 같은 로봇의 중복 ACCEPT를 한 번만 처리한다(확정 시각·상태 그대로)
+        accepted_at = auctioneer.accepted_at
+        bus.publish(accepts[0])
+        bus.publish(accepts[0])
+        assert (auctioneer.phase, auctioneer.accepted_at) == ('done', accepted_at)
     finally:
         for node in nodes.values():
             node.destroy_node()

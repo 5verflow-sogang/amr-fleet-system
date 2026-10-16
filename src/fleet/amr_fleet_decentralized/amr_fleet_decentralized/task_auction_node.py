@@ -242,6 +242,8 @@ class TaskAuctionNode(Node):
         # 이미 ACCEPT를 보낸 경매 - WITHDRAW는 ACCEPT 전까지만(10/7 결정), 재전송된 AWARD에
         # 또 ACCEPT를 보내지 않는 데도 쓴다(멱등).
         self._accepted: set = set()
+        # 보낸 ACCEPT - 같은 경매의 AWARD가 다시 오면(내 ACCEPT 유실) 그대로 다시 보낸다.
+        self._accept_msgs: Dict[AuctionKey, TaskBid] = {}
         # 동시 낙찰 경합: 내가 지금 맡고 있는(ACCEPT한) 작업 - (경매 key, task_id). 있으면 새
         # AWARD는 WITHDRAW하고 새 공고에는 입찰하지 않는다. 내 TaskStatus COMPLETED/FAILED로 푼다.
         self._active_task: Optional[Tuple[AuctionKey, str]] = None
@@ -488,7 +490,12 @@ class TaskAuctionNode(Node):
         # 재전송할 이유가 없다(#155·#171, ACCEPT·WITHDRAW 어느 쪽이든 마찬가지).
         self._bid_resends.pop(key, None)
         if key in self._accepted:
-            return  # 재전송된 AWARD - 이미 수락을 보냈다(멱등)
+            # 재전송된 AWARD - 이미 수락했다. 경매인이 AWARD를 다시 보낸 건 내 ACCEPT를 못 받았다는
+            # 뜻일 수 있으니 같은 ACCEPT를 다시 보낸다(안 보내면 경매인은 재전송을 다 쓰고 재경매해
+            # 내가 이미 실행 중인 작업을 다른 로봇도 맡는다). 작업 실행(TaskAssignment)은 다시 하지
+            # 않는다 - 처음 보낸 것이 같은 assignment_id로 Ack까지 재전송 중이다.
+            self._bid_pub.publish(self._accept_msgs[key])
+            return
         task = self._tasks_seen.get(key)
         now = self._now()
         # 입찰했을 때와 사정이 바뀌었을 수 있으니(배터리·IDLE 여부) 다시 확인한다. 이미 다른
@@ -510,6 +517,7 @@ class TaskAuctionNode(Node):
         if still_eligible:
             out.type = TaskBid.TYPE_ACCEPT
             self._accepted.add(key)
+            self._accept_msgs[key] = out
             self._active_task = (key, msg.task_id)
             self._active_accepted_at = time.monotonic()
             self._active_seen_busy = False
