@@ -42,8 +42,10 @@
   -> 경매인이 마감(bid_window_s, "경매인이 받은 시각" 기준) 전 입찰만 모아
      decide_winner()로 낙찰자 결정 (최저가, 동점이면 robot_id 사전순 — TaskBid.msg 주석과 동일)
   -> 낙찰 통보(AWARD, 1초 간격 x 5회 재전송)
-  -> 낙찰 로봇 수락(ACCEPT) 또는 그사이 사정이 바뀌면 포기(WITHDRAW, ACCEPT 전까지만)
-  -> ACCEPT 없이 재전송을 다 쓰거나 WITHDRAW를 받으면 재경매(auction_id를 올려 다시 공고)
+  -> 낙찰 로봇 수락(ACCEPT) 또는 그사이 사정이 바뀌면 포기(WITHDRAW, ACCEPT 전까지만).
+     이미 다른 작업을 ACCEPT한 로봇은 새 AWARD를 WITHDRAW한다(동시 낙찰 경합)
+  -> 낙찰자가 WITHDRAW하면 같은 경매의 다음 순위 입찰자에게 AWARD, 남은 입찰자가 없으면 재경매
+  -> ACCEPT 없이 재전송을 다 쓰면 재경매(auction_id를 올려 다시 공고)
   -> ACCEPT 뒤 수행 중 TaskStatus FAILED를 받으면 최대 failed_retries번(기본 1) 재경매,
      그래도 실패하면 실패로 남긴다
 ```
@@ -64,6 +66,22 @@
   내성 비교가 공정하다) - 그래도 ACCEPT가 없으면 재경매.
 - **WITHDRAW 범위**: ACCEPT 전까지만. 수락 뒤 못 하게 되면 `TaskStatus` FAILED로
   보고하고(`amr_bt`가 발행) 경매인이 재경매한다 - 아래 "ACCEPT 뒤 실패 재시도" 참고.
+
+10/16 동시 낙찰 경합:
+
+- **문제**: 경매가 동시에 여러 개 열리면 IDLE 로봇 하나가 여러 경매에 입찰해 둘 다 최저가로
+  낙찰될 수 있다. 수락한 뒤에도 그 로봇의 `RobotState`는 `amr_bt`가 작업을 시작하기 전까지
+  IDLE이라, AWARD 때의 재확인(`decide_bid`)만으로는 못 거른다.
+- **로봇 쪽**: 이미 ACCEPT한 작업이 있는 로봇은 새 AWARD에 ACCEPT 대신 WITHDRAW를 보낸다
+  (`should_withdraw_award`). 노드는 단일 스레드라 ACCEPT를 보내는 순간 "맡은 작업"으로 기록해서
+  ACCEPT 처리 중인 경우도 같다. 한 번 WITHDRAW한 경매는 재전송된 AWARD가 와도 다시 WITHDRAW한다 -
+  경매인이 이미 다음 순위에게 줬을 수 있어 뒤늦게 수락하면 같은 작업을 두 로봇이 맡는다. 맡은
+  작업이 있는 동안은 새 공고에 입찰하지 않고(IDLE 로봇만 입찰), 자기 `TaskStatus` COMPLETED/FAILED로
+  그 작업이 끝나면 다시 입찰한다.
+- **경매인 쪽**: 낙찰자의 WITHDRAW를 받으면 같은 경매의 입찰 목록에서 WITHDRAW한 로봇들을 빼고
+  `decide_winner(..., excluded=...)`로 다음 순위에게 AWARD한다(재전송 횟수는 새로 센다). 남은
+  입찰자가 없으면 새 `auction_id`로 재경매한다(기존 재경매 규칙과 같음). WITHDRAW한 로봇의
+  재전송 BID는 그 경매에서 다시 세지 않는다.
 
 10/9 하연·이진 결정(#107·#108):
 
@@ -136,8 +154,9 @@ pytest test/test_auction.py
 ```
 
 `task_auction_node`는 `test/test_task_auction_launch.py`에서 로봇 2대를 실제로
-띄워 공고 → 입찰 → 낙찰 → 수락 전체 흐름을 확인한다(rclpy가 필요해 로컬 python으로는
-못 돌리고 colcon 환경에서만 된다):
+띄워 공고 → 입찰 → 낙찰 → 수락 전체 흐름을 확인한다. 동시 낙찰 경합은
+`test/test_task_auction_node.py`에서 노드 여러 개를 가짜 버스로 이어 메시지 순서를 정해 놓고
+확인한다(둘 다 rclpy가 필요해 로컬 python으로는 못 돌리고 colcon 환경에서만 된다):
 
 ```bash
 colcon test --packages-select amr_fleet_decentralized

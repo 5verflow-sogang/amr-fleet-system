@@ -37,6 +37,12 @@ BID는 1회성 발행이라 DDS 디스커버리가 아직 안 끝난 상태에�
 다시 안 온다(#155·#171) - 마감(공고를 받은 시각 + bid_window_s)까지 bid_resend_period_s
 간격으로 같은 입찰(같은 cost)을 다시 보낸다. AWARD를 받거나 마감되면 멈춘다. 경매인
 쪽은 같은 로봇의 재전송 BID를 중복으로 세지 않는다(auction.register_bid).
+
+동시 낙찰 경합: 경매가 동시에 여러 개 열리면 IDLE 로봇 하나가 여러 경매에 낙찰될 수 있다.
+이미 ACCEPT한 작업이 있는 로봇은 새 AWARD에 WITHDRAW를 보내고(auction.should_withdraw_award),
+그 작업을 끝낼 때(내 TaskStatus COMPLETED/FAILED)까지 새 공고에 입찰하지 않는다. 경매인은
+낙찰자의 WITHDRAW를 받으면 같은 경매의 다음 순위 입찰자에게 AWARD하고, 남은 입찰자가 없으면
+새 auction_id로 재경매한다.
 """
 from __future__ import annotations
 
@@ -67,6 +73,7 @@ from .auction import (
     register_bid,
     should_resend_award,
     should_resend_bid,
+    should_withdraw_award,
     winner_lost,
 )
 
@@ -128,6 +135,8 @@ class _AuctionState:
     award_last_sent: Optional[float] = None
     # ACCEPT를 받은 시각 (실제 시간, 낙찰 로봇 장애 판정 기준 - winner_lost)
     accepted_at: Optional[float] = None
+    # 이 경매를 WITHDRAW한 로봇 - 다음 순위를 고를 때 빼고, 그 뒤 온 재전송 BID도 안 센다.
+    withdrawn: set = field(default_factory=set)
 
 
 class TaskAuctionNode(Node):
@@ -183,6 +192,12 @@ class TaskAuctionNode(Node):
         # 이미 ACCEPT를 보낸 경매 - WITHDRAW는 ACCEPT 전까지만(10/7 결정), 재전송된 AWARD에
         # 또 ACCEPT를 보내지 않는 데도 쓴다(멱등).
         self._accepted: set = set()
+        # 동시 낙찰 경합: 내가 지금 맡고 있는(ACCEPT한) 작업 - (경매 key, task_id). 있으면 새
+        # AWARD는 WITHDRAW하고 새 공고에는 입찰하지 않는다. 내 TaskStatus COMPLETED/FAILED로 푼다.
+        self._active_task: Optional[Tuple[AuctionKey, str]] = None
+        # 내가 WITHDRAW한 경매 - 재전송된 AWARD가 와도 다시 WITHDRAW한다(뒤늦은 수락으로 다음
+        # 순위 낙찰자와 같은 작업을 맡지 않게).
+        self._withdrawn: set = set()
         self._next_reauction_id: Dict[str, int] = {}
         # 작업별 FAILED 재시도·장애 회수 횟수 - task_id로 세어 재경매로 auction_id가 바뀌어도
         # 이어서 센다(중앙 TaskEntry.failures·reclaims와 같은 역할, 둘은 따로 센다).
@@ -260,6 +275,10 @@ class TaskAuctionNode(Node):
             self._pending_bids.setdefault(key, (msg, self._now()))
             return
         self._bid_decided.add(key)
+        if self._active_task is not None:
+            # 이미 ACCEPT한 작업이 있다 - RobotState가 아직 IDLE이어도 IDLE 로봇이 아니다
+            # (IDLE 로봇만 입찰, 10/7 결정). 입찰하면 낙찰돼도 WITHDRAW할 수밖에 없다.
+            return
         task = self._tasks_seen[key]
         now = self._now()
         bid = decide_bid(self._robot_info, task, now, self._params)
@@ -291,7 +310,7 @@ class TaskAuctionNode(Node):
 
     def _register_bid(self, key: AuctionKey, bid: Bid, received_time: float):
         state = self._auctions.get(key)
-        if state is None or state.phase != 'collecting':
+        if state is None or state.phase != 'collecting' or bid.robot_id in state.withdrawn:
             return
         # register_bid: 재전송(bid_resend_period_s)으로 같은 로봇의 BID가 또 와도
         # 중복으로 세지 않는다(#155·#171).
@@ -339,9 +358,12 @@ class TaskAuctionNode(Node):
             return  # 재전송된 AWARD - 이미 수락을 보냈다(멱등)
         task = self._tasks_seen.get(key)
         now = self._now()
-        # 입찰했을 때와 사정이 바뀌었을 수 있으니(배터리·IDLE 여부) 다시 확인한다.
+        # 입찰했을 때와 사정이 바뀌었을 수 있으니(배터리·IDLE 여부) 다시 확인한다. 이미 다른
+        # 작업을 ACCEPT했거나 이 경매를 한 번 포기했으면 수락하지 않는다(동시 낙찰 경합).
+        holding_other_task = self._active_task is not None and self._active_task[0] != key
         still_eligible = (
-            self._robot_info is not None and task is not None
+            not should_withdraw_award(holding_other_task, key in self._withdrawn)
+            and self._robot_info is not None and task is not None
             and decide_bid(self._robot_info, task, now, self._params) is not None
         )
 
@@ -355,9 +377,11 @@ class TaskAuctionNode(Node):
         if still_eligible:
             out.type = TaskBid.TYPE_ACCEPT
             self._accepted.add(key)
+            self._active_task = (key, msg.task_id)
         elif can_withdraw(accepted=False):
-            # 10/7 결정: WITHDRAW는 ACCEPT 전까지만 - 아직 ACCEPT를 안 보냈으니 가능하다.
+            # 10/7 결정: WITHDRAW는 ACCEPT 전까지만 - 이 경매에는 아직 ACCEPT를 안 보냈으니 가능하다.
             out.type = TaskBid.TYPE_WITHDRAW
+            self._withdrawn.add(key)
         else:
             return
         self._bid_pub.publish(out)
@@ -375,16 +399,37 @@ class TaskAuctionNode(Node):
         if state is None:
             return
         if state.phase == 'collecting':
+            state.withdrawn.add(robot_id)
             state.bids = [b for b in state.bids if b.robot_id != robot_id]
         elif state.phase == 'awarded' and state.winner_id == robot_id:
-            self.get_logger().warn(f'경매 {key}: 낙찰자 {robot_id} 포기 - 재경매')
-            self._reauction(key, state)
+            # 동시 낙찰 경합: 같은 입찰 목록에서 포기한 로봇들을 빼고 다음 순위에게 준다.
+            # 남은 입찰자가 없으면 새 auction_id로 재경매(기존 재경매 규칙과 같음).
+            state.withdrawn.add(robot_id)
+            result = decide_winner(
+                state.task.task_id, state.bids, state.announce_time, state.bid_window_s,
+                excluded=state.withdrawn)
+            if result.winner_id is None:
+                self.get_logger().warn(f'경매 {key}: 낙찰자 {robot_id} 포기, 남은 입찰 없음 - 재경매')
+                self._reauction(key, state)
+                return
+            self.get_logger().info(
+                f'경매 {key}: 낙찰자 {robot_id} 포기 - 다음 순위 {result.winner_id}에게 낙찰')
+            state.winner_id = result.winner_id
+            state.winning_cost = result.winning_cost
+            state.award_attempts = 0
+            self._send_award(key, state, self._now())
 
     # --- 확정된 작업이 수행 중 실패했다는 보고(amr_bt가 TaskStatus로 발행) ---
 
     def _on_task_status(self, msg: TaskStatus):
         if msg.state not in (TaskStatus.STATE_FAILED, TaskStatus.STATE_COMPLETED):
             return
+        if (
+            msg.robot_id == self._robot_id and self._active_task is not None
+            and self._active_task[1] == msg.task_id
+        ):
+            # 내가 맡은 작업이 끝났다 - 다시 입찰·수락할 수 있다(동시 낙찰 경합).
+            self._active_task = None
         for key, state in list(self._auctions.items()):
             if (
                 state.phase == 'done' and state.task.task_id == msg.task_id
