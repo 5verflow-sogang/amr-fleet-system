@@ -553,3 +553,25 @@ def test_task_assignment_publisher_uses_relayed_topic_name():
             node.destroy_node()
     finally:
         rclpy.shutdown()
+
+
+def test_auction_seen_while_holding_task_gets_bid_after_release():
+    # 내 작업의 끝(TaskStatus)과 새 공고는 다른 토픽이라 순서가 바뀔 수 있다 - 맡은 작업이 있는 동안
+    # 받은 공고를 "결정 끝"으로 버리지 않고, 작업이 풀리면 마감 전인 것에 입찰한다
+    rclpy.init()
+    nodes = {}
+    try:
+        bus, clock, nodes = _run_concurrent_auctions([('amr_01', (3.0, 0.0))])
+        robot = nodes['amr_01']
+        assert robot._active_task == (('amr_10', 1), 'task_a')
+        auction = _make_auction('amr_10', 5, 'task_next')
+        bus.publish(auction)
+        assert [m for m in bus.bids(TaskBid.TYPE_BID) if m.auction_id == 5] == []
+        robot._on_task_status(
+            TaskStatus(task_id='task_a', robot_id='amr_01', state=TaskStatus.STATE_COMPLETED))
+        bus.pump()
+        assert [m.robot_id for m in bus.bids(TaskBid.TYPE_BID) if m.auction_id == 5] == ['amr_01']
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()

@@ -227,6 +227,8 @@ class TaskAuctionNode(Node):
         # 내 상태(RobotState)를 아직 몰라 입찰 여부를 못 정한 공고 - (msg, 받은 시각).
         # RobotState를 처음 받으면 마감 전인 것만 다시 본다(10/10 연우 리뷰, #109).
         self._pending_bids: Dict[AuctionKey, Tuple[TaskAuction, float]] = {}
+        # 맡은 작업이 있어 입찰 여부를 미룬 공고 - 작업이 풀리면 마감(_bid_deadline) 전인 것만 다시 본다.
+        self._deferred_bids: Dict[AuctionKey, TaskAuction] = {}
         # 입찰 마감(실제 시간) - 공고를 처음 받은 시각 + bid_window_s. #155·#171 BID
         # 재전송이 멈춰야 할 때(마감)를 판단하는 기준이라, 공고를 받을 때(_on_task_auction)
         # 마다 한 번만 찍는다(재전송·중계 에코로 다시 받아도 안 바꾼다).
@@ -401,11 +403,15 @@ class TaskAuctionNode(Node):
             # 받으면 마감 전인지 보고 다시 판단한다.
             self._pending_bids.setdefault(key, (msg, self._now()))
             return
-        self._bid_decided.add(key)
         if self._active_task is not None:
             # 이미 ACCEPT한 작업이 있다 - RobotState가 아직 IDLE이어도 IDLE 로봇이 아니다
-            # (IDLE 로봇만 입찰, 10/7 결정). 입찰하면 낙찰돼도 WITHDRAW할 수밖에 없다.
+            # (IDLE 로봇만 입찰, 10/7 결정). 입찰하면 낙찰돼도 WITHDRAW할 수밖에 없다. "결정 끝"으로
+            # 기록하지 않고 미룬다 - 그 작업을 끝냈다는 보고(TaskStatus)와 새 공고는 다른 토픽이라
+            # 순서가 보장되지 않아서, 끝낸 직후 온 공고(예: 내 작업의 재경매)를 놓치면 안 된다.
+            # 맡은 작업이 풀리면(_release_active_task) 마감 전인 것만 다시 본다.
+            self._deferred_bids[key] = msg
             return
+        self._bid_decided.add(key)
         task = self._tasks_seen[key]
         now = self._now()
         bid = decide_bid(self._robot_info, task, now, self._params)
@@ -660,6 +666,12 @@ class TaskAuctionNode(Node):
         self.get_logger().info(f'맡은 작업 {self._active_task[1]} 해제({reason}) - 다시 입찰한다')
         self._active_task = None
         self._active_seen_busy = False
+        # 작업 중이라 미뤄 둔 공고 중 아직 마감 전인 것에 다시 입찰 여부를 정한다
+        now = self._now()
+        for key, auction_msg in list(self._deferred_bids.items()):
+            del self._deferred_bids[key]
+            if now < self._bid_deadline.get(key, 0.0):
+                self._maybe_bid(key, auction_msg)
 
     def _maybe_release_uncommitted_task(self):
         """(c) ACCEPT 뒤 commit_timeout_s 동안 RobotState가 한 번도 BUSY가 안 됐으면 맡은 작업을 푼다."""
@@ -671,7 +683,7 @@ class TaskAuctionNode(Node):
         self.get_logger().warn(
             f'작업 {self._active_task[1]}을 ACCEPT하고 {self._params.commit_timeout_s:g}초 동안 '
             f'RobotState가 BUSY가 안 됨(작업이 시작 안 됨) - 맡은 작업 해제')
-        self._active_task = None
+        self._release_active_task(f'commit_timeout_s {self._params.commit_timeout_s:g}초')
 
     def _on_timer(self):
         now = self._now()
