@@ -1,0 +1,4 @@
+n,task_id,mode,seed,pickup,dropoff,jump_m,result,error_code,error_message,lost_s,nav_cancel_s,tracking_s,failed_s,resend_s,end_s,end_pos_err_cm,mode_after_fail,restored_idle_s,wall_s
+1,kidnap_far_10160737_01,far,1,rack_a5,rack_a6,25.56,FAILED,203,move to dropoff: localization lost (kidnap_recovery failed),2.1,2.3,,129.0,,129.3,,ERROR,,274.6
+2,kidnap_far_10160750_01,far,2,rack_a6,rack_a5,9.81,FAILED,203,move to dropoff: localization lost (kidnap_recovery failed),2.3,2.5,,127.6,,127.9,,ERROR,,286.1
+3,kidnap_far_10160758_01,far,3,rack_a5,rack_a6,21.94,FAILED,203,move to dropoff: localization lost (kidnap_recovery failed),2.1,2.2,,127.8,,128.0,,ERROR,131.5,338.2

@@ -1,0 +1,4 @@
+n,task_id,mode,seed,pickup,dropoff,jump_m,result,error_code,error_message,lost_s,nav_cancel_s,tracking_s,failed_s,resend_s,end_s,end_pos_err_cm,mode_after_fail,restored_idle_s,wall_s
+1,kidnap_near_10160718_01,near,1,rack_a6,rack_a5,2.46,COMPLETED,0,,2.0,2.2,40.4,,41.1,114.8,0.59,,,276.8
+2,kidnap_near_10160718_02,near,2,rack_a5,rack_a6,2.77,COMPLETED,0,,2.6,2.7,42.0,,42.8,161.0,0.29,,,186.5
+3,kidnap_near_10160718_03,near,3,rack_a6,rack_a5,3.51,COMPLETED,0,,2.7,2.9,42.9,,43.6,111.1,0.34,,,135.9
