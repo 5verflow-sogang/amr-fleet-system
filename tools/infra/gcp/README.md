@@ -43,7 +43,7 @@ GitHub Actions (fleet-test.yml, 수동 실행)
 | 작업이 끝났는데 VM이 남음 | `startup.sh`가 러너 종료 뒤 VM을 끈다 (컴퓨팅 요금 멈춤) |
 | 월 사용량 | 예산 알림 (무료 크레딧 차감 전 금액 기준) |
 
-- N2D 한도가 16 vCPU라 러너는 동시에 1대다. 워크플로 `concurrency`로 줄 세운다.
+- 러너는 슬롯마다 동시에 1대다(아래 "슬롯"). 워크플로 `concurrency`를 슬롯마다 따로 둔다.
 - `n2d-standard-16` Spot 약 0.13달러/시간. 첫 실행은 이미지 빌드(tracetools 소스 빌드 포함)로 오래 걸리고, 이후에는 캐시를 쓴다.
 
 ## 처음 설정 (하연, 한 번)
@@ -103,6 +103,7 @@ tools/harness/gcp_run.sh fleet_fake -n 10 --set delay_ms=200 --ref dev
 | `--pr 145` / `--ref dev` | 다른 PR이나 브랜치 코드로 |
 | `--watch` | 끝날 때까지 진행을 보여 준다. 없으면 실행 링크만 찍고 끝난다 |
 | `--fresh`, `--packages a,b` | `HARNESS_FRESH=1`, `HARNESS_PACKAGES`와 같다 |
+| `--slot b1` | 러너 슬롯 (기본 `a`). 아래 "슬롯" |
 
 `gcp_run.sh`는 아래 워크플로 입력으로 바꿔 `gh workflow run`을 부를 뿐이다. 브라우저에서는 Actions → Fleet Regression Test → Run workflow에 같은 값을 넣는다. 저장소 관리자면 누구나 돌릴 수 있다.
 
@@ -117,7 +118,10 @@ tools/harness/gcp_run.sh fleet_fake -n 10 --set delay_ms=200 --ref dev
 | `params` | (비움) | 시나리오 값을 `이름=값`으로, 여러 개면 공백으로 나눈다. 시나리오 `params`에 없는 이름(오타)은 거부한다. 값에는 공백·따옴표·`$`를 못 쓴다 |
 | `fresh` | 끔 | 반복마다 새 컨테이너 (`HARNESS_FRESH=1`). Nav2 시나리오를 여러 번 돌리면 켠다 (#138) |
 
-`params`의 특별한 이름은 `packages=a,b` 하나다. 시나리오 값이 아니라 컨테이너에서 빌드할 패키지(`docker_run.sh`의 `HARNESS_PACKAGES`)로 넘긴다.
+`params`의 특별한 이름은 둘이다. 시나리오 값으로 넘기지 않는다.
+
+- `packages=a,b`: 컨테이너에서 빌드할 패키지(`docker_run.sh`의 `HARNESS_PACKAGES`)
+- `slot=b1`: 러너 슬롯. 워크플로 입력이 10개로 꽉 차서 `params`로 받는다 (`gcp_run.sh --slot`)
 
 예시
 
@@ -130,7 +134,7 @@ tools/harness/gcp_run.sh fleet_fake -n 10 --set delay_ms=200 --ref dev
 
 진행 상황은 `gh run list -R 5verflow-sogang/amr-fleet-system --workflow fleet-test.yml`로 본다.
 
-- 러너는 동시에 1대다. 앞 실행이 끝날 때까지 대기열에 선다. 10회면 시나리오에 따라 1~2시간 걸리므로 긴 실행은 팀 채널에 미리 알린다.
+- 같은 슬롯에는 러너가 동시에 1대다. **GitHub는 같은 슬롯에 대기 실행을 1개만 남기고 앞의 대기 실행을 취소한다.** 여러 조건은 아래 `gcp_batch.py`로 넣는다. 10회면 시나리오에 따라 1~2시간 걸리므로 긴 실행은 팀 채널에 미리 알린다.
 - 카메라가 필요한 측정(도킹 ArUco, YOLO FPS)은 GCP에 맞지 않는다. CPU 렌더링이라 카메라를 켜면 RTF가 0.37로 떨어진다(명세서 11-3절).
 - 끝나면 요약이 실행 화면 Summary와 Discord 실험 결과 채널로 온다.
 - 포크 PR의 `pull_request` 이벤트는 GCP 로그인 토큰을 받지 못해 PR 라벨로 자동 실행하지 않는다.
@@ -143,6 +147,40 @@ gcloud storage cat gs://amr-fleet-results/index.csv
 gcloud storage ls gs://amr-fleet-results/runs/
 gcloud storage cp -r gs://amr-fleet-results/runs/<시나리오>-<라벨>/<날짜>_<실행 번호> .
 ```
+
+`index.csv` 마지막 열 `machine_type`과 결과 폴더의 `machine_type.txt`에 러너 VM 종류가 남는다 (10/16부터, 그 전 줄은 빈칸).
+
+### 슬롯
+
+전체 리전 vCPU 한도가 32라 동시에 띄울 수 있는 러너가 정해져 있다 (10/16 서울: N2D 16, C2D 100, 전체 32).
+
+| 슬롯 | VM | 쓰는 곳 |
+| --- | --- | --- |
+| `a` (기본) | `n2d-standard-16` (템플릿) | Gazebo 시나리오 (`fleet_stack`, `loc_*`, `nav_*`) |
+| `b1`~`b4` | `c2d-standard-8` | 가짜 로봇 시나리오 `fleet_fake` (연구 1). 4개를 같이 띄우면 32 vCPU |
+
+- `a`와 `b` 네 개를 한꺼번에 띄우면 48 vCPU라 마지막 VM이 한도에 걸려 만들어지지 않는다(그 실행은 시작 단계에서 실패). `a`를 쓰는 동안은 `b` 두 개만 쓴다.
+- **지연을 재는 실험은 기계가 다르면 값이 달라진다.** 한 실험의 조건은 같은 종류 슬롯(`b`끼리)에서 돌리고, `index.csv`의 `machine_type`으로 확인한다. 예전 결과(`n2d-standard-16`)와 섞어 비교하지 않는다.
+- 템플릿은 그대로 두고 VM을 만들 때 종류만 바꾼다(`--machine-type`). Spot·최대 실행 시간·디스크는 같다.
+
+### 여러 조건 줄 세우기 (`gcp_batch.py`)
+
+조건 목록 파일을 주면 슬롯이 빌 때마다 하나씩 넣고 끝나기를 기다린다. 기록(`<목록>.log.csv`)을 줄마다 남겨서, 꺼졌다 다시 켜면 돌던 실행부터 다시 지켜보고 이어 간다. 실패한 조건은 `--retries`번(기본 1) 목록 끝에서 다시 넣는다.
+
+```bash
+cat > central_delay.txt <<'EOF'
+# 한 줄 = gcp_run.sh 인자 (시나리오부터, --label 필수)
+fleet_fake -n 10 --set delay_ms=0   --label central_d0
+fleet_fake -n 10 --set delay_ms=200 --label central_d200
+EOF
+python3 tools/harness/gcp_batch.py central_delay.txt --slots b1,b2,b3,b4 --ref dev --dry-run   # 순서만 확인
+caffeinate -i python3 tools/harness/gcp_batch.py central_delay.txt --slots b1,b2,b3,b4 --ref dev
+```
+
+- `--slot`·`--watch`는 줄에 쓰지 않는다. 슬롯은 `--slots`로, `a`와 `b`는 섞지 않는다.
+- 줄에 `--ref`·`--pr`이 없으면 `--ref`·`--pr` 공통 값을 붙인다.
+- `gcp_run.sh`는 방금 넣은 실행을 "가장 최근 실행"으로 찾는다. 디스패처가 도는 동안 다른 사람이 같은 워크플로를 손으로 넣으면 실행 번호를 잘못 잡을 수 있으니 팀 채널에 알린다.
+- 워크플로를 고친 PR을 머지 전에 시험할 때는 원 저장소에 그 브랜치를 올리고 `HARNESS_WORKFLOW_REF=<브랜치>`를 준다 (기본 `dev`의 워크플로 파일로 돈다).
 
 ## 결과 보기 (팀원)
 

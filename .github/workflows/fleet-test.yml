@@ -9,6 +9,14 @@
 # 장애 입력(delay_ms·loss_pct·kill_robot)은 시나리오 params에 그 이름이 있을 때만 넘긴다.
 # workflow_dispatch 입력은 10개까지라 시나리오별 값은 따로 입력을 만들지 않고 params로 받는다.
 #
+# 슬롯 (params의 slot=<이름>, 기본 a): 슬롯마다 러너가 동시에 1대씩 뜬다. 전체 리전 vCPU 한도가 32라
+#   a      n2d-standard-16 (템플릿 그대로). Gazebo 시나리오
+#   b1~b4  c2d-standard-8. 가짜 로봇 시나리오(fleet_fake)를 나눠 돌릴 때 (연구 1)
+# a와 b 네 개를 한꺼번에 띄우면 48 vCPU라 마지막 VM은 한도에 걸려 만들어지지 않는다.
+# 지연을 재는 실험은 기계가 다르면 값이 달라지므로 한 실험의 조건은 같은 종류 슬롯(b끼리)에서 돌린다.
+# GitHub는 같은 concurrency 그룹에서 대기 실행을 1개만 남기고 앞의 대기 실행을 취소한다.
+# 여러 조건을 줄 세울 때는 tools/harness/gcp_batch.py가 슬롯이 빌 때마다 하나씩 넣는다.
+#
 # 필요한 설정 (tools/infra/gcp/README.md)
 # - 저장소 변수 GCP_WIF_PROVIDER, GCP_GHA_SA: terraform output
 # - 시크릿 RUNNER_ADMIN_TOKEN: 이 저장소 Administration 쓰기 권한 토큰 (러너 등록용)
@@ -45,7 +53,7 @@ on:
         description: 로봇 장애 - 가짜 로봇 launch 시작 후 죽일 시각 (s). -1이면 끄기
         default: "-1"
       params:
-        description: "시나리오 값 '이름=값' 공백 구분 (예: controller=teb scenario=obstacle, duration_s=120). packages=a,b는 빌드할 패키지"
+        description: "시나리오 값 '이름=값' 공백 구분 (예: controller=teb scenario=obstacle, duration_s=120). packages=a,b는 빌드할 패키지, slot=b1은 러너 슬롯"
         default: ""
       fresh:
         description: 반복마다 새 컨테이너 (Nav2 시나리오를 여러 번 돌릴 때)
@@ -59,9 +67,15 @@ permissions:
   contents: read
   id-token: write
 
-# N2D 한도(16 vCPU)로 러너는 동시에 1대만 뜬다
+# 슬롯마다 러너는 동시에 1대 (머리 주석 "슬롯"). 입력이 10개로 꽉 차 슬롯은 params에서 읽는다.
+# 앞뒤에 공백을 붙여 찾아서 slot=b1이 slot=b10 같은 이름에 걸리지 않게 한다
 concurrency:
-  group: fleet-test
+  group: >-
+    fleet-test-${{
+      contains(format(' {0} ', github.event.inputs.params), ' slot=b1 ') && 'b1' ||
+      contains(format(' {0} ', github.event.inputs.params), ' slot=b2 ') && 'b2' ||
+      contains(format(' {0} ', github.event.inputs.params), ' slot=b3 ') && 'b3' ||
+      contains(format(' {0} ', github.event.inputs.params), ' slot=b4 ') && 'b4' || 'a' }}
   cancel-in-progress: false
 
 env:
@@ -77,9 +91,28 @@ jobs:
     timeout-minutes: 10
     outputs:
       name: ${{ steps.name.outputs.name }}
+      machine: ${{ steps.slot.outputs.machine }}
     steps:
       - id: name
         run: echo "name=fleet-runner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      # 슬롯 → VM 종류. a는 템플릿 값(n2d-standard-16)을 그대로 쓰고, b는 만들 때 덮어쓴다
+      - id: slot
+        env:
+          PARAMS: ${{ github.event.inputs.params }}
+        run: |
+          slot=a
+          read -ra items <<< "$PARAMS"
+          for item in "${items[@]}"; do
+            case "$item" in slot=*) slot="${item#slot=}" ;; esac
+          done
+          case "$slot" in
+            a) machine=n2d-standard-16 ;;
+            b1|b2|b3|b4) machine=c2d-standard-8 ;;
+            *) echo "::error::slot은 a, b1~b4: $slot"; exit 1 ;;
+          esac
+          echo "slot $slot → $machine"
+          echo "machine=$machine" >> "$GITHUB_OUTPUT"
 
       - uses: google-github-actions/auth@v3
         with:
@@ -93,6 +126,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
           NAME: ${{ steps.name.outputs.name }}
+          MACHINE: ${{ steps.slot.outputs.machine }}
         run: |
           gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runners/generate-jitconfig" \
             -f name="$NAME" -F runner_group_id=1 \
@@ -102,9 +136,10 @@ jobs:
           # 템플릿의 startup-script를 같이 넘기지 않으면 러너가 설치되지 않아 작업이 대기열에 머문다
           gcloud compute instance-templates describe "$TEMPLATE" --project "$PROJECT_ID" --format=json \
             | jq -er '.properties.metadata.items[] | select(.key == "startup-script") | .value' > startup.sh
+          # 템플릿의 Spot·최대 실행 시간·디스크는 그대로 두고 VM 종류만 슬롯에 맞춘다
           gcloud compute instances create "$NAME" \
             --project "$PROJECT_ID" --zone "$ZONE" \
-            --source-instance-template "$TEMPLATE" \
+            --source-instance-template "$TEMPLATE" --machine-type "$MACHINE" \
             --metadata-from-file jit-config=jit-config.txt,startup-script=startup.sh
           rm jit-config.txt startup.sh
 
@@ -191,6 +226,8 @@ jobs:
                 [[ "$value" =~ ^[a-z0-9_,]+$ ]] || fail "packages는 패키지 이름을 쉼표로: $value"
                 export HARNESS_PACKAGES="${value//,/ }"
                 continue ;;
+              # 러너 슬롯. start-runner가 VM 종류를 고를 때 쓰고 하네스에는 넘기지 않는다
+              slot) continue ;;
             esac
             has_param "$key" || fail "$key는 $scenario_file params에 없다. 있는 이름: $(tr '\n' ' ' <<< "$scenario_params")"
             args+=(--set "$key=$value")
@@ -228,12 +265,15 @@ jobs:
         if: always() && env.RESULTS_PREFIX != ''
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MACHINE: ${{ needs.start-runner.outputs.machine }}
         run: |
           if ! ls "$RUN_DIR"/*/meta.json >/dev/null 2>&1; then echo "올릴 결과 없음"; exit 0; fi
           cat "$RUN_DIR"/summary_*.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          # 결과 폴더만 받아도 어느 기계에서 돌았는지 알게 남긴다 (index.csv machine_type과 같은 값)
+          echo "$MACHINE" > "$RUN_DIR/machine_type.txt"
           dest="gs://${RESULTS_BUCKET}/${RESULTS_PREFIX}/$(date -u +%Y%m%d)_${GITHUB_RUN_ID}/"
           gcloud storage cp -r "$RUN_DIR"/* "$dest"
-          echo "결과: $dest" >> "$GITHUB_STEP_SUMMARY"
+          echo "결과: $dest (러너 $MACHINE)" >> "$GITHUB_STEP_SUMMARY"
 
           # 받아서 한 줄 더해 올린다. 그사이 다른 실행이 바꿨으면(generation 불일치) 다시 받는다
           # 작업본은 레포 밖(RUNNER_TEMP)에 둔다
@@ -243,7 +283,8 @@ jobs:
             gen=$(gcloud storage objects describe "$index" --format='value(generation)' 2>/dev/null || echo 0)
             rm -f "$local_index"
             if [ "$gen" != 0 ]; then gcloud storage cp "$index" "$local_index"; fi
-            python3 tools/harness/index_run.py "$RUN_DIR" --index "$local_index" --path "$dest" --url "$RUN_URL"
+            python3 tools/harness/index_run.py "$RUN_DIR" --index "$local_index" --path "$dest" --url "$RUN_URL" \
+              --machine "$MACHINE"
             if gcloud storage cp "$local_index" "$index" --if-generation-match="$gen"; then break; fi
             echo "index.csv가 그사이 바뀜, 다시 시도 ($attempt/3)"
           done
