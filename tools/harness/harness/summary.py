@@ -266,10 +266,12 @@ def nav_kpi_metrics(run_dir: Path) -> dict[str, float]:
         k = json.loads(path.read_text(encoding='utf-8'))
         cte_kpi = (k.get('definition') or {}).get('cte_kpi', False)
         for key in ('plan_success_rate', 'nav_success_rate', 'replan_p95_ms', 'replan_max_ms', 'pred_err_mean',
-                    'pred_err_median', 'pred_err_no_recovery_mean', 'cte_straight_mean_m', 'cte_curve_mean_m'):
+                    'pred_err_median', 'pred_err_no_recovery_mean', 'cte_straight_mean_m', 'cte_curve_mean_m',
+                    'cte_est_straight_mean_m', 'cte_est_curve_mean_m', 'loc_err_straight_mean_m', 'loc_err_curve_mean_m'):
             v = k.get(key)
             if isinstance(v, (int, float)) and not math.isnan(v):
-                name = key if cte_kpi or not key.startswith('cte_') else 'ref_' + key
+                # 추정 기준 CTE·위치 오차는 원인 나누기용 참고 (판정 없음)
+                name = key if cte_kpi or not key.startswith('cte_') or key.startswith('cte_est') else 'ref_' + key
                 out[f'navkpi.{name}'] = float(v)
     return out
 
