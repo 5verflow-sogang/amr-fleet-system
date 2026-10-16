@@ -100,6 +100,7 @@ protected:
   void run(double seconds, double dt = 0.1)
   {
     for (double t = 0; t < seconds; t += dt) {
+      expire_task(tree, *ctx);   // amr_bt_node의 tick 타이머와 같은 순서
       tree.tickRoot();
       clock += dt;
       if (ctx->task == std::nullopt && !events.empty() && events.back().end) {
@@ -226,7 +227,40 @@ TEST_F(TaskCycleTest, ChargeTimeout)
   run(60.0);
   EXPECT_EQ(events.back().state, TaskStatus::STATE_FAILED);
   EXPECT_EQ(events.back().phase, "charging");
+  EXPECT_EQ(events.back().code, ErrorInfo::CHARGE_TIMEOUT);
   EXPECT_FALSE(ctx->charging);
+}
+
+// 작업 전체 상한: 구역 대기 50 s → 잠깐 진행을 되풀이하면 멈춤 상한(60 s)에도 이동 상한(멈춘 시간 뺌)에도
+// 안 걸려 끝나지 않는다. task_timeout_s에서 끊는다 (BT 점검 이슈 2)
+TEST_F(TaskCycleTest, TaskTimeoutStopsEndlessPauseResume)
+{
+  nav.duration = 1e6;
+  ctx->task_timeout_s = 300.0;
+  ctx->assign(make_task("r", Task::TYPE_RETURN));
+  for (int i = 0; i < 10 && ctx->busy(); ++i) {
+    ctx->zone_state = "waiting";
+    run(50.0);
+    ctx->zone_state = "approaching";
+    run(1.0);
+  }
+  ASSERT_FALSE(events.empty());
+  EXPECT_EQ(events.back().state, TaskStatus::STATE_FAILED);
+  EXPECT_EQ(events.back().code, ErrorInfo::TASK_TIMEOUT);
+  EXPECT_EQ(events.back().phase, "move_to_dropoff");
+  EXPECT_FALSE(ctx->busy());
+  EXPECT_NEAR(clock, 300.0, 1.0);
+  EXPECT_EQ(nav.cancels, nav.starts);   // 끝낼 때 Nav2 목표도 취소
+}
+
+TEST_F(TaskCycleTest, TaskTimeoutOffWhenZero)
+{
+  nav.duration = 1e6;
+  ctx->task_timeout_s = 0.0;
+  ctx->nav_timeout_s = 1e6;
+  ctx->assign(make_task("r", Task::TYPE_RETURN));
+  run(5000.0);
+  EXPECT_TRUE(ctx->busy());
 }
 
 // 충전 중 취소: charging을 끈다
@@ -421,7 +455,7 @@ TEST_F(TaskCycleTest, ZoneFailedAborts)
   ctx->zone_state = "failed";
   run(0.3);
   EXPECT_EQ(events.back().state, TaskStatus::STATE_FAILED);
-  EXPECT_EQ(events.back().code, ErrorInfo::TRAFFIC_REVOKED);
+  EXPECT_EQ(events.back().code, ErrorInfo::TRAFFIC_BACKING_FAILED);
 }
 
 // 위치 복구 failed는 복구 노드가 포기한 상태라 기다리지 않고 바로 실패한다 (#166 민지 리뷰)

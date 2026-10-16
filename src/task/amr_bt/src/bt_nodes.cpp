@@ -105,7 +105,7 @@ PauseReason pause_reason(const TaskContext & ctx)
   const auto & zone = ctx.zone_state;
   if (zone == "failed") {
     r.pause = r.abort = true;
-    r.code = ErrorInfo::TRAFFIC_REVOKED;
+    r.code = ErrorInfo::TRAFFIC_BACKING_FAILED;
     r.why = "zone_client failed (backing safety stop)";
     return r;
   }
@@ -351,7 +351,7 @@ BT::NodeStatus Charge::onRunning()
   }
   if (ctx_->now() - since_ > ctx_->charge_timeout_s) {
     ctx_->charging = false;
-    ctx_->fail(ErrorInfo::NONE, "charging not done in " + std::to_string(ctx_->charge_timeout_s) + " s");
+    ctx_->fail(ErrorInfo::CHARGE_TIMEOUT, "charging not done in " + std::to_string(ctx_->charge_timeout_s) + " s");
     return BT::NodeStatus::FAILURE;
   }
   return BT::NodeStatus::RUNNING;
@@ -402,6 +402,20 @@ bool cancel_task(
   }
   // 멈춘 뒤 다음 tick은 WaitForTask부터 다시 시작한다 (진행 중이던 MoveTo·Dock은 halt에서 목표 취소)
   tree.haltTree();
+  ctx.report(TaskStatus::STATE_FAILED, ctx.phase, error, true);
+  ctx.clear();
+  return true;
+}
+
+bool expire_task(BT::Tree & tree, TaskContext & ctx)
+{
+  if (!ctx.busy() || ctx.task_timeout_s <= 0.0 || ctx.now() - ctx.task_since <= ctx.task_timeout_s) {
+    return false;
+  }
+  ErrorInfo error;
+  error.code = ErrorInfo::TASK_TIMEOUT;
+  error.message = "task not done in " + std::to_string(static_cast<int>(ctx.task_timeout_s)) + " s";
+  tree.haltTree();   // 진행 중이던 MoveTo·Dock·Charge는 halt에서 목표 취소·충전 끔
   ctx.report(TaskStatus::STATE_FAILED, ctx.phase, error, true);
   ctx.clear();
   return true;
