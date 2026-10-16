@@ -1,6 +1,9 @@
 name: CI
 
 # 문서만 바뀐 변경은 빌드 결과에 영향이 없으므로 CI를 건너뛴다.
+# 그 밖에는 바뀐 경로에 맞는 작업만 돈다 (changes): ROS 패키지(src/)가 바뀌면 colcon, 도구(tools/)가 바뀌면 하네스 테스트.
+# experiments/만 바뀐 변경은 둘 다 건너뛴다 (연구 2는 RL Env 워크플로가 따로 본다).
+# 워크플로 전체가 아니라 작업 단위로 건너뛰어, 나중에 필수 검사를 걸어도 건너뛴 작업이 통과로 잡힌다.
 
 on:
   push:
@@ -18,8 +21,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ros: ${{ steps.filter.outputs.ros }}
+      tools: ${{ steps.filter.outputs.tools }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            ros:
+              - "src/**"
+              - ".github/workflows/ci.yml"
+            tools:
+              - "tools/**"
+              - ".github/workflows/ci.yml"
+
   build-test:
     name: colcon build & test
+    needs: changes
+    if: needs.changes.outputs.ros == 'true'
     runs-on: ubuntu-22.04
     container: ros:humble
     timeout-minutes: 30
@@ -38,15 +62,34 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
+          apt-get install -y --no-install-recommends ccache
           rosdep update --rosdistro humble
           rosdep install --from-paths src --ignore-src -y --rosdistro humble \
             -t build -t buildtool -t build_export -t buildtool_export -t test
 
+      # C++ 패키지(amr_planning_core, amr_nav2_plugins, amr_bt 등) 재컴파일을 줄인다. 같은 브랜치의 마지막 캐시,
+      # 없으면 dev 캐시에서 시작한다. dev push가 캐시를 새로 저장하므로 PR은 대부분 dev 캐시를 받는다
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ github.ref_name }}-
+            ccache-dev-
+
       - name: Build
         run: |
           source /opt/ros/humble/setup.bash
+          # 컨테이너 안 경로를 쓴다 (github.workspace는 호스트 경로라 컨테이너와 다르다). BASEDIR로 경로를 상대화해
+          # 작업 폴더 경로가 달라도 캐시가 맞는다. COLCON_IGNORE: colcon이 캐시 폴더를 패키지로 훑지 않게
+          export CCACHE_DIR="$PWD/.ccache" CCACHE_BASEDIR="$PWD" CCACHE_MAXSIZE=500M
+          mkdir -p "$CCACHE_DIR" && touch "$CCACHE_DIR/COLCON_IGNORE"
+          ccache -z
           colcon build --event-handlers console_cohesion+ \
-            --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          ccache -s
 
       # 원 명세서: colcon build 시 에러나 경고가 없어야 한다
       - name: Check build warnings
@@ -60,20 +103,17 @@ jobs:
             exit 1
           fi
 
-      # 패키지 테스트를 하나씩 돌린다. 런치 테스트들이 같은 ROS 도메인(0)에서 같은 토픽(/fleet/*)과 로봇 이름(amr_01)을
-      # 쓰므로, 동시에 돌면 서로의 메시지를 받는다. 10/16 amr_bt test_bt_actions가 보낸 작업 t1을 동시에 돌던
-      # amr_fleet_manager 테스트의 가짜 로봇 amr_01도 수행해 단계 목록이 섞이며 간헐적으로 실패했다.
-      # 런치 테스트마다 도메인을 나누면(ament_cmake_ros 격리 테스트, domain_coordinator) 다시 병렬로 돌릴 수 있다
+      # 패키지 테스트는 병렬로 돈다. ROS 노드를 띄우는 테스트는 패키지마다 ROS 도메인이 따로라 서로의 메시지를 받지 않는다
+      # (test/conftest.py, amr_bt는 런치 테스트 파일. 번호: amr_bt 11, amr_fault_injector 12,
+      # amr_fleet_decentralized 13, amr_fleet_manager 14, amr_zone_client 15, amr_safety 16, amr_tracking 17).
+      # 10/16 같은 도메인(0)에서 amr_bt 테스트가 보낸 작업을 동시에 돌던 amr_fleet_manager 테스트의 가짜 로봇 amr_01도
+      # 수행해 간헐적으로 실패했다. ROS 노드를 띄우는 테스트를 새로 만든 패키지는 비어 있는 번호로 conftest.py를 둔다
       - name: Test
         run: |
           source /opt/ros/humble/setup.bash
           source install/setup.bash
-          colcon test --executor sequential --event-handlers console_cohesion+ --return-code-on-test-failure
+          colcon test --event-handlers console_cohesion+ --return-code-on-test-failure
           colcon test-result --verbose
-
-      # 하네스(tools/harness)·개발 도구(tools/dev)는 colcon 패키지가 아니라 따로 돈다. ROS 없이 도는 테스트만
-      - name: Harness unit tests
-        run: python3 -m pytest -q tools/harness/tests tools/dev/tests
 
       - name: Upload logs
         if: failure()
@@ -81,3 +121,21 @@ jobs:
         with:
           name: colcon-logs
           path: log/
+
+  # 하네스(tools/harness)·개발 도구(tools/dev)는 colcon 패키지가 아니라 따로 돈다. ROS 없이 도는 테스트만이라
+  # ROS 컨테이너·빌드 없이 돌린다
+  tools-test:
+    name: tools unit tests
+    needs: changes
+    if: needs.changes.outputs.tools == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Harness unit tests
+        run: |
+          python -m pip install --quiet pytest pyyaml
+          python -m pytest -q tools/harness/tests tools/dev/tests
