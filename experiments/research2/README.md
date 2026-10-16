@@ -40,9 +40,9 @@ uv run python scripts/smoke_ppo.py            # 설치 확인: CartPole PPO 학�
 uv run --frozen --with pytest pytest tests                         # 환경 검사
 uv run python scripts/train_ppo.py --variant proposed --steps 200000   # 파이프라인 확인 (짧게)
 uv run python scripts/train_ppo.py --variant r2 --seed 0
-uv run python scripts/evaluate.py raw/proposed_s0_* raw/r2_s0_* raw/r1_s0_*   # S1·S2 각 200개, 정확한 질량
-uv run python scripts/evaluate.py raw/proposed_s0_* --mass-obs exact plus30 minus30 unknown   # 정보 조건 4개
-uv run python scripts/evaluate.py raw/proposed_s0_* --scenarios mixed      # S1·S2를 popout_prob대로 섞은 분포
+uv run python scripts/evaluate.py raw/proposed_s0_2026* raw/r2_s0_2026* raw/r1_s0_2026*   # S1·S2 각 200개, 정확한 질량 (_2026*: --tag 후보 폴더는 빼고)
+uv run python scripts/evaluate.py raw/proposed_s0_2026* --mass-obs exact plus30 minus30 unknown   # 정보 조건 4개
+uv run python scripts/evaluate.py raw/proposed_s0_2026* --scenarios mixed      # S1·S2를 popout_prob대로 섞은 분포
 uv run python scripts/evaluate.py raw/r2_s3_* --eval-list 0                # 시드 3 실행을 목록 0으로 (짝짓기 확인용)
 uv run python scripts/evaluate.py --rule mass_agnostic mass_aware --eval-list 100 --scenarios mixed   # 규칙 정책 (참고 기준선)
 uv run tensorboard --logdir raw
@@ -50,6 +50,8 @@ uv run tensorboard --logdir raw
 
 - 평가 시나리오 분포(`[env.scenario]`)는 학습한 실행도 `--config`(기본 `config/env_v0.toml`) 것을 쓴다. 학습 시나리오만 바꾼 후보(예: 돌발 장애물을 더 자주)도 기준선·DWA와 같은 시나리오로 짝지어 평가된다. 관측·보상·로봇 설정은 실행의 `config.json` 그대로다. 학습 시나리오가 다르면 실행할 때 알리고 `meta.json`의 `train_scenario_differs`에 남긴다.
 - 학습 시나리오만 바꾼 후보는 `train_ppo.py --val-config config/env_v0.toml`로 학습한다. 검증(`eval/*` 체크포인트 선택, `eval_common/*`)도 기준선과 같은 시나리오로 재서, 효과가 학습 데이터 때문인지 체크포인트 고르는 시험지 때문인지 섞이지 않는다. 쓴 값은 `config.json`의 `args.val_config`·`val_scenario`에 남는다.
+- **후보와 기준선은 따로 평가하고 따로 analyze한다.** `--tag`로 학습한 후보도 `variant`는 `proposed` 그대로라, 같은 평가나 같은 analyze 입력에 섞이면 같은 비교군·같은 시드로 합쳐진다(경고 없음, analyze 경고는 민지 #203 리뷰 후속). 기준선은 태그 없는 폴더만 잡는 glob(`raw/proposed_s0_2026*`, 폴더 이름 `<비교군>_s<시드>_<시각>`)을 쓰고, 후보(`raw/proposed_s0_<태그>_*`)는 평가 폴더(`--out-dir`)를 따로 만든다.
+- **v1 결과를 다시 만들 때**: 평가 시나리오가 `--config`에서 오므로 `config/env_v0.toml`의 `[env.scenario]`가 v1 때와 같아야 같은 결과가 나온다. 바뀌었으면 v1 실행 폴더의 `config.toml`을 `--config`로 준다.
 
 | 파일 | 내용 |
 | --- | --- |
