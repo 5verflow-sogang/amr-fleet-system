@@ -25,7 +25,8 @@ params:
   restart_robot_after_s: -1
   # 연구 1 확장 조건 (명세 밖, 장애 주입기 README "확장 조건"). allow_out_of_spec=true일 때만 손실 70%까지와
   # 연속 끊김을 허용한다. 끊김: 주입기 시작 blackout_at_s초부터 blackout_s초 (blackout_period_s마다 되풀이, 0이면 한 번),
-  # blackout_robot(all 또는 amr_NN)의 중계 링크. 라벨에 조건을 넣는다 (예: --label central_bo3_p120)
+  # blackout_robot(all 또는 amr_NN)의 중계 링크. 중앙·분산 비교는 로봇 한 대(amr_NN)로 끊는다 (all은 두 방식 조건이 달라짐,
+  # 장애 주입기 README "확장 조건"). 라벨에 조건을 넣는다 (예: --label central_bo3_r3)
   allow_out_of_spec: false
   blackout_s: 0
   blackout_at_s: 0
