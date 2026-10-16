@@ -11,6 +11,7 @@ from amr_fleet_decentralized.auction import (
     can_reclaim,
     can_retry_failed_task,
     can_withdraw,
+    commit_timed_out,
     compute_bid_cost,
     decide_bid,
     decide_winner,
@@ -18,6 +19,7 @@ from amr_fleet_decentralized.auction import (
     should_resend_award,
     should_resend_bid,
     should_withdraw_award,
+    task_finished_by_state,
     winner_lost,
 )
 
@@ -197,6 +199,23 @@ def test_decide_winner_excluding_withdrawn_picks_next_rank():
     assert result.winner_id == 'amr_02'
     assert result.winning_cost == 4.0
     assert decide_winner('t1', bids, 0.0, 2.0, excluded={'amr_01', 'amr_02'}).winner_id == 'amr_03'
+
+
+def test_task_finished_by_state_needs_busy_then_idle():
+    # ACCEPT 직후 IDLE(아직 시작 전)은 끝난 게 아니다
+    assert task_finished_by_state(seen_busy=False, mode=MODE_IDLE) is False
+    assert task_finished_by_state(seen_busy=True, mode=MODE_BUSY) is False
+    assert task_finished_by_state(seen_busy=True, mode=MODE_IDLE) is True
+
+
+def test_commit_timed_out_only_without_busy():
+    assert AuctionParams().commit_timeout_s == 30.0
+    assert commit_timed_out(accepted_at=0.0, now_s=29.9, seen_busy=False, commit_timeout_s=30.0) is False
+    assert commit_timed_out(accepted_at=0.0, now_s=30.0, seen_busy=False, commit_timeout_s=30.0) is True
+    # 한 번이라도 BUSY가 됐으면(작업이 시작됨) 시간으로는 안 푼다
+    assert commit_timed_out(accepted_at=0.0, now_s=100.0, seen_busy=True, commit_timeout_s=30.0) is False
+    # 0 이하면 끈다
+    assert commit_timed_out(accepted_at=0.0, now_s=100.0, seen_busy=False, commit_timeout_s=0.0) is False
 
 
 def test_decide_winner_excluding_all_bidders_has_no_winner():

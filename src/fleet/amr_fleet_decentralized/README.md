@@ -76,8 +76,13 @@
   (`should_withdraw_award`). 노드는 단일 스레드라 ACCEPT를 보내는 순간 "맡은 작업"으로 기록해서
   ACCEPT 처리 중인 경우도 같다. 한 번 WITHDRAW한 경매는 재전송된 AWARD가 와도 다시 WITHDRAW한다 -
   경매인이 이미 다음 순위에게 줬을 수 있어 뒤늦게 수락하면 같은 작업을 두 로봇이 맡는다. 맡은
-  작업이 있는 동안은 새 공고에 입찰하지 않고(IDLE 로봇만 입찰), 자기 `TaskStatus` COMPLETED/FAILED로
-  그 작업이 끝나면 다시 입찰한다.
+  작업이 있는 동안은 새 공고에 입찰하지 않고(IDLE 로봇만 입찰), 그 작업이 풀리면 다시 입찰한다.
+- **맡은 작업 해제**: 다음 중 먼저 오는 것으로 푼다 - (a) 자기 `TaskStatus` COMPLETED/FAILED,
+  (b) 자기 `RobotState`가 BUSY였다가 다시 IDLE(TaskStatus가 유실돼도 풀린다), (c) ACCEPT 뒤
+  `commit_timeout_s`(30초, 실제 시간) 동안 한 번도 BUSY가 안 됨(작업이 시작 안 됨, 경고 로그).
+  (c)는 ACCEPT를 받아 실제로 작업을 시작시키는 쪽이 없을 때를 막는다 - 가짜 로봇(`amr_fleet_manager`
+  `fake_robot_node`)과 `amr_bt`는 `TaskAssignment`로 받은 작업만 수행하고 TaskStatus·BUSY를 내는데,
+  경매 ACCEPT를 `TaskAssignment`로 바꿔 주는 연결은 아직 없다.
 - **경매인 쪽**: 낙찰자의 WITHDRAW를 받으면 같은 경매의 입찰 목록에서 WITHDRAW한 로봇들을 빼고
   `decide_winner(..., excluded=...)`로 다음 순위에게 AWARD한다(재전송 횟수는 새로 센다). 남은
   입찰자가 없으면 새 `auction_id`로 재경매한다(기존 재경매 규칙과 같음). WITHDRAW한 로봇의
@@ -132,6 +137,7 @@
 | `failed_retries` | `1` | ACCEPT 뒤 FAILED 보고 시 재경매 최대 횟수 (10/9 결정) |
 | `reclaim_timeout_s` | `5.0` | ACCEPT한 낙찰 로봇의 `RobotState`가 이 시간(실제 시간, s) 동안 끊기면 재경매. 0이면 끄기 (중앙 #132와 같음) |
 | `max_reclaims` | `-1` | 장애 회수 재경매 상한. 음수면 상한 없음 (#132와 같음) |
+| `commit_timeout_s` | `30.0` | ACCEPT 뒤 이 시간(실제 시간, s) 동안 내 `RobotState`가 한 번도 BUSY가 안 되면 맡은 작업을 해제(경고 로그). 0이면 끄기 |
 | `auction_topic_prefix` | `/fleet` | 구독 접두어. `fleet`면 중계본(`relayed:=true`와 동일) |
 | `robot_states_topic` | `/fleet/robot_states` | 내 로봇 상태(위치·배터리·모드) |
 | `update_rate_hz` | `10.0` | 마감 판정·AWARD 재전송·재경매를 확인하는 주기 |

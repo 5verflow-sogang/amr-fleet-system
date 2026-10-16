@@ -265,3 +265,76 @@ def test_concurrent_awards_no_duplicate_assignment():
         for node in nodes.values():
             node.destroy_node()
         rclpy.shutdown()
+
+
+# --- 맡은 작업 해제 안전장치 ---
+
+
+def _state(robot_id, mode):
+    return RobotState(robot_id=robot_id, mode=mode, battery_percent=80.0, pose=_pose(3.0, 0.0))
+
+
+def test_active_task_released_when_robot_state_goes_busy_then_idle():
+    rclpy.init()
+    nodes = {}
+    try:
+        _, _, nodes = _run_concurrent_auctions([('amr_01', (3.0, 0.0))])
+        robot = nodes['amr_01']
+        assert robot._active_task == (('amr_10', 1), 'task_a')
+
+        # ACCEPT 직후 IDLE은 아직 시작 전이라 풀지 않는다
+        robot._on_robot_state(_state('amr_01', RobotState.MODE_IDLE))
+        assert robot._active_task is not None
+        # 다른 로봇의 BUSY -> IDLE은 상관없다
+        robot._on_robot_state(_state('amr_02', RobotState.MODE_BUSY))
+        robot._on_robot_state(_state('amr_02', RobotState.MODE_IDLE))
+        assert robot._active_task is not None
+        # 작업 시작(BUSY) 뒤 다시 IDLE이면 TaskStatus 없이도 푼다
+        robot._on_robot_state(_state('amr_01', RobotState.MODE_BUSY))
+        assert robot._active_task is not None
+        robot._on_robot_state(_state('amr_01', RobotState.MODE_IDLE))
+        assert robot._active_task is None
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_active_task_released_after_commit_timeout_without_busy():
+    rclpy.init()
+    nodes = {}
+    try:
+        _, _, nodes = _run_concurrent_auctions([('amr_01', (3.0, 0.0))])
+        robot = nodes['amr_01']
+        timeout = robot._params.commit_timeout_s
+        assert timeout == 30.0
+
+        # 아직 commit_timeout_s 전 - 그대로
+        robot._active_accepted_at -= timeout - 1.0
+        robot._on_timer()
+        assert robot._active_task is not None
+        # ACCEPT 뒤 commit_timeout_s 동안 한 번도 BUSY가 안 됨(작업이 시작 안 됨) - 푼다
+        robot._active_accepted_at -= 2.0
+        robot._on_timer()
+        assert robot._active_task is None
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_commit_timeout_does_not_release_started_task():
+    rclpy.init()
+    nodes = {}
+    try:
+        _, _, nodes = _run_concurrent_auctions([('amr_01', (3.0, 0.0))])
+        robot = nodes['amr_01']
+        robot._on_robot_state(_state('amr_01', RobotState.MODE_BUSY))
+        # 작업이 시작됐으면(BUSY) 오래 걸려도 시간으로는 안 푼다 - 끝(BUSY -> IDLE·TaskStatus)을 기다린다
+        robot._active_accepted_at -= robot._params.commit_timeout_s * 10
+        robot._on_timer()
+        assert robot._active_task == (('amr_10', 1), 'task_a')
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()

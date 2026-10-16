@@ -23,6 +23,9 @@
     reclaim_timeout_s: 5.0
     # 회수 재경매 상한. -1이면 상한 없음(#132와 같음). failed_retries와 따로 센다.
     max_reclaims: -1
+    # 맡은 작업 해제 안전장치(동시 낙찰 경합): ACCEPT 뒤 이 시간(실제 시간, s) 동안 내 RobotState가 한 번도
+    # BUSY가 안 되면(작업이 시작 안 됨) 맡은 작업을 풀고 경고 로그를 남긴다. 0이면 끈다.
+    commit_timeout_s: 30.0
     # TaskAuction·TaskBid 구독 접두어. 기본은 절대 경로 원본(/fleet, 중계 없이 직접 구독) -
     # relayed:=true(launch 인자) 또는 이 값을 'fleet'로 주면 상대 이름(장애 주입기
     # relay_auction 중계본)을 구독한다. amr_bt의 server_topic_prefix와 같은 방식.

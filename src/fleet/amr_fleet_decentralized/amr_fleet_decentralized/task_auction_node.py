@@ -40,7 +40,9 @@ BID는 1회성 발행이라 DDS 디스커버리가 아직 안 끝난 상태에�
 
 동시 낙찰 경합: 경매가 동시에 여러 개 열리면 IDLE 로봇 하나가 여러 경매에 낙찰될 수 있다.
 이미 ACCEPT한 작업이 있는 로봇은 새 AWARD에 WITHDRAW를 보내고(auction.should_withdraw_award),
-그 작업을 끝낼 때(내 TaskStatus COMPLETED/FAILED)까지 새 공고에 입찰하지 않는다. 경매인은
+그 작업이 풀릴 때까지 새 공고에 입찰하지 않는다. 맡은 작업은 (a) 내 TaskStatus COMPLETED/FAILED,
+(b) 내 RobotState가 BUSY였다가 다시 IDLE, (c) ACCEPT 뒤 commit_timeout_s(실제 시간) 동안 한 번도
+BUSY가 안 됨(작업이 시작 안 됨, 경고 로그) 중 먼저 오는 것으로 푼다. 경매인은
 낙찰자의 WITHDRAW를 받으면 같은 경매의 다음 순위 입찰자에게 AWARD하고, 남은 입찰자가 없으면
 새 auction_id로 재경매한다.
 """
@@ -68,12 +70,14 @@ from .auction import (
     TaskRetryLedger,
     award_exhausted,
     can_withdraw,
+    commit_timed_out,
     decide_bid,
     decide_winner,
     register_bid,
     should_resend_award,
     should_resend_bid,
     should_withdraw_award,
+    task_finished_by_state,
     winner_lost,
 )
 
@@ -168,6 +172,7 @@ class TaskAuctionNode(Node):
             failed_retries=p('failed_retries', AuctionParams.failed_retries).value,
             reclaim_timeout_s=p('reclaim_timeout_s', AuctionParams.reclaim_timeout_s).value,
             max_reclaims=p('max_reclaims', AuctionParams.max_reclaims).value,
+            commit_timeout_s=p('commit_timeout_s', AuctionParams.commit_timeout_s).value,
         )
 
         self._robot_info: Optional[RobotInfo] = None
@@ -195,6 +200,10 @@ class TaskAuctionNode(Node):
         # 동시 낙찰 경합: 내가 지금 맡고 있는(ACCEPT한) 작업 - (경매 key, task_id). 있으면 새
         # AWARD는 WITHDRAW하고 새 공고에는 입찰하지 않는다. 내 TaskStatus COMPLETED/FAILED로 푼다.
         self._active_task: Optional[Tuple[AuctionKey, str]] = None
+        # 맡은 작업을 ACCEPT한 시각(실제 시간)과, 그 뒤 내 RobotState에서 BUSY를 봤는지 - 해제
+        # 안전장치(b)(c)에 쓴다.
+        self._active_accepted_at: float = 0.0
+        self._active_seen_busy: bool = False
         # 내가 WITHDRAW한 경매 - 재전송된 AWARD가 와도 다시 WITHDRAW한다(뒤늦은 수락으로 다음
         # 순위 낙찰자와 같은 작업을 맡지 않게).
         self._withdrawn: set = set()
@@ -228,6 +237,12 @@ class TaskAuctionNode(Node):
         self._robot_last_seen[msg.robot_id] = time.monotonic()
         if msg.robot_id != self._robot_id:
             return
+        if self._active_task is not None:
+            if msg.mode == RobotState.MODE_BUSY:
+                self._active_seen_busy = True
+            elif task_finished_by_state(self._active_seen_busy, msg.mode):
+                # (b) BUSY였다가 다시 IDLE - TaskStatus가 안 와도 작업은 끝났다
+                self._release_active_task('RobotState BUSY -> IDLE')
         had_info = self._robot_info is not None
         self._robot_info = RobotInfo(
             robot_id=msg.robot_id,
@@ -378,6 +393,8 @@ class TaskAuctionNode(Node):
             out.type = TaskBid.TYPE_ACCEPT
             self._accepted.add(key)
             self._active_task = (key, msg.task_id)
+            self._active_accepted_at = time.monotonic()
+            self._active_seen_busy = False
         elif can_withdraw(accepted=False):
             # 10/7 결정: WITHDRAW는 ACCEPT 전까지만 - 이 경매에는 아직 ACCEPT를 안 보냈으니 가능하다.
             out.type = TaskBid.TYPE_WITHDRAW
@@ -428,8 +445,8 @@ class TaskAuctionNode(Node):
             msg.robot_id == self._robot_id and self._active_task is not None
             and self._active_task[1] == msg.task_id
         ):
-            # 내가 맡은 작업이 끝났다 - 다시 입찰·수락할 수 있다(동시 낙찰 경합).
-            self._active_task = None
+            # (a) 내가 맡은 작업이 끝났다 - 다시 입찰·수락할 수 있다(동시 낙찰 경합).
+            self._release_active_task('TaskStatus COMPLETED/FAILED')
         for key, state in list(self._auctions.items()):
             if (
                 state.phase == 'done' and state.task.task_id == msg.task_id
@@ -461,9 +478,27 @@ class TaskAuctionNode(Node):
 
     # --- 주기 처리: 마감 판정, AWARD 재전송·재경매 ---
 
+    def _release_active_task(self, reason: str):
+        self.get_logger().info(f'맡은 작업 {self._active_task[1]} 해제({reason}) - 다시 입찰한다')
+        self._active_task = None
+        self._active_seen_busy = False
+
+    def _maybe_release_uncommitted_task(self):
+        """(c) ACCEPT 뒤 commit_timeout_s 동안 RobotState가 한 번도 BUSY가 안 됐으면 맡은 작업을 푼다."""
+        if self._active_task is None or not commit_timed_out(
+            self._active_accepted_at, time.monotonic(), self._active_seen_busy,
+            self._params.commit_timeout_s,
+        ):
+            return
+        self.get_logger().warn(
+            f'작업 {self._active_task[1]}을 ACCEPT하고 {self._params.commit_timeout_s:g}초 동안 '
+            f'RobotState가 BUSY가 안 됨(작업이 시작 안 됨) - 맡은 작업 해제')
+        self._active_task = None
+
     def _on_timer(self):
         now = self._now()
         self._maybe_resend_bids(now)
+        self._maybe_release_uncommitted_task()
         for key, state in list(self._auctions.items()):
             if state.phase == 'collecting':
                 self._maybe_decide_winner(key, state, now)
