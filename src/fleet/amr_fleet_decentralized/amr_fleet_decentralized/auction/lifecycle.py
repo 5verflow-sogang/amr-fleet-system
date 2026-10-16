@@ -55,6 +55,19 @@ def can_withdraw(accepted: bool) -> bool:
     return not accepted
 
 
+def should_withdraw_award(holding_other_task: bool, withdrew_before: bool) -> bool:
+    """AWARD에 ACCEPT 대신 WITHDRAW를 보내야 하는지(동시 낙찰 경합).
+
+    경매가 동시에 여러 개 열리면 IDLE 로봇 하나가 여러 경매에 입찰해 여러 개를 동시에
+    낙찰받을 수 있다. 로봇이 수락하고 나서도 자기 RobotState가 BUSY로 바뀌기 전에는
+    decide_bid(IDLE 확인)만으로는 못 거른다 - 그래서 이미 다른 작업을 ACCEPT했으면
+    (holding_other_task) 새 AWARD는 WITHDRAW한다. 한 번 포기한 경매(withdrew_before)는
+    그 뒤 재전송된 AWARD가 와도 다시 포기한다 - 경매인이 이미 다음 순위에게 줬을 수 있어서
+    뒤늦게 수락하면 같은 작업을 두 로봇이 맡게 된다.
+    """
+    return holding_other_task or withdrew_before
+
+
 # amr_msgs/msg/ErrorInfo.ASSIGN_CANCELED 와 같은 값 (amr_fleet_manager dispatcher.ERROR_CANCELED와 같음)
 ERROR_CANCELED = 103
 

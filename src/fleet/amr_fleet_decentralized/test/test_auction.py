@@ -17,6 +17,7 @@ from amr_fleet_decentralized.auction import (
     register_bid,
     should_resend_award,
     should_resend_bid,
+    should_withdraw_award,
     winner_lost,
 )
 
@@ -178,6 +179,29 @@ def test_award_exhausted_after_max_attempts():
 def test_can_withdraw_only_before_accept():
     assert can_withdraw(accepted=False) is True
     assert can_withdraw(accepted=True) is False
+
+
+# --- 동시 낙찰 경합: 이미 ACCEPT한 로봇은 새 AWARD를 WITHDRAW, 경매인은 다음 순위에게 ---
+
+
+def test_should_withdraw_award_when_holding_other_task_or_withdrew_before():
+    assert should_withdraw_award(holding_other_task=False, withdrew_before=False) is False
+    assert should_withdraw_award(holding_other_task=True, withdrew_before=False) is True
+    # 한 번 포기한 경매는 일이 끝난 뒤 재전송 AWARD가 와도 다시 포기한다(다음 순위와 중복 방지)
+    assert should_withdraw_award(holding_other_task=False, withdrew_before=True) is True
+
+
+def test_decide_winner_excluding_withdrawn_picks_next_rank():
+    bids = [bid('amr_01', cost=3.0), bid('amr_02', cost=4.0), bid('amr_03', cost=5.0)]
+    result = decide_winner('t1', bids, 0.0, 2.0, excluded={'amr_01'})
+    assert result.winner_id == 'amr_02'
+    assert result.winning_cost == 4.0
+    assert decide_winner('t1', bids, 0.0, 2.0, excluded={'amr_01', 'amr_02'}).winner_id == 'amr_03'
+
+
+def test_decide_winner_excluding_all_bidders_has_no_winner():
+    result = decide_winner('t1', [bid('amr_01', cost=3.0)], 0.0, 2.0, excluded={'amr_01'})
+    assert result.winner_id is None
 
 
 # --- ACCEPT 뒤 TaskStatus FAILED: 최대 failed_retries번 재경매 (10/9 결정, #107·#108) ---
