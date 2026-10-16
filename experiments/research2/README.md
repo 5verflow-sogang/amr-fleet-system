@@ -42,11 +42,13 @@ uv run python scripts/train_ppo.py --variant proposed --steps 200000   # 파이�
 uv run python scripts/train_ppo.py --variant r2 --seed 0
 uv run python scripts/evaluate.py raw/proposed_s0_* raw/r2_s0_* raw/r1_s0_*   # S1·S2 각 200개, 정확한 질량
 uv run python scripts/evaluate.py raw/proposed_s0_* --mass-obs exact plus30 minus30 unknown   # 정보 조건 4개
-uv run python scripts/evaluate.py raw/proposed_s0_* --scenarios mixed      # 학습과 같은 섞인 분포
+uv run python scripts/evaluate.py raw/proposed_s0_* --scenarios mixed      # S1·S2를 popout_prob대로 섞은 분포
 uv run python scripts/evaluate.py raw/r2_s3_* --eval-list 0                # 시드 3 실행을 목록 0으로 (짝짓기 확인용)
 uv run python scripts/evaluate.py --rule mass_agnostic mass_aware --eval-list 100 --scenarios mixed   # 규칙 정책 (참고 기준선)
 uv run tensorboard --logdir raw
 ```
+
+- 평가 시나리오 분포(`[env.scenario]`)는 학습한 실행도 `--config`(기본 `config/env_v0.toml`) 것을 쓴다. 학습 시나리오만 바꾼 후보(예: 돌발 장애물을 더 자주)도 기준선·DWA와 같은 시나리오로 짝지어 평가된다. 관측·보상·로봇 설정은 실행의 `config.json` 그대로다. 학습 시나리오가 다르면 실행할 때 알리고 `meta.json`의 `train_scenario_differs`에 남긴다.
 
 | 파일 | 내용 |
 | --- | --- |
