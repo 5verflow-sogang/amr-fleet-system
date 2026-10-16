@@ -8,6 +8,7 @@ uint16 NONE=0
 uint16 ASSIGN_BATTERY_LOW=101        # 배터리 부족으로 거부
 uint16 ASSIGN_ALREADY_BUSY=102       # 이미 작업 수행 중
 uint16 ASSIGN_CANCELED=103          # 서버가 취소함 (TaskAssignment.ACTION_CANCEL). FAILED와 함께 보내며, 서버는 다시 할당하지 않는다
+uint16 ASSIGN_TASK_TAKEN=104        # 다른 로봇이 먼저 수락한 작업 (하이브리드 중복 정리, architecture.md 5-2절). 거부 Ack나 FAILED와 함께 보내며, 재시도로 세지 않는다
 
 # 200번대: 주행
 uint16 NAV_NO_PATH=201               # 경로 없음

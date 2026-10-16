@@ -24,6 +24,8 @@ string phase
 ErrorInfo error
 
 # 시작·종료 시각. 아직이면 0
+# start_time은 로봇이 작업을 수락한 시각이다. PENDING부터 채운다. 여러 로봇이 같은 작업을 보고하면 이 값이 가장
+# 이른 로봇이 주인이다 (먼저 수락한 쪽이 주인, architecture.md 5-2절). 0이면 그 보고의 header.stamp로 본다
 builtin_interfaces/Time start_time
 builtin_interfaces/Time end_time
 
