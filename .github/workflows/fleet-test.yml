@@ -269,10 +269,11 @@ jobs:
         run: |
           if ! ls "$RUN_DIR"/*/meta.json >/dev/null 2>&1; then echo "올릴 결과 없음"; exit 0; fi
           cat "$RUN_DIR"/summary_*.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-          # 결과 폴더만 받아도 어느 기계에서 돌았는지 알게 남긴다 (index.csv machine_type과 같은 값)
-          echo "$MACHINE" > "$RUN_DIR/machine_type.txt"
           dest="gs://${RESULTS_BUCKET}/${RESULTS_PREFIX}/$(date -u +%Y%m%d)_${GITHUB_RUN_ID}/"
           gcloud storage cp -r "$RUN_DIR"/* "$dest"
+          # 결과 폴더만 받아도 어느 기계에서 돌았는지 알게 남긴다 (index.csv machine_type과 같은 값).
+          # RUN_DIR은 하네스 컨테이너가 root로 만들어 러너 사용자가 쓸 수 없으므로 버킷에 바로 올린다
+          echo "$MACHINE" | gcloud storage cp - "${dest}machine_type.txt"
           echo "결과: $dest (러너 $MACHINE)" >> "$GITHUB_STEP_SUMMARY"
 
           # 받아서 한 줄 더해 올린다. 그사이 다른 실행이 바꿨으면(generation 불일치) 다시 받는다
