@@ -114,7 +114,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 안전 | `SafetyStatus` | 감속·정지 여부와 원인 | 연우, 이진, 지수 | — |
 | Fleet 서버 → 로봇 | `Task`, `TaskAssignment`, `FleetHeartbeat`, `ZoneGrant`, `FleetTaskTable`, `TaskRecord` | 작업 할당, 서버 생존 신호, 구역 허가, 전체 작업 현황 | 지수, 이진 | 민지 |
 | Fleet 로봇 → 서버 | `TaskAssignmentAck`, `TaskStatus`, `RobotState`, `ZoneRequest` | 할당 확인, 작업 진행 보고, 로봇 상태, 구역 진입 요청 | 지수 | 민지 |
-| Fleet 분산 | `TaskAuction`, `TaskBid` | 서버 장애 시 로봇끼리 경매 | 이진 | 민지 |
+| Fleet 분산 | `TaskAuction`, `TaskBid`, `RobotFleetMode` | 서버 장애 시 로봇끼리 경매, 하이브리드 로봇별 모드 | 이진 | 민지 |
 | 로봇 내부 | `Dock` (action) | 도킹 | 지수 | — |
 
 9/28 회의에서 `TrafficCommand`는 `ZoneRequest`·`ZoneGrant`로 대체했다. 서버가 WAIT를 밀어 보내는 방식은 WAIT가 유실되면 로봇이 그대로 교차로에 들어가기 때문에, "허가 없으면 진입 금지"로 기본값을 뒤집었다 (VDA 5050 v3 zone, RMF MutexGroup).
@@ -141,6 +141,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 로봇 | `/fleet/zone_requests` | 토픽 | `amr_msgs/msg/ZoneRequest` | `amr_zone_client` (이진, D6) | `amr_fleet_manager` | 경로 기준 구역 경계 3 m 앞, 대기·통과 중 1초마다 (연장), 나올 때 |
 | 분산 | `/fleet/task_auctions` | 토픽 | `amr_msgs/msg/TaskAuction` | `amr_fleet_decentralized` (경매인 로봇) | `amr_fleet_decentralized` (장애 주입 실험에서는 네임스페이스 안 `fleet/task_auctions` 중계본) | 서버 장애 중 미할당 작업이 있을 때 |
 | 분산 | `/fleet/task_bids` | 토픽 | `amr_msgs/msg/TaskBid` | `amr_fleet_decentralized` | `amr_fleet_decentralized` (장애 주입 실험에서는 네임스페이스 안 `fleet/task_bids` 중계본) | 경매 진행 중 |
+| 하이브리드 | `/fleet/robot_modes` | 토픽 | `amr_msgs/msg/RobotFleetMode` | `amr_fleet_decentralized` (`fleet_mode:=hybrid`) | `amr_fleet_manager`, `amr_fleet_decentralized`, 하네스 | 1 Hz와 바뀔 때. 로봇 → 모두라 장애를 주입하지 않는다 ([architecture.md 5-2절](architecture.md#5-2-하이브리드-폴백-연구-1-비교군-1016-하연-설계)) |
 | 로봇 | `docking/dock` | 액션 | `amr_msgs/action/Dock` | `amr_docking` | `amr_bt` | BT가 요청할 때 |
 
 서버 → 로봇 토픽(`/fleet/task_assignments`, `/fleet/heartbeat`, `/fleet/zone_grants`, `/fleet/task_table`)은 장애 주입기(`amr_fault_injector`)가 중계하며 지연·손실을 건다.

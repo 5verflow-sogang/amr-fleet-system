@@ -44,4 +44,11 @@
     # relay_auction 중계본)을 구독한다. amr_bt의 server_topic_prefix와 같은 방식.
     auction_topic_prefix: /fleet
     robot_states_topic: /fleet/robot_states
+    # 하이브리드 (architecture.md 5-2절, B안). decentral: 늘 분산(분산 비교군) / hybrid: 평시 중앙, 자기 heartbeat
+    # 중계본이 fallback_timeout_s 동안 안 오면 분산, 다시 return_stable_s 동안 안정되면 중앙. launch 인자 fleet_mode
+    fleet_mode: decentral
+    fallback_timeout_s: 2.0
+    return_stable_s: 5.0
+    # 서버 → 로봇 토픽(heartbeat·task_table) 앞부분. relayed:=true면 'fleet'(장애 주입기 중계본)
+    server_topic_prefix: /fleet
     update_rate_hz: 10.0

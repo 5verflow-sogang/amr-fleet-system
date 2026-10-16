@@ -10,7 +10,8 @@
 """
 
 import rclpy
-from amr_msgs.msg import RobotState, Task, TaskAssignment, TaskAssignmentAck, TaskAuction, TaskBid, TaskStatus
+from amr_msgs.msg import (ErrorInfo, FleetTaskTable, RobotFleetMode, RobotState, Task, TaskAssignment,
+                          TaskAssignmentAck, TaskAuction, TaskBid, TaskRecord, TaskStatus)
 
 from amr_fleet_decentralized.auction import assignment_topic, robot_index
 from amr_fleet_decentralized.task_auction_node import TaskAuctionNode
@@ -109,6 +110,7 @@ class _Bus:
         node._auction_pub = self.publisher()
         node._assignment_pub = self.publisher()
         node._status_pub = self.publisher()
+        node._mode_pub = self.publisher()
         node._now = lambda: clock[0]
         self.nodes.append(node)
 
@@ -130,6 +132,8 @@ class _Bus:
                     node._on_task_bid(msg)
                 elif isinstance(msg, TaskStatus):
                     node._on_task_status(msg)
+                elif isinstance(msg, RobotFleetMode):
+                    node._on_robot_mode(msg)
                 # TaskAssignment는 로봇(amr_bt·가짜 로봇)이 받는 것이라 기록만 한다
 
     def bids(self, type_):
@@ -635,6 +639,145 @@ def test_lost_accept_is_resent_on_repeated_award_without_reauction():
         bus.publish(accepts[0])
         bus.publish(accepts[0])
         assert (auctioneer.phase, auctioneer.accepted_at) == ('done', accepted_at)
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+# --- 하이브리드 폴백 (architecture.md 5-2절) · 먼저 수락한 쪽이 주인 ---
+
+def _set_mode(node, mode):
+    """모드 전환 판단(FallbackMode)은 test_hybrid.py에서 본다. 여기서는 전환 뒤 노드가 할 일만 본다."""
+    node._fallback.mode = mode
+    node._fallback.transitions += 1
+    node._on_mode(mode)
+
+
+def _announces(bus):
+    return [(m.auctioneer_id, m.task.task_id) for m in bus.log if isinstance(m, TaskAuction)]
+
+
+def test_hybrid_central_mode_does_not_auction():
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = _fleet(['amr_01', 'amr_02', 'amr_03'], bus, clock)
+        for node in nodes.values():
+            node._fleet_mode = 'hybrid'
+        _deliver_task_request(nodes, _task('task_central'))
+        bus.pump()
+        assert _announces(bus) == []
+        # 중앙 모드에서 본 작업은 "본 것"으로 적지 않는다 - 분산으로 바뀌면 작업표에서 이어받는다
+        assert all('task_central' not in node._task_ids_seen for node in nodes.values())
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_hybrid_fallback_takes_backlog_and_returns():
+    """amr_03만 서버와 끊겨 분산으로: 작업표의 미할당·내 몫 작업과 새 작업을 amr_03 혼자 경매한다.
+    중앙 모드 로봇은 입찰하지 않는다. 중앙으로 돌아오면 낙찰 전 경매를 접는다."""
+    from amr_fleet_decentralized.auction import MODE_CENTRALIZED, MODE_DECENTRALIZED
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = _fleet(['amr_01', 'amr_02', 'amr_03'], bus, clock)
+        for node in nodes.values():
+            node._fleet_mode = 'hybrid'
+        robot = nodes['amr_03']
+        robot._on_task_table(FleetTaskTable(seq=7, records=[
+            TaskRecord(task=_task('t_back'), assignee_id='', state=TaskStatus.STATE_PENDING),
+            TaskRecord(task=_task('t_mine', x=4.0, y=0.0), assignee_id='amr_03', state=TaskStatus.STATE_PENDING),
+            TaskRecord(task=_task('t_other'), assignee_id='amr_01', state=TaskStatus.STATE_PENDING),
+            TaskRecord(task=_task('t_done'), assignee_id='amr_02', state=TaskStatus.STATE_COMPLETED),
+        ]))
+        _set_mode(robot, MODE_DECENTRALIZED)
+        bus.pump()
+        assert sorted(_announces(bus)) == [('amr_03', 't_back'), ('amr_03', 't_mine')]
+        assert [n._robot_modes.get('amr_03') for n in (nodes['amr_01'], nodes['amr_02'])] == [MODE_DECENTRALIZED] * 2
+
+        # 분산 중 들어온 새 작업도 분산 모드 로봇(amr_03)이 연다
+        _deliver_task_request(nodes, _task('t_new'))
+        bus.pump()
+        assert ('amr_03', 't_new') in _announces(bus)
+
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+        # 입찰은 amr_03뿐 - 세 경매 모두 낙찰되지만 먼저 온 AWARD(t_back) 하나만 수락하고 나머지는 포기·재경매
+        assert {m.robot_id for m in bus.bids(TaskBid.TYPE_BID)} == {'amr_03'}
+        assignments = [m for m in bus.log if isinstance(m, TaskAssignment)]
+        assert [(m.robot_id, m.task.task_id) for m in assignments] == [('amr_03', 't_back')]
+
+        # 중앙으로 복귀: 낙찰 전 경매(t_back·t_new 재경매 대기)를 접고 다시 이어받을 수 있게 둔다
+        _set_mode(robot, MODE_CENTRALIZED)
+        assert [s.task.task_id for s in robot._auctions.values() if s.phase in ('collecting', 'awarded')] == []
+        assert 't_mine' not in robot._task_ids_seen and 't_new' not in robot._task_ids_seen
+        assert robot._active_task is not None and robot._active_task[1] == 't_back'   # 맡은 작업은 끝까지
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_other_robot_claim_closes_collecting_auction():
+    """먼저 수락한 쪽이 주인: 입찰 수집 중에 다른 로봇(서버 할당)이 그 작업을 시작하면 경매를 접는다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = _fleet(['amr_01', 'amr_02'], bus, clock)
+        nodes['amr_01']._open_auction(_task('task_claimed'))
+        bus.pump()
+        bus.publish(TaskStatus(task_id='task_claimed', robot_id='amr_09', state=TaskStatus.STATE_IN_PROGRESS))
+        assert nodes['amr_01']._auctions == {}
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+        assert bus.bids(TaskBid.TYPE_AWARD) == []
+        # 그 뒤 작업 방송이 와도 열지 않는다
+        late = _fleet(['amr_05'], bus, clock)['amr_05']
+        nodes['amr_05'] = late
+        late._on_task_status(TaskStatus(task_id='task_late', robot_id='amr_09', state=TaskStatus.STATE_PENDING))
+        late._on_task_request(_task('task_late'))
+        bus.pump()
+        assert ('amr_05', 'task_late') not in _announces(bus)
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_task_taken_reject_not_reauctioned():
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = _fleet(['amr_01', 'amr_02', 'amr_03'], bus, clock)
+        _deliver_task_request(nodes, _task('task_taken', x=4.0, y=0.0))
+        bus.pump()
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+        [assignment] = [m for m in bus.log if isinstance(m, TaskAssignment)]
+        robot = nodes[assignment.robot_id]
+        robot._on_assignment_ack(TaskAssignmentAck(
+            robot_id=assignment.robot_id, assignment_id=assignment.assignment_id,
+            result=TaskAssignmentAck.RESULT_REJECTED, error=ErrorInfo(code=ErrorInfo.ASSIGN_TASK_TAKEN)))
+        bus.pump()
+        assert [m for m in bus.log if isinstance(m, TaskAuction) and m.auction_id > 1] == []
+        assert robot._active_task is None
     finally:
         for node in nodes.values():
             node.destroy_node()

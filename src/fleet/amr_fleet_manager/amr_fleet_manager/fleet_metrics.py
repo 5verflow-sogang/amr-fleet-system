@@ -44,6 +44,9 @@ ACKS_TOPIC = '/fleet/task_assignment_acks'
 REQUESTS_TOPIC = '/fleet/task_requests'
 STATUS_TOPIC = '/fleet/task_status'
 STATES_TOPIC = '/fleet/robot_states'
+# 하이브리드 로봇별 모드 (RobotFleetMode, amr_fleet_decentralized fleet_mode:=hybrid)
+MODES_TOPIC = '/fleet/robot_modes'
+MODE_NAMES = {0: 'central', 1: 'decentral'}
 # TaskStatus.STATE_*
 STATE_COMPLETED = 2
 STATE_FAILED = 3
@@ -77,6 +80,7 @@ TASK_OUTCOMES_HEADER = ['task_id', 'request_time', 'first_assign_time', 'robots'
                         'task_time_s', 'distance_m', 'error_code', 'runners']
 ZONE_WAITS_HEADER = ['robot', 'zone', 'request_id', 'request_time', 'grant_time', 'wait_s', 'outcome', 'release_time']
 STALLS_HEADER = ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s']
+FLEET_MODES_HEADER = ['robot', 'mode', 'start_time', 'end_time', 'duration_s']
 RECOVERY_HEADER = ['robot', 'kill_time', 'task_id', 'reassign_time', 'reassigned_robot', 'recovery_s', 'completed']
 # latency_ms: 서버 발행 → 첫 움직임 (원 명세 측정 표 "작업 명령 발행"). 통신 지연 포함
 # latency_recv_ms: 로봇 수신(중계본 도착) → 첫 움직임 (원 명세 성능 요구사항 "명령 수신 ~ 로봇 반응"). 통신 지연 제외
@@ -440,6 +444,26 @@ def recovery(records: Sequence[Record], kills: Sequence[tuple[float, str]]) -> l
     return rows
 
 
+def fleet_modes(records: Sequence[Record], end: float) -> list[list]:
+    """fleet_modes.csv 행. 하이브리드 로봇의 모드 구간 1개마다 1행 (architecture.md 5-2절).
+
+    RobotFleetMode는 1초마다와 바뀔 때 온다. 로봇마다 첫 메시지부터 모드가 바뀔 때까지가 한 구간이고, 마지막 구간은
+    end(실행 끝)까지다. 하네스 요약이 분산 전환 횟수(fleet.fallbacks)와 분산 모드 시간(fleet.decentral_s)을 센다.
+    """
+    segments: dict[str, list[list]] = defaultdict(list)
+    for r in sorted((r for r in records if r.topic == MODES_TOPIC), key=lambda r: r.t):
+        robot = segments[r.msg.robot_id]
+        if not robot or robot[-1][0] != r.msg.mode:
+            robot.append([r.msg.mode, r.t])
+    rows = []
+    for robot_id in sorted(segments):
+        robot = segments[robot_id]
+        for i, (mode, start) in enumerate(robot):
+            stop = robot[i + 1][1] if i + 1 < len(robot) else max(end, start)
+            rows.append([robot_id, MODE_NAMES.get(mode, str(mode)), _fmt(start), _fmt(stop), _fmt(stop - start, 3)])
+    return rows
+
+
 def robot_states(records: Sequence[Record]) -> list[list]:
     """robot_states.csv 행. RobotState 1건마다 1행 (그림용: fleet_plot의 궤적·작업 타임라인)."""
     rows = []
@@ -486,6 +510,9 @@ def convert(records: Sequence[Record], out_dir: Path, delay_ms: float, grace_s: 
     if any(ODOM_TOPIC.match(r.topic) for r in records):
         write_csv(out_dir / 'stalls.csv', STALLS_HEADER, stalls(records))
     write_csv(out_dir / 'robot_states.csv', ROBOT_STATES_HEADER, robot_states(records))
+    # 하이브리드 실행만 (경매 노드가 fleet_mode:=hybrid로 떠야 모드를 알린다)
+    if any(r.topic == MODES_TOPIC for r in records):
+        write_csv(out_dir / 'fleet_modes.csv', FLEET_MODES_HEADER, fleet_modes(records, cutoff.end))
     kills = read_kill_events(fault_events or out_dir / 'fault_events.csv')
     if kills:
         write_csv(out_dir / 'recovery.csv', RECOVERY_HEADER, recovery(records, kills))

@@ -95,6 +95,8 @@ def commit_timed_out(
 
 # amr_msgs/msg/ErrorInfo.ASSIGN_CANCELED 와 같은 값 (amr_fleet_manager dispatcher.ERROR_CANCELED와 같음)
 ERROR_CANCELED = 103
+# amr_msgs/msg/ErrorInfo.ASSIGN_TASK_TAKEN. 다른 로봇이 먼저 맡아 물러난 FAILED·거부 (architecture.md 5-2절)
+ERROR_TASK_TAKEN = 104
 
 
 def can_retry_failed_task(failures: int, failed_retries: int, error_code: int = 0) -> bool:
@@ -107,9 +109,10 @@ def can_retry_failed_task(failures: int, failed_retries: int, error_code: int = 
 
     취소(error_code ERROR_CANCELED)로 온 FAILED는 재경매하지 않는다 - 일부러 멈춘
     작업이라 다시 맡기면 안 된다. 중앙 #107(dispatcher.on_status)과 같은 규칙이고,
-    호출 쪽은 이 실패를 failures에 세지 않는다.
+    호출 쪽은 이 실패를 failures에 세지 않는다. 다른 로봇이 먼저 맡아 물러난 FAILED(ERROR_TASK_TAKEN)도
+    같다 - 그 작업은 주인이 하고 있다.
     """
-    if error_code == ERROR_CANCELED:
+    if error_code in (ERROR_CANCELED, ERROR_TASK_TAKEN):
         return False
     return failures < failed_retries
 

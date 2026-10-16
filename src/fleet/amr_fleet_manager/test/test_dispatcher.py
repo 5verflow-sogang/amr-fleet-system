@@ -445,3 +445,25 @@ def test_report_before_request_is_kept_for_assign():
     d.add_task(task('t1'))
     assert d.assign(0.2) == ([], [])
     assert (d.tasks['t1'].assignee, d.tasks['t1'].state) == ('amr_03', STATE_IN_PROGRESS)
+
+
+def test_decentral_robot_not_assigned_and_pending_withdrawn():
+    """하이브리드: 분산 모드로 바뀐 로봇은 후보에서 빠지고, 확인 전 명령은 큐로 돌아가 다른 로봇에게 간다."""
+    d = make()
+    d.update_robot(robot('amr_01', (0.0, 0.0)), '', 0.0)
+    d.update_robot(robot('amr_02', (10.0, 0.0)), '', 0.0)
+    d.add_task(task('t1', (1.0, 0.0)))
+    [cmd], _ = d.assign(0.0)
+    assert cmd.robot_id == 'amr_01'
+    assert d.set_robot_mode('amr_01', True) == ['t1']
+    assert d.pending_ids() == set()
+    [again], _ = d.assign(0.5)
+    assert again.robot_id == 'amr_02'
+    assert d.set_robot_mode('amr_01', True) == []      # 이미 분산
+    assert d.set_robot_mode('amr_09', True) == []      # 모르는 로봇
+    # 중앙으로 돌아오면 다시 후보
+    d.update_robot(robot('amr_02', (10.0, 0.0)), 't1', 0.6)
+    d.add_task(task('t2', (1.0, 0.0)))
+    d.set_robot_mode('amr_01', False)
+    [third], _ = d.assign(0.7)
+    assert third.robot_id == 'amr_01'

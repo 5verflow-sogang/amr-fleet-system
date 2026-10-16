@@ -13,8 +13,8 @@ import rclpy
 from builtin_interfaces.msg import Time
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
 from amr_fleet_core.traffic import Decision, ZoneManager
-from amr_msgs.msg import (ErrorInfo, FleetHeartbeat, FleetTaskTable, RobotState, Task, TaskAssignment,
-                          TaskAssignmentAck, TaskRecord, TaskStatus, ZoneGrant, ZoneRequest)
+from amr_msgs.msg import (ErrorInfo, FleetHeartbeat, FleetTaskTable, RobotFleetMode, RobotState, Task,
+                          TaskAssignment, TaskAssignmentAck, TaskRecord, TaskStatus, ZoneGrant, ZoneRequest)
 from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -92,6 +92,8 @@ class FleetManager(Node):
         self.create_subscription(TaskAssignmentAck, '/fleet/task_assignment_acks', self._on_ack, qos)
         self.create_subscription(TaskStatus, '/fleet/task_status', self._on_status, qos)
         self.create_subscription(ZoneRequest, '/fleet/zone_requests', self._on_zone_request, qos)
+        # 하이브리드: 서버와 끊겨 분산 모드로 도는 로봇 (amr_fleet_decentralized, architecture.md 5-2절)
+        self.create_subscription(RobotFleetMode, '/fleet/robot_modes', self._on_robot_mode, qos)
 
         # 재전송·heartbeat 주기는 네트워크 쪽 시간이라 use_sim_time과 상관없이 실제 시간으로 잰다
         steady = Clock(clock_type=ClockType.STEADY_TIME)
@@ -157,6 +159,17 @@ class FleetManager(Node):
                 self.get_logger().warn(f'{msg.task_id} 실패로 남김 (재할당 {task.failures}회 뒤)')
         if handed_over or msg.state in (TaskStatus.STATE_COMPLETED, TaskStatus.STATE_FAILED):
             self._assign()
+
+    def _on_robot_mode(self, msg: RobotFleetMode):
+        decentral = msg.mode == FleetHeartbeat.MODE_DECENTRALIZED
+        robot = self._dispatcher.robots.get(msg.robot_id)
+        if robot is None or robot.decentral == decentral:
+            return
+        released = self._dispatcher.set_robot_mode(msg.robot_id, decentral)
+        self.get_logger().warn(
+            f'{msg.robot_id} {"분산" if decentral else "중앙"} 모드 (전환 {msg.transitions}회). '
+            f'{"맡기지 않음" if decentral else "다시 맡김"}' + (f', 확인 전 명령 거둠: {released}' if released else ''))
+        self._assign()
 
     def _on_zone_request(self, msg: ZoneRequest):
         # lease_expiry는 로봇이 자기 노드 시계와 비교하므로 서버도 노드 시계(use_sim_time이면 시뮬레이션 시간)로 잰다
