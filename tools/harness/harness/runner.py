@@ -307,8 +307,15 @@ def host_info() -> dict:
                       if line.startswith('MemTotal'))
     except (OSError, StopIteration):
         mem_kb = 0
-    return {'cpu': cpu, 'cores': os.cpu_count(), 'mem_gb': round(mem_kb / 1024 / 1024, 1),
+    info = {'cpu': cpu, 'cores': os.cpu_count(), 'mem_gb': round(mem_kb / 1024 / 1024, 1),
             'gpu': shutil.which('nvidia-smi') is not None, 'hostname': platform.node()}
+    # GCP 러너면 VM 종류·슬롯과 실행한 사람 (fleet-test.yml → docker_run.sh). 지연을 재는 실험은 기계가 다르면
+    # 값이 달라져서 남기고, 러너를 같이 쓰니 누가 넣은 실행인지 남긴다
+    for key, env in (('runner_machine', 'HARNESS_RUNNER_MACHINE'), ('runner_slot', 'HARNESS_RUNNER_SLOT'),
+                     ('triggered_by', 'HARNESS_TRIGGERED_BY')):
+        if os.environ.get(env):
+            info[key] = os.environ[env]
+    return info
 
 
 def git_sha() -> str:
@@ -331,7 +338,25 @@ def fault_meta(params: dict) -> Optional[dict]:
             'restart_after_s': float(params.get('restart_after_s', -1)),
             # 로봇 장애 (fake_robots.launch.py kill_robot). 없으면 none, -1
             'kill_robot': str(params.get('kill_robot', 'none')),
-            'kill_robot_at_s': float(params.get('kill_robot_at_s', -1))}
+            'kill_robot_at_s': float(params.get('kill_robot_at_s', -1)),
+            **extended_fault_meta(params)}
+
+
+def _flag(value) -> bool:
+    return str(value).strip().lower() in ('1', 'true', 'yes')
+
+
+def extended_fault_meta(params: dict) -> dict:
+    """연구 1 확장 조건 (장애 주입기 allow_out_of_spec·blackout). 그 params를 가진 시나리오만 남긴다."""
+    if 'allow_out_of_spec' not in params:
+        return {}
+    meta = {'allow_out_of_spec': _flag(params['allow_out_of_spec'])}
+    if float(params.get('blackout_s', 0)) > 0:
+        meta['blackout'] = {'at_s': float(params.get('blackout_at_s', 0)), 'duration_s': float(params['blackout_s']),
+                            'period_s': float(params.get('blackout_period_s', 0)),
+                            'robot': str(params.get('blackout_robot', 'all')),
+                            'mode': str(params.get('blackout_mode', 'delay'))}
+    return meta
 
 
 def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[ConfigOverrides] = None,

@@ -1,7 +1,22 @@
-"""경매인(auctioneer) 쪽 낙찰 결정. 입찰 수집이 끝난 뒤(또는 마감 시각이 지난 뒤) 호출한다."""
-from typing import Sequence
+"""경매인(auctioneer) 쪽 입찰 수집·낙찰 결정."""
+from typing import List, Sequence
 
 from .types import AuctionResult, Bid
+
+
+def register_bid(bids: Sequence[Bid], bid: Bid) -> List[Bid]:
+    """입찰 목록에 새 입찰을 더한다.
+
+    #155·#171 BID 재전송(should_resend_bid)과 짝이다: 같은 로봇이 같은 경매에
+    재전송으로 BID를 또 보내도 중복으로 세지 않는다 - 이미 그 로봇의 입찰이
+    있으면 그대로 두고 새로 받은 건 버린다. 재전송은 cost가 같아서 버려도
+    낙찰 결과는 안 바뀌고, 먼저 받은 입찰의 bid_time을 그대로 둬야 마감
+    판정(decide_winner)이 맞다 - 나중에 도착한(마감을 넘겼을 수도 있는) 재전송으로
+    덮어쓰면 원래 마감 전에 들어온 유효한 입찰이 무효로 바뀔 수 있다.
+    """
+    if any(b.robot_id == bid.robot_id for b in bids):
+        return list(bids)
+    return [*bids, bid]
 
 
 def decide_winner(

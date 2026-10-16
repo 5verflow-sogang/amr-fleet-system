@@ -59,8 +59,14 @@ def context_line(run_dirs: Iterable[Path]) -> str:
     first = metas[0]
     parts = [f"git `{first.get('git_sha', '?')}`"]
     host = first.get('host') or {}
-    if host.get('hostname'):
+    if host.get('runner_machine'):
+        # GCP 러너: 컨테이너 호스트 이름보다 VM 종류·슬롯이 실험 비교에 필요한 정보다
+        slot = f", 슬롯 {host['runner_slot']}" if host.get('runner_slot') else ''
+        parts.append(f"GCP {host['runner_machine']} ({host.get('cores', '?')}코어{slot})")
+    elif host.get('hostname'):
         parts.append(f"{host['hostname']} ({host.get('cores', '?')}코어)")
+    if host.get('triggered_by'):
+        parts.append(f"실행 {host['triggered_by']}")
     fault = first.get('fault')
     if fault:
         parts.append(f"지연 {fault['delay_ms']:g} ms · 손실 {fault['loss_pct']:g}%")

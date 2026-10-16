@@ -21,9 +21,11 @@ def main(argv=None) -> int:
     ap.add_argument('--index', required=True, help='더할 index.csv (없으면 만든다)')
     ap.add_argument('--path', required=True, help='결과가 올라간 위치 (예: gs://amr-fleet-results/runs/...)')
     ap.add_argument('--url', default='', help='실행 링크 (Actions)')
+    ap.add_argument('--machine', default='', help='러너 VM 종류 (예: c2d-standard-8)')
+    ap.add_argument('--by', default='', help='실행한 GitHub 계정')
     args = ap.parse_args(argv)
     run_dirs = [p.parent for p in Path(args.results).glob('*/meta.json')]
-    row = index_row(run_dirs, args.path, args.url)
+    row = index_row(run_dirs, args.path, args.url, machine_type=args.machine, triggered_by=args.by)
     append(Path(args.index), row)
     print(','.join(row))
     return 0

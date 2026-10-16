@@ -10,21 +10,69 @@ from typing import Any, Optional
 # 명세 범위 (project-spec 3장 장애 주입기: 지연 0~500ms, 손실 0~10%). 밖의 값은 실험 조건 실수로 보고 거부한다
 MAX_DELAY_MS = 500.0
 MAX_LOSS_PCT = 10.0
+# 연구 1 확장 조건 (10/16 결정): 손실 0~10%로는 중앙집중 재전송(1 s × 5회)이 다 막혀 역전 지점이 안 나온다.
+# 분산 할당 선행연구는 5~70%를 쓴다. allow_out_of_spec을 켤 때만 손실 70%까지와 연속 끊김을 허용한다
+EXTENDED_MAX_LOSS_PCT = 70.0
+# 끊김 동안 메시지 처리. delay(기본): 링크가 다시 이어지면 쌓인 것을 보낸 순서대로 전달한다 (DDS Reliable이
+# 재연결 뒤 재전송하는 것과 같다). 쌓이는 수는 hold_depth(QoS depth 10)까지, 넘으면 오래된 것부터 버린다
+# (KEEP_LAST). drop: 끊김 동안 나갈 메시지를 모두 버린다 (더 가혹한 조건, 비교용)
+BLACKOUT_MODES = ('delay', 'drop')
+
+
+@dataclass(frozen=True)
+class Blackout:
+    """연속 끊김 (Wi-Fi 핸드오프·음영 지역 모사). 이 구간에는 링크로 아무것도 나가지 않는다.
+
+    시각은 주입기 시작부터 잰 초. period_s가 0이면 한 번, 아니면 at_s부터 period_s마다 되풀이한다.
+    """
+
+    at_s: float
+    duration_s: float
+    period_s: float = 0.0
+
+    def __post_init__(self):
+        if not (self.at_s >= 0 and self.duration_s > 0 and self.period_s >= 0):
+            raise ValueError(f'blackout은 at_s ≥ 0, duration_s > 0, period_s ≥ 0: {self}')
+        if self.period_s and self.period_s <= self.duration_s:
+            raise ValueError(f'blackout period_s는 duration_s보다 길어야 한다 (끊김 사이에 연결 구간): {self}')
+
+    def active(self, elapsed_s: float) -> bool:
+        if elapsed_s < self.at_s:
+            return False
+        offset = elapsed_s - self.at_s
+        if self.period_s:
+            offset %= self.period_s
+        return offset < self.duration_s
 
 
 @dataclass(frozen=True)
 class FaultConfig:
-    """링크 하나에 거는 장애 조건. 명세 범위 밖이면 ValueError."""
+    """링크 하나에 거는 장애 조건. 범위 밖이면 ValueError.
+
+    allow_out_of_spec이 거짓(기본)이면 명세 범위만, 참이면 손실 70%까지와 blackout을 허용한다. 지연 상한은 같다.
+    """
 
     delay_ms: float = 0.0
     loss_pct: float = 0.0
+    allow_out_of_spec: bool = False
+    blackout: Optional[Blackout] = None
+    blackout_mode: str = 'delay'
+    hold_depth: int = 10
 
     def __post_init__(self):
+        if self.blackout_mode not in BLACKOUT_MODES:
+            raise ValueError(f'blackout_mode는 {BLACKOUT_MODES} 중 하나: {self.blackout_mode}')
+        if self.hold_depth < 1:
+            raise ValueError(f'hold_depth는 1 이상: {self.hold_depth}')
+        max_loss = EXTENDED_MAX_LOSS_PCT if self.allow_out_of_spec else MAX_LOSS_PCT
         # NaN은 비교가 모두 False라 범위 검사를 통과하지 않는다
         if not 0 <= self.delay_ms <= MAX_DELAY_MS:
             raise ValueError(f'delay_ms는 0~{MAX_DELAY_MS:g}이어야 한다: {self.delay_ms}')
-        if not 0 <= self.loss_pct <= MAX_LOSS_PCT:
-            raise ValueError(f'loss_pct는 0~{MAX_LOSS_PCT:g}이어야 한다: {self.loss_pct}')
+        if not 0 <= self.loss_pct <= max_loss:
+            hint = '' if self.allow_out_of_spec else f' (연구용 {EXTENDED_MAX_LOSS_PCT:g}%까지는 allow_out_of_spec)'
+            raise ValueError(f'loss_pct는 0~{max_loss:g}이어야 한다: {self.loss_pct}{hint}')
+        if self.blackout is not None and not self.allow_out_of_spec:
+            raise ValueError('blackout은 명세 밖 조건이라 allow_out_of_spec을 켜야 한다')
 
 
 class DelayLine:
@@ -34,28 +82,63 @@ class DelayLine:
     지연이 고정이라 도착 순서가 보낸 순서와 같으므로 FIFO 큐로 충분하다.
     """
 
-    def __init__(self, config: FaultConfig, rng: random.Random):
+    def __init__(self, config: FaultConfig, rng: random.Random, start: float = 0.0,
+                 blackout: bool = True):
+        """start: blackout 시각의 기준(주입기 시작 시각). blackout: 이 링크에 config.blackout을 걸지 (대상 로봇만)."""
         self._config = config
         self._rng = rng
+        self._start = start
+        self._blackout = config.blackout if blackout else None
         self._queue: deque[tuple[float, Any]] = deque()
         self.received = 0
         self.dropped = 0
+        self.blacked_out = 0
+
+    def down(self, now: float) -> bool:
+        """지금 이 링크가 끊겼는지."""
+        return self._blackout is not None and self._blackout.active(now - self._start)
 
     def push(self, item: Any, now: float) -> bool:
-        """메시지를 넣는다. 손실로 버리면 False."""
+        """메시지를 넣는다. 손실이나 끊김(drop 모드)으로 버리면 False."""
         self.received += 1
-        if self._config.loss_pct > 0 and self._rng.random() * 100 < self._config.loss_pct:
+        # 손실 난수는 끊김 구간에서도 똑같이 뽑는다. 그래야 같은 seed면 끊김 밖의 손실 위치가 끊김이 없는 실행과
+        # 같아서, "끊김 있음 vs 없음"을 짝지어 비교할 때 차이가 끊김에서만 나온다
+        lost = self._config.loss_pct > 0 and self._rng.random() * 100 < self._config.loss_pct
+        down = self.down(now)
+        if down and self._config.blackout_mode == 'drop':
+            self._drop_blackout()
+            return False
+        if lost:
             self.dropped += 1
             return False
         self._queue.append((now + self._config.delay_ms / 1000.0, item))
+        if down:
+            # delay 모드: 끊긴 동안 쌓인 것은 QoS depth만큼만 남는다 (KEEP_LAST, 오래된 것부터 밀려남)
+            while len(self._queue) > self._config.hold_depth:
+                self._queue.popleft()
+                self._drop_blackout()
         return True
 
     def pop_due(self, now: float) -> list[Any]:
-        """now까지 지연이 끝난 메시지를 보낸 순서대로 꺼낸다."""
+        """now까지 지연이 끝난 메시지를 보낸 순서대로 꺼낸다.
+
+        끊긴 동안에는 아무것도 내보내지 않는다. 끊김 전에 보내 지연 큐에 있던 메시지도 그 사이 나갈 수 없다.
+        delay 모드는 붙잡아 두었다가 다시 이어지면 순서대로 내보내고, drop 모드는 나갈 차례가 된 것을 버린다.
+        """
+        if self.down(now):
+            if self._config.blackout_mode == 'drop':
+                while self._queue and self._queue[0][0] <= now:
+                    self._queue.popleft()
+                    self._drop_blackout()
+            return []
         due = []
         while self._queue and self._queue[0][0] <= now:
             due.append(self._queue.popleft()[1])
         return due
+
+    def _drop_blackout(self):
+        self.dropped += 1
+        self.blacked_out += 1
 
     def next_due(self) -> Optional[float]:
         """다음 메시지가 나갈 시각. 큐가 비면 None."""

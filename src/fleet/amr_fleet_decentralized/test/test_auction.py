@@ -14,7 +14,9 @@ from amr_fleet_decentralized.auction import (
     compute_bid_cost,
     decide_bid,
     decide_winner,
+    register_bid,
     should_resend_award,
+    should_resend_bid,
     winner_lost,
 )
 
@@ -114,6 +116,40 @@ def test_decide_winner_no_valid_bids_when_all_late():
     bids = [bid('amr_01', cost=1.0, bid_time=5.0)]
     result = decide_winner('t1', bids, announce_time_s=0.0, bid_window_s=2.0)
     assert result.winner_id is None
+
+
+# --- BID 재전송 (#155·#171): 1회성 발행이 디스커버리 레이스로 유실돼도 재전송으로 구제 ---
+
+
+def test_should_resend_bid_waits_for_period():
+    assert should_resend_bid(last_sent_time=0.0, now_s=0.4, resend_period_s=0.5, deadline_s=2.0) is False
+    assert should_resend_bid(last_sent_time=0.0, now_s=0.5, resend_period_s=0.5, deadline_s=2.0) is True
+
+
+def test_should_resend_bid_stops_at_deadline():
+    assert should_resend_bid(last_sent_time=1.5, now_s=2.0, resend_period_s=0.5, deadline_s=2.0) is False
+
+
+def test_register_bid_ignores_duplicate_from_same_robot():
+    # 재전송된 BID(같은 로봇, 같은 cost)는 중복으로 세지 않는다 - 먼저 받은 것만 남는다
+    bids = register_bid([], bid('amr_02', cost=5.0, bid_time=0.1))
+    bids = register_bid(bids, bid('amr_02', cost=5.0, bid_time=0.6))
+    assert len(bids) == 1
+    assert bids[0].bid_time == 0.1
+
+
+def test_register_bid_keeps_distinct_robots():
+    bids = register_bid([], bid('amr_01', cost=5.0))
+    bids = register_bid(bids, bid('amr_02', cost=3.0))
+    assert {b.robot_id for b in bids} == {'amr_01', 'amr_02'}
+
+
+def test_resend_recovers_auction_from_lost_first_bid():
+    # 첫 BID는 경매인에 전혀 도착하지 않았다(유실) - register_bid가 호출된 적 없다.
+    # bid_resend_period_s 뒤 재전송된 입찰만 도착하는데, 그래도 마감(2.0s) 전이라 낙찰된다.
+    bids = register_bid([], bid('amr_02', cost=3.0, bid_time=0.5))
+    result = decide_winner('t1', bids, announce_time_s=0.0, bid_window_s=2.0)
+    assert result.winner_id == 'amr_02'
 
 
 # --- 경매 뒷단계: AWARD 재전송 (1초 간격 x 5회) · WITHDRAW 범위 (ACCEPT 전까지만) ---

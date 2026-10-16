@@ -104,7 +104,7 @@ PauseReason pause_reason(const TaskContext & ctx);
 // - Nav2가 실패하면 nav_retries번 다시 보낸다. 그래도 실패하면 Nav2가 준 코드로 FAILURE
 // - 멈춘 시간을 뺀 이동 시간이 nav_timeout_s를 넘으면 NAV_TIMEOUT, 한 번 멈춘 채 상한을 넘으면 멈춘 이유의
 //   코드로 FAILURE (구역 pause_timeout_s → TRAFFIC_LEASE_TIMEOUT, 위치 kidnap_pause_timeout_s → LOCALIZATION_LOST)
-// - 구역·위치 복구가 failed면 기다리지 않고 바로 FAILURE (구역 TRAFFIC_REVOKED, 위치 LOCALIZATION_LOST)
+// - 구역·위치 복구가 failed면 기다리지 않고 바로 FAILURE (구역 TRAFFIC_BACKING_FAILED, 위치 LOCALIZATION_LOST)
 class MoveTo : public BT::StatefulActionNode
 {
 public:
@@ -229,6 +229,10 @@ void register_nodes(BT::BehaviorTreeFactory & factory, std::shared_ptr<TaskConte
 bool cancel_task(
   BT::Tree & tree, TaskContext & ctx, const std::string & task_id,
   const amr_msgs::msg::ErrorInfo & error);
+
+// 작업 전체 시간 상한(task_timeout_s)을 넘었으면 cancel_task처럼 그 자리에서 끝낸다: FAILED(TASK_TIMEOUT).
+// 매 tick 전에 부른다. 끝냈으면 true
+bool expire_task(BT::Tree & tree, TaskContext & ctx);
 
 // 서버 취소(ACTION_CANCEL)로 멈춘 작업의 FAILED 오류: ASSIGN_CANCELED + "canceled".
 // 서버는 이 코드가 붙은 FAILED를 다시 할당하지 않는다 (#107)

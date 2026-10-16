@@ -2,7 +2,7 @@
 
 [통계 설계](statistical_design.md) 4절 단계 C(대수)를 P2보다 먼저 가짜 로봇으로 돌린다. 담당: 민지(실행·분석), 하연(가짜 로봇 10대 #159, 서버).
 
-> 상태: 설계 초안 (10/15). 작업 부하 규칙(A/B)은 10/19 회의에서 정한다. 둘 다 돌릴 수 있게 하네스는 준비돼 있다.
+> 상태: 본 실험 준비 (10/16). 10/16 하연 결정: **A안·B안 둘 다** 돌린다(3절). GCP 러너에서만 잰다, 응답 시간은 Ack 수신까지.
 
 ## 1. 무엇을 보나
 
@@ -20,12 +20,15 @@
 | 반복 | seed 1~10 (본 실험). 같은 N·작업 부하면 seed가 같은 작업 일정을 만든다 |
 | 실행 시간 | 약 11분 (작업 600초 + 기동·정리) |
 
-8조건 × 10회 = 80실행, 약 15시간. GCP 러너는 한 번에 한 대라 다른 실험 사이에 조건 단위(10회, 약 2시간)로 나눠 돌린다.
+A·B 각 8조건인데 5대는 두 안이 같아(3절) 14조건 × 10회 = 140실행, 러너 1대로 약 26시간이다. 러너 슬롯을 여럿 쓰면 그만큼 줄어든다.
+
+- **모든 조건을 같은 기종에서 돌린다.** 기종이 다르면 지연 측정값 자체가 달라진다. 10/16 A안 3대·지연 0 ms 10회(`scale_a_n3_d0`, `n2d-standard-16`)는 러너 기종이 정해지기 전에 돌린 것이라, 본 실험 기종이 다르면 예비로만 쓰고 다시 돌린다
+- 라벨: `scale_a_n{N}_d{지연}`, `scale_b_n{N}_d{지연}` (N=5는 `scale_a_n5_*` 하나를 두 안에 같이 쓴다)
 
 ```bash
-tools/harness/gcp_run.sh fleet_fake -n 10 --set num_robots=7 --set delay_ms=100 --label n7_d100        # A안
+tools/harness/gcp_run.sh fleet_fake -n 10 --set num_robots=7 --set delay_ms=100 --label scale_a_n7_d100  # A안
 tools/harness/gcp_run.sh fleet_fake -n 10 --set num_robots=7 --set delay_ms=100 \
-    --set task_count=84 --set task_interval_s=7.143 --label n7_d100_b                                    # B안
+    --set task_count=84 --set task_interval_s=7.143 --label scale_b_n7_d100                              # B안
 ```
 
 ## 3. 작업 부하 규칙 (회의 결정)
@@ -35,7 +38,10 @@ tools/harness/gcp_run.sh fleet_fake -n 10 --set num_robots=7 --set delay_ms=100 
 | A 총 부하 고정 | 60건, 10초 간격 | 60 / 10 s | 60 / 10 s | 60 / 10 s | 60 / 10 s | 대수가 늘면 로봇마다 일이 줄어 놀게 된다. 할당·Ack 메시지 수는 같고 heartbeat·RobotState만 늘어난다 |
 | B 로봇당 부하 고정 | 12 × N건, 50 / N초 간격 | 36 / 16.7 s | 60 / 10 s | 84 / 7.14 s | 120 / 5 s | 대수와 함께 할당 메시지도 늘어 서버 부하를 함께 본다. 로봇마다 일의 양은 같다 |
 
-- 제안: **B**. 규모 곡선의 질문은 "로봇이 늘면 서버가 버티나"라서, 로봇마다 일이 같아야 대수 효과를 본다. A는 대수가 늘수록 로봇이 놀아 지연이 오히려 줄어 보일 수 있다
+- **결정: A·B 둘 다** (10/16 하연). 처음에는 A로 정했지만(같은 날 오전), A만으로는 대수가 늘어도 할당·Ack 수가 같아 곡선이 평평하게 나올 가능성이 커서 논문에 쓸 결과가 약하다. B는 아래 문제가 있지만 서버 부하를 대수와 함께 키우므로 분석적으로 쓸 수 있다
+- 논문에서 두 안의 역할: **A는 "상태 메시지만 늘 때"의 대조**, **B는 "대수와 함께 할당까지 늘 때"의 본 곡선**. 두 곡선의 차이가 할당 메시지 증가의 몫이다
+- A의 위협: 대수가 늘면 로봇당 일이 줄어 지연이 낮아 보일 수 있다. 결과에 적는다
+- B의 위협: 대수가 늘면 실행 끝에 못 끝낸 작업도 는다(예비 실행 80/120). 그래서 B의 완료율은 대수 간 비교에 쓰지 않고, 지연·Ack 지표와 처리량(`fleet.throughput_per_min`, 마지막 완료까지)으로 본다. 실행 시간을 늘릴지는 실행 길이 결정(300초 후보, 10/19)과 같이 정한다
 - 5대는 두 안이 같다 (Before 데이터 #130과 같은 조건)
 - 하네스: `--set task_count=… --set task_interval_s=…` (`fleet_fake.yaml` `config_patch`가 작업 생성기 `basic.yaml`을 실행 동안 바꿔 끼운다. `meta.json` `config_overrides`에 해시가 남는다)
 
@@ -46,9 +52,9 @@ tools/harness/gcp_run.sh fleet_fake -n 10 --set num_robots=7 --set delay_ms=100 
 | Fleet 링크 지연 평균·P95·P99 | `fleet_latency.csv` | 주기 메시지(heartbeat 5 Hz·작업표 1 Hz)라 실행마다 P99가 안정 (통계 설계 3절) |
 | 손실률 | `fleet_latency.csv` `delivered` | 손실 0%라 0이 기대값. 0이 아니면 서버·DDS 과부하 |
 | Ack 왕복시간 평균·P95, 재전송 수 | `response_time.csv` | 할당 수는 실행당 36~120건이라 P99는 내지 않는다 |
-| 작업 완료율·평균 완료 시간 | `task_outcomes.csv` | B안에서 대수 효과, A안은 참고 |
+| 작업 완료율·평균 완료 시간·처리량 | `task_outcomes.csv` | 완료율은 같은 N·seed끼리만. B안의 대수 효과는 평균 완료 시간·처리량으로 |
 
-곡선: 가로 N, 세로 지표, 지연 0·100 ms 두 선과 CI 띠. 대수 효과는 N=5 대비 비율(같은 seed 짝)로도 낸다.
+곡선: 가로 N, 세로 지표, 안(A·B) × 지연(0·100 ms) 네 선과 CI 띠. 대수 효과는 N=5 대비 비율(같은 seed 짝)로도 낸다.
 
 ## 5. 한계
 
@@ -57,9 +63,10 @@ tools/harness/gcp_run.sh fleet_fake -n 10 --set num_robots=7 --set delay_ms=100 
 
 ## 6. 할 일
 
-- [ ] 10/19 회의: A/B 결정
+- [x] A/B 결정 → A·B 둘 다 (10/16 하연, 오전의 A 결정을 바꿈)
 - [x] 예비 1회 (N=10, B안, 지연 0, seed 1001, 로컬 Mac, 10/15): 아래 7절
-- [ ] GCP 본 실험 8조건 × 10회
+- [ ] 러너 기종 확정 (하연 러너 슬롯 작업)
+- [ ] GCP 본 실험 14조건 × 10회 (라벨 `scale_a_*`·`scale_b_*`). 10/16 `scale_a_n3_d0`(n2d-16) 1조건은 돌았고, 나머지 7조건은 Actions 결제 문제로 시작하지 못했다
 - [ ] 분석: `summarize.py` 결과로 곡선 그림·표
 
 ## 7. 예비 실행 (10/15, N=10, B안, 지연 0, seed 1001, 로컬)

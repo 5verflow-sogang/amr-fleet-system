@@ -22,6 +22,10 @@ HARNESS_FRESH=1 tools/harness/docker_run.sh loc_basic -n 10   # 반복마다 새
 
 # GCP 러너로 (같은 인자, 지금 브랜치의 PR 코드. RTF 1.0, 결과는 버킷)
 tools/harness/gcp_run.sh loc_basic -n 10
+tools/harness/gcp_run.sh fleet_fake -n 10 --set delay_ms=200 --ref dev --slot b1   # 슬롯 b1 (c2d-standard-8)
+
+# 여러 조건을 슬롯에 줄 세워 (GitHub는 같은 슬롯에 대기 실행을 1개만 남긴다. GCP README "슬롯")
+caffeinate -i python3 tools/harness/gcp_batch.py conditions.txt --slots b1,b2,b3,b4 --ref dev
 
 # 실행 목록(index.csv)에 한 줄 더하기 (fleet-test.yml이 버킷에 올리며 쓴다, ROS 불필요)
 python3 tools/harness/index_run.py tools/harness/results/<out 폴더> --index index.csv --path <결과 위치>
