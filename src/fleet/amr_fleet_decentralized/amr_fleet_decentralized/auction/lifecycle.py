@@ -9,6 +9,8 @@
 
 from typing import Dict, Optional
 
+from .types import MODE_IDLE
+
 
 def should_resend_award(
     attempts_sent: int, last_sent_time: float, now_s: float,
@@ -66,6 +68,29 @@ def should_withdraw_award(holding_other_task: bool, withdrew_before: bool) -> bo
     뒤늦게 수락하면 같은 작업을 두 로봇이 맡게 된다.
     """
     return holding_other_task or withdrew_before
+
+
+def task_finished_by_state(seen_busy: bool, mode: int) -> bool:
+    """맡은 작업이 끝났다고 RobotState로 판단할 수 있는지: ACCEPT 뒤 BUSY를 한 번 봤고 지금 IDLE이다.
+
+    TaskStatus COMPLETED/FAILED가 유실되거나 안 와도 맡은 작업이 영원히 안 풀리지 않게 하는
+    안전장치다. ACCEPT 직후의 IDLE(아직 작업 시작 전)은 끝난 게 아니므로 BUSY를 먼저 봐야 한다.
+    """
+    return seen_busy and mode == MODE_IDLE
+
+
+def commit_timed_out(
+    accepted_at: float, now_s: float, seen_busy: bool, commit_timeout_s: float,
+) -> bool:
+    """ACCEPT 뒤 commit_timeout_s 동안 RobotState가 한 번도 BUSY가 안 됐는지(작업이 시작 안 됨).
+
+    ACCEPT를 받아 실제로 작업을 시작시키는 쪽(TaskAssignment를 받는 amr_bt·가짜 로봇)이 없거나
+    전달이 끊긴 경우, 로봇이 맡은 작업을 쥐고 영원히 입찰을 못 하지 않게 푼다. 시각은 같은 시계
+    (실제 시간)여야 한다. commit_timeout_s가 0 이하면 풀지 않는다.
+    """
+    if commit_timeout_s <= 0 or seen_busy:
+        return False
+    return now_s - accepted_at >= commit_timeout_s
 
 
 # amr_msgs/msg/ErrorInfo.ASSIGN_CANCELED 와 같은 값 (amr_fleet_manager dispatcher.ERROR_CANCELED와 같음)

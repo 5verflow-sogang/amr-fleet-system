@@ -26,3 +26,6 @@ class AuctionParams:
     reclaim_timeout_s: float = 5.0
     # 회수 재경매 상한. 음수면 상한 없음(#132와 같음). FAILED 재시도(failed_retries)와 따로 센다.
     max_reclaims: int = -1
+    # 맡은 작업 해제 안전장치(동시 낙찰 경합): ACCEPT 뒤 이 시간(실제 시간, s) 동안 내 RobotState가
+    # 한 번도 BUSY가 안 되면(작업이 시작 안 됨) 맡은 작업을 풀고 다시 입찰한다. 0 이하면 끈다.
+    commit_timeout_s: float = 30.0
