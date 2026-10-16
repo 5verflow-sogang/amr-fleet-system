@@ -49,17 +49,17 @@ class EnvConfig:
     fixed_mass: float = 0.0
     observe_mass: bool = False          # True면 제안 방법
     mass_hide_prob: float = 0.0         # 학습 중 질량을 "모름"으로 가릴 확률 (제안 방법 0.2)
-    # 보상 (명세서 4-2절 출발값)
-    w_progress: float = 2.0             # /m
-    w_time: float = 0.01                # /스텝
-    w_near: float = 0.5                 # /m (안전거리 침범량). 장애물만, 벽은 제외
+    # 보상 (v1 튜닝 후보 G, README "v1 튜닝 기록". config/env_v0.toml과 같아야 한다)
+    w_progress: float = 5.0             # /m
+    w_time: float = 0.1                 # /스텝
+    w_near: float = 0.0                 # /m (안전거리 침범량). 장애물만, 벽은 제외
     d_safe: float = 0.3                 # m. 명세 긴급정지 거리
-    w_smooth: float = 0.05              # 정규화된 명령 변화량(|Δv|/v_max + |Δω|/ω_max)당
-    r_collision: float = -40.0          # v0 튜닝 (README "v0 튜닝 기록")
-    w_impact: float = 0.0               # 충돌 순간 속도 [m/s]당 추가 벌점. 0이면 속도와 무관 (v1 튜닝 후보 H)
-    r_arrival: float = 10.0
-    r_timeout: float = -10.0
-    w_overshoot: float = 5.0            # /m
+    w_smooth: float = 0.0               # 정규화된 명령 변화량(|Δv|/v_max + |Δω|/ω_max)당
+    r_collision: float = -100.0
+    w_impact: float = 40.0              # 충돌 순간 속도 [m/s]당 추가 벌점. 0이면 속도와 무관
+    r_arrival: float = 100.0
+    r_timeout: float = -25.0
+    w_overshoot: float = 12.5           # /m
     # 종료 조건
     arrive_dist: float = 0.2            # m
     arrive_speed: float = 0.1           # m/s
