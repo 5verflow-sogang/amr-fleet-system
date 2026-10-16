@@ -6,7 +6,7 @@
     uv run python scripts/train_ppo.py --variant r2 --config config/env_v2_b1.toml --val-config config/env_v0.toml
 
 비교군·환경·PPO 설정은 설정 파일(기본 config/env_v0.toml)에서 읽는다.
-결과: raw/<variant>_s<seed>_<시각>/ 아래 config.toml(쓴 설정 원본), config.json(풀어 쓴 값),
+결과: raw/<variant>_s<seed>[_<tag>]_<시각>/ 아래 config.toml(쓴 설정 원본), config.json(풀어 쓴 값),
 best_model.zip, best_vecnormalize.pkl, final_model.zip, final_vecnormalize.pkl, TensorBoard 로그.
 
 --val-config를 주면 검증(eval/*: 체크포인트 선택, eval_common/*)의 시나리오 분포([env.scenario])를 그 파일
@@ -143,6 +143,9 @@ def main():
     parser.add_argument('--eval-episodes', type=int, default=100)
     parser.add_argument('--common-eval-episodes', type=int, default=200,
                         help='비교군 공통 검증(eval_common/*) 횟수. 학습 질량에 고르게 나눈다. 0이면 끈다')
+    parser.add_argument('--tag', default='',
+                        help='결과 폴더 이름에 붙일 후보 이름 (raw/<variant>_s<seed>_<tag>_<시각>). 같은 비교군·시드를 '
+                             '설정만 바꿔 동시에 돌릴 때 구분용')
     parser.add_argument('--val-config', type=Path, default=None,
                         help='검증(eval/*·eval_common/*) 시나리오([env.scenario])를 이 파일 것으로. 기본은 학습 시나리오')
     parser.add_argument('--threads', type=int, default=int(os.environ.get('OMP_NUM_THREADS', '2')))
@@ -161,8 +164,17 @@ def main():
     if args.val_config:
         val_config = replace(env_config, scenario=load_experiment(args.val_config).env.scenario)
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
-    run_dir = ROOT / 'raw' / f'{args.variant}_s{args.seed}_{stamp}'
-    run_dir.mkdir(parents=True)
+    tag = f'_{args.tag}' if args.tag else ''
+    # 같은 이름(같은 초에 시작한 같은 비교군·시드)이 이미 있으면 번호를 붙인다. 동시 실행이 서로 덮어쓰지 않게
+    run_dir = ROOT / 'raw' / f'{args.variant}_s{args.seed}{tag}_{stamp}'
+    for n in range(2, 100):
+        try:
+            run_dir.mkdir(parents=True)
+            break
+        except FileExistsError:
+            run_dir = ROOT / 'raw' / f'{args.variant}_s{args.seed}{tag}_{stamp}-{n}'
+    else:
+        sys.exit(f'결과 폴더를 만들지 못했다: {run_dir}')
     shutil.copyfile(args.config, run_dir / 'config.toml')
     # 학습 환경 시드는 학습 시드끼리 겹치지 않게 따로 둔다 (seeds.py, training.py)
     model, venv, env_seed = make_model(env_config, n_envs, args.seed, ppo, net_arch,
