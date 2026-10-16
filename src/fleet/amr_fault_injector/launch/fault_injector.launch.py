@@ -37,6 +37,7 @@ def _injector(context):
         'blackout_s': ParameterValue(LaunchConfiguration('blackout_s'), value_type=float),
         'blackout_period_s': ParameterValue(LaunchConfiguration('blackout_period_s'), value_type=float),
         'blackout_robot': LaunchConfiguration('blackout_robot'),
+        'blackout_mode': LaunchConfiguration('blackout_mode'),
     }
     num_robots = LaunchConfiguration('num_robots').perform(context)
     if num_robots:
@@ -85,5 +86,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'blackout_robot', default_value='all',
             description='끊김을 걸 로봇 (예: amr_03). all이면 모든 로봇'),
+        DeclareLaunchArgument(
+            'blackout_mode', default_value='delay',
+            description='끊김 동안 메시지: delay(다시 이어지면 순서대로 전달, QoS depth 10까지) 또는 drop(버림)'),
         OpaqueFunction(function=_injector),
     ])

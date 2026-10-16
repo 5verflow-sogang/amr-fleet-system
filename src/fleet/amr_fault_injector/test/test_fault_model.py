@@ -76,9 +76,11 @@ def test_loss_rate_close_to_config():
 def test_out_of_spec_loss_needs_flag():
     with pytest.raises(ValueError, match='allow_out_of_spec'):
         FaultConfig(loss_pct=30.0)
-    FaultConfig(loss_pct=50.0, allow_out_of_spec=True)
+    FaultConfig(loss_pct=70.0, allow_out_of_spec=True)
     with pytest.raises(ValueError):
-        FaultConfig(loss_pct=50.1, allow_out_of_spec=True)
+        FaultConfig(loss_pct=70.1, allow_out_of_spec=True)
+    with pytest.raises(ValueError):
+        FaultConfig(allow_out_of_spec=True, blackout_mode='queue')
     # 지연 상한은 플래그와 상관없이 그대로
     with pytest.raises(ValueError):
         FaultConfig(delay_ms=600.0, allow_out_of_spec=True)
@@ -107,9 +109,9 @@ def test_blackout_window_once_and_periodic():
 
 
 def test_blackout_keeps_loss_positions_outside_window():
-    """같은 seed면 끊김 밖의 손실 위치가 끊김이 없는 실행과 같다 (끊김 유무를 짝지어 비교)."""
+    """같은 seed면 끊김 밖의 손실 위치가 끊김이 없는 실행과 같다 (끊김 유무를 짝지어 비교). drop 모드."""
     def run(blackout):
-        cfg = FaultConfig(loss_pct=20.0, allow_out_of_spec=True, blackout=blackout)
+        cfg = FaultConfig(loss_pct=20.0, allow_out_of_spec=True, blackout=blackout, blackout_mode='drop')
         d = DelayLine(cfg, random.Random(7), start=100.0)
         return [d.push(i, now=100.0 + i * 0.1) for i in range(200)], d
 
@@ -123,8 +125,43 @@ def test_blackout_keeps_loss_positions_outside_window():
     assert d.dropped == d.blacked_out + sum(1 for i, ok in enumerate(with_bo) if not ok and i not in inside)
 
 
+def test_delay_mode_holds_until_link_returns():
+    """delay(기본): 끊긴 동안 아무것도 안 나가고, 다시 이어지면 쌓인 것을 보낸 순서대로 전달한다.
+    끊기기 직전에 보내 지연 큐에 있던 메시지도 끊김 동안에는 못 나간다."""
+    cfg = FaultConfig(delay_ms=200.0, allow_out_of_spec=True, blackout=Blackout(at_s=1.0, duration_s=2.0))
+    d = DelayLine(cfg, random.Random(0), start=0.0)
+    d.push('before', now=0.9)            # 1.1에 나갈 차례지만 그때는 끊김
+    d.push('during', now=1.5)
+    assert d.pop_due(1.2) == [] and d.pop_due(2.9) == []
+    assert d.pop_due(3.0) == ['before', 'during']
+    d.push('after', now=3.1)
+    assert d.pop_due(3.31) == ['after']
+    assert (d.dropped, d.blacked_out) == (0, 0)
+
+
+def test_delay_mode_keeps_only_hold_depth():
+    """끊김이 길어 쌓인 수가 QoS depth를 넘으면 오래된 것부터 밀려난다 (KEEP_LAST)."""
+    cfg = FaultConfig(allow_out_of_spec=True, blackout=Blackout(at_s=0.0, duration_s=10.0), hold_depth=3)
+    d = DelayLine(cfg, random.Random(0), start=0.0)
+    for i in range(5):
+        d.push(i, now=1.0 + i)
+    assert d.pop_due(10.0) == [2, 3, 4]
+    assert (d.dropped, d.blacked_out) == (2, 2)
+
+
+def test_drop_mode_drops_in_flight_messages_due_during_blackout():
+    cfg = FaultConfig(delay_ms=200.0, allow_out_of_spec=True, blackout=Blackout(at_s=1.0, duration_s=2.0),
+                      blackout_mode='drop')
+    d = DelayLine(cfg, random.Random(0), start=0.0)
+    d.push('before', now=0.9)
+    assert not d.push('during', now=1.5)
+    assert d.pop_due(1.2) == []
+    assert d.pop_due(3.5) == []
+    assert d.blacked_out == 2
+
+
 def test_blackout_only_on_target_link():
-    cfg = FaultConfig(allow_out_of_spec=True, blackout=Blackout(at_s=0.0, duration_s=1.0))
+    cfg = FaultConfig(allow_out_of_spec=True, blackout=Blackout(at_s=0.0, duration_s=1.0), blackout_mode='drop')
     target = DelayLine(cfg, random.Random(0), start=0.0, blackout=True)
     other = DelayLine(cfg, random.Random(0), start=0.0, blackout=False)
     assert not target.push('a', now=0.5)

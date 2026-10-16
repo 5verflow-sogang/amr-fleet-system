@@ -327,7 +327,8 @@ def extended_fault_meta(params: dict) -> dict:
     if float(params.get('blackout_s', 0)) > 0:
         meta['blackout'] = {'at_s': float(params.get('blackout_at_s', 0)), 'duration_s': float(params['blackout_s']),
                             'period_s': float(params.get('blackout_period_s', 0)),
-                            'robot': str(params.get('blackout_robot', 'all'))}
+                            'robot': str(params.get('blackout_robot', 'all')),
+                            'mode': str(params.get('blackout_mode', 'delay'))}
     return meta
 
 

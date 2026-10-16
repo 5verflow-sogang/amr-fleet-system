@@ -31,6 +31,8 @@ params:
   blackout_at_s: 0
   blackout_period_s: 0
   blackout_robot: all
+  # 끊김 동안 메시지: delay(기본, 다시 이어지면 순서대로 전달) 또는 drop(버림, 더 가혹한 비교 조건)
+  blackout_mode: delay
   algorithm: nearest
   # 가짜 로봇 수 (1~10). 연구 1 규모 곡선: --set num_robots=3/5/7/10. 장애 주입기·녹화·지표 변환이 같은 수를 쓴다
   num_robots: 5
@@ -53,6 +55,7 @@ processes:
       ros2 launch amr_fault_injector fault_injector.launch.py delay_ms:={delay_ms} loss_pct:={loss_pct} seed:={seed}
       num_robots:={num_robots} allow_out_of_spec:={allow_out_of_spec} blackout_s:={blackout_s}
       blackout_at_s:={blackout_at_s} blackout_period_s:={blackout_period_s} blackout_robot:={blackout_robot}
+      blackout_mode:={blackout_mode}
     settle_s: 2
   - name: fake_robots
     cmd: >-

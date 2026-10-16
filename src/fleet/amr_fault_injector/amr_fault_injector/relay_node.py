@@ -59,6 +59,8 @@ class FaultInjector(Node):
             loss_pct=self.declare_parameter('loss_pct', 0.0).value,
             allow_out_of_spec=self.declare_parameter('allow_out_of_spec', False).value,
             blackout=blackout,
+            # delay: 다시 이어지면 쌓인 것을 순서대로 전달 (기본), drop: 끊김 동안 나갈 메시지를 버림
+            blackout_mode=self.declare_parameter('blackout_mode', 'delay').value,
         )
         seed = self.declare_parameter('seed', 0).value
         tick_ms = self.declare_parameter('tick_ms', 1.0).value
@@ -92,7 +94,7 @@ class FaultInjector(Node):
             f'중계 시작: topics={topics}, robots={robot_ids}, '
             f'delay_ms={config.delay_ms}, loss_pct={config.loss_pct}, seed={seed}'
             + (' (명세 밖 조건 허용)' if config.allow_out_of_spec else '')
-            + (f', 끊김 {blackout_robot} {blackout}' if blackout else ''))
+            + (f', 끊김 {blackout_robot} {blackout} ({config.blackout_mode})' if blackout else ''))
 
     def _on_message(self, links, data: bytes):
         now = time.monotonic()

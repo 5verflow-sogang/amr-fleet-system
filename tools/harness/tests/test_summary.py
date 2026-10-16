@@ -89,7 +89,7 @@ def test_fault_meta_extended_conditions():
     assert (f['loss_pct'], f['allow_out_of_spec']) == (30.0, True) and 'blackout' not in f
     f = fault_meta({**base, 'blackout_s': '3', 'blackout_at_s': '60', 'blackout_period_s': '120',
                     'blackout_robot': 'amr_03'})
-    assert f['blackout'] == {'at_s': 60.0, 'duration_s': 3.0, 'period_s': 120.0, 'robot': 'amr_03'}
+    assert f['blackout'] == {'at_s': 60.0, 'duration_s': 3.0, 'period_s': 120.0, 'robot': 'amr_03', 'mode': 'delay'}
     # YAML false가 문자열 'False'로 렌더링돼도 거짓
     assert fault_meta({'delay_ms': '0', 'allow_out_of_spec': 'False'})['allow_out_of_spec'] is False
 
