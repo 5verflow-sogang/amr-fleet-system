@@ -148,7 +148,7 @@ gcloud storage ls gs://amr-fleet-results/runs/
 gcloud storage cp -r gs://amr-fleet-results/runs/<시나리오>-<라벨>/<날짜>_<실행 번호> .
 ```
 
-`index.csv` 마지막 열 `machine_type`과 결과 폴더의 `machine_type.txt`에 러너 VM 종류가 남는다 (10/16부터, 그 전 줄은 빈칸).
+`index.csv` 끝 열 `machine_type`·`triggered_by`, 결과 폴더의 `machine_type.txt`, `meta.json` `host`의 `runner_machine`·`runner_slot`·`triggered_by`에 러너 VM 종류·슬롯·실행한 계정이 남는다 (10/16부터, 그 전 줄은 빈칸). Actions 실행 이름과 Discord 요약 첫 줄에도 보인다.
 
 ### 슬롯
 

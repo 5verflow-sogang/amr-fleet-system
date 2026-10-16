@@ -65,6 +65,8 @@ def context_line(run_dirs: Iterable[Path]) -> str:
         parts.append(f"GCP {host['runner_machine']} ({host.get('cores', '?')}코어{slot})")
     elif host.get('hostname'):
         parts.append(f"{host['hostname']} ({host.get('cores', '?')}코어)")
+    if host.get('triggered_by'):
+        parts.append(f"실행 {host['triggered_by']}")
     fault = first.get('fault')
     if fault:
         parts.append(f"지연 {fault['delay_ms']:g} ms · 손실 {fault['loss_pct']:g}%")

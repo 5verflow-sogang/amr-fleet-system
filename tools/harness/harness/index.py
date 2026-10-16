@@ -14,7 +14,8 @@ from .summary import load_meta
 
 # 새 열은 끝에만 더한다. 예전 머리줄로 쓰인 파일은 append가 새 머리줄로 옮긴다
 INDEX_HEADER = ['date', 'scenario', 'label', 'delay_ms', 'loss_pct', 'kill_robot', 'kill_robot_at_s',
-                'relay_auction', 'repeats', 'completed', 'git_sha', 'path', 'actions_url', 'machine_type']
+                'relay_auction', 'repeats', 'completed', 'git_sha', 'path', 'actions_url', 'machine_type',
+                'triggered_by']
 
 
 def _num(value) -> str:
@@ -26,7 +27,7 @@ def _flag(value) -> str:
 
 
 def index_row(run_dirs: Iterable[Path], path: str, actions_url: str = '',
-              date: Optional[str] = None, machine_type: str = '') -> list[str]:
+              date: Optional[str] = None, machine_type: str = '', triggered_by: str = '') -> list[str]:
     """반복 폴더들(같은 실행) → index.csv 한 줄. 조건은 첫 반복의 meta.json에서 읽는다.
 
     machine_type: 러너 VM 종류 (예: c2d-standard-8). 지연을 재는 실험은 기계가 다르면 값이 달라져서,
@@ -52,6 +53,7 @@ def index_row(run_dirs: Iterable[Path], path: str, actions_url: str = '',
         path,
         actions_url,
         machine_type,
+        triggered_by,
     ]
 
 

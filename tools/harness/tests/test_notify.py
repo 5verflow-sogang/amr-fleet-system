@@ -49,21 +49,23 @@ def test_context_line_shows_gcp_runner(tmp_path):
     """GCP 러너면 컨테이너 호스트 이름 대신 VM 종류·슬롯을 보인다 (지연 실험은 기계가 다르면 비교 불가)."""
     run = make_run(tmp_path, 'r0')
     meta = json.loads((run / 'meta.json').read_text())
-    meta['host'].update(runner_machine='c2d-standard-8', runner_slot='b2', cores=8)
+    meta['host'].update(runner_machine='c2d-standard-8', runner_slot='b2', cores=8, triggered_by='alswl722')
     (run / 'meta.json').write_text(json.dumps(meta))
-    assert context_line([run]) == \
-        '하네스 결과 · git `abc1234` · GCP c2d-standard-8 (8코어, 슬롯 b2) · 지연 100 ms · 손실 5% · seed 1~1'
+    assert context_line([run]) == ('하네스 결과 · git `abc1234` · GCP c2d-standard-8 (8코어, 슬롯 b2) · 실행 alswl722'
+                                   ' · 지연 100 ms · 손실 5% · seed 1~1')
 
 
 def test_host_info_records_runner(monkeypatch):
     from harness.runner import host_info
     monkeypatch.delenv('HARNESS_RUNNER_MACHINE', raising=False)
     monkeypatch.delenv('HARNESS_RUNNER_SLOT', raising=False)
-    assert 'runner_machine' not in host_info()
+    monkeypatch.delenv('HARNESS_TRIGGERED_BY', raising=False)
+    assert not {'runner_machine', 'runner_slot', 'triggered_by'} & set(host_info())
     monkeypatch.setenv('HARNESS_RUNNER_MACHINE', 'c2d-standard-8')
     monkeypatch.setenv('HARNESS_RUNNER_SLOT', 'b1')
+    monkeypatch.setenv('HARNESS_TRIGGERED_BY', 'noeyish')
     info = host_info()
-    assert (info['runner_machine'], info['runner_slot']) == ('c2d-standard-8', 'b1')
+    assert (info['runner_machine'], info['runner_slot'], info['triggered_by']) == ('c2d-standard-8', 'b1', 'noeyish')
 
 
 def test_payload_shows_kpi_and_failures(tmp_path):

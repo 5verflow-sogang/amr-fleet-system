@@ -289,8 +289,10 @@ def host_info() -> dict:
         mem_kb = 0
     info = {'cpu': cpu, 'cores': os.cpu_count(), 'mem_gb': round(mem_kb / 1024 / 1024, 1),
             'gpu': shutil.which('nvidia-smi') is not None, 'hostname': platform.node()}
-    # GCP 러너면 VM 종류·슬롯 (fleet-test.yml → docker_run.sh). 지연을 재는 실험은 기계가 다르면 값이 달라져서 남긴다
-    for key, env in (('runner_machine', 'HARNESS_RUNNER_MACHINE'), ('runner_slot', 'HARNESS_RUNNER_SLOT')):
+    # GCP 러너면 VM 종류·슬롯과 실행한 사람 (fleet-test.yml → docker_run.sh). 지연을 재는 실험은 기계가 다르면
+    # 값이 달라져서 남기고, 러너를 같이 쓰니 누가 넣은 실행인지 남긴다
+    for key, env in (('runner_machine', 'HARNESS_RUNNER_MACHINE'), ('runner_slot', 'HARNESS_RUNNER_SLOT'),
+                     ('triggered_by', 'HARNESS_TRIGGERED_BY')):
         if os.environ.get(env):
             info[key] = os.environ[env]
     return info

@@ -30,7 +30,8 @@ run-name: >-
     contains(format(' {0} ', github.event.inputs.params), ' slot=b1 ') && 'b1 (c2d-8)' ||
     contains(format(' {0} ', github.event.inputs.params), ' slot=b2 ') && 'b2 (c2d-8)' ||
     contains(format(' {0} ', github.event.inputs.params), ' slot=b3 ') && 'b3 (c2d-8)' ||
-    contains(format(' {0} ', github.event.inputs.params), ' slot=b4 ') && 'b4 (c2d-8)' || 'a (n2d-16)' }}
+    contains(format(' {0} ', github.event.inputs.params), ' slot=b4 ') && 'b4 (c2d-8)' || 'a (n2d-16)' }} · ${{
+    github.triggering_actor }}
 
 on:
   workflow_dispatch:
@@ -187,6 +188,7 @@ jobs:
           # meta.json host와 Discord 요약에 남긴다 (컨테이너 안에서는 VM 종류를 알 수 없다)
           HARNESS_RUNNER_MACHINE: ${{ needs.start-runner.outputs.machine }}
           HARNESS_RUNNER_SLOT: ${{ needs.start-runner.outputs.slot }}
+          HARNESS_TRIGGERED_BY: ${{ github.triggering_actor }}
           # 있으면 하네스가 끝날 때 요약을 실험 결과 채널로 보낸다 (tools/harness README "Discord 알림")
           HARNESS_DISCORD_WEBHOOK: ${{ secrets.HARNESS_DISCORD_WEBHOOK }}
         run: |
@@ -297,7 +299,7 @@ jobs:
             rm -f "$local_index"
             if [ "$gen" != 0 ]; then gcloud storage cp "$index" "$local_index"; fi
             python3 tools/harness/index_run.py "$RUN_DIR" --index "$local_index" --path "$dest" --url "$RUN_URL" \
-              --machine "$MACHINE"
+              --machine "$MACHINE" --by "$GITHUB_TRIGGERING_ACTOR"
             if gcloud storage cp "$local_index" "$index" --if-generation-match="$gen"; then break; fi
             echo "index.csv가 그사이 바뀜, 다시 시도 ($attempt/3)"
           done

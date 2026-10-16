@@ -27,7 +27,7 @@ def test_index_row(tmp_path):
     runs = [make_run(tmp_path, f'r{i}') for i in range(3)] + [make_run(tmp_path, 'r3', outcome='timeout')]
     row = index_row(runs, 'gs://b/runs/x/', 'https://github.com/a/b/actions/runs/1', date='2026-10-10T15:00:00Z')
     assert row == ['2026-10-10T15:00:00Z', 'fleet_fake', 'before_d100', '100', '0', '', '', '', '4', '3',
-                   'b918867', 'gs://b/runs/x/', 'https://github.com/a/b/actions/runs/1', '']
+                   'b918867', 'gs://b/runs/x/', 'https://github.com/a/b/actions/runs/1', '', '']
     with pytest.raises(ValueError):
         index_row([tmp_path / 'nothing'], 'gs://b/')
 
@@ -91,10 +91,11 @@ def test_cli(tmp_path, capsys):
     make_run(out, 'fleet_fake-before_d100_20261010_00')
     (out / 'summary_fleet_fake-before_d100.md').write_text('## x\n')
     index = tmp_path / 'index.csv'
-    assert main([str(out), '--index', str(index), '--path', 'gs://b/runs/y/', '--machine', 'c2d-standard-8']) == 0
+    assert main([str(out), '--index', str(index), '--path', 'gs://b/runs/y/', '--machine', 'c2d-standard-8',
+                 '--by', 'alswl722']) == 0
     rows = list(csv.reader(index.open()))
     row = dict(zip(rows[0], rows[1]))
     assert [row[k] for k in ('scenario', 'label', 'delay_ms', 'loss_pct', 'repeats', 'completed', 'git_sha')] \
         == ['fleet_fake', 'before_d100', '100', '0', '1', '1', 'b918867']
     assert row['path'] == 'gs://b/runs/y/'
-    assert row['machine_type'] == 'c2d-standard-8'
+    assert (row['machine_type'], row['triggered_by']) == ('c2d-standard-8', 'alswl722')
