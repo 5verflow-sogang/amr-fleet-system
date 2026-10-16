@@ -69,7 +69,12 @@ class MarkerDetector:
                       dist: Optional[np.ndarray] = None) -> Optional[Tuple[Vec3, Vec3]]:
         """판(왼쪽 ids[0], 오른쪽 ids[1], 중심 간격 spacing) 하나의 PnP → (왼쪽, 오른쪽) 마커 중심.
         두 장이 다 안 보이면 None."""
-        corners = self.detect(gray)
+        return self.board_from_corners(self.detect(gray), camera_matrix, ids, marker_size, spacing, dist)
+
+    def board_from_corners(self, corners: Dict[int, np.ndarray], camera_matrix: np.ndarray, ids: Tuple[int, int],
+                           marker_size: float, spacing: float,
+                           dist: Optional[np.ndarray] = None) -> Optional[Tuple[Vec3, Vec3]]:
+        """board_centers와 같고, 검출(detect)은 이미 한 것을 받는다. 판 여러 개를 한 번 검출로 풀 때 쓴다."""
         if ids[0] not in corners or ids[1] not in corners:
             return None
         h, half = marker_size / 2, spacing / 2
