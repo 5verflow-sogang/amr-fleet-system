@@ -48,3 +48,6 @@ dist/
 # 주차별 명세 템플릿·주차별 명세 (PM 로컬용)
 docs/template/
 docs/plan/
+
+# tools/dev/nav_check.sh 실행 로그
+tools/dev/logs/
