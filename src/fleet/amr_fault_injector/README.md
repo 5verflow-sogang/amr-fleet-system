@@ -4,7 +4,7 @@
 - 빌드 타입: ament_python
 - 책임: 통신 지연·패킷 손실·중앙 서버 강제종료 장애 주입기
 
-> 상태: 고정 지연·손실 중계 구현(2주차). 서버 강제종료는 `amr_fleet_manager` launch에 구현(3주차, 아래 미결 표). 분산 경매 토픽(로봇 → 로봇) 중계는 `relay_auction`으로 켠다(10/7). 지터, 로봇 → 서버 방향은 미구현(D8).
+> 상태: 고정 지연·손실 중계 구현(2주차). 서버 강제종료는 `amr_fleet_manager` launch에 구현(3주차, 아래 미결 표). 분산 경매 토픽(로봇 → 로봇) 중계는 `relay_auction`으로 켠다(10/7). 연구 1 확장 조건(손실 50%까지, 연속 끊김)은 `allow_out_of_spec`으로 켠다(10/16, 아래 "확장 조건"). 지터, 로봇 → 서버 방향은 미구현(D8).
 
 ## 방식 결정: ROS 레이어 중계
 
@@ -45,11 +45,35 @@
 | `topics` | 위 4개 | `config/fault_injector.yaml` | 중계할 토픽 (`/fleet/` 뒤 이름) |
 | `tick_ms` | `1.0` | `config/fault_injector.yaml` | 지연 큐 확인 주기. 주입 지연 오차가 최대 이만큼 |
 | `delay_ms` | `100.0` | launch 인자 | 고정 지연 (ms). 명세 범위 0~500 밖이면 노드가 시작하지 않는다 |
-| `loss_pct` | `0.0` | launch 인자 | 손실률 (%). 명세 범위 0~10 밖이면 노드가 시작하지 않는다 |
+| `loss_pct` | `0.0` | launch 인자 | 손실률 (%). 명세 범위 0~10 밖이면 노드가 시작하지 않는다 (`allow_out_of_spec`이면 0~50) |
 | `seed` | `0` | launch 인자 | 손실 난수 seed. 하네스 반복 번호 |
 | `relay_auction` | `false` | launch 인자 | 분산 경매 토픽도 중계한다. 분산·하이브리드 비교군 실험에서 켠다. 중앙집중 실험은 끈다 |
+| `allow_out_of_spec` | `false` | launch 인자 | 연구 1 확장 조건 허용: 손실 0~50%, 연속 끊김. 지연 상한 500 ms는 그대로 |
+| `blackout_s` | `0.0` | launch 인자 | 연속 끊김 길이 (s). 0이면 끔. `allow_out_of_spec` 필요 |
+| `blackout_at_s` | `0.0` | launch 인자 | 주입기 시작부터 첫 끊김까지 (s) |
+| `blackout_period_s` | `0.0` | launch 인자 | 끊김 반복 주기 (s, 끊김 길이보다 길게). 0이면 한 번 |
+| `blackout_robot` | `all` | launch 인자 | 끊김을 걸 로봇 (`amr_03` 등). `all`이면 모든 로봇의 링크 |
 
 QoS는 4개 토픽 모두 Reliable, depth 10이다. [api.md 6절](../../../docs/api.md#6-qos-기본값)이 정해지면 토픽별로 맞춘다.
+
+## 확장 조건 (연구 1, 10/16)
+
+명세 범위(지연 0~500 ms, 손실 0~10%)에서는 중앙집중의 할당 재전송(1 s × 5회)이 손실을 다 막아서(5번 모두 잃을 확률 10%에서 0.001%) 분산과의 역전 지점이 나오지 않을 가능성이 크다. 분산 할당 선행연구는 손실 5~70%(Lott·Honary 2026), 완전 단절까지(Otte 외 2020)를 쓰고, 창고 Wi-Fi 핸드오프 중 RTT는 120~480 ms로 잰 사례가 있다(Sathya 외 2026). 그래서 실험용 플래그를 켤 때만 아래를 허용한다. 기본값은 지금처럼 명세 밖을 거부한다.
+
+| 조건 | 값 | 모사하는 상황 |
+| --- | --- | --- |
+| 손실 | 30%, 50% | 혼잡하거나 신호가 약한 무선 구간 |
+| 연속 끊김 | 1·3·10 s | Wi-Fi 핸드오프, 음영 지역. 고르게 흩어진 손실과 달리 재전송 구간 전체가 막힌다 |
+
+- 끊김 구간에 들어온 메시지는 모두 버린다(지연 큐에도 넣지 않음). 손실 난수는 끊김 구간에서도 똑같이 뽑아서, 같은 `seed`면 끊김 밖의 손실 위치가 끊김 없는 실행과 같다. 끊김 유무를 짝지어 비교할 수 있다.
+- 끊김 시각은 주입기 시작부터 잰 실제 시간(단조 시계)이다. 하네스 `fleet_fake`는 `--set allow_out_of_spec=true --set blackout_s=3 --set blackout_at_s=60 --set blackout_period_s=120`처럼 준다. `meta.json` `fault`에 `allow_out_of_spec`, `blackout`이 남는다.
+- KPI 판정(명세 9절 지연 100 ms 등)은 명세 범위 결과로만 하고, 확장 조건은 연구 결과로만 보고한다.
+
+```bash
+ros2 launch amr_fault_injector fault_injector.launch.py allow_out_of_spec:=true loss_pct:=30.0
+ros2 launch amr_fault_injector fault_injector.launch.py allow_out_of_spec:=true \
+    blackout_s:=3.0 blackout_at_s:=60.0 blackout_period_s:=120.0 blackout_robot:=amr_03
+```
 
 ## 실행
 

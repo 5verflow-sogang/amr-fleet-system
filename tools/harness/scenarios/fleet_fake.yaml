@@ -23,6 +23,14 @@ params:
   kill_robot: none
   kill_robot_at_s: -1
   restart_robot_after_s: -1
+  # 연구 1 확장 조건 (명세 밖, 장애 주입기 README "확장 조건"). allow_out_of_spec=true일 때만 손실 50%까지와
+  # 연속 끊김을 허용한다. 끊김: 주입기 시작 blackout_at_s초부터 blackout_s초 (blackout_period_s마다 되풀이, 0이면 한 번),
+  # blackout_robot(all 또는 amr_NN)의 중계 링크. 라벨에 조건을 넣는다 (예: --label central_bo3_p120)
+  allow_out_of_spec: false
+  blackout_s: 0
+  blackout_at_s: 0
+  blackout_period_s: 0
+  blackout_robot: all
   algorithm: nearest
   # 가짜 로봇 수 (1~10). 연구 1 규모 곡선: --set num_robots=3/5/7/10. 장애 주입기·녹화·지표 변환이 같은 수를 쓴다
   num_robots: 5
@@ -43,7 +51,8 @@ processes:
   - name: fault_injector
     cmd: >-
       ros2 launch amr_fault_injector fault_injector.launch.py delay_ms:={delay_ms} loss_pct:={loss_pct} seed:={seed}
-      num_robots:={num_robots}
+      num_robots:={num_robots} allow_out_of_spec:={allow_out_of_spec} blackout_s:={blackout_s}
+      blackout_at_s:={blackout_at_s} blackout_period_s:={blackout_period_s} blackout_robot:={blackout_robot}
     settle_s: 2
   - name: fake_robots
     cmd: >-

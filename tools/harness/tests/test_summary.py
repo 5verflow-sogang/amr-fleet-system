@@ -82,6 +82,18 @@ def test_render_and_fault_meta():
     assert (f['kill_robot'], f['kill_robot_at_s']) == ('amr_03', 120.0)
 
 
+def test_fault_meta_extended_conditions():
+    """확장 조건 params가 있는 시나리오(fleet_fake)만 allow_out_of_spec·blackout을 남긴다."""
+    base = {'delay_ms': '100', 'loss_pct': '30', 'allow_out_of_spec': 'true', 'blackout_s': '0'}
+    f = fault_meta(base)
+    assert (f['loss_pct'], f['allow_out_of_spec']) == (30.0, True) and 'blackout' not in f
+    f = fault_meta({**base, 'blackout_s': '3', 'blackout_at_s': '60', 'blackout_period_s': '120',
+                    'blackout_robot': 'amr_03'})
+    assert f['blackout'] == {'at_s': 60.0, 'duration_s': 3.0, 'period_s': 120.0, 'robot': 'amr_03'}
+    # YAML false가 문자열 'False'로 렌더링돼도 거짓
+    assert fault_meta({'delay_ms': '0', 'allow_out_of_spec': 'False'})['allow_out_of_spec'] is False
+
+
 def test_fleet_task_and_recovery_metrics(tmp_path):
     run = tmp_path / 'r'
     run.mkdir()

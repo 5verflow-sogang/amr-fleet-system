@@ -311,7 +311,24 @@ def fault_meta(params: dict) -> Optional[dict]:
             'restart_after_s': float(params.get('restart_after_s', -1)),
             # 로봇 장애 (fake_robots.launch.py kill_robot). 없으면 none, -1
             'kill_robot': str(params.get('kill_robot', 'none')),
-            'kill_robot_at_s': float(params.get('kill_robot_at_s', -1))}
+            'kill_robot_at_s': float(params.get('kill_robot_at_s', -1)),
+            **extended_fault_meta(params)}
+
+
+def _flag(value) -> bool:
+    return str(value).strip().lower() in ('1', 'true', 'yes')
+
+
+def extended_fault_meta(params: dict) -> dict:
+    """연구 1 확장 조건 (장애 주입기 allow_out_of_spec·blackout). 그 params를 가진 시나리오만 남긴다."""
+    if 'allow_out_of_spec' not in params:
+        return {}
+    meta = {'allow_out_of_spec': _flag(params['allow_out_of_spec'])}
+    if float(params.get('blackout_s', 0)) > 0:
+        meta['blackout'] = {'at_s': float(params.get('blackout_at_s', 0)), 'duration_s': float(params['blackout_s']),
+                            'period_s': float(params.get('blackout_period_s', 0)),
+                            'robot': str(params.get('blackout_robot', 'all'))}
+    return meta
 
 
 def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[ConfigOverrides] = None,
