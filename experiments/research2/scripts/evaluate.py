@@ -4,6 +4,7 @@
     uv run python scripts/evaluate.py raw/proposed_s0_* --mass-obs exact plus30 minus30 unknown
     uv run python scripts/evaluate.py raw/proposed_s0_* --scenarios mixed            # 학습과 같은 섞인 분포
     uv run python scripts/evaluate.py --rule mass_agnostic mass_aware --eval-list 100   # 규칙 정책 (참고 기준선)
+    uv run python scripts/evaluate.py --dwa b1 b2 --eval-list 0 --mass-obs exact plus30 minus30 unknown  # DWA
 
 결과: raw/eval/<시각>/episodes.csv와 meta.json (실행마다 새 폴더라 앞 결과를 덮어쓰지 않는다).
 
@@ -14,6 +15,10 @@ scenario_seed)로 구분한다.
 --rule은 학습 없이 규칙 정책(payload_nav/rule_policy.py, 참고 기준선)을 같은 시나리오·열로 평가한다.
 학습 시드가 없으므로 --eval-list가 필요하다. 환경 설정은 --config(기본 config/env_v0.toml)의 [env]다.
 run·variant 열은 rule_agnostic / rule_aware다.
+
+--dwa는 DWA 비교군 B1·B2(payload_nav/dwa_policy.py, #41 C++ 원본을 그대로 부름)를 같은 방식으로 평가한다.
+--rule처럼 --eval-list가 필요하고, 시드 k의 RL과 짝지으려면 목록 k로 평가한다 (실험 설계 2절). run·variant 열은
+dwa_b1 / dwa_b2다. B1은 질량을 보지 않으므로 정보 조건을 exact로 한 번만 평가한다.
 """
 
 import argparse
@@ -40,6 +45,7 @@ from payload_nav import (EnvConfig, PayloadNavEnv, RobotParams, ScenarioConfig, 
                          eval_seed, load_experiment)
 from payload_nav.seeds import EVAL_LIST_STRIDE, EVAL_SEED_BASE  # noqa: E402
 from payload_nav.evaluation import run_policy_episode  # noqa: E402
+from payload_nav.dwa_policy import DWA_VARIANTS, DwaPolicy  # noqa: E402
 from payload_nav.rule_policy import RULE_VARIANTS, RulePolicy  # noqa: E402
 
 
@@ -100,8 +106,10 @@ def main():
     parser.add_argument('runs', nargs='*', type=Path, help='학습 실행 폴더 (raw/<variant>_s<seed>_<시각>)')
     parser.add_argument('--rule', nargs='+', choices=list(RULE_VARIANTS), default=[],
                         help='규칙 정책(참고 기준선)도 평가한다. --eval-list가 필요하다')
+    parser.add_argument('--dwa', nargs='+', choices=list(DWA_VARIANTS), default=[],
+                        help='DWA 비교군(B1·B2)도 평가한다. --eval-list가 필요하다')
     parser.add_argument('--config', type=Path, default=ROOT / 'config' / 'env_v0.toml',
-                        help='--rule이 쓰는 환경 설정 ([env])')
+                        help='--rule·--dwa가 쓰는 환경 설정 ([env])')
     parser.add_argument('--masses', type=float, nargs='+', default=[0, 2, 10, 25, 15, 30])
     parser.add_argument('--episodes', type=int, default=200, help='시나리오 종류마다 에피소드 수')
     parser.add_argument('--eval-list', type=int, default=None,
@@ -123,14 +131,14 @@ def main():
     if (out_dir / 'episodes.csv').exists():
         sys.exit(f'이미 결과가 있다: {out_dir / "episodes.csv"} (다른 --out-dir을 쓴다)')
 
-    if args.rule and args.eval_list is None:
-        sys.exit('--rule은 학습 시드가 없어 --eval-list가 필요하다 (튜닝은 100번대, 0~9는 최종 평가용)')
+    if (args.rule or args.dwa) and args.eval_list is None:
+        sys.exit('--rule·--dwa는 학습 시드가 없어 --eval-list가 필요하다 (튜닝은 100번대, 0~9는 최종 평가용)')
 
     rows = []
     runs = [r for r in args.runs if (r / f'{args.checkpoint}_model.zip').exists()]
     for skipped in sorted(set(args.runs) - set(runs)):
         print(f'건너뜀: {skipped} ({args.checkpoint}_model.zip 없음, 학습이 끝나지 않은 실행)')
-    if not runs and not args.rule:
+    if not runs and not args.rule and not args.dwa:
         sys.exit('평가할 실행이 없다')
     run_meta = []
     targets = []   # (run 이름, variant, 학습 시드, 평가 목록, env, act(obs), 정보 조건 목록)
@@ -159,7 +167,7 @@ def main():
         def act(obs, model=model, vecnorm=vecnorm):
             return model.predict(vecnorm.normalize_obs(obs), deterministic=True)[0]
         targets.append((run.name, meta['variant'], train_seed, eval_list, env, act, run_labels))
-    if args.rule:
+    if args.rule or args.dwa:
         base = load_experiment(args.config).env
     for rule in args.rule:
         policy = RulePolicy(mass_aware=rule == 'mass_aware')
@@ -172,6 +180,19 @@ def main():
             'eval_list': args.eval_list,
             'scenario_seeds': [eval_seed(args.eval_list, 0), eval_seed(args.eval_list, args.episodes - 1)],
             'rule': {'name': rule, **asdict(policy)},
+            'config': str(args.config), 'config_toml_sha256': sha256(args.config),
+        })
+        targets.append((policy.name, policy.name, None, args.eval_list, env,
+                        lambda obs, policy=policy, env=env: policy(env), run_labels))
+    for variant in args.dwa:
+        policy = DwaPolicy(variant=variant)
+        env = PayloadNavEnv(replace(base, observe_mass=policy.mass_aware))
+        run_labels = labels if policy.mass_aware else ['exact']   # B1은 질량을 보지 않는다
+        run_meta.append({
+            'run': policy.name, 'variant': policy.name, 'train_seed': None, 'mass_obs': run_labels,
+            'eval_list': args.eval_list,
+            'scenario_seeds': [eval_seed(args.eval_list, 0), eval_seed(args.eval_list, args.episodes - 1)],
+            'dwa': {'variant': variant, **asdict(policy.params)},
             'config': str(args.config), 'config_toml_sha256': sha256(args.config),
         })
         targets.append((policy.name, policy.name, None, args.eval_list, env,
@@ -204,7 +225,8 @@ def main():
         'eval': {'episodes': args.episodes, 'masses': args.masses, 'scenarios': args.scenarios,
                  'mass_obs': labels, 'checkpoint': args.checkpoint,
                  'eval_seed_base': EVAL_SEED_BASE, 'eval_list_stride': EVAL_LIST_STRIDE,
-                 'eval_list_override': args.eval_list, 'rules': args.rule},
+                 'eval_list_override': args.eval_list, 'rules': args.rule,
+                 'dwa': args.dwa},
         'runs': run_meta,
         'host': {'machine': platform.machine(), 'processor': platform.processor() or None,
                  'cpu_count': os.cpu_count(), 'torch_threads': torch.get_num_threads()},
