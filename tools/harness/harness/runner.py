@@ -287,8 +287,13 @@ def host_info() -> dict:
                       if line.startswith('MemTotal'))
     except (OSError, StopIteration):
         mem_kb = 0
-    return {'cpu': cpu, 'cores': os.cpu_count(), 'mem_gb': round(mem_kb / 1024 / 1024, 1),
+    info = {'cpu': cpu, 'cores': os.cpu_count(), 'mem_gb': round(mem_kb / 1024 / 1024, 1),
             'gpu': shutil.which('nvidia-smi') is not None, 'hostname': platform.node()}
+    # GCP 러너면 VM 종류·슬롯 (fleet-test.yml → docker_run.sh). 지연을 재는 실험은 기계가 다르면 값이 달라져서 남긴다
+    for key, env in (('runner_machine', 'HARNESS_RUNNER_MACHINE'), ('runner_slot', 'HARNESS_RUNNER_SLOT')):
+        if os.environ.get(env):
+            info[key] = os.environ[env]
+    return info
 
 
 def git_sha() -> str:

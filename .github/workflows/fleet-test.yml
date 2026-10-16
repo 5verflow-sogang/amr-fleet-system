@@ -24,6 +24,13 @@
 # 포크 PR의 pull_request 이벤트는 GCP 로그인 토큰을 받지 못하므로 수동 실행만 둔다.
 # PR 코드를 돌리려면 ref에 refs/pull/<번호>/head를 넣는다.
 name: Fleet Regression Test
+# Actions 목록에서 어떤 조건·러너로 돌았는지 바로 보이게 (슬롯은 concurrency와 같은 식으로 params에서 읽는다)
+run-name: >-
+  Fleet ${{ github.event.inputs.scenario }} · ${{ github.event.inputs.label || 'default' }} · 슬롯 ${{
+    contains(format(' {0} ', github.event.inputs.params), ' slot=b1 ') && 'b1 (c2d-8)' ||
+    contains(format(' {0} ', github.event.inputs.params), ' slot=b2 ') && 'b2 (c2d-8)' ||
+    contains(format(' {0} ', github.event.inputs.params), ' slot=b3 ') && 'b3 (c2d-8)' ||
+    contains(format(' {0} ', github.event.inputs.params), ' slot=b4 ') && 'b4 (c2d-8)' || 'a (n2d-16)' }}
 
 on:
   workflow_dispatch:
@@ -92,6 +99,7 @@ jobs:
     outputs:
       name: ${{ steps.name.outputs.name }}
       machine: ${{ steps.slot.outputs.machine }}
+      slot: ${{ steps.slot.outputs.slot }}
     steps:
       - id: name
         run: echo "name=fleet-runner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
@@ -113,6 +121,7 @@ jobs:
           esac
           echo "slot $slot → $machine"
           echo "machine=$machine" >> "$GITHUB_OUTPUT"
+          echo "slot=$slot" >> "$GITHUB_OUTPUT"
 
       - uses: google-github-actions/auth@v3
         with:
@@ -175,6 +184,9 @@ jobs:
           PARAMS: ${{ github.event.inputs.params }}
           HARNESS_FRESH: ${{ inputs.fresh && '1' || '0' }}
           HARNESS_IMAGE: amr-fleet-system:latest
+          # meta.json host와 Discord 요약에 남긴다 (컨테이너 안에서는 VM 종류를 알 수 없다)
+          HARNESS_RUNNER_MACHINE: ${{ needs.start-runner.outputs.machine }}
+          HARNESS_RUNNER_SLOT: ${{ needs.start-runner.outputs.slot }}
           # 있으면 하네스가 끝날 때 요약을 실험 결과 채널로 보낸다 (tools/harness README "Discord 알림")
           HARNESS_DISCORD_WEBHOOK: ${{ secrets.HARNESS_DISCORD_WEBHOOK }}
         run: |
