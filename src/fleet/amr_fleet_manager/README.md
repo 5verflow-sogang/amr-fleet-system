@@ -176,7 +176,7 @@
 | `assignment.reclaim_timeout_s` | `5.0` | 작업을 맡은 로봇의 `RobotState`가 이 시간 동안 끊기면 로봇이 죽은 것으로 보고 작업을 회수해 다시 할당한다 (실제 시간, s). 0이면 끄기. `robot_timeout_s` 이상 |
 | `robot_timeout_s` | `3.0` | 이 시간 동안 `RobotState`가 없으면 후보에서 뺀다 (s) |
 | `resend.interval_s` | `1.0` | Ack 없을 때 재전송 간격 (s) |
-| `resend.max_resends` | `5` | 재전송 한도. 첫 발송은 세지 않는다 |
+| `resend.max_resends` | `5` | 재전송 한도. 첫 발송은 세지 않는다. launch 인자 `max_resends`(연구 1 재전송 비교) |
 | `heartbeat_period_s` | `0.2` | heartbeat 주기 (s). 연구 1 실험 변수 |
 | `task_table_period_s` | `1.0` | 작업표 방송 주기 (s) |
 | `traffic.lease_s` | `5.0` | 구역 허가 유효 시간 (노드 시계, s) |
@@ -202,6 +202,7 @@
 | `step_hz` | `10.0` | 이동 계산 주기 |
 | `server_topic_prefix` | `/fleet` | 서버 → 로봇 토픽 앞부분. launch 인자 `relayed:=true`면 `fleet` |
 | `claim_timeout_s` | `5.0` | 다른 로봇의 작업 주장을 세는 시간. 그 로봇의 RobotState가 이만큼 끊기면 뺀다 (서버 `reclaim_timeout_s`와 같게, 실제 시간) |
+| `pause_on_link_loss_s` | `0.0` | 서버 heartbeat가 이 시간(실제 시간, s) 동안 안 오면 하던 작업을 멈추고 기다린다(끊기면 멈춤 정책, 상용 AMR 기본 동작을 흉내). 0이면 끊겨도 계속 수행. launch 인자 같은 이름 |
 
 `task_generator` ([launch/task_generator.launch.py](launch/task_generator.launch.py) 인자)
 

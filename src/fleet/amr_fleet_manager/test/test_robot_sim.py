@@ -2,7 +2,7 @@
 
 import pytest
 
-from amr_fleet_manager.robot_sim import DUPLICATE, NEW, STALE, AssignmentFilter, TaskRun, assignment_source
+from amr_fleet_manager.robot_sim import DUPLICATE, NEW, STALE, AssignmentFilter, LinkWatch, TaskRun, assignment_source
 
 
 # 경매로 로봇 k가 수락한 명령 번호 (amr_fleet_decentralized #211: 1,000,000 + k × 100,000 + 순번)
@@ -99,3 +99,15 @@ def test_zero_dwell_skips_wait():
 def test_invalid_speed():
     with pytest.raises(ValueError):
         TaskRun((0.0, 0.0), None, (1.0, 0.0), speed=0.0, dwell_s=0.0)
+
+
+def test_link_watch_pauses_after_heartbeat_gap():
+    """끊기면 멈춤 정책: heartbeat가 pause_after_s 동안 안 오면 끊김. 처음 heartbeat 전에는 끊긴 것으로 보지 않는다."""
+    w = LinkWatch(2.0)
+    assert not w.lost(100.0)
+    w.on_heartbeat(10.0)
+    assert not w.lost(11.9)
+    assert w.lost(12.0)
+    w.on_heartbeat(20.0)
+    assert not w.lost(20.1)
+    assert not LinkWatch(0.0).lost(1e9)      # 0이면 끄기 (끊겨도 계속)
