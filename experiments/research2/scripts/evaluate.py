@@ -18,7 +18,7 @@ run·variant 열은 rule_agnostic / rule_aware다.
 
 --dwa는 DWA 비교군 B1·B2(payload_nav/dwa_policy.py, #41 C++ 원본을 그대로 부름)를 같은 방식으로 평가한다.
 --rule처럼 --eval-list가 필요하고, 시드 k의 RL과 짝지으려면 목록 k로 평가한다 (실험 설계 2절). run·variant 열은
-dwa_b1 / dwa_b2다. B1은 질량을 보지 않으므로 정보 조건을 exact로 한 번만 평가한다.
+dwa_b1 / dwa_b2, variant 열은 b1 / b2다(analyze.py가 이 이름으로 H1·H2를 판정한다). B1은 질량을 보지 않으므로 정보 조건을 exact로 한 번만 평가한다.
 """
 
 import argparse
@@ -189,13 +189,14 @@ def main():
         env = PayloadNavEnv(replace(base, observe_mass=policy.mass_aware))
         run_labels = labels if policy.mass_aware else ['exact']   # B1은 질량을 보지 않는다
         run_meta.append({
-            'run': policy.name, 'variant': policy.name, 'train_seed': None, 'mass_obs': run_labels,
+            'run': policy.name, 'variant': variant, 'train_seed': None, 'mass_obs': run_labels,
             'eval_list': args.eval_list,
             'scenario_seeds': [eval_seed(args.eval_list, 0), eval_seed(args.eval_list, args.episodes - 1)],
             'dwa': {'variant': variant, **asdict(policy.params)},
             'config': str(args.config), 'config_toml_sha256': sha256(args.config),
         })
-        targets.append((policy.name, policy.name, None, args.eval_list, env,
+        # variant 열은 명세 비교군 이름 b1·b2 (analyze.py가 이 이름으로 H1·H2를 판정한다), run 열은 dwa_b1·dwa_b2
+        targets.append((policy.name, variant, None, args.eval_list, env,
                         lambda obs, policy=policy, env=env: policy(env), run_labels))
 
     for name, variant, train_seed, eval_list, env, act, run_labels in targets:

@@ -99,3 +99,24 @@ def test_runs_whole_episode():
         if terminated or truncated:
             break
     assert info['outcome'] in ('success', 'timeout', 'overshoot', 'collision')
+
+
+def test_evaluate_output_is_read_by_analyze(tmp_path):
+    # evaluate.py --dwa 결과의 variant 열이 analyze.py가 H1·H2에 쓰는 이름(b1·b2)이어야 한다 (본 실험 시험 실행에서 발견)
+    import importlib.util
+    from pathlib import Path
+    import subprocess
+    import sys
+    root = Path(__file__).resolve().parents[1]
+    out = tmp_path / 'dwa'
+    subprocess.run([sys.executable, str(root / 'scripts' / 'evaluate.py'), '--dwa', 'b1', 'b2', '--eval-list', '150',
+                    '--episodes', '1', '--masses', '10', '--scenarios', 'S1', '--mass-obs', 'exact', 'unknown',
+                    '--out-dir', str(out)], check=True, cwd=root, capture_output=True)
+    spec = importlib.util.spec_from_file_location('analyze', root / 'scripts' / 'analyze.py')
+    analyze = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(analyze)
+    rows, _ = analyze.load([out / 'episodes.csv'])
+    assert {r['variant'] for r in rows} == {'b1', 'b2'}
+    import csv
+    with (out / 'episodes.csv').open(newline='', encoding='utf-8') as fh:
+        assert {r['run'] for r in csv.DictReader(fh)} == {'dwa_b1', 'dwa_b2'}

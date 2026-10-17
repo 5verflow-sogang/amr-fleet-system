@@ -75,10 +75,25 @@ def test_check_env():
     (True, None, (0.0, 0.0)),           # 제안 + 평가 "정보 없음": 모름. 0 kg과 구분된다
 ])
 def test_mass_slots(observe, mass_obs, expected):
-    env = PayloadNavEnv(EnvConfig(observe_mass=observe))
+    env = PayloadNavEnv(EnvConfig(observe_mass=observe, mass_obs_mode='mass'))
     obs, _ = env.reset(seed=0, options={'payload_kg': 10.0, 'mass_obs_kg': mass_obs})
     assert obs.shape == (OBS_DIM,) == (48,)
     assert (obs[MASS], obs[KNOWN]) == pytest.approx(expected)
+
+
+
+@pytest.mark.parametrize('mass_obs', [0.0, 10.0, 25.0, None])
+def test_mass_slot_brake_ratio(mass_obs):
+    # brake_ratio: 질량 대신 빈 차 대비 제동 능력 a_max(m) / a_max(0). 모르면 그대로 (0, 0)
+    env = PayloadNavEnv(EnvConfig(observe_mass=True, mass_obs_mode='brake_ratio'))
+    obs, _ = env.reset(seed=0, options={'payload_kg': 10.0, 'mass_obs_kg': mass_obs})
+    if mass_obs is None:
+        assert (obs[MASS], obs[KNOWN]) == pytest.approx((0.0, 0.0))
+    else:
+        ratio = max_linear_accel(mass_obs) / max_linear_accel(0.0)
+        assert (obs[MASS], obs[KNOWN]) == pytest.approx((ratio, 1.0))
+    with pytest.raises(ValueError, match='mass_obs_mode'):
+        PayloadNavEnv(EnvConfig(mass_obs_mode='speed'))
 
 
 def test_path_wall_and_time_slots():
@@ -318,9 +333,24 @@ def test_config_variants():
     assert (r1.mass_mode, r1.fixed_mass, r1.observe_mass) == ('fixed', 0.0, False)
     assert (r2.mass_mode, r2.observe_mass, r2.mass_hide_prob) == ('random', False, 0.0)
     assert (prop.mass_mode, prop.observe_mass, prop.mass_hide_prob) == ('random', True, 0.2)
+    # 질량 칸 표현은 제안 방법만 brake_ratio (질량 입력 튜닝). R1·R2는 질량 칸이 늘 (0, 0)이라 영향 없다
+    assert (r1.mass_obs_mode, r2.mass_obs_mode, prop.mass_obs_mode) == ('mass', 'mass', 'brake_ratio')
     # 비교군끼리 질량 설정 말고는 같다
-    assert replace(r2, observe_mass=True, mass_hide_prob=0.2) == prop
+    assert replace(r2, observe_mass=True, mass_hide_prob=0.2, mass_obs_mode='brake_ratio') == prop
     assert exp.ppo['net_arch'] == [128, 128]
+
+
+def test_old_run_config_reads_as_mass_slot():
+    # mass_obs_mode가 생기기 전 실행의 config.json(env)은 m / norm_mass로 학습했다. 다시 평가할 때 그대로 읽혀야 한다
+    import importlib.util
+    from dataclasses import asdict
+    spec = importlib.util.spec_from_file_location(
+        'evaluate', Path(__file__).resolve().parents[1] / 'scripts' / 'evaluate.py')
+    evaluate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(evaluate)
+    old = asdict(EnvConfig(observe_mass=True, mass_hide_prob=0.2))
+    del old['mass_obs_mode']
+    assert evaluate.load_env_config(old).mass_obs_mode == 'mass'
 
 
 def test_config_rejects_unknown_key(tmp_path):
@@ -438,6 +468,39 @@ def test_reward_prefers_safe_cruise_speed():
     safe, fast = check_reward.check(CONFIG, lists=(100,), episodes=20, scales=(1.0, 1.5))
     assert safe['collision_rate'] == 0.0 and fast['collision_rate'] > 0.0
     assert safe['return'] > fast['return']
+
+
+# ---------------------------------------------------------------- 비교군 공통 검증 (train_ppo.py eval_common/*)
+def _train_ppo_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('train_ppo', Path(__file__).resolve().parents[1] / 'scripts'
+                                                  / 'train_ppo.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_common_eval_same_conditions_for_every_variant():
+    exp = load_experiment(CONFIG)
+    train_ppo = _train_ppo_module()
+    # R1(0 kg 고정)도 학습 질량 전부로, 제안 방법은 가림 없이 정확한 질량으로 잰다
+    for variant, known in (('r1', False), ('r2', False), ('proposed', True)):
+        cfg = env_config_for(exp, variant)
+        model, venv, _ = make_model(cfg, 1, 0, {'n_steps': 64, 'batch_size': 64}, [8], verbose=0)
+        cb = train_ppo.CommonEvalCallback(cfg, venv, every_steps=1, episodes=8)
+        assert cb.masses == exp.env.train_masses
+        env = PayloadNavEnv(cfg)
+        scenarios = []
+        for i in range(8):
+            _, info = env.reset(seed=cb.seed_base + i // 4, options={'payload_kg': cb.masses[i % 4]})
+            assert info['payload_kg'] == cb.masses[i % 4] and info['mass_known'] is known
+            scenarios.append(env.scenario)
+        # 질량끼리 같은 시나리오 (0~3번이 시나리오 0, 4~7번이 시나리오 1)
+        assert scenarios[0] == scenarios[3] and scenarios[4] == scenarios[7] and scenarios[0] != scenarios[4]
+        out = cb.evaluate(model)
+        assert set(out) == {'success_rate', 'collision_rate', 'timeout_rate', 'mean_time_s',
+                            'speed_0kg', 'speed_2kg', 'speed_10kg', 'speed_25kg', 'collision_25kg'}
+        assert all(0.0 <= out[k] <= 1.0 for k in ('success_rate', 'collision_rate', 'collision_25kg'))
 
 
 # ---------------------------------------------------------------- v1 튜닝 옵션
