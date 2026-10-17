@@ -1,0 +1,87 @@
+# v2 트랙 B 후보 B1: 학습 시나리오의 돌발 장애물 확률만 0.7 -> 0.9 (env_v0.toml 복사, 나머지 같음).
+# 학습: train_ppo.py --config config/env_v2_b1.toml --val-config config/env_v0.toml. 평가는 env_v0 시나리오
+
+# 연구 2 v0 실험 설정 (명세서 4장). scripts/train_ppo.py --config로 고른다.
+# 값을 바꿔 실험할 때는 이 파일을 복사해 이름을 바꿔 쓴다 (예: env_v0_collision20.toml).
+# 실행마다 쓴 설정이 raw/<실행>/config.toml에 그대로 복사된다.
+# 로봇 물리값(토크·질량·크기)은 URDF(#44)와 제동 모델(#55)에서 온 상수라 코드(payload_nav/dynamics.py)에 둔다.
+
+[env]
+dt = 0.1                 # s. 정책 주기 10 Hz
+substeps = 4             # 적분·충돌 판정 분할 (2 m/s에서 5 cm 간격)
+max_steps = 300          # 30 s
+train_masses = [0.0, 2.0, 10.0, 25.0]   # kg. 학습 질량 (이산 균등). 15·30 kg은 평가 전용
+# 보상 (v1 튜닝 후보 G, README "v1 튜닝 기록"). 괄호 안은 v0 값(F)
+# 일반적인 DRL 내비게이션 보상(도착 +100, 충돌 −100, 진행 5/m, 시간 −0.1/스텝)에 충돌 속도 벌점을 더했다.
+# F는 무거워도 속도를 줄이지 않았다. 질량은 보상에 넣지 않는다 (동역학과 관측으로만 들어간다)
+w_progress = 5.0         # /m (2.0)
+w_time = 0.1             # /스텝 (0.01)
+w_near = 0.0             # /m (0.5) 안전거리 침범량. 장애물만, 벽은 제외. 템플릿에 없어 끈다
+d_safe = 0.3             # m. 명세 긴급정지 거리 (w_near가 0이라 보상에는 안 쓰인다)
+w_smooth = 0.0           # (0.05) 정규화된 명령 변화량(|Δv|/v_max + |Δω|/ω_max)당. 템플릿에 없어 끈다
+r_collision = -100.0     # (−40) 장애물·벽 충돌
+w_impact = 40.0          # (0) 충돌 순간 속도 [m/s]당 추가 벌점 (충돌 보상 = r_collision − w_impact·|v|)
+r_arrival = 100.0        # (10)
+r_timeout = -25.0        # (−10) 시간 초과 (남은 시간을 관측하므로 종료로 처리). 시간 초과 : 충돌 = 1 : 4 유지 (같게 두면 부딪히는 것과 늦는 것이 같아진다)
+w_overshoot = 12.5       # /m (5.0) 지나친 거리의 최댓값이 늘어난 만큼만. 지나침 ÷ 진행 = 2.5 유지
+# 종료 조건
+arrive_dist = 0.2        # m
+arrive_speed = 0.1       # m/s
+overshoot_fail = 2.0     # m. 목표를 이만큼 지나면 실패로 끝낸다
+stop_speed = 0.1         # m/s. 실제 제동 거리 측정에서 "멈춤" 기준 (도착 기준과 같음)
+reaction_s = 0.1         # s. "설 수 있었는지" 판정의 반응 지연 (정책 주기 한 번)
+# 관측 정규화 상수 (질량과 무관한 고정값)
+norm_goal_dist = 20.0
+norm_obs_dist = 10.0
+norm_rel_speed = 3.0
+norm_radius = 1.0
+norm_mass = 30.0
+mass_obs_mode = "mass"     # 질량 칸: "mass"(m / norm_mass) 또는 "brake_ratio"(a_max(m) / a_max(0 kg)). 제안 방법은 [variants.proposed]
+norm_lateral = 1.0       # m. 경로 옆 오차, 벽까지 거리
+
+[env.scenario]
+goal_distance = [10.0, 20.0]       # m
+initial_speed = [1.0, 2.0]         # m/s (명세 S1 주행 속도)
+heading_noise_deg = 5.0
+start_lateral_offset = 0.1         # m. 출발 위치의 통로 중심선 대비 옆 오차
+corridor_width = [1.2, 2.0]        # m. 통로 폭 (로봇 폭 0.4 m). 좁으면 멈춰 선 장애물을 비켜 갈 수 없다
+popout_prob = 0.9
+popout_gap = [0.5, 1.5]            # m. 나타날 때 로봇 앞면~장애물 표면 (명세 S1)
+popout_speed = [0.3, 1.5]          # m/s. 비킬 때 옆으로 움직이는 속도 (명세 동적 장애물 속도)
+popout_lateral_offset = 0.2        # m. 로봇 진행선 기준
+standing_prob = 0.5                # 돌발 장애물 중 진행선에 멈춰 서는 비율 (나머지는 가로지름)
+standing_dwell_s = [1.5, 3.0]      # s. 멈춰 서 있는 시간. 지나면 옆으로 비킨다
+obstacle_radius = [0.25, 0.4]      # m
+# 출현 지점: 경로상 x_trigger를 지나면 나타난다. 최소 x_trigger = v0·반응지연 + v0²/(2·a(25 kg)) + 여유
+guard_payload_kg = 25.0            # 출현 지점 기준 질량 (가장 무거운 학습 질량)
+guard_reaction_s = 0.1             # s
+guard_margin_m = 0.5               # m
+trigger_goal_margin_m = 3.0        # m. 출현 지점은 목표보다 이만큼 앞
+
+[ppo]
+n_envs = 8
+learning_rate = 3e-4
+n_steps = 2048
+batch_size = 64
+n_epochs = 10
+gamma = 0.99
+gae_lambda = 0.95
+clip_range = 0.2
+target_kl = 0.02         # 정책 변화량 상한. 없으면 KL이 0.15 넘게 커지며 학습이 무너졌다 (README "v0 튜닝 기록")
+net_arch = [128, 128]    # Actor·Critic 각각
+
+# 비교군 (명세서 4-4절). [env] 위에 덮어쓴다. 신경망 구조·보상·이력은 모두 같다
+[variants.r1]            # 0 kg 고정 학습, 질량 모름
+mass_mode = "fixed"
+fixed_mass = 0.0
+observe_mass = false
+
+[variants.r2]            # 질량 무작위 학습, 질량 모름
+mass_mode = "random"
+observe_mass = false
+
+[variants.proposed]      # 질량 무작위 학습 + 질량 관측 (20% 확률로 가려 "모름"도 학습)
+mass_mode = "random"
+observe_mass = true
+mass_hide_prob = 0.2
+mass_obs_mode = "brake_ratio"    # 빈 차 대비 제동 능력. 제안 방법 질량 입력 튜닝(README)에서 규칙대로 골랐다
