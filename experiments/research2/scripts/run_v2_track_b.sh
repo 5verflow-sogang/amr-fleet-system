@@ -29,12 +29,12 @@ git rev-parse HEAD > "$D/commit.txt"
 git rev-parse --abbrev-ref HEAD >> "$D/commit.txt"
 git status --porcelain -- . ':!raw' > "$D/dirty.txt"
 if [ -s "$D/dirty.txt" ]; then err "커밋 안 된 변경이 있다 (dirty.txt). 중단"; exit 1; fi
-shasum -a 256 config/env_v0.toml config/env_v2_b1.toml config/env_v2_b2.toml > "$D/config_sha256.txt"
+shasum -a 256 config/env_v0.toml config/env_v2_b1.toml config/env_v2_b2.toml config/env_v3_info.toml > "$D/config_sha256.txt"
 if ! uv run --frozen --with pytest pytest tests -q > "$D/pytest.log" 2>&1; then err "테스트 실패 (pytest.log). 중단"; exit 1; fi
 log "커밋 $(head -1 $D/commit.txt), 테스트 $(tail -1 $D/pytest.log)"
 
 config_of() {   # 후보 → 학습 설정
-  case "$1" in base) echo config/env_v0.toml ;; b1) echo config/env_v2_b1.toml ;; b2) echo config/env_v2_b2.toml ;; esac
+  case "$1" in base) echo config/env_v0.toml ;; b1) echo config/env_v2_b1.toml ;; b2) echo config/env_v2_b2.toml ;; info) echo config/env_v3_info.toml ;; esac
 }
 export -f config_of
 
