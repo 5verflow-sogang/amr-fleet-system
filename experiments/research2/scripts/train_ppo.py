@@ -3,15 +3,20 @@
     uv run python scripts/train_ppo.py --variant proposed --seed 0
     uv run python scripts/train_ppo.py --variant r2 --seed 0 --steps 200000   # 짧게 (파이프라인 확인)
     uv run python scripts/train_ppo.py --variant r2 --config config/env_v0_collision20.toml
+    uv run python scripts/train_ppo.py --variant r2 --config config/env_v2_b1.toml --val-config config/env_v0.toml
 
 비교군·환경·PPO 설정은 설정 파일(기본 config/env_v0.toml)에서 읽는다.
-결과: raw/<variant>_s<seed>_<시각>/ 아래 config.toml(쓴 설정 원본), config.json(풀어 쓴 값),
+결과: raw/<variant>_s<seed>[_<tag>]_<시각>/ 아래 config.toml(쓴 설정 원본), config.json(풀어 쓴 값),
 best_model.zip, best_vecnormalize.pkl, final_model.zip, final_vecnormalize.pkl, TensorBoard 로그.
+
+--val-config를 주면 검증(eval/*: 체크포인트 선택, eval_common/*)의 시나리오 분포([env.scenario])를 그 파일
+것으로 쓴다. 학습 시나리오만 바꾼 후보가 기준선과 같은 시나리오로 체크포인트를 고르게 하려는 것이다.
+안 주면 학습 시나리오 그대로다. 평가(evaluate.py)는 늘 --config의 시나리오를 쓴다.
 """
 
 import argparse
 from collections import deque
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import datetime
 import json
 import os
@@ -138,6 +143,11 @@ def main():
     parser.add_argument('--eval-episodes', type=int, default=100)
     parser.add_argument('--common-eval-episodes', type=int, default=200,
                         help='비교군 공통 검증(eval_common/*) 횟수. 학습 질량에 고르게 나눈다. 0이면 끈다')
+    parser.add_argument('--tag', default='',
+                        help='결과 폴더 이름에 붙일 후보 이름 (raw/<variant>_s<seed>_<tag>_<시각>). 같은 비교군·시드를 '
+                             '설정만 바꿔 동시에 돌릴 때 구분용')
+    parser.add_argument('--val-config', type=Path, default=None,
+                        help='검증(eval/*·eval_common/*) 시나리오([env.scenario])를 이 파일 것으로. 기본은 학습 시나리오')
     parser.add_argument('--threads', type=int, default=int(os.environ.get('OMP_NUM_THREADS', '2')))
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
@@ -149,21 +159,37 @@ def main():
     if args.n_envs:
         n_envs = args.n_envs
     net_arch = list(ppo.pop('net_arch', [64, 64]))
+    # 검증 환경: 시나리오만 --val-config 것, 나머지(관측·보상·질량)는 학습과 같다
+    val_config = env_config
+    if args.val_config:
+        val_config = replace(env_config, scenario=load_experiment(args.val_config).env.scenario)
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
-    run_dir = ROOT / 'raw' / f'{args.variant}_s{args.seed}_{stamp}'
-    run_dir.mkdir(parents=True)
+    tag = f'_{args.tag}' if args.tag else ''
+    # 같은 이름(같은 초에 시작한 같은 비교군·시드)이 이미 있으면 번호를 붙인다. 동시 실행이 서로 덮어쓰지 않게
+    run_dir = ROOT / 'raw' / f'{args.variant}_s{args.seed}{tag}_{stamp}'
+    for n in range(2, 100):
+        try:
+            run_dir.mkdir(parents=True)
+            break
+        except FileExistsError:
+            run_dir = ROOT / 'raw' / f'{args.variant}_s{args.seed}{tag}_{stamp}-{n}'
+    else:
+        sys.exit(f'결과 폴더를 만들지 못했다: {run_dir}')
     shutil.copyfile(args.config, run_dir / 'config.toml')
     # 학습 환경 시드는 학습 시드끼리 겹치지 않게 따로 둔다 (seeds.py, training.py)
     model, venv, env_seed = make_model(env_config, n_envs, args.seed, ppo, net_arch,
                                        tensorboard_log=str(run_dir / 'tb'))
     (run_dir / 'config.json').write_text(json.dumps(
-        {'variant': args.variant, 'args': {**vars(args), 'config': str(args.config)},
+        {'variant': args.variant,
+         'args': {**vars(args), 'config': str(args.config),
+                  'val_config': str(args.val_config) if args.val_config else None},
          'n_envs': n_envs, 'env_seed_base': env_seed, 'ppo': {**ppo, 'net_arch': net_arch},
-         'env': asdict(env_config), 'torch': torch.__version__}, indent=2, ensure_ascii=False))
-    callback = SuccessEvalCallback(env_config, venv, run_dir, args.eval_every, args.eval_episodes)
+         'env': asdict(env_config), 'val_scenario': asdict(val_config.scenario),
+         'torch': torch.__version__}, indent=2, ensure_ascii=False))
+    callback = SuccessEvalCallback(val_config, venv, run_dir, args.eval_every, args.eval_episodes)
     callbacks = [callback, OutcomeLogCallback()]
     if args.common_eval_episodes > 0:
-        callbacks.append(CommonEvalCallback(env_config, venv, args.eval_every, args.common_eval_episodes))
+        callbacks.append(CommonEvalCallback(val_config, venv, args.eval_every, args.common_eval_episodes))
     model.learn(args.steps, callback=callbacks)
     model.save(run_dir / 'final_model.zip')
     venv.save(str(run_dir / 'final_vecnormalize.pkl'))

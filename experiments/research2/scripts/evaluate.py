@@ -2,7 +2,7 @@
 
     uv run python scripts/evaluate.py raw/proposed_s0_* raw/r2_s0_*                  # S1·S2 각 200개
     uv run python scripts/evaluate.py raw/proposed_s0_* --mass-obs exact plus30 minus30 unknown
-    uv run python scripts/evaluate.py raw/proposed_s0_* --scenarios mixed            # 학습과 같은 섞인 분포
+    uv run python scripts/evaluate.py raw/proposed_s0_* --scenarios mixed            # S1·S2를 popout_prob(--config)대로 섞은 분포
     uv run python scripts/evaluate.py --rule mass_agnostic mass_aware --eval-list 100   # 규칙 정책 (참고 기준선)
     uv run python scripts/evaluate.py --dwa b1 b2 --eval-list 0 --mass-obs exact plus30 minus30 unknown  # DWA
 
@@ -11,6 +11,10 @@
 평가 시나리오는 학습 시드 k마다 다른 목록 k를 쓴다 (seeds.py). 같은 시나리오 시드는 질량·비교군·정보
 조건과 관계없이 같은 시나리오다. S1과 S2는 같은 시드 번호를 쓰므로 시나리오는 (scenario,
 scenario_seed)로 구분한다.
+
+시나리오 분포([env.scenario])는 학습한 실행도 --config 것을 쓴다. 학습 시나리오만 바꾼 후보(예: 돌발 장애물을
+더 자주)도 기준선·DWA와 같은 시나리오로 평가해야 짝지어 비교할 수 있다. 시나리오 밖의 환경 설정(관측·보상·
+로봇)은 실행의 config.json 그대로다. 학습 시나리오가 평가 시나리오와 다르면 알리고 meta.json에 남긴다.
 
 --rule은 학습 없이 규칙 정책(payload_nav/rule_policy.py, 참고 기준선)을 같은 시나리오·열로 평가한다.
 학습 시드가 없으므로 --eval-list가 필요하다. 환경 설정은 --config(기본 config/env_v0.toml)의 [env]다.
@@ -58,6 +62,16 @@ def load_env_config(d: dict) -> EnvConfig:
     env['scenario'] = tuples(ScenarioConfig, env['scenario'])
     env['robot'] = tuples(RobotParams, env['robot'])
     return tuples(EnvConfig, env)
+
+
+def eval_env_config(train_env: dict, base: EnvConfig):
+    """학습한 실행의 평가 환경: 실행의 설정(config.json의 env)에 시나리오만 --config 것을 쓴다.
+
+    학습 시나리오를 바꾼 후보도 기준선·DWA와 같은 시나리오로 평가해야 짝지어 비교할 수 있다.
+    (평가 환경 설정, 학습 시나리오가 평가 시나리오와 달랐는지)를 돌려준다.
+    """
+    train_cfg = load_env_config(train_env)
+    return replace(train_cfg, scenario=base.scenario), train_cfg.scenario != base.scenario
 
 
 # 시나리오 이름 → reset 옵션 popout (S1: 돌발 장애물, S2: 정밀 정지, mixed: 학습과 같이 popout_prob)
@@ -109,7 +123,8 @@ def main():
     parser.add_argument('--dwa', nargs='+', choices=list(DWA_VARIANTS), default=[],
                         help='DWA 비교군(B1·B2)도 평가한다. --eval-list가 필요하다')
     parser.add_argument('--config', type=Path, default=ROOT / 'config' / 'env_v0.toml',
-                        help='--rule·--dwa가 쓰는 환경 설정 ([env])')
+                        help='--rule·--dwa가 쓰는 환경 설정 ([env]). 평가 시나리오([env.scenario])는 '
+                             '학습한 실행도 이 파일 것을 쓴다')
     parser.add_argument('--masses', type=float, nargs='+', default=[0, 2, 10, 25, 15, 30])
     parser.add_argument('--episodes', type=int, default=200, help='시나리오 종류마다 에피소드 수')
     parser.add_argument('--eval-list', type=int, default=None,
@@ -140,13 +155,19 @@ def main():
         print(f'건너뜀: {skipped} ({args.checkpoint}_model.zip 없음, 학습이 끝나지 않은 실행)')
     if not runs and not args.rule and not args.dwa:
         sys.exit('평가할 실행이 없다')
+    base = load_experiment(args.config).env
     run_meta = []
     targets = []   # (run 이름, variant, 학습 시드, 평가 목록, env, act(obs), 정보 조건 목록)
+    tags = {}      # run 이름 → train_ppo --tag (규칙·DWA·태그 없는 실행은 빈칸)
     for run in runs:
         meta = json.loads((run / 'config.json').read_text())
         train_seed = meta['args']['seed']
         eval_list = train_seed if args.eval_list is None else args.eval_list
-        env = PayloadNavEnv(load_env_config(meta['env']))
+        env_config, scenario_differs = eval_env_config(meta['env'], base)
+        if scenario_differs:
+            print(f'알림: {run.name}은 학습 시나리오가 평가 시나리오({args.config.name})와 다르다. '
+                  f'평가는 {args.config.name} 것을 쓴다')
+        env = PayloadNavEnv(env_config)
         model = PPO.load(run / f'{args.checkpoint}_model.zip', device='cpu')
         vecnorm = VecNormalize.load(str(run / f'{args.checkpoint}_vecnormalize.pkl'),
                                     DummyVecEnv([lambda: PayloadNavEnv(env.cfg)]))
@@ -154,21 +175,22 @@ def main():
         # 질량을 보지 않는 비교군(R1·R2)은 정보 조건이 결과를 바꾸지 않는다
         run_labels = labels if env.cfg.observe_mass else ['exact']
         ckpt = run / f'{args.checkpoint}_model.zip'
+        # train_ppo --tag (후보 이름). variant는 후보여도 그대로라, 기준선과 후보를 이 열로 가른다
+        tags[run.name] = meta['args'].get('tag') or ''
         run_meta.append({
-            'run': str(run), 'variant': meta['variant'], 'train_seed': train_seed,
+            'run': str(run), 'variant': meta['variant'], 'tag': tags[run.name], 'train_seed': train_seed,
             'env_seed_base': meta.get('env_seed_base'), 'mass_obs': run_labels,
             'eval_list': eval_list,
             'scenario_seeds': [eval_seed(eval_list, 0), eval_seed(eval_list, args.episodes - 1)],
             'checkpoint': str(ckpt), 'checkpoint_sha256': sha256(ckpt),
             'vecnormalize_sha256': sha256(run / f'{args.checkpoint}_vecnormalize.pkl'),
             'config_toml_sha256': sha256(run / 'config.toml'),
+            'train_scenario_differs': scenario_differs,
         })
 
         def act(obs, model=model, vecnorm=vecnorm):
             return model.predict(vecnorm.normalize_obs(obs), deterministic=True)[0]
         targets.append((run.name, meta['variant'], train_seed, eval_list, env, act, run_labels))
-    if args.rule or args.dwa:
-        base = load_experiment(args.config).env
     for rule in args.rule:
         policy = RulePolicy(mass_aware=rule == 'mass_aware')
         # observe_mass는 mass_known 열에만 쓰인다 (규칙 정책은 관측 벡터를 읽지 않는다)
@@ -208,7 +230,7 @@ def main():
                         options = {'payload_kg': mass, 'mass_obs_kg': mass_obs_for(label, mass),
                                    'popout': SCENARIOS[scenario]}
                         result = run_policy_episode(act, env, seed, options)
-                        rows.append({'run': name, 'variant': variant,
+                        rows.append({'run': name, 'variant': variant, 'tag': tags.get(name, ''),
                                      'train_seed': train_seed, 'eval_list': eval_list,
                                      'scenario': scenario, 'scenario_seed': seed, 'mass_obs': label,
                                      'mass_obs_kg': options['mass_obs_kg'], 'episode': ep, **result})
@@ -227,7 +249,8 @@ def main():
                  'mass_obs': labels, 'checkpoint': args.checkpoint,
                  'eval_seed_base': EVAL_SEED_BASE, 'eval_list_stride': EVAL_LIST_STRIDE,
                  'eval_list_override': args.eval_list, 'rules': args.rule,
-                 'dwa': args.dwa},
+                 'dwa': args.dwa, 'config': str(args.config),
+                 'config_toml_sha256': sha256(args.config)},
         'runs': run_meta,
         'host': {'machine': platform.machine(), 'processor': platform.processor() or None,
                  'cpu_count': os.cpu_count(), 'torch_threads': torch.get_num_threads()},
