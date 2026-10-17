@@ -252,6 +252,13 @@ double DwaPlanner::admissibleVelocity(double obstacle_distance) const
   return std::sqrt(2.0 * std::max(config_.acc_v, 0.0) * std::max(obstacle_distance, 0.0));
 }
 
+double DwaPlanner::goalStoppingVelocity(double goal_distance) const
+{
+  const double a = std::max(config_.acc_v, 0.0);
+  const double a_dt = a * config_.dt;
+  return std::max(0.0, std::sqrt(a_dt * a_dt + 2.0 * a * std::max(goal_distance, 0.0)) - a_dt);
+}
+
 double DwaPlanner::headingCost(const TrajectoryPoint & trajectory_end, const Point2D & goal) const
 {
   const double desired_yaw = std::atan2(goal.y - trajectory_end.y, goal.x - trajectory_end.x);
@@ -362,7 +369,7 @@ DwaCommand DwaPlanner::selectCommand(
     // 목표 앞 감속: acc_v로 줄여 최종 목표에 서는 속도까지만 샘플링한다. 그만큼 빨리 못
     // 줄이면(윈도우 최저 속도가 더 높으면) 최대 감속인 최저 속도만 남긴다.
     const double d_goal = std::hypot(final_goal->x - state.x, final_goal->y - state.y);
-    const double goal_cap = admissibleVelocity(d_goal);
+    const double goal_cap = goalStoppingVelocity(d_goal);
     window.max_v = std::max(window.min_v, std::min(window.max_v, goal_cap));
   }
 

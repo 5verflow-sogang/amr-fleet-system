@@ -159,9 +159,10 @@ struct DwaConfig
   // --- 목표 앞 감속 ---
 
   // true면 최종 목표(computeVelocityCommand의 final_goal, 지역 waypoint가 아님)까지 직선
-  // 거리 d_goal에서 샘플 선속도를 |v| <= sqrt(2*acc_v*d_goal)로 제한한다 - acc_v로 감속해
-  // 목표에 서는 속도. 동적 윈도우의 최저 속도가 이보다 높으면(그만큼 빨리 못 줄이면) 최저
-  // 속도 하나만 샘플링한다. final_goal을 안 넘기거나 false면 기존 동작과 결과가 같다.
+  // 거리 d_goal에서 샘플 선속도를 |v|*dt + v^2/(2*acc_v) <= d_goal인 속도로 제한한다 - 이번 제어
+  // 주기(dt) 동안 그 속도로 간 뒤 acc_v로 감속해 목표에 서는 속도(goalStoppingVelocity). 동적
+  // 윈도우의 최저 속도가 이보다 높으면(그만큼 빨리 못 줄이면) 최저 속도 하나만 샘플링한다.
+  // final_goal을 안 넘기거나 false면 기존 동작과 결과가 같다.
   bool use_goal_slowdown = true;
 
   // --- 경로 추종 heading 기준점 (경로를 받는 computeVelocityCommand에서만 쓴다) ---
@@ -253,6 +254,11 @@ public:
   // sqrt(2*acc_v*obstacle_distance). use_admissible_velocity가 켜져 있으면 이 값보다 빠른
   // 샘플은 후보에서 빠진다.
   double admissibleVelocity(double obstacle_distance) const;
+
+  // 목표 앞 감속 상한: |v|*dt + v^2/(2*acc_v) <= goal_distance인 최대 속도
+  // -acc_v*dt + sqrt((acc_v*dt)^2 + 2*acc_v*goal_distance). sqrt(2*acc_v*d)(연속 시간)를 그대로 쓰면
+  // 매 주기 그 속도로 dt만큼 더 가는 만큼 상한보다 늦게 줄어, 최대로 감속해도 목표를 지나친다(#216).
+  double goalStoppingVelocity(double goal_distance) const;
 
   const DwaConfig & config() const noexcept {return config_;}
 

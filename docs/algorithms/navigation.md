@@ -231,7 +231,7 @@ heading 비중(0.8)이 압도적이라 벽으로 곧장 가다 막판에 못 꺾
 **목표 앞 감속** (`use_goal_slowdown`, 기본 true): 최종 목표(전역 경로 끝, 지역 waypoint가 아님)까지
 직선 거리 `d_goal`에서 샘플 선속도를 `v <= sqrt(2·acc_v·d_goal)`로 제한한다(`computeVelocityCommand`의
 `final_goal` 인자. 경로를 받는 버전은 경로 마지막 점을 쓴다). 동적 윈도우 최저 속도가 이보다
-높으면 최저 속도 하나만 샘플링한다. 감속은 `acc_v` 그대로 쓰고, `xy_goal_tolerance` 안에서는 지금처럼
+높으면 최저 속도 하나만 샘플링한다. #216부터 상한은 연속 시간 `sqrt(2·acc_v·d_goal)`이 아니라 이번 제어 주기를 넣은 `|v|·dt + v²/(2·acc_v) <= d_goal`의 최대 속도(`goalStoppingVelocity`)다 - 연속 시간 식은 매 주기 그 속도로 `dt`만큼 더 가는 만큼 상한보다 늦게 줄어, 최대로 감속해도 목표를 지나쳤다(연구 2 S2 25 kg 30/30 지나침, `GoalSlowdownStopsBeforeGoalAccountingForControlPeriod`). 감속은 `acc_v` 그대로 쓰고, `xy_goal_tolerance` 안에서는 지금처럼
 플러그인이 v=0으로 끊고 `rotateToGoalYaw`로 돈다.
 
 다만 이것도 기존 heading 항에 가려지는 경우가 많다. 궤적 끝이 목표를 넘으면 heading 비용이 최대(1.0)라

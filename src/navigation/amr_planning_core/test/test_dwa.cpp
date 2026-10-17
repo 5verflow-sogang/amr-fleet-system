@@ -974,4 +974,20 @@ TEST(DwaPlannerTest, DynamicObstacleAlreadyWithinMarginAllowsTrajectoriesMovingA
   }
 }
 
+TEST(DwaPlannerTest, GoalSlowdownStopsBeforeGoalAccountingForControlPeriod)
+{
+  // #216: 상한을 sqrt(2*acc_v*d)(연속 시간)로 두면 매 주기 그 속도로 dt만큼 더 가는 만큼 상한보다 늦게
+  // 줄어, 최대로 감속해도 목표를 지나쳤다(연구 2 S2 25 kg, 고친 heading으로 빨리 도착하자 드러남).
+  // 상한이 |v|*dt + v^2/(2*acc_v) <= d이면 도착 판정 때 그 자리에서 acc_v로 서도 목표를 안 넘는다.
+  DwaConfig config = makeFastConfig();
+  config.v_samples = 21;
+  config.acc_v = 1.113;  // 연구 2 25 kg
+  const PathRunResult result = followStraightPath(config, 2.0, 12.0);
+  ASSERT_TRUE(result.reached);
+  EXPECT_LE(result.stop_x, 12.0 + 1e-6);
+  EXPECT_NEAR(DwaPlanner(config).goalStoppingVelocity(0.0), 0.0, 1e-12);
+  const double v = DwaPlanner(config).goalStoppingVelocity(2.0);
+  EXPECT_NEAR(v * config.dt + v * v / (2.0 * config.acc_v), 2.0, 1e-9);
+}
+
 }  // namespace amr_planning_core
