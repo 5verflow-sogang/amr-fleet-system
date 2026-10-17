@@ -493,6 +493,30 @@ uv run python scripts/judge_v2_tuning.py raw/v2_track_b --cands b1 b2   # 판정
 - 하연 Mac(M5), 10/16 15:23~16:37, 실행 커밋 `efb6c9b`(브랜치 `exp/research2-v2-track-b`, 하연 포크). 원자료: `gs://amr-fleet-results/research2/tuning_v2/track_b/`
 - `run_v2_track_b.sh`는 같은 비교군·시드를 후보마다 동시에 돌리므로 `--tag`(#203)가 있어야 결과 폴더가 겹치지 않는다
 
+## v2 튜닝 트랙 A(보상)와 합친 후보 (10/17)
+
+트랙 A는 충돌 고정 벌점과 시간 초과 벌점만 키운다(충돌 : 시간 초과 = 4 : 1 유지, 충돌 속도 벌점 40 등은 G 그대로). 채택 규칙은 트랙 B와 같은 `v2_plan.md` 1-3절이다. A·B가 둘 다 채택돼 두 채택안을 합친 후보 ab(A2 + B1)를 따로 돌렸다.
+
+```bash
+caffeinate -i scripts/run_v2_track_a.sh                       # base·a1·a2 × proposed·r2 × 시드 200~209 학습·평가
+uv run python scripts/judge_v2_tuning.py raw/v2_track_a --cands a1 a2
+caffeinate -i scripts/run_v2_combined.sh                      # base·ab × proposed·r2 × 시드 220~229 학습·평가
+uv run python scripts/judge_v2_tuning.py raw/v2_combined --cands ab
+```
+
+| 후보 | 설정 | ① 제안 25 kg 충돌 Δ (95% CI) | ② 시간 초과 Δ | ③ R2 성공 Δ | 결과 |
+| --- | --- | --- | --- | --- | --- |
+| a1 | `config/env_v2_a1.toml` (충돌 −200, 시간 초과 −50) | −3.9%p (−10.3 ~ +2.3) | −0.0%p | +2.0%p | 통과, ①이 a2보다 높음 |
+| a2 | `config/env_v2_a2.toml` (충돌 −300, 시간 초과 −75) | −6.0%p (−10.9 ~ −0.8) | +0.0%p | +1.3%p | **트랙 A 채택** |
+| ab | `config/env_v2_ab.toml` (a2 + `popout_prob` 0.9) | −9.0%p (−12.0 ~ −5.9) | +1.1%p | +0.8%p | **채택 → v2 설정** |
+
+- ab는 자기 기준선(같은 Mac, 시드 220~229) 대비 개선 폭 9.0%p가 A2(6.0)·B1(6.6) 단독보다 커서 합친 것을 골랐다(`v2_plan.md` 1-3절 합치기). `judge_v2_tuning.py`의 "선택"은 ①②③만 보므로 이 비교는 따로 한다
+- 셋 다 R2도 같은 만큼 좋아졌다 (25 kg 충돌 A: 16.8 → 11.3%, ab: 20.1 → 8.8%). 제안 − R2 차이는 A2 −1.5 → −2.1%p, ab −5.3 → −3.0%p로 벌어지지 않았고, 제안의 0 → 25 kg 감속도 A2 −8.3 → −7.8%, ab −4.7 → −5.5%로 그대로다. 트랙 B와 같이 모든 RL을 더 조심하게 만든 효과다
+- 무너진 시드(학습 질량 성공 < 85% 또는 시간 초과 > 10%)는 A2 R2 s208(성공 84.9%, 시간 초과 10.4%)과 ab R2 s225(84.4%, 11.2%) 둘이다. 제안·a1·기준선은 없다. 벌점을 키우면 질량을 모르는 R2가 멈추거나 기어가는 쪽으로 기우는 것으로 보인다
+- 학습 전 점검: `check_reward.py`로 모든 설정에서 안전 순항 속도가 최적, ab는 바꾼 시나리오에서 규칙 정책 충돌 0건 (질량 4개 × S1·S2 × 200판). 스크립트가 통과 못 하면 시작하지 않는다
+- 연우 Mac(M5). 트랙 A 10/17 00:59~02:41, 실행 커밋 `4866273`(브랜치 `exp/research2-v2-track-a`). 합친 후보 12:24~13:34, `ee4a222`(`exp/research2-v2-combined`). 둘 다 연우 포크, 오류 0건. 원자료는 연우 Mac `raw/v2_track_a/`·`raw/v2_combined/`(요청하면 공유)
+- 시험 실행에 예비 시드 299를 썼다 (2만 스텝, 결과 버림)
+
 ## 결과 분석 (가설 판정)
 
 `scripts/evaluate.py`가 만든 `episodes.csv`들을 모아 시드별 요약과 H1~H3 판정표를 만든다. 판정 기준은 [명세서 4장](../../docs/project-spec.md)과 실험 설계 메모(#72)를 따른다.
