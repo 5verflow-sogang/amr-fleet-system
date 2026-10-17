@@ -61,6 +61,8 @@ def test_resend_and_link_loss_policy_reach_processes():
     assert 'pause_on_link_loss_s:=2' in procs['fake_robots']['cmd']
     assert 'speed_mps:=3' in procs['fake_robots']['cmd']
     assert 'speed_mps:=1.0' in _fleet_fake_procs()['fake_robots']['cmd']
+    assert 'pause_mode:=stop' in _fleet_fake_procs()['fake_robots']['cmd']
+    assert 'pause_mode:=leg' in _fleet_fake_procs(pause_mode='leg')['fake_robots']['cmd']
 
 
 def test_fleet_mode_processes():
