@@ -41,7 +41,58 @@ double normalizeAngle(double angle)
   return angle;
 }
 
+std::size_t closestPathIndex(const std::vector<Point2D> & path, double x, double y)
+{
+  std::size_t best_index = 0;
+  double best_distance = std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < path.size(); ++i) {
+    const double d = std::hypot(path[i].x - x, path[i].y - y);
+    if (d < best_distance) {
+      best_distance = d;
+      best_index = i;
+    }
+  }
+  return best_index;
+}
+
+// path가 비어 있지 않고 start가 로봇에 가장 가까운 점일 때의 pathPointAhead.
+PathTarget pathPointAheadFrom(
+  const std::vector<Point2D> & path, std::size_t start, double robot_x, double robot_y,
+  double distance)
+{
+  PathTarget target;
+  const double to_start = std::hypot(path[start].x - robot_x, path[start].y - robot_y);
+  double accumulated = 0.0;
+  Point2D previous = path[start];
+  for (std::size_t i = start; i < path.size(); ++i) {
+    accumulated += std::hypot(path[i].x - previous.x, path[i].y - previous.y);
+    if (accumulated >= distance) {
+      target.point = path[i];
+      target.distance_from_robot = to_start + accumulated;
+      return target;
+    }
+    previous = path[i];
+  }
+  target.point = path.back();
+  target.distance_from_robot = to_start + accumulated;
+  target.at_path_end = true;
+  return target;
+}
+
 }  // namespace
+
+PathTarget pathPointAhead(
+  const std::vector<Point2D> & path, double robot_x, double robot_y, double distance)
+{
+  if (path.empty()) {
+    PathTarget target;
+    target.point = Point2D{robot_x, robot_y};
+    target.at_path_end = true;
+    return target;
+  }
+  return pathPointAheadFrom(
+    path, closestPathIndex(path, robot_x, robot_y), robot_x, robot_y, distance);
+}
 
 DwaPlanner::DwaPlanner(DwaConfig config)
 : config_(config)
@@ -106,6 +157,7 @@ bool DwaPlanner::evaluateFootprint(
 
       const uint8_t cost = grid.cost(cell);
       if (cost >= config_.lethal_cost_threshold) {
+        *max_cell_cost = static_cast<double>(cost);
         return true;
       }
       *max_cell_cost = std::max(*max_cell_cost, static_cast<double>(cost));
@@ -183,6 +235,11 @@ double DwaPlanner::dynamicObstacleCost(double min_surface_distance) const
   return std::clamp(cost, 0.0, 1.0);
 }
 
+double DwaPlanner::admissibleVelocity(double obstacle_distance) const
+{
+  return std::sqrt(2.0 * std::max(config_.acc_v, 0.0) * std::max(obstacle_distance, 0.0));
+}
+
 double DwaPlanner::headingCost(const TrajectoryPoint & trajectory_end, const Point2D & goal) const
 {
   const double desired_yaw = std::atan2(goal.y - trajectory_end.y, goal.x - trajectory_end.x);
@@ -240,9 +297,36 @@ DwaCommand DwaPlanner::rotateToGoalYaw(
 
 DwaCommand DwaPlanner::computeVelocityCommand(
   const RobotState & state, const Point2D & goal, const Grid & grid,
+  const std::vector<DynamicObstacle> & dynamic_obstacles,
+  const std::optional<Point2D> & final_goal) const
+{
+  return selectCommand(state, {goal}, false, grid, dynamic_obstacles, final_goal);
+}
+
+DwaCommand DwaPlanner::computeVelocityCommand(
+  const RobotState & state, const std::vector<Point2D> & path, const Grid & grid,
   const std::vector<DynamicObstacle> & dynamic_obstacles) const
 {
+  if (path.empty()) {
+    DwaCommand result;
+    result.status = DwaStatus::kGoalReached;
+    return result;
+  }
+  return selectCommand(state, path, true, grid, dynamic_obstacles, path.back());
+}
+
+DwaCommand DwaPlanner::selectCommand(
+  const RobotState & state, const std::vector<Point2D> & path, bool follow_path,
+  const Grid & grid, const std::vector<DynamicObstacle> & dynamic_obstacles,
+  const std::optional<Point2D> & final_goal) const
+{
   DwaCommand result;
+
+  const std::size_t path_start = closestPathIndex(path, state.x, state.y);
+  const double base_distance = follow_path ? config_.lookahead_distance : 0.0;
+  const Point2D goal =
+    pathPointAheadFrom(path, path_start, state.x, state.y, base_distance).point;
+  const bool adaptive = follow_path && config_.adaptive_lookahead;
 
   const double dx = goal.x - state.x;
   const double dy = goal.y - state.y;
@@ -251,68 +335,118 @@ DwaCommand DwaPlanner::computeVelocityCommand(
     return result;
   }
 
-  const DynamicWindow window = computeDynamicWindow(state);
+  DynamicWindow window = computeDynamicWindow(state);
+  if (config_.use_goal_slowdown && final_goal.has_value()) {
+    // 목표 앞 감속: acc_v로 줄여 최종 목표에 서는 속도까지만 샘플링한다. 그만큼 빨리 못
+    // 줄이면(윈도우 최저 속도가 더 높으면) 최대 감속인 최저 속도만 남긴다.
+    const double d_goal = std::hypot(final_goal->x - state.x, final_goal->y - state.y);
+    const double goal_cap = admissibleVelocity(d_goal);
+    window.max_v = std::max(window.min_v, std::min(window.max_v, goal_cap));
+  }
 
-  bool found = false;
-  double best_cost = std::numeric_limits<double>::infinity();
-  double best_v = 0.0;
-  double best_w = 0.0;
+  // [0]: 장애물에 안 닿는 궤적, [1]: 닿지만 허용 속도 조건으로 그 앞에 설 수 있는 궤적.
+  // [0]이 하나라도 있으면 [1]은 보지 않는다 - 닿는 궤적까지 비용으로 겨루게 하면 heading이
+  // 압도적이라 벽으로 곧장 가다 막판에 못 꺾는다(기존 폐루프 테스트가 실패했다).
+  bool found[2] = {false, false};
+  double best_cost[2] = {
+    std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+  double best_v[2] = {0.0, 0.0};
+  double best_w[2] = {0.0, 0.0};
 
   for (int vi = 0; vi < config_.v_samples; ++vi) {
     const double v = sampleValue(window.min_v, window.max_v, vi, config_.v_samples);
+
+    // heading 기준점: 고정이면 goal, adaptive면 이 속도의 궤적 길이만큼 앞의 경로 점.
+    // 궤적이 경로 끝점을 지나치면 그 앞(goal_tolerance만큼 짧게)까지만 보고 heading을 잰다.
+    Point2D heading_target = goal;
+    std::size_t heading_steps = std::numeric_limits<std::size_t>::max();
+    if (adaptive) {
+      const double travel = std::abs(v) * config_.sim_time;
+      const PathTarget target = pathPointAheadFrom(
+        path, path_start, state.x, state.y, std::max(config_.lookahead_distance, travel));
+      heading_target = target.point;
+      const double step_length = std::abs(v) * config_.dt;
+      if (target.at_path_end && target.distance_from_robot < travel && step_length > 0.0) {
+        const double before_end = target.distance_from_robot - config_.goal_tolerance;
+        heading_steps =
+          static_cast<std::size_t>(std::max(1.0, std::floor(before_end / step_length)));
+      }
+    }
 
     for (int wi = 0; wi < config_.w_samples; ++wi) {
       const double w = sampleValue(window.min_w, window.max_w, wi, config_.w_samples);
 
       const std::vector<TrajectoryPoint> trajectory = simulateTrajectory(state, v, w);
 
+      // 충돌 검사와 함께 장애물에 닿기 전까지 남은 궤적 점 개수(free_steps)를 센다 -
+      // 허용 속도 조건의 dist는 |v|*dt*free_steps다(닿는 점 바로 앞까지, 보수적).
       bool collides = false;
+      std::size_t free_steps = trajectory.size();
       double max_cell_cost = 0.0;
       double min_dynamic_surface_distance = std::numeric_limits<double>::infinity();
       for (std::size_t i = 0; i < trajectory.size(); ++i) {
         const TrajectoryPoint & point = trajectory[i];
         double point_max_cost = 0.0;
-        if (evaluateFootprint(grid, point.x, point.y, point.yaw, &point_max_cost)) {
+        const bool static_hit =
+          evaluateFootprint(grid, point.x, point.y, point.yaw, &point_max_cost);
+        max_cell_cost = std::max(max_cell_cost, point_max_cost);
+        if (static_hit) {
           collides = true;
+          free_steps = i;
           break;
         }
-        max_cell_cost = std::max(max_cell_cost, point_max_cost);
 
         if (!dynamic_obstacles.empty()) {
           const double t = static_cast<double>(i + 1) * config_.dt;
           double point_min_distance = std::numeric_limits<double>::infinity();
-          if (evaluateDynamicObstacles(
-              dynamic_obstacles, t, point.x, point.y, point.yaw, &point_min_distance))
-          {
+          const bool dynamic_hit = evaluateDynamicObstacles(
+            dynamic_obstacles, t, point.x, point.y, point.yaw, &point_min_distance);
+          min_dynamic_surface_distance = std::min(min_dynamic_surface_distance, point_min_distance);
+          if (dynamic_hit) {
             collides = true;
+            free_steps = i;
             break;
           }
-          min_dynamic_surface_distance = std::min(min_dynamic_surface_distance, point_min_distance);
         }
       }
-      if (collides || trajectory.empty()) {
+      if (trajectory.empty()) {
+        continue;
+      }
+      if (config_.use_admissible_velocity) {
+        // 첫 점부터 닿으면 멈출 거리가 없다. 그 밖에는 닿는 궤적도 acc_v로 그 앞에 설 수
+        // 있으면 [1] 후보로 남긴다.
+        const double dist = std::abs(v) * config_.dt * static_cast<double>(free_steps);
+        if (free_steps == 0 || std::abs(v) > admissibleVelocity(dist)) {
+          continue;
+        }
+      } else if (collides) {
         continue;
       }
 
-      const double cost = evaluateCost(trajectory.back(), goal, v, max_cell_cost) +
+      // 닿는 궤적은 설 수 있는 마지막 점(닿기 직전)에서 heading을 본다.
+      const TrajectoryPoint & trajectory_end =
+        trajectory[std::min(free_steps, heading_steps) - 1];
+      const double cost = evaluateCost(trajectory_end, heading_target, v, max_cell_cost) +
         config_.dynamic_weight * dynamicObstacleCost(min_dynamic_surface_distance);
-      if (cost < best_cost) {
-        best_cost = cost;
-        best_v = v;
-        best_w = w;
-        found = true;
+      const int tier = collides ? 1 : 0;
+      if (cost < best_cost[tier]) {
+        best_cost[tier] = cost;
+        best_v[tier] = v;
+        best_w[tier] = w;
+        found[tier] = true;
       }
     }
   }
 
-  if (!found) {
+  const int tier = found[0] ? 0 : 1;
+  if (!found[tier]) {
     result.status = DwaStatus::kNoValidTrajectory;
     return result;
   }
 
   result.status = DwaStatus::kOk;
-  result.v = best_v;
-  result.w = best_w;
+  result.v = best_v[tier];
+  result.w = best_w[tier];
   return result;
 }
 

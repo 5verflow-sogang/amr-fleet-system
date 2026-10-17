@@ -20,8 +20,23 @@ fleet/task_auctions, fleet/task_bids로 - 장애 주입기 relay_auction 중계�
 보낸 로봇 자기 메시지(중계 에코)는 robot_id로 걸러 무시한다 - 보낼 때 이미 처리했으므로
 또 처리하면 중복이다.
 
-이 노드는 "경매를 언제 새로 시작할지"(서버 장애·미할당 작업 감지)는 아직 안 다룬다 -
-README '확인 필요' 절 참고. 재경매는 두 가지 - AWARD 재전송 다 썼는데 ACCEPT 없음,
+분산 모드 경매 트리거: 모든 로봇의 노드가 작업 방송(/fleet/task_requests, Task)을 구독하고,
+살아 있는 로봇(RobotState를 최근 alive_timeout_s 안에 받은 로봇, robot_id 순) 중
+crc32(task_id) mod 로봇 수 번째 로봇만 그 작업의 경매를 연다(auction.auction_opener). 한 번 본
+task_id(작업 방송·다른 로봇의 공고)는 다시 열지 않는다. 로봇마다 살아 있는 목록이 잠깐 달라 두
+로봇이 같은 작업을 동시에 열면, 입찰 수집 중에 더 작은 robot_id의 공고를 본 쪽이 자기 경매를
+접는다. 이렇게 연 경매에 입찰이 하나도 없으면(모두 작업 중) no_bid_retry_s 뒤 새 auction_id로
+다시 연다 - 서버가 미할당 작업을 큐에 두고 다시 할당하는 것과 같은 역할이다(외부에서 들어온
+공고는 기존처럼 입찰이 없으면 끝낸다).
+
+ACCEPT 뒤 작업 실행: ACCEPT한 로봇의 노드가 자기에게 TaskAssignment를 보낸다 - amr_bt·가짜
+로봇이 relayed:=true로 구독하는 중계본 이름(/<robot_id>/fleet/task_assignments)으로 바로 보내
+장애 주입이 두 번 걸리지 않게 한다. assignment_id는 1,000,000 + 로봇 번호 x 100,000 + 로봇별
+순번(서버 번호와 안 겹침). Ack(/fleet/task_assignment_acks)가 올 때까지 AWARD와 같은 간격·횟수로
+다시 보내고, 거부(REJECTED)면 TaskStatus FAILED를 보내 경매인이 재경매하게 한다. 경매인은 ACCEPT를
+받으면 "공고 → ACCEPT" 응답 시간을 로그로 남긴다(분산 응답 시간).
+
+재경매는 두 가지 - AWARD 재전송 다 썼는데 ACCEPT 없음,
 그리고 ACCEPT 뒤 TaskStatus FAILED(최대 failed_retries번, 그래도 실패하면 실패로 남김
 - 중앙 assignment.failed_retries와 같은 규칙). 취소(ErrorInfo.ASSIGN_CANCELED)로 온 FAILED는
 재경매하지 않는다(중앙 #107과 같음). 그리고 ACCEPT한 낙찰 로봇의 RobotState가
@@ -37,6 +52,14 @@ BID는 1회성 발행이라 DDS 디스커버리가 아직 안 끝난 상태에�
 다시 안 온다(#155·#171) - 마감(공고를 받은 시각 + bid_window_s)까지 bid_resend_period_s
 간격으로 같은 입찰(같은 cost)을 다시 보낸다. AWARD를 받거나 마감되면 멈춘다. 경매인
 쪽은 같은 로봇의 재전송 BID를 중복으로 세지 않는다(auction.register_bid).
+
+동시 낙찰 경합: 경매가 동시에 여러 개 열리면 IDLE 로봇 하나가 여러 경매에 낙찰될 수 있다.
+이미 ACCEPT한 작업이 있는 로봇은 새 AWARD에 WITHDRAW를 보내고(auction.should_withdraw_award),
+그 작업이 풀릴 때까지 새 공고에 입찰하지 않는다. 맡은 작업은 (a) 내 TaskStatus COMPLETED/FAILED,
+(b) 내 RobotState가 BUSY였다가 다시 IDLE, (c) ACCEPT 뒤 commit_timeout_s(실제 시간) 동안 한 번도
+BUSY가 안 됨(작업이 시작 안 됨, 경고 로그) 중 먼저 오는 것으로 푼다. 경매인은
+낙찰자의 WITHDRAW를 받으면 같은 경매의 다음 순위 입찰자에게 AWARD하고, 남은 입찰자가 없으면
+새 auction_id로 재경매한다.
 """
 from __future__ import annotations
 
@@ -46,7 +69,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import rclpy
-from amr_msgs.msg import RobotState, Task, TaskAuction, TaskBid, TaskStatus
+from amr_msgs.msg import (
+    RobotState, Task, TaskAssignment, TaskAssignmentAck, TaskAuction, TaskBid, TaskStatus,
+)
 from builtin_interfaces.msg import Duration as DurationMsg
 from builtin_interfaces.msg import Time as TimeMsg
 from rclpy.executors import ExternalShutdownException
@@ -60,13 +85,21 @@ from .auction import (
     RobotInfo,
     TaskInfo,
     TaskRetryLedger,
+    assignment_id_for,
+    assignment_topic,
+    auction_opener,
     award_exhausted,
     can_withdraw,
+    commit_timed_out,
     decide_bid,
     decide_winner,
+    live_robots,
     register_bid,
+    robot_index,
     should_resend_award,
     should_resend_bid,
+    should_withdraw_award,
+    task_finished_by_state,
     winner_lost,
 )
 
@@ -76,6 +109,9 @@ TASK_AUCTIONS_PUB_TOPIC = '/fleet/task_auctions'
 TASK_BIDS_PUB_TOPIC = '/fleet/task_bids'
 # TaskStatus는 장애 주입기 relay 목록에 없어 relayed 여부와 무관하게 항상 이 절대 경로다.
 TASK_STATUS_TOPIC = '/fleet/task_status'
+# ACCEPT 뒤 보낸 TaskAssignment의 Ack - 로봇(amr_bt·가짜 로봇)이 서버에 보내는 것과 같은 토픽이다.
+# 서버는 모르는 assignment_id의 Ack를 무시한다(amr_fleet_manager Dispatcher.on_ack).
+TASK_ASSIGNMENT_ACKS_TOPIC = '/fleet/task_assignment_acks'
 
 AuctionKey = Tuple[str, int]  # (auctioneer_id, auction_id)
 
@@ -128,6 +164,14 @@ class _AuctionState:
     award_last_sent: Optional[float] = None
     # ACCEPT를 받은 시각 (실제 시간, 낙찰 로봇 장애 판정 기준 - winner_lost)
     accepted_at: Optional[float] = None
+    # 이 경매를 WITHDRAW한 로봇 - 다음 순위를 고를 때 빼고, 그 뒤 온 재전송 BID도 안 센다.
+    withdrawn: set = field(default_factory=set)
+    # 공고에 실린 작업 원본(Task) - 재경매·TaskAssignment에 그대로 싣는다(종류·물품·스테이션 id).
+    task_msg: Optional[Task] = None
+    # 작업 방송(/fleet/task_requests)으로 내가 연 경매인지 - 입찰이 없으면 다시 연다(no_bid_retry_s).
+    from_request: bool = False
+    # 입찰 없이 마감된 뒤 다시 열 시각(_now 기준)
+    retry_at: Optional[float] = None
 
 
 class TaskAuctionNode(Node):
@@ -159,7 +203,20 @@ class TaskAuctionNode(Node):
             failed_retries=p('failed_retries', AuctionParams.failed_retries).value,
             reclaim_timeout_s=p('reclaim_timeout_s', AuctionParams.reclaim_timeout_s).value,
             max_reclaims=p('max_reclaims', AuctionParams.max_reclaims).value,
+            commit_timeout_s=p('commit_timeout_s', AuctionParams.commit_timeout_s).value,
         )
+
+        # 분산 모드 경매 트리거 · ACCEPT 뒤 작업 실행
+        task_requests_topic = p('task_requests_topic', '/fleet/task_requests').value
+        self._open_auctions = p('open_auctions', True).value
+        self._alive_timeout_s = p('alive_timeout_s', 3.0).value
+        self._no_bid_retry_s = p('no_bid_retry_s', 1.0).value
+        self._run_accepted_tasks = p('run_accepted_tasks', True).value
+        relayed_assignments = p('relayed_assignments', True).value
+        index = p('robot_index', -1).value
+        self._robot_index = index if index >= 0 else (
+            robot_index(self._robot_id) if self._run_accepted_tasks else 0)
+        self._assignment_topic = assignment_topic(self._robot_id, relayed_assignments)
 
         self._robot_info: Optional[RobotInfo] = None
         # 내가 경매인인 경매들 (auctioneer_id는 항상 나 자신이라 auction_id만 키로 써도 되지만,
@@ -170,6 +227,8 @@ class TaskAuctionNode(Node):
         # 내 상태(RobotState)를 아직 몰라 입찰 여부를 못 정한 공고 - (msg, 받은 시각).
         # RobotState를 처음 받으면 마감 전인 것만 다시 본다(10/10 연우 리뷰, #109).
         self._pending_bids: Dict[AuctionKey, Tuple[TaskAuction, float]] = {}
+        # 맡은 작업이 있어 입찰 여부를 미룬 공고 - 작업이 풀리면 마감(_bid_deadline) 전인 것만 다시 본다.
+        self._deferred_bids: Dict[AuctionKey, TaskAuction] = {}
         # 입찰 마감(실제 시간) - 공고를 처음 받은 시각 + bid_window_s. #155·#171 BID
         # 재전송이 멈춰야 할 때(마감)를 판단하는 기준이라, 공고를 받을 때(_on_task_auction)
         # 마다 한 번만 찍는다(재전송·중계 에코로 다시 받아도 안 바꾼다).
@@ -183,6 +242,18 @@ class TaskAuctionNode(Node):
         # 이미 ACCEPT를 보낸 경매 - WITHDRAW는 ACCEPT 전까지만(10/7 결정), 재전송된 AWARD에
         # 또 ACCEPT를 보내지 않는 데도 쓴다(멱등).
         self._accepted: set = set()
+        # 보낸 ACCEPT - 같은 경매의 AWARD가 다시 오면(내 ACCEPT 유실) 그대로 다시 보낸다.
+        self._accept_msgs: Dict[AuctionKey, TaskBid] = {}
+        # 동시 낙찰 경합: 내가 지금 맡고 있는(ACCEPT한) 작업 - (경매 key, task_id). 있으면 새
+        # AWARD는 WITHDRAW하고 새 공고에는 입찰하지 않는다. 내 TaskStatus COMPLETED/FAILED로 푼다.
+        self._active_task: Optional[Tuple[AuctionKey, str]] = None
+        # 맡은 작업을 ACCEPT한 시각(실제 시간)과, 그 뒤 내 RobotState에서 BUSY를 봤는지 - 해제
+        # 안전장치(b)(c)에 쓴다.
+        self._active_accepted_at: float = 0.0
+        self._active_seen_busy: bool = False
+        # 내가 WITHDRAW한 경매 - 재전송된 AWARD가 와도 다시 WITHDRAW한다(뒤늦은 수락으로 다음
+        # 순위 낙찰자와 같은 작업을 맡지 않게).
+        self._withdrawn: set = set()
         self._next_reauction_id: Dict[str, int] = {}
         # 작업별 FAILED 재시도·장애 회수 횟수 - task_id로 세어 재경매로 auction_id가 바뀌어도
         # 이어서 센다(중앙 TaskEntry.failures·reclaims와 같은 역할, 둘은 따로 센다).
@@ -190,19 +261,34 @@ class TaskAuctionNode(Node):
         # 로봇별 마지막 RobotState 수신 시각 (실제 시간). 낙찰 로봇 장애 판정에 쓴다 - 중앙 #132처럼
         # 로봇 생존은 실제 시간으로 잰다(메시지 stamp는 시뮬레이션 시간일 수 있다)
         self._robot_last_seen: Dict[str, float] = {}
+        # 작업 방송·공고로 이미 본 task_id - 같은 작업으로 경매를 두 번 열지 않는다.
+        self._task_ids_seen: set = set()
+        # 내가 연 작업의 첫 공고 시각(_now) - "공고 -> ACCEPT" 응답 시간 기준.
+        self._first_announce: Dict[str, float] = {}
+        # 공고에 실린 작업 원본(Task) - ACCEPT 뒤 TaskAssignment에 싣는다.
+        self._task_msgs: Dict[AuctionKey, Task] = {}
+        # 내가 보낸 TaskAssignment 중 Ack를 기다리는 것 - assignment_id -> [msg, 보낸 횟수, 마지막 전송(실제 시간)].
+        self._assignment_seq = 0
+        self._assignment_resends: Dict[int, list] = {}
 
         self.create_subscription(RobotState, robot_states_topic, self._on_robot_state, 10)
         self.create_subscription(TaskAuction, task_auctions_sub_topic, self._on_task_auction, 10)
         self.create_subscription(TaskBid, task_bids_sub_topic, self._on_task_bid, 10)
         self.create_subscription(TaskStatus, TASK_STATUS_TOPIC, self._on_task_status, 10)
+        self.create_subscription(Task, task_requests_topic, self._on_task_request, 10)
+        self.create_subscription(
+            TaskAssignmentAck, TASK_ASSIGNMENT_ACKS_TOPIC, self._on_assignment_ack, 10)
         self._auction_pub = self.create_publisher(TaskAuction, TASK_AUCTIONS_PUB_TOPIC, 10)
         self._bid_pub = self.create_publisher(TaskBid, TASK_BIDS_PUB_TOPIC, 10)
+        self._assignment_pub = self.create_publisher(TaskAssignment, self._assignment_topic, 10)
+        self._status_pub = self.create_publisher(TaskStatus, TASK_STATUS_TOPIC, 10)
         self.create_timer(1.0 / update_rate_hz, self._on_timer)
 
         self.get_logger().info(
             f'task_auction({self._robot_id}): 구독 {task_auctions_sub_topic} (공고), '
             f'{task_bids_sub_topic} (입찰/낙찰/수락), {TASK_STATUS_TOPIC} (실패 보고), '
-            f'{robot_states_topic} (내 상태) · 발행 {TASK_AUCTIONS_PUB_TOPIC}, {TASK_BIDS_PUB_TOPIC}')
+            f'{robot_states_topic} (내 상태), {task_requests_topic} (작업 방송) · 발행 '
+            f'{TASK_AUCTIONS_PUB_TOPIC}, {TASK_BIDS_PUB_TOPIC}, {self._assignment_topic} (수락한 작업)')
 
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
@@ -213,6 +299,12 @@ class TaskAuctionNode(Node):
         self._robot_last_seen[msg.robot_id] = time.monotonic()
         if msg.robot_id != self._robot_id:
             return
+        if self._active_task is not None:
+            if msg.mode == RobotState.MODE_BUSY:
+                self._active_seen_busy = True
+            elif task_finished_by_state(self._active_seen_busy, msg.mode):
+                # (b) BUSY였다가 다시 IDLE - TaskStatus가 안 와도 작업은 끝났다
+                self._release_active_task('RobotState BUSY -> IDLE')
         had_info = self._robot_info is not None
         self._robot_info = RobotInfo(
             robot_id=msg.robot_id,
@@ -244,10 +336,64 @@ class TaskAuctionNode(Node):
             # 입찰 수집을 시작한다. 이미 추적 중이면(재전송·중계 에코) 다시 안 만든다.
             self._auctions[key] = _AuctionState(
                 task=_task_from_msg(msg.task), announce_time=self._now(),
-                bid_window_s=_duration_to_s(msg.bid_window))
+                bid_window_s=_duration_to_s(msg.bid_window), task_msg=msg.task)
+        elif msg.auctioneer_id != self._robot_id:
+            self._drop_duplicate_auction(msg)
 
+        self._task_ids_seen.add(msg.task.task_id)
         self._tasks_seen[key] = _task_from_msg(msg.task)
+        self._task_msgs[key] = msg.task
         self._maybe_bid(key, msg)
+
+    def _drop_duplicate_auction(self, msg: TaskAuction):
+        """같은 작업을 다른 로봇도 열었다(살아 있는 로봇 목록이 잠깐 달랐을 때). 입찰 수집 중이면
+        robot_id가 작은 쪽의 경매만 남긴다 - 두 경매가 각자 낙찰하면 같은 작업이 두 로봇에게 간다."""
+        if msg.auctioneer_id > self._robot_id:
+            return
+        for key, state in list(self._auctions.items()):
+            if state.task.task_id == msg.task.task_id and state.phase == 'collecting':
+                del self._auctions[key]
+                self.get_logger().warn(
+                    f'경매 {key}: 같은 작업 {msg.task.task_id}을 {msg.auctioneer_id}도 열어 내 경매를 접는다')
+
+    # --- 경매 트리거: 작업 방송을 보고 내가 열 차례면 경매를 연다 ---
+
+    def _on_task_request(self, msg: Task):
+        task_id = msg.task_id
+        if not self._open_auctions or not task_id or task_id in self._task_ids_seen:
+            return
+        self._task_ids_seen.add(task_id)
+        robots = live_robots(self._robot_last_seen, time.monotonic(), self._alive_timeout_s)
+        opener = auction_opener(task_id, robots)
+        if opener is None:
+            self.get_logger().warn(f'작업 {task_id}: 살아 있는 로봇이 없어 경매를 못 연다')
+            return
+        if opener == self._robot_id:
+            self._open_auction(msg)
+
+    def _next_auction_id(self) -> int:
+        next_id = self._next_reauction_id.get(self._robot_id, 1)
+        self._next_reauction_id[self._robot_id] = next_id + 1
+        return next_id
+
+    def _open_auction(self, task: Task):
+        out = TaskAuction()
+        out.header.stamp = self.get_clock().now().to_msg()
+        out.auctioneer_id = self._robot_id
+        out.auction_id = self._next_auction_id()
+        out.task = task
+        out.bid_window.sec = int(self._params.bid_window_s)
+        out.bid_window.nanosec = int(round(
+            (self._params.bid_window_s - out.bid_window.sec) * 1e9))
+        self._first_announce[task.task_id] = self._now()
+        self._auction_pub.publish(out)
+        self.get_logger().info(
+            f'경매 공고 ({self._robot_id}, {out.auction_id}): 작업 {task.task_id} '
+            f't={self._first_announce[task.task_id]:.3f}')
+        # 내 경매 상태를 만들고 나도 입찰한다(자기 공고 에코를 기다리지 않는다 - 에코는 이미 있는
+        # 경매라 다시 안 만든다).
+        self._on_task_auction(out)
+        self._auctions[(self._robot_id, out.auction_id)].from_request = True
 
     def _maybe_bid(self, key: AuctionKey, msg: TaskAuction):
         if key in self._bid_decided:
@@ -258,6 +404,14 @@ class TaskAuctionNode(Node):
             # 입찰하지 못한다(10/10 연우 리뷰, #109) - _on_robot_state가 상태를 처음
             # 받으면 마감 전인지 보고 다시 판단한다.
             self._pending_bids.setdefault(key, (msg, self._now()))
+            return
+        if self._active_task is not None:
+            # 이미 ACCEPT한 작업이 있다 - RobotState가 아직 IDLE이어도 IDLE 로봇이 아니다
+            # (IDLE 로봇만 입찰, 10/7 결정). 입찰하면 낙찰돼도 WITHDRAW할 수밖에 없다. "결정 끝"으로
+            # 기록하지 않고 미룬다 - 그 작업을 끝냈다는 보고(TaskStatus)와 새 공고는 다른 토픽이라
+            # 순서가 보장되지 않아서, 끝낸 직후 온 공고(예: 내 작업의 재경매)를 놓치면 안 된다.
+            # 맡은 작업이 풀리면(_release_active_task) 마감 전인 것만 다시 본다.
+            self._deferred_bids[key] = msg
             return
         self._bid_decided.add(key)
         task = self._tasks_seen[key]
@@ -291,7 +445,7 @@ class TaskAuctionNode(Node):
 
     def _register_bid(self, key: AuctionKey, bid: Bid, received_time: float):
         state = self._auctions.get(key)
-        if state is None or state.phase != 'collecting':
+        if state is None or state.phase != 'collecting' or bid.robot_id in state.withdrawn:
             return
         # register_bid: 재전송(bid_resend_period_s)으로 같은 로봇의 BID가 또 와도
         # 중복으로 세지 않는다(#155·#171).
@@ -336,12 +490,20 @@ class TaskAuctionNode(Node):
         # 재전송할 이유가 없다(#155·#171, ACCEPT·WITHDRAW 어느 쪽이든 마찬가지).
         self._bid_resends.pop(key, None)
         if key in self._accepted:
-            return  # 재전송된 AWARD - 이미 수락을 보냈다(멱등)
+            # 재전송된 AWARD - 이미 수락했다. 경매인이 AWARD를 다시 보낸 건 내 ACCEPT를 못 받았다는
+            # 뜻일 수 있으니 같은 ACCEPT를 다시 보낸다(안 보내면 경매인은 재전송을 다 쓰고 재경매해
+            # 내가 이미 실행 중인 작업을 다른 로봇도 맡는다). 작업 실행(TaskAssignment)은 다시 하지
+            # 않는다 - 처음 보낸 것이 같은 assignment_id로 Ack까지 재전송 중이다.
+            self._bid_pub.publish(self._accept_msgs[key])
+            return
         task = self._tasks_seen.get(key)
         now = self._now()
-        # 입찰했을 때와 사정이 바뀌었을 수 있으니(배터리·IDLE 여부) 다시 확인한다.
+        # 입찰했을 때와 사정이 바뀌었을 수 있으니(배터리·IDLE 여부) 다시 확인한다. 이미 다른
+        # 작업을 ACCEPT했거나 이 경매를 한 번 포기했으면 수락하지 않는다(동시 낙찰 경합).
+        holding_other_task = self._active_task is not None and self._active_task[0] != key
         still_eligible = (
-            self._robot_info is not None and task is not None
+            not should_withdraw_award(holding_other_task, key in self._withdrawn)
+            and self._robot_info is not None and task is not None
             and decide_bid(self._robot_info, task, now, self._params) is not None
         )
 
@@ -355,12 +517,77 @@ class TaskAuctionNode(Node):
         if still_eligible:
             out.type = TaskBid.TYPE_ACCEPT
             self._accepted.add(key)
+            self._accept_msgs[key] = out
+            self._active_task = (key, msg.task_id)
+            self._active_accepted_at = time.monotonic()
+            self._active_seen_busy = False
+            self._bid_pub.publish(out)
+            self.get_logger().info(
+                f'경매 {key}: 작업 {msg.task_id} ACCEPT t={self._now():.3f}')
+            if self._run_accepted_tasks:
+                self._send_assignment(key, msg.task_id)
+            return
         elif can_withdraw(accepted=False):
-            # 10/7 결정: WITHDRAW는 ACCEPT 전까지만 - 아직 ACCEPT를 안 보냈으니 가능하다.
+            # 10/7 결정: WITHDRAW는 ACCEPT 전까지만 - 이 경매에는 아직 ACCEPT를 안 보냈으니 가능하다.
             out.type = TaskBid.TYPE_WITHDRAW
+            self._withdrawn.add(key)
         else:
             return
         self._bid_pub.publish(out)
+
+    def _send_assignment(self, key: AuctionKey, task_id: str):
+        """ACCEPT한 작업을 나(amr_bt·가짜 로봇)에게 TaskAssignment로 보낸다. Ack가 올 때까지 다시 보낸다."""
+        task_msg = self._task_msgs.get(key)
+        if task_msg is None:
+            self.get_logger().error(f'경매 {key}: 작업 {task_id} 원본이 없어 TaskAssignment를 못 보낸다')
+            return
+        self._assignment_seq += 1
+        out = TaskAssignment()
+        out.header.stamp = self.get_clock().now().to_msg()
+        out.assignment_id = assignment_id_for(self._robot_index, self._assignment_seq)
+        out.robot_id = self._robot_id
+        out.action = TaskAssignment.ACTION_ASSIGN
+        out.task = task_msg
+        self._assignment_pub.publish(out)
+        self._assignment_resends[out.assignment_id] = [out, 1, time.monotonic()]
+        self.get_logger().info(
+            f'작업 {task_id} 실행: TaskAssignment {out.assignment_id} -> {self._assignment_topic}')
+
+    def _on_assignment_ack(self, msg: TaskAssignmentAck):
+        if msg.robot_id != self._robot_id:
+            return
+        entry = self._assignment_resends.pop(msg.assignment_id, None)
+        if entry is None:
+            return  # 서버가 보낸 할당의 Ack이거나 이미 받은 Ack
+        if msg.result == TaskAssignmentAck.RESULT_ACCEPTED:
+            return
+        task = entry[0].task
+        self.get_logger().warn(
+            f'TaskAssignment {msg.assignment_id}(작업 {task.task_id}) 거부: code={msg.error.code} '
+            f'{msg.error.message} - FAILED로 보고해 경매인이 재경매하게 한다')
+        status = TaskStatus()
+        status.header.stamp = self.get_clock().now().to_msg()
+        status.task_id = task.task_id
+        status.robot_id = self._robot_id
+        status.state = TaskStatus.STATE_FAILED
+        status.error = msg.error
+        self._status_pub.publish(status)
+
+    def _maybe_resend_assignments(self):
+        now = time.monotonic()
+        for assignment_id, entry in list(self._assignment_resends.items()):
+            msg, attempts, last_sent = entry
+            if now - last_sent < self._params.award_resend_interval_s:
+                continue
+            if attempts >= self._params.award_max_attempts:
+                del self._assignment_resends[assignment_id]
+                self.get_logger().warn(
+                    f'TaskAssignment {assignment_id}(작업 {msg.task.task_id}) Ack 없음({attempts}회) - '
+                    f'재전송 그만(작업이 시작 안 되면 commit_timeout_s 뒤 맡은 작업을 푼다)')
+                continue
+            self._assignment_pub.publish(msg)
+            entry[1] = attempts + 1
+            entry[2] = now
 
     def _on_accept(self, key: AuctionKey, robot_id: str):
         state = self._auctions.get(key)
@@ -368,23 +595,50 @@ class TaskAuctionNode(Node):
             return
         state.phase = 'done'
         state.accepted_at = time.monotonic()
-        self.get_logger().info(f'경매 {key}: {robot_id} 수락, 작업 {state.task.task_id} 확정')
+        task_id = state.task.task_id
+        now = self._now()
+        first = self._first_announce.get(task_id, state.announce_time)
+        # 분산 응답 시간 = 첫 공고 -> ACCEPT (재경매·입찰 대기 포함). 이 경매만의 값도 같이 남긴다.
+        self.get_logger().info(
+            f'경매 {key}: {robot_id} 수락, 작업 {task_id} 확정 - 응답 시간(공고->ACCEPT) '
+            f'{now - first:.3f}s (이 경매 {now - state.announce_time:.3f}s)')
 
     def _on_withdraw(self, key: AuctionKey, robot_id: str):
         state = self._auctions.get(key)
         if state is None:
             return
         if state.phase == 'collecting':
+            state.withdrawn.add(robot_id)
             state.bids = [b for b in state.bids if b.robot_id != robot_id]
         elif state.phase == 'awarded' and state.winner_id == robot_id:
-            self.get_logger().warn(f'경매 {key}: 낙찰자 {robot_id} 포기 - 재경매')
-            self._reauction(key, state)
+            # 동시 낙찰 경합: 같은 입찰 목록에서 포기한 로봇들을 빼고 다음 순위에게 준다.
+            # 남은 입찰자가 없으면 새 auction_id로 재경매(기존 재경매 규칙과 같음).
+            state.withdrawn.add(robot_id)
+            result = decide_winner(
+                state.task.task_id, state.bids, state.announce_time, state.bid_window_s,
+                excluded=state.withdrawn)
+            if result.winner_id is None:
+                self.get_logger().warn(f'경매 {key}: 낙찰자 {robot_id} 포기, 남은 입찰 없음 - 재경매')
+                self._reauction(key, state)
+                return
+            self.get_logger().info(
+                f'경매 {key}: 낙찰자 {robot_id} 포기 - 다음 순위 {result.winner_id}에게 낙찰')
+            state.winner_id = result.winner_id
+            state.winning_cost = result.winning_cost
+            state.award_attempts = 0
+            self._send_award(key, state, self._now())
 
     # --- 확정된 작업이 수행 중 실패했다는 보고(amr_bt가 TaskStatus로 발행) ---
 
     def _on_task_status(self, msg: TaskStatus):
         if msg.state not in (TaskStatus.STATE_FAILED, TaskStatus.STATE_COMPLETED):
             return
+        if (
+            msg.robot_id == self._robot_id and self._active_task is not None
+            and self._active_task[1] == msg.task_id
+        ):
+            # (a) 내가 맡은 작업이 끝났다 - 다시 입찰·수락할 수 있다(동시 낙찰 경합).
+            self._release_active_task('TaskStatus COMPLETED/FAILED')
         for key, state in list(self._auctions.items()):
             if (
                 state.phase == 'done' and state.task.task_id == msg.task_id
@@ -416,9 +670,34 @@ class TaskAuctionNode(Node):
 
     # --- 주기 처리: 마감 판정, AWARD 재전송·재경매 ---
 
+    def _release_active_task(self, reason: str):
+        self.get_logger().info(f'맡은 작업 {self._active_task[1]} 해제({reason}) - 다시 입찰한다')
+        self._active_task = None
+        self._active_seen_busy = False
+        # 작업 중이라 미뤄 둔 공고 중 아직 마감 전인 것에 다시 입찰 여부를 정한다
+        now = self._now()
+        for key, auction_msg in list(self._deferred_bids.items()):
+            del self._deferred_bids[key]
+            if now < self._bid_deadline.get(key, 0.0):
+                self._maybe_bid(key, auction_msg)
+
+    def _maybe_release_uncommitted_task(self):
+        """(c) ACCEPT 뒤 commit_timeout_s 동안 RobotState가 한 번도 BUSY가 안 됐으면 맡은 작업을 푼다."""
+        if self._active_task is None or not commit_timed_out(
+            self._active_accepted_at, time.monotonic(), self._active_seen_busy,
+            self._params.commit_timeout_s,
+        ):
+            return
+        self.get_logger().warn(
+            f'작업 {self._active_task[1]}을 ACCEPT하고 {self._params.commit_timeout_s:g}초 동안 '
+            f'RobotState가 BUSY가 안 됨(작업이 시작 안 됨) - 맡은 작업 해제')
+        self._release_active_task(f'commit_timeout_s {self._params.commit_timeout_s:g}초')
+
     def _on_timer(self):
         now = self._now()
         self._maybe_resend_bids(now)
+        self._maybe_resend_assignments()
+        self._maybe_release_uncommitted_task()
         for key, state in list(self._auctions.items()):
             if state.phase == 'collecting':
                 self._maybe_decide_winner(key, state, now)
@@ -468,6 +747,14 @@ class TaskAuctionNode(Node):
         result: AuctionResult = decide_winner(
             state.task.task_id, state.bids, state.announce_time, state.bid_window_s)
         if result.winner_id is None:
+            if state.from_request and self._no_bid_retry_s > 0:
+                # 작업 방송으로 연 경매: 모두 작업 중이라 입찰이 없으면 잠시 뒤 다시 연다
+                # (서버가 미할당 작업을 큐에 두고 다시 할당하는 것과 같은 역할)
+                if state.retry_at is None:
+                    state.retry_at = now + self._no_bid_retry_s
+                elif now >= state.retry_at:
+                    self._reauction(key, state)
+                return
             self.get_logger().warn(f'경매 {key}: 입찰 없음 - 종료')
             state.phase = 'done'
             return
@@ -508,21 +795,28 @@ class TaskAuctionNode(Node):
         new_key = (auctioneer_id, next_id)
         self._auctions.pop(key, None)
         new_state = _AuctionState(
-            task=state.task, announce_time=self._now(), bid_window_s=state.bid_window_s)
+            task=state.task, announce_time=self._now(), bid_window_s=state.bid_window_s,
+            task_msg=state.task_msg, from_request=state.from_request)
         self._auctions[new_key] = new_state
         self._tasks_seen[new_key] = state.task
+        if state.task_msg is not None:
+            self._task_msgs[new_key] = state.task_msg
 
         out = TaskAuction()
         out.header.stamp = self.get_clock().now().to_msg()
         out.auctioneer_id = auctioneer_id
         out.auction_id = next_id
-        out.task.task_id = state.task.task_id
-        out.task.dropoff_pose.position.x, out.task.dropoff_pose.position.y = state.task.dropoff_xy
-        if state.task.pickup_xy is not None:
-            out.task.pickup_station_id = state.task.task_id  # 재경매용 - 실제 스테이션 id는 모른다
-            out.task.pickup_pose.position.x, out.task.pickup_pose.position.y = state.task.pickup_xy
-        if state.task.deadline is not None:
-            out.task.deadline = _epoch_to_time(state.task.deadline)
+        if state.task_msg is not None:
+            # 원본 작업 그대로(종류·물품·스테이션 id) - TaskAssignment로 로봇에게 그대로 간다
+            out.task = state.task_msg
+        else:
+            out.task.task_id = state.task.task_id
+            out.task.dropoff_pose.position.x, out.task.dropoff_pose.position.y = state.task.dropoff_xy
+            if state.task.pickup_xy is not None:
+                out.task.pickup_station_id = state.task.task_id  # 재경매용 - 실제 스테이션 id는 모른다
+                out.task.pickup_pose.position.x, out.task.pickup_pose.position.y = state.task.pickup_xy
+            if state.task.deadline is not None:
+                out.task.deadline = _epoch_to_time(state.task.deadline)
         out.bid_window.sec = int(new_state.bid_window_s)
         out.bid_window.nanosec = int(round((new_state.bid_window_s - out.bid_window.sec) * 1e9))
         self._auction_pub.publish(out)

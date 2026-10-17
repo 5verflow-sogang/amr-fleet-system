@@ -146,6 +146,10 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
             failed = [r for r in tasks if r['final_state'] == 'FAILED']
             for name, codes in FAILURE_CAUSES.items():
                 out[f'fleet.tasks_failed_{name}'] = sum(r['error_code'] in codes for r in failed)
+        # 같은 작업을 둘 이상의 로봇이 실제로 움직이며 한 수 (하이브리드 중복 실행, architecture.md 5-2절).
+        # task_outcomes.csv에 runners 열이 있을 때만
+        if 'runners' in tasks[0]:
+            out['fleet.duplicate_tasks'] = sum(len(r['runners'].split()) > 1 for r in tasks)
     # 구역 허가 대기와 교착 해소 (구역을 쓰는 시나리오만 파일이 있다)
     if (run_dir / 'zone_waits.csv').exists():
         zones = _read_csv(run_dir / 'zone_waits.csv')

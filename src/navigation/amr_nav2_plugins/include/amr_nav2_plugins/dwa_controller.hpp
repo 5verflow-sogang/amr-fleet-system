@@ -26,7 +26,7 @@ namespace amr_nav2_plugins
 // 탐색 로직은 전부 DwaPlanner에 위임하고, 이 클래스는 세 가지만 한다:
 // 1. costmap <-> DwaPlanner의 Grid-로컬 좌표 변환 (costmap origin을 빼고 더함)
 // 2. perception/obstacles(TrackedObstacleArray)를 DynamicObstacle로 변환
-// 3. 전역 경로에서 다음 추종 지점을 고름(waypoint.hpp)
+// 3. 전역 경로를 Grid 좌표 점 목록으로 바꿔 넘김(추종 기준점은 코어가 고른다)
 class DwaController : public nav2_core::Controller
 {
 public:
