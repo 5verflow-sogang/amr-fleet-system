@@ -119,7 +119,7 @@ def main():
             out.append(f'| {kg} kg 충돌 제안 / 제안 − R2 (처음 보는 질량) | {m(args.base, f"p_coll{kg}")*100:.1f}% / '
                        f'{fmt(m(args.base, f"gap{kg}"))} | {m(args.cand, f"p_coll{kg}")*100:.1f}% / {fmt(m(args.cand, f"gap{kg}"))} |')
     out += ['', '- 충돌률 분모는 돌발 장애물이 나타난 판. 감속·도착 시간은 같은 시나리오를 둘 다 성공한 판끼리',
-            '- 기준선은 트랙 B base (같은 맥·학습 코드·시드). 판정 기준은 실행 전에 공유 문서에 적었다']
+            f'- 기준선은 `{args.base}` (같은 맥·학습 코드·시드). 판정 기준은 실행 전에 공유 문서에 적었다']
     text = '\n'.join(out)
     (args.root / 'judge_info.md').write_text(text + '\n')
     print(text)
