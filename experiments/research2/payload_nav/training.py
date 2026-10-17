@@ -26,6 +26,9 @@ def make_model(env_config: EnvConfig, n_envs: int, train_seed: int, ppo_kwargs: 
     보상에만 걸리고 비용(info['cost'])은 그대로 쓴다.
     """
     ppo_kwargs = dict(ppo_kwargs)
+    # 보상 정규화 뒤 자르는 한도 (SB3 기본 10). 충돌 벌점이 정규화 뒤 −10을 넘으면 잘려서 벌점 크기를 바꿔도 학습에는
+    # 같게 보인다 (v2 트랙 A: −140·−240·−340이 모두 −10). 벌점 곡선 실험(v3)은 설정 [ppo] clip_reward로 늘린다
+    clip_reward = float(ppo_kwargs.pop('clip_reward', 10.0))
     schedule = ppo_kwargs.pop('lr_schedule', 'constant')
     if schedule == 'linear':
         lr0 = ppo_kwargs.get('learning_rate', 3e-4)
@@ -36,7 +39,7 @@ def make_model(env_config: EnvConfig, n_envs: int, train_seed: int, ppo_kwargs: 
     env_seed = train_env_seed(train_seed, n_envs)
     venv = make_vec_env(PayloadNavEnv, n_envs=n_envs, seed=env_seed,
                         env_kwargs={'config': env_config})
-    venv = VecNormalize(venv, norm_obs=True, norm_reward=True,
+    venv = VecNormalize(venv, norm_obs=True, norm_reward=True, clip_reward=clip_reward,
                         gamma=ppo_kwargs.get('gamma', 0.99))
     algo = dict(constraint=constraint) if constraint is not None else {}
     model = (PPOLagrangian if constraint is not None else PPO)(

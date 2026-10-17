@@ -318,3 +318,23 @@ def test_v3_config_anneals():
     c = load_experiment(CONFIG_DIR / 'env_v3.toml').constraint
     assert c.limit_at(0) == pytest.approx(0.5) and c.limit_at(c.anneal_steps) == c.cost_limit == 0.01
     assert c.lambda_max == 20.0 and c.pid_kp == 0.2
+
+
+# ---------------------------------------------------------------- 벌점 곡선 실험 (보상 자르기 한도)
+def test_clip_reward_default_and_config():
+    cfg = load_experiment(CONFIG_DIR / 'env_v0.toml')
+    _, venv, _ = make_model(cfg.env, 1, 0, {'n_steps': 64, 'batch_size': 64}, [8], verbose=0)
+    assert venv.clip_reward == 10.0                                    # 기본은 SB3 그대로 (v1·v2 재현)
+    pen = load_experiment(CONFIG_DIR / 'env_v3_pen1000.toml')
+    ppo = dict(pen.ppo)
+    ppo.pop('n_envs'), ppo.pop('net_arch')
+    _, venv, _ = make_model(pen.env, 1, 0, dict(ppo, n_steps=64, batch_size=64), [8], verbose=0)
+    assert venv.clip_reward == 100.0
+
+
+@pytest.mark.parametrize('p', [100, 300, 1000])
+def test_penalty_configs_differ_from_v0_only_in_collision_and_clip(p):
+    v0, pen = load_experiment(CONFIG_DIR / 'env_v0.toml'), load_experiment(CONFIG_DIR / f'env_v3_pen{p}.toml')
+    assert pen.env == replace(v0.env, r_collision=-float(p))
+    assert pen.variants == v0.variants and pen.constraint is None
+    assert pen.ppo == dict(v0.ppo, clip_reward=100.0)
