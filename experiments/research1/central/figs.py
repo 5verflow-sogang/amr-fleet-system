@@ -108,8 +108,9 @@ for y, (label, c) in zip(ys, conds):
     m, lo, hi = paired('short_d0' if c.startswith('short') else 'central_d0', c, time_ratio)
     sig = lo > 0 or hi < 0
     color = 'black' if sig else '0.6'
-    ax.errorbar(m, y, xerr=[[m - lo], [hi - m]], fmt='s' if 'pause' in c else ('D' if c.startswith('short') else 'o'), ms=3.2, color=color,
-                mfc=color, elinewidth=0.7, capsize=1.5)
+    marker = 's' if 'pause' in c else ('D' if c.startswith('short') else 'o')
+    ax.errorbar(m, y, xerr=[[m - lo], [hi - m]], fmt=marker, ms=3.2, color=color, mfc=color, elinewidth=0.7,
+                capsize=1.5)
     ax.text(hi + 1.0, y, f'{m:+.1f}%', va='center', fontsize=5.8, color=color,
             bbox={'fc': 'white', 'ec': 'none', 'pad': 0.4}, zorder=4)
 ax.axvline(0, color='0.3', lw=0.6)
@@ -128,10 +129,10 @@ save(fig, 'figA_conditions')
 # ---------- 그림 B: 예측 vs 실측 ----------
 def model_points():
     """(그룹, p, 예측 W, 실측 추가 대기, 예측 처리량 변화 %, 실측 처리량 변화 CI)"""
-    groups = [('60초 작업 (사후 적합)', 'central_d0', [(0.3, 'central_loss30'), (0.5, 'central_loss50'),
-                                                    (0.7, 'central_loss70')], 'o', 'black'),
-              ('60초, 재전송 0·1번 (사전 예측)', 'central_d0', [(0.5, 'central_loss50_k0'),
-                                                         (0.5, 'central_loss50_k1')], 's', 'white'),
+    post = [(0.3, 'central_loss30'), (0.5, 'central_loss50'), (0.7, 'central_loss70')]
+    resend = [(0.5, 'central_loss50_k0'), (0.5, 'central_loss50_k1')]
+    groups = [('60초 작업 (사후 적합)', 'central_d0', post, 'o', 'black'),
+              ('60초, 재전송 0·1번 (사전 예측)', 'central_d0', resend, 's', 'white'),
               ('25초 작업 (사전 예측)', 'short_d0', [(0.5, 'short_loss50'), (0.7, 'short_loss70')], '^', 'white')]
     out = []
     for name, base, pts, marker, face in groups:
