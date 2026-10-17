@@ -1,7 +1,7 @@
 """먼저 수락한 쪽이 주인: 같은 작업을 두 로봇이 맡았을 때 누가 계속할지 (architecture.md 5-2절).
 
-하이브리드에서는 서버와 분산 경매가 같은 작업을 서로 다른 로봇에게 맡길 수 있다. 서버 장부(dispatcher)와
-가짜 로봇이 둘 다 /fleet/task_status를 보고 같은 규칙으로 정한다. rclpy를 import하지 않는다.
+하이브리드에서는 서버와 분산 경매가 같은 작업을 서로 다른 로봇에게 맡길 수 있다. 서버 장부(amr_fleet_manager
+dispatcher)·가짜 로봇·경매 노드(amr_fleet_decentralized)가 모두 /fleet/task_status를 보고 같은 규칙으로 정한다.
 
 - COMPLETED를 보고한 로봇이 있으면 그 로봇이 주인이다 (끝난 작업을 다시 할 이유가 없다)
 - 아니면 PENDING·IN_PROGRESS를 보고한 로봇 중 수락 시각(TaskStatus.start_time)이 가장 이른 로봇. 같으면 robot_id 순

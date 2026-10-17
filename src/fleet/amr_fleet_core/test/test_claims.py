@@ -1,6 +1,6 @@
 """먼저 수락한 쪽이 주인 (claims.TaskClaims). rclpy 없이 돈다."""
 
-from amr_fleet_manager.claims import (STATE_COMPLETED, STATE_FAILED, STATE_IN_PROGRESS, STATE_PENDING,
+from amr_fleet_core.claims import (STATE_COMPLETED, STATE_FAILED, STATE_IN_PROGRESS, STATE_PENDING,
                                       TaskClaims)
 
 

@@ -18,7 +18,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
-from .claims import TaskClaims
+from amr_fleet_core.claims import TaskClaims
 from .robot_sim import DUPLICATE, STALE, AssignmentFilter, TaskRun
 
 

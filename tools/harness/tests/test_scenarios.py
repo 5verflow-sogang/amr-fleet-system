@@ -73,8 +73,8 @@ def test_fleet_mode_processes():
 
 
 @pytest.mark.parametrize('mode', ['decentral', 'hybrid'])
-def test_fleet_mode_blocked_until_prerequisites_merge(mode):
-    # 선행 PR(#213·#215) 머지 전에는 분산 이름의 중앙 데이터가 쌓이지 않게 막는다. 머지되면 _blocked 줄을 지우고 이 테스트도 지운다
-    with pytest.raises(ValueError, match='아직 돌릴 수 없다'):
-        _fleet_fake_procs(allow_blocked=False, fleet_mode=mode)
+def test_fleet_mode_runs_after_prerequisites_merge(mode):
+    # 선행 PR(#213 작업 생성기 server_count, #215 경매 노드 fleet_mode·하이브리드 폴백)이 들어가 막지 않는다
+    procs = _fleet_fake_procs(allow_blocked=False, fleet_mode=mode)
+    assert f'fleet_mode:={mode}' in procs['task_auctions']['cmd']
     assert 'task_auctions' not in _fleet_fake_procs(allow_blocked=False)      # central은 그대로

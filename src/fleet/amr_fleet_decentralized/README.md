@@ -17,7 +17,9 @@
 | Subscribe | `/fleet/task_auctions` (파라미터 `auction_topic_prefix`, 기본 `/fleet`) | `amr_msgs/msg/TaskAuction` | 기본은 절대 경로 원본. `relayed:=true`(launch) 또는 `auction_topic_prefix:=fleet`면 상대 이름 → 장애 주입기 `relay_auction` 중계본을 구독 (`amr_bt`·가짜 로봇의 `relayed` 인자와 같은 방식) |
 | Subscribe | `/fleet/task_bids` (파라미터 `auction_topic_prefix`) | `amr_msgs/msg/TaskBid` | 위와 동일 |
 | Subscribe | `/fleet/task_status` | `amr_msgs/msg/TaskStatus` | ACCEPT 뒤 낙찰 로봇이 보낸 FAILED를 보고 재경매 여부 판단 (relay 목록에 없어 항상 절대 경로) |
-| Subscribe | `/fleet/robot_states` (파라미터 `robot_states_topic`) | `amr_msgs/msg/RobotState` | 내 로봇 것만 걸러서 입찰 판단(위치·배터리·IDLE 여부)에 쓴다 |
+| Subscribe | `/fleet/robot_states` (파라미터 `robot_states_topic`) | `amr_msgs/msg/RobotState` | 내 로봇 것만 걸러서 입찰 판단(위치·배터리·IDLE 여부)에 쓴다. 모든 로봇 것으로 생존과 작업 주인을 본다 |
+| Publish·Subscribe | `/fleet/robot_modes` (`fleet_mode:=hybrid`만) | `amr_msgs/msg/RobotFleetMode` | 내 모드(중앙·분산)를 1초마다·바뀔 때 알리고, 다른 로봇 모드로 경매 참여 로봇을 고른다 |
+| Subscribe | `/fleet/heartbeat`, `/fleet/task_table` (파라미터 `server_topic_prefix`, `fleet_mode:=hybrid`만) | `FleetHeartbeat`, `FleetTaskTable` | heartbeat로 모드 전환, 마지막 작업표로 분산 전환 때 미할당 작업 이어받기. `relayed:=true`면 중계본 |
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
@@ -147,15 +149,34 @@
   `header.stamp`로 잴 수 있다(`test_auction_fleet_launch.py`가 이렇게 잰다). 공고·ACCEPT 시각도
   각각 `경매 공고 ... t=`, `... ACCEPT t=` 로그로 남는다.
 
+## 하이브리드 폴백 (`fleet_mode:=hybrid`)
+
+설계는 [architecture.md 5-2절](../../../docs/architecture.md#5-2-하이브리드-폴백-연구-1-비교군-1016-하연-설계) (B안: 로봇마다 판단).
+
+- **전환** (`auction/hybrid.py` `FallbackMode`): 평시 중앙. 자기 heartbeat 중계본이 `fallback_timeout_s`(2초)
+  동안 안 오면 분산, 다시 `return_stable_s`(5초) 동안 2초 넘게 끊기지 않으면 중앙. heartbeat를 한 번도 못
+  봤으면 바꾸지 않는다. heartbeat의 `mode`가 `MODE_DECENTRALIZED`면 바로 분산(C안 자리).
+- **중앙 모드**: 경매를 열지도 입찰하지도 않는다. 받은 AWARD는 포기(WITHDRAW)한다.
+- **분산으로 바뀌면**: 마지막 작업표의 미할당 작업(PENDING, 맡은 로봇 없음 또는 나), 마지막 작업표 뒤 전환
+  전까지 받은 작업 방송(중앙 모드에서 모아 두고 작업표에 나오면 지운다), 그 뒤 새 작업 방송을 **분산 모드
+  로봇끼리** 경매한다(여는 로봇도 분산 모드 로봇 중 crc32 순번).
+- **중앙으로 돌아오면**: 낙찰 전 경매는 접고 남의 경매에 넣은 입찰 재전송도 멈춘다(서버가 다시 맡긴다). 맡은 작업은 끝까지 한다.
+- **서버**(`amr_fleet_manager`)는 `/fleet/robot_modes`를 보고 분산 모드 로봇에게 맡기지 않고, 확인 전 명령은
+  거둬 다른 로봇에게 준다.
+- **기록**: 하네스가 `/fleet/robot_modes`로 `fleet_modes.csv`(로봇별 모드 구간)와 `fleet.fallbacks`·
+  `fleet.decentral_s`를 낸다.
+
+**먼저 수락한 쪽이 주인** (두 모드 공통, `amr_fleet_core.claims`): 다른 로봇이 `TaskStatus`로 맡았다고
+보고한 작업은 경매를 열지 않고, 입찰 수집 중인 경매는 접고, 재경매하지 않는다. 내 로봇이 먼저 맡은 다른
+로봇 때문에 거부·중단(`ErrorInfo.ASSIGN_TASK_TAKEN`, 104)하면 재경매하지 않는다.
+
 ## 확인 필요 (하연과 맞출 부분)
 
-- **서버 장애 폴백 트리거**: 지금 트리거는 "분산 모드에서 작업 방송을 받으면"이다. 중앙 서버가 있다가
-  죽었을 때(`FleetHeartbeat` 끊김) 미할당 작업(`FleetTaskTable`)을 넘겨받는 하이브리드 전환은 아직 없다.
+- **서버 장애 폴백 트리거**: 위 "하이브리드 폴백"으로 정했다 (10/16).
 - **경매인이 죽으면**: 경매를 연 로봇이 낙찰 전에 죽으면 그 작업은 다시 안 열린다(다른 로봇은
   이미 본 task_id라 무시한다).
-- **서버와 섞어 쓸 때**: 가짜 로봇·`amr_bt`는 `assignment_id`가 마지막으로 받은 번호보다 작으면
-  뒤늦은 명령으로 버린다(epoch가 같을 때). 경매 쪽 번호(1,000,000 이상)를 받은 뒤 서버 번호를 받으면
-  버려진다 - 하이브리드에서 한 로봇이 두 쪽 할당을 번갈아 받으면 맞춰야 한다.
+- **서버와 섞어 쓸 때**: 가짜 로봇은 출처(서버·경매 로봇 k)별로 번호를 비교한다(#213, api.md 4-3절
+  "명령 번호 출처"). `amr_bt`는 지수 후속 PR(10/20–21).
 
 ## 파라미터
 
@@ -185,12 +206,17 @@
 | `auction_topic_prefix` | `/fleet` | 구독 접두어. `fleet`면 중계본(`relayed:=true`와 동일) |
 | `robot_states_topic` | `/fleet/robot_states` | 내 로봇 상태(위치·배터리·모드) |
 | `update_rate_hz` | `10.0` | 마감 판정·AWARD 재전송·재경매를 확인하는 주기 |
+| `fleet_mode` | `decentral` | `decentral`(늘 분산, 분산 비교군) / `hybrid`(평시 중앙, 위 "하이브리드 폴백"). launch 인자 `fleet_mode` |
+| `fallback_timeout_s` | `2.0` | 하이브리드: heartbeat가 이 시간(실제 시간, s) 동안 안 오면 분산 |
+| `return_stable_s` | `5.0` | 하이브리드: heartbeat가 이 시간 동안 안정되면 중앙으로 복귀 |
+| `server_topic_prefix` | `/fleet` | 하이브리드: heartbeat·작업표 구독 접두어. `relayed:=true`면 `fleet`(중계본) |
 
 ## 실행
 
 ```bash
 ros2 launch amr_fleet_decentralized task_auction.launch.py namespace:=amr_01 robot_id:=amr_01
 ros2 launch amr_fleet_decentralized task_auction.launch.py relayed:=true   # 장애 주입기 중계본 구독
+ros2 launch amr_fleet_decentralized task_auction.launch.py fleet_mode:=hybrid relayed:=true   # 하이브리드
 ```
 
 ## 테스트
@@ -200,7 +226,7 @@ ros2 launch amr_fleet_decentralized task_auction.launch.py relayed:=true   # 장
 
 ```bash
 pip install -e ".[test]"
-pytest test/test_auction.py
+pytest test/test_auction.py test/test_hybrid.py
 ```
 
 `task_auction_node`는 `test/test_task_auction_launch.py`에서 로봇 2대를 실제로

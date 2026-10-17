@@ -114,6 +114,14 @@ def test_fleet_task_and_recovery_metrics(tmp_path):
         'task_id,request_time,first_assign_time,robots,final_state,end_time,runners\n'
         't1,0,1,amr_01,COMPLETED,8,amr_01\nt2,10,11,amr_02,COMPLETED,40,amr_03 amr_02\nt3,50,,,,,\n')
     assert fleet_metrics(run)['fleet.duplicate_tasks'] == 1
+    assert 'fleet.fallbacks' not in fleet_metrics(run)
+
+    (run / 'fleet_modes.csv').write_text(
+        'robot,mode,start_time,end_time,duration_s\n'
+        'amr_01,central,1,100,99.000\namr_03,central,1,40.5,39.500\namr_03,decentral,40.5,75,34.500\n'
+        'amr_03,central,75,100,25.000\n')
+    m = fleet_metrics(run)
+    assert (m['fleet.fallbacks'], m['fleet.decentral_s']) == (1, 34.5)
 
     (run / 'recovery.csv').write_text(
         'robot,kill_time,task_id,reassign_time,reassigned_robot,recovery_s,completed\n'
