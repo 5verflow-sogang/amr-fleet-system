@@ -56,9 +56,11 @@ def test_resend_and_link_loss_policy_reach_processes():
     procs = _fleet_fake_procs()
     assert 'max_resends:=5' in procs['fleet_manager']['cmd']
     assert 'pause_on_link_loss_s:=0' in procs['fake_robots']['cmd']
-    procs = _fleet_fake_procs(max_resends='0', pause_on_link_loss_s='2')
+    procs = _fleet_fake_procs(max_resends='0', pause_on_link_loss_s='2', robot_speed_mps='3')
     assert 'max_resends:=0' in procs['fleet_manager']['cmd']
     assert 'pause_on_link_loss_s:=2' in procs['fake_robots']['cmd']
+    assert 'speed_mps:=3' in procs['fake_robots']['cmd']
+    assert 'speed_mps:=1.0' in _fleet_fake_procs()['fake_robots']['cmd']
 
 
 def test_fleet_mode_processes():

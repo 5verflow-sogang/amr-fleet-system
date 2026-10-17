@@ -202,6 +202,7 @@
 | `step_hz` | `10.0` | 이동 계산 주기 |
 | `server_topic_prefix` | `/fleet` | 서버 → 로봇 토픽 앞부분. launch 인자 `relayed:=true`면 `fleet` |
 | `claim_timeout_s` | `5.0` | 다른 로봇의 작업 주장을 세는 시간. 그 로봇의 RobotState가 이만큼 끊기면 뺀다 (서버 `reclaim_timeout_s`와 같게, 실제 시간) |
+| `speed_mps` (launch 인자) | `1.0` | `fake_robots.launch.py`가 모든 로봇의 `speed_mps`를 이 값으로 덮어쓴다 (연구 1 짧은 작업) |
 | `pause_on_link_loss_s` | `0.0` | 서버 heartbeat가 이 시간(실제 시간, s) 동안 안 오면 하던 작업을 멈추고 기다린다(끊기면 멈춤 정책, 상용 AMR 기본 동작을 흉내). 0이면 끊겨도 계속 수행. launch 인자 같은 이름 |
 
 `task_generator` ([launch/task_generator.launch.py](launch/task_generator.launch.py) 인자)

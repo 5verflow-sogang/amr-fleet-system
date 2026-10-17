@@ -54,7 +54,8 @@ def _robots(context):
             executable='fake_robot',
             namespace=robot_id,
             parameters=[config, {'robot_id': robot_id, 'server_topic_prefix': prefix,
-                                 'pause_on_link_loss_s': float(arg('pause_on_link_loss_s'))}],
+                                 'pause_on_link_loss_s': float(arg('pause_on_link_loss_s')),
+                                 'speed_mps': float(arg('speed_mps'))}],
             output='screen',
         )
 
@@ -98,6 +99,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'fault_events_file', default_value='',
             description='강제종료·재시작 시각 기록 파일 (fault_events.csv). 비우면 기록하지 않는다'),
+        DeclareLaunchArgument(
+            'speed_mps', default_value='1.0',
+            description='직선 이동 속도 (m/s, config 기본 1.0). 올리면 작업 수행 시간이 짧아진다 (연구 1 짧은 작업 예측 검증)'),
         DeclareLaunchArgument(
             'pause_on_link_loss_s', default_value='0.0',
             description='서버 heartbeat가 이 시간(실제 시간, s) 동안 안 오면 하던 작업을 멈추고 기다린다(끊기면 멈춤 정책). 0이면 끄기'),
