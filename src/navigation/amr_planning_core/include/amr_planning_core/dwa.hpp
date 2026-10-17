@@ -168,12 +168,16 @@ struct DwaConfig
   // nav2_params.yaml DWA.lookahead_distance(0.5)와 같다.
   double lookahead_distance = 0.5;
 
-  // true면 heading 기준점을 궤적마다 max(lookahead_distance, |v|*sim_time) 앞의 경로 점으로
-  // 잡는다(경로 끝을 넘으면 마지막 점). 기준점이 고정이면 궤적 끝이 그 점을 넘는 순간 heading
-  // 비용이 최대가 되어 v <= lookahead_distance/sim_time(0.25 m/s)으로 묶인다. 경로 끝에서는
-  // 궤적이 끝점을 지나치면 그 앞(goal_tolerance만큼 짧게)에서 heading을 본다 - 끝점을 지나친
-  // 궤적 끝에서 보면 방향이 뒤집혀 목표 앞 감속(use_goal_slowdown) 대신 그쪽이 속도를 정한다.
-  // lookahead_distance가 최솟값이라 느릴 때(|v|*sim_time <= lookahead_distance)는 false와 같다.
+  // true면 heading 기준점을 궤적마다 |v|*sim_time + lookahead_distance 앞의 경로 점으로 잡는다
+  // (경로 끝을 넘으면 마지막 점) - 모든 샘플에서 기준점이 궤적 끝보다 lookahead_distance 앞이다.
+  // 기준점이 고정이면 궤적 끝이 그 점을 넘는 순간 heading 비용이 최대가 되어
+  // v <= lookahead_distance/sim_time(0.25 m/s)으로 묶인다. 기준점을 궤적 길이(|v|*sim_time)만큼만
+  // 앞에 두면 궤적 끝과 기준점이 거의 같은 곳이라, 끝 -> 기준점 방향이 경로 점 간격·옆 오차 몇 mm에
+  // 따라 크게 튀어 빠른 샘플의 heading 비용만 들쭉날쭉 커진다 - 달리다 0.15 m/s로 떨어져 기어갔다(#216).
+  // 기준점이 경로 끝점으로 잘리면 끝점보다 lookahead_distance 앞인 궤적 점에서 heading을 본다 - 끝점을
+  // 지나친 궤적 끝에서 보면 방향이 뒤집혀 목표 앞 감속(use_goal_slowdown) 대신 그쪽이 속도를 정하고,
+  // 끝점에 붙은 궤적 끝에서 보면 위와 같이 방향이 튄다.
+  // 정지(v=0)에서는 false와 같은 기준점(lookahead_distance 앞)이다.
   bool adaptive_lookahead = true;
 };
 

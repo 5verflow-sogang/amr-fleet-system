@@ -255,6 +255,18 @@ heading을 끝점 앞에서 재므로 이 가림이 없어진다(4-8절).
 그대로다(경로가 없으면 그 점 기준). `adaptive_lookahead: false`면 경로 버전도 기존 플러그인 흐름과
 결과가 같다(`AdaptiveLookaheadDisabledMatchesFixedWaypointCall`).
 
+**#216에서 고친 것(연구 2에서 1.5 m/s로 달리다 0.15 m/s로 떨어져 기어가 시간 초과):** 위 규칙은 기준점을
+궤적 길이(`|v|·sim_time`)만큼 앞에 두어, 빠른 샘플일수록 궤적 끝과 기준점이 거의 같은 곳(수 cm 차)에
+있었다. 궤적 끝에서 기준점을 향하는 방향이 경로 점 간격(0.05 m)과 옆 오차 몇 mm에 따라 크게 튀어, 빠른
+샘플의 heading 비용만 들쭉날쭉 커지고(0.2~0.3) 속도 비용(최대 0.1)으로는 못 이겨 속도가
+`lookahead_distance/sim_time` 근처로 떨어졌다 - 그보다 느리면 기준점이 고정 lookahead 점이라 다시
+앞에 있게 된다. 진단 로그(샘플별 기준점·궤적 끝·비용 항)로 확인했다. 그래서 기준점을 **궤적 끝보다
+`lookahead_distance` 앞**(`|v|·sim_time + lookahead_distance`)에 둔다 - 모든 샘플에서 끝 → 기준점
+거리가 같아 heading 비용을 같은 조건으로 비교한다. 기준점이 경로 끝점으로 잘리면 끝점보다
+`lookahead_distance` 앞인 궤적 점에서 heading을 잰다(전에는 끝점을 지나치는 궤적만 `goal_tolerance`
+앞에서 쟀다) - 같은 이유로 목표 앞 몇 m에서 다시 기어가던 것을 막는다. 정지(v=0)에서는 기준점이 전과
+같이 `lookahead_distance` 앞이다. 로봇에 가장 가까운 경로 점 찾기는 경로 전체를 보므로 원인이 아니었다.
+
 ## 5. Pure Pursuit · Stanley · PID
 
 > 담당: 이진. ROS 비의존 코어 `amr_control/include/amr_control/core/`, 노드 `path_tracker_node`

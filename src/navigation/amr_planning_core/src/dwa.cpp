@@ -356,18 +356,21 @@ DwaCommand DwaPlanner::selectCommand(
   for (int vi = 0; vi < config_.v_samples; ++vi) {
     const double v = sampleValue(window.min_v, window.max_v, vi, config_.v_samples);
 
-    // heading 기준점: 고정이면 goal, adaptive면 이 속도의 궤적 길이만큼 앞의 경로 점.
-    // 궤적이 경로 끝점을 지나치면 그 앞(goal_tolerance만큼 짧게)까지만 보고 heading을 잰다.
+    // heading 기준점: 고정이면 goal, adaptive면 이 속도의 궤적 끝보다 lookahead_distance 앞의 경로 점
+    // (궤적 길이 + lookahead_distance). 궤적 끝과 기준점이 붙어 있으면 끝 -> 기준점 방향이 튄다(#216).
+    // 기준점이 경로 끝점으로 잘리면(궤적 끝 + lookahead_distance가 경로 끝을 넘음) 끝점보다
+    // lookahead_distance 앞인 궤적 점까지만 보고 heading을 잰다 - 같은 이유로, 끝에 가까운 빠른 궤적의
+    // 끝과 경로 끝점이 붙어 방향이 튀지 않게 한다(지나치는 궤적은 끝점을 넘은 쪽에서 보면 뒤집힌다).
     Point2D heading_target = goal;
     std::size_t heading_steps = std::numeric_limits<std::size_t>::max();
     if (adaptive) {
       const double travel = std::abs(v) * config_.sim_time;
       const PathTarget target = pathPointAheadFrom(
-        path, path_start, state.x, state.y, std::max(config_.lookahead_distance, travel));
+        path, path_start, state.x, state.y, travel + config_.lookahead_distance);
       heading_target = target.point;
       const double step_length = std::abs(v) * config_.dt;
-      if (target.at_path_end && target.distance_from_robot < travel && step_length > 0.0) {
-        const double before_end = target.distance_from_robot - config_.goal_tolerance;
+      const double before_end = target.distance_from_robot - config_.lookahead_distance;
+      if (target.at_path_end && before_end < travel && step_length > 0.0) {
         heading_steps =
           static_cast<std::size_t>(std::max(1.0, std::floor(before_end / step_length)));
       }

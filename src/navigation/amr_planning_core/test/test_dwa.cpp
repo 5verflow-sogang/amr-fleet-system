@@ -768,10 +768,13 @@ struct PathRunResult
   double max_v = 0.0;
   double stop_x = 0.0;              // kGoalReached 뒤 acc_v로 감속해 서는 x
   double slowdown_distance = 0.0;   // 최고 속도보다 0.05 m/s 넘게 줄어든 시점의 경로 끝까지 거리
+  int steps = 0;                    // kGoalReached까지 걸린 제어 주기 수
 };
 
 // 빈 지도에서 직선 경로를 따라가는 닫힌 루프(명령을 그대로 따른다고 보고 적분).
-PathRunResult followStraightPath(const DwaConfig & config, double v0, double goal_x)
+// start_y·start_yaw: 경로(y=2.0) 기준 옆 오차·방향 오차로 출발한다(연구 2 환경처럼 경로 위에 딱 있지 않음).
+PathRunResult followStraightPath(
+  const DwaConfig & config, double v0, double goal_x, double start_y = 2.0, double start_yaw = 0.0)
 {
   TestGrid test_grid(200, 40, 0.1);  // 20m x 4m, 빈 지도라 거칠게(테스트 시간 단축)
   const DwaPlanner planner(config);
@@ -779,7 +782,8 @@ PathRunResult followStraightPath(const DwaConfig & config, double v0, double goa
 
   RobotState state;
   state.x = 1.0;
-  state.y = 2.0;
+  state.y = start_y;
+  state.yaw = start_yaw;
   state.v = v0;
 
   PathRunResult result;
@@ -790,6 +794,7 @@ PathRunResult followStraightPath(const DwaConfig & config, double v0, double goa
     if (command.status == DwaStatus::kGoalReached) {
       result.reached = true;
       result.stop_x = state.x + state.v * state.v / (2.0 * config.acc_v);
+      result.steps = step;
       break;
     }
     if (command.status != DwaStatus::kOk) {
@@ -829,9 +834,11 @@ TEST(DwaPlannerTest, AdaptiveLookaheadReachesNearMaxSpeedOnStraightPath)
   EXPECT_LE(fixed.max_v, config.lookahead_distance / config.sim_time + 0.1);
 }
 
-TEST(DwaPlannerTest, AdaptiveLookaheadUsesFixedTargetAtLowSpeed)
+TEST(DwaPlannerTest, AdaptiveLookaheadUsesFixedTargetWhenStopped)
 {
-  // |v|*sim_time <= lookahead_distance면 기준점이 고정 lookahead 점과 같다.
+  // 기준점은 궤적 끝보다 lookahead_distance 앞(궤적 길이 + lookahead_distance)이라, 정지(v=0)에서는
+  // 고정 lookahead 점과 같다. (#216 전에는 |v|*sim_time <= lookahead_distance인 느린 속도 전체에서
+  // 같았다 - 그 규칙이 궤적 끝과 기준점을 붙여 놓아 속도가 떨어지는 원인이었다.)
   const std::vector<Point2D> path = {
     {1.0, 2.0}, {1.2, 2.0}, {1.4, 2.0}, {1.4, 2.2}, {1.4, 2.4}, {1.4, 2.6}, {1.4, 2.8}};
   EXPECT_EQ(pathPointAhead(path, 1.0, 2.0, 0.5).point.x, 1.4);
@@ -842,9 +849,10 @@ TEST(DwaPlannerTest, AdaptiveLookaheadUsesFixedTargetAtLowSpeed)
   TestGrid test_grid(80, 80, 0.05);
   test_grid.setRegion(1.7, 1.9, 1.6, 2.4, 254);
   DwaConfig on = makeFastConfig();
+  on.acc_v = 1e-6;  // 동적 윈도우가 사실상 v=0 하나 - 궤적 길이 0
   DwaConfig off = on;
   off.adaptive_lookahead = false;
-  for (const double v0 : {0.0, 0.05, 0.1}) {  // 윈도우 최고 속도 <= 0.2 -> 궤적 길이 <= 0.4m
+  for (const double v0 : {0.0}) {
     RobotState state;
     state.x = 1.0;
     state.y = 2.0;
@@ -902,6 +910,23 @@ TEST(DwaPlannerTest, AdaptiveLookaheadLetsGoalSlowdownTakeEffect)
   EXPECT_GT(weak_result.slowdown_distance, strong_result.slowdown_distance);
   EXPECT_LE(strong_result.stop_x, 15.0 + strong.goal_tolerance);
   EXPECT_LE(weak_result.stop_x, 15.0 + weak.goal_tolerance);
+}
+
+TEST(DwaPlannerTest, AdaptiveLookaheadKeepsSpeedWhenSlightlyOffPath)
+{
+  // #216 증상 1(연구 2 S2 0 kg): 경로에서 몇 cm 옆·몇 도 틀어진 채 달리면 1.5 m/s에서 0.15 m/s로 떨어져
+  // 기어갔다. heading 기준점을 궤적 길이(|v|*sim_time)만큼 앞의 경로 점으로 잡아, 궤적 끝과 기준점이 거의
+  // 같은 곳이라 끝 -> 기준점 방향이 경로 점 간격(0.05 m)·옆 오차 몇 mm에 따라 크게 튀었다 - 빠른 샘플의
+  // heading 비용만 들쭉날쭉 커져 속도 비용(0.1)으로는 못 이겼다.
+  DwaConfig config = makeFastConfig();
+  config.v_samples = 11;
+  config.acc_v = 2.07;  // 연구 2 0 kg
+  const PathRunResult result = followStraightPath(config, 1.5, 15.0, 2.0 - 0.02, 0.02);
+  ASSERT_TRUE(result.reached);
+  EXPECT_GE(result.max_v, 0.95 * config.max_v);
+  // 14 m를 최고 속도 근처로 가면 10초 안쪽이다(기어가면 수십 초)
+  EXPECT_LT(result.steps * config.dt, 12.0) << "steps=" << result.steps;
+  EXPECT_LE(result.stop_x, 15.0 + config.goal_tolerance);
 }
 
 }  // namespace amr_planning_core
