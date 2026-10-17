@@ -95,11 +95,9 @@ param_sets:
     central: {server: 'true', auction: 'false', relay_auction: 'false',
               gen_server_node: fleet_manager, gen_server_count: '1'}
     decentral: {server: 'false', auction: 'true', relay_auction: 'true',
-                gen_server_node: task_auction, gen_server_count: '{num_robots}',
-                _blocked: '#213(작업 생성기 server_count) 머지 전'}
+                gen_server_node: task_auction, gen_server_count: '{num_robots}'}
     hybrid: {server: 'true', auction: 'true', relay_auction: 'true',
-             gen_server_node: fleet_manager, gen_server_count: '1',
-             _blocked: '#213·#215(경매 노드 fleet_mode, 하이브리드 폴백) 머지 전'}
+             gen_server_node: fleet_manager, gen_server_count: '1'}
 driver:
   mode: wait
   use_sim_time: false
