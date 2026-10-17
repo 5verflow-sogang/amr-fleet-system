@@ -257,6 +257,9 @@ class TaskAuctionNode(Node):
         # 서버 → 로봇 토픽 앞부분. 장애 주입기 중계본이면 'fleet'(→ /<robot_id>/fleet/...), 가짜 로봇과 같은 이름
         server_topic_prefix = p('server_topic_prefix', '/fleet').value
         self._last_table: Optional[FleetTaskTable] = None
+        # 중앙 모드에서 받은 작업 방송 중 아직 작업표에 안 나온 것. 작업표는 1초마다, 분산 전환은 2초 끊긴 뒤라
+        # 마지막 작업표 뒤 ~ 전환 사이에 들어온 작업은 표에 없다 - 분산으로 바뀌면 표의 미할당분과 같이 이어받는다
+        self._central_requests: Dict[str, Task] = {}
         # 다른 로봇의 모드 (RobotFleetMode). 하이브리드에서 분산 모드 로봇끼리만 경매를 연다
         self._robot_modes: Dict[str, int] = {}
         # 먼저 수락한 쪽이 주인 - 다른 로봇이 맡은 작업은 경매를 열거나 이어가지 않는다. 죽은 로봇의 주장은
@@ -416,8 +419,12 @@ class TaskAuctionNode(Node):
 
     def _on_task_request(self, msg: Task):
         task_id = msg.task_id
-        # 중앙 모드(하이브리드)면 서버가 맡긴다. 본 것으로 적지 않아야 분산으로 바뀔 때 작업표에서 이어받는다
-        if not self._open_auctions or not task_id or task_id in self._task_ids_seen or not self._decentral():
+        if not self._open_auctions or not task_id or task_id in self._task_ids_seen:
+            return
+        if not self._decentral():
+            # 중앙 모드(하이브리드)면 서버가 맡긴다. 본 것으로 적지 않고 모아 둔다 - 작업표에 나오면 지우고, 그 전에
+            # 분산으로 바뀌면 이어받는다(_take_over_backlog)
+            self._central_requests[task_id] = msg
             return
         self._task_ids_seen.add(task_id)
         if self._taken_by_other(task_id):
@@ -451,6 +458,9 @@ class TaskAuctionNode(Node):
 
     def _on_task_table(self, msg: FleetTaskTable):
         self._last_table = msg
+        # 서버가 아는 작업은 작업표로 이어받는다 (미할당이면 경매, 다른 로봇에게 맡겼으면 서버에 맡김)
+        for r in msg.records:
+            self._central_requests.pop(r.task.task_id, None)
 
     def _on_robot_mode(self, msg: RobotFleetMode):
         if msg.robot_id != self._robot_id:
@@ -476,21 +486,29 @@ class TaskAuctionNode(Node):
             self._hand_back_to_server()
 
     def _take_over_backlog(self):
-        """분산으로 바뀌었다: 마지막 작업표의 미할당 작업 중 내가 열 차례인 것의 경매를 연다."""
-        if self._last_table is None or not self._open_auctions:
+        """분산으로 바뀌었다: 마지막 작업표의 미할당 작업과 그 뒤 들어온 작업 방송 중 내가 열 차례인 것의 경매를 연다."""
+        if not self._open_auctions:
             return
         robots = self._auction_robots()
-        tasks = {r.task.task_id: r.task for r in self._last_table.records}
+        records = self._last_table.records if self._last_table is not None else []
+        tasks = {r.task.task_id: r.task for r in records}
+        backlog = backlog_task_ids(records, self._robot_id)
+        for task_id, task in self._central_requests.items():
+            if task_id not in tasks:
+                tasks[task_id] = task
+                backlog.append(task_id)
+        self._central_requests.clear()
         opened = 0
-        for task_id in backlog_task_ids(self._last_table.records, self._robot_id):
+        for task_id in backlog:
             if task_id in self._task_ids_seen or self._taken_by_other(task_id):
                 continue
             self._task_ids_seen.add(task_id)
             if auction_opener(task_id, robots) == self._robot_id:
                 self._open_auction(tasks[task_id])
                 opened += 1
+        seq = self._last_table.seq if self._last_table is not None else '-'
         self.get_logger().info(
-            f'작업표(seq {self._last_table.seq})에서 이어받기: 경매 {opened}건 열음, 경매 참여 로봇 {robots}')
+            f'이어받기(작업표 seq {seq} + 그 뒤 방송): 후보 {len(backlog)}건, 경매 {opened}건 열음, 경매 참여 로봇 {robots}')
 
     def _hand_back_to_server(self):
         """중앙으로 돌아왔다: 아직 낙찰 전인 경매는 접고(서버가 다시 맡긴다), 확정된 경매는 감시를 끝낸다.
@@ -504,6 +522,8 @@ class TaskAuctionNode(Node):
                 state.phase = 'completed'
         self._pending_bids.clear()
         self._deferred_bids.clear()
+        # 남의 경매에 넣은 입찰도 거둔다 - 중앙 로봇이 낙찰되면 WITHDRAW하느라 그 경매가 늦어진다 (#215 리뷰 2)
+        self._bid_resends.clear()
 
     def _next_auction_id(self) -> int:
         next_id = self._next_reauction_id.get(self._robot_id, 1)

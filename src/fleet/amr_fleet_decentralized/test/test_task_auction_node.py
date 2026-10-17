@@ -808,3 +808,32 @@ def test_isolated_auctioneer_awards_itself_without_echo():
         for node in nodes.values():
             node.destroy_node()
         rclpy.shutdown()
+
+
+def test_hybrid_takes_over_requests_after_last_task_table():
+    """마지막 작업표 뒤 ~ 분산 전환 사이에 들어온 작업도 이어받는다 (#215 리뷰 1). 작업표에 나온 작업은 표를 따른다."""
+    from amr_fleet_decentralized.auction import MODE_DECENTRALIZED
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = _fleet(['amr_01', 'amr_02', 'amr_03'], bus, clock)
+        for node in nodes.values():
+            node._fleet_mode = 'hybrid'
+        robot = nodes['amr_03']
+        # 중앙 모드에서 방송 두 건: t_listed는 그 뒤 작업표에 다른 로봇 몫으로 나오고, t_gap은 표가 오기 전에 끊겼다
+        _deliver_task_request(nodes, _task('t_listed'))
+        robot._on_task_table(FleetTaskTable(seq=3, records=[
+            TaskRecord(task=_task('t_listed'), assignee_id='amr_01', state=TaskStatus.STATE_PENDING)]))
+        _deliver_task_request(nodes, _task('t_gap'))
+        bus.pump()
+        assert _announces(bus) == []
+        _set_mode(robot, MODE_DECENTRALIZED)
+        bus.pump()
+        assert _announces(bus) == [('amr_03', 't_gap')]
+        assert robot._central_requests == {}
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()

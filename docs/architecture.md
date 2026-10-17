@@ -216,6 +216,7 @@ sequenceDiagram
 - 손실률이 높으면(70%) heartbeat 10개가 연달아 사라질 확률이 커서(0.7¹⁰ ≈ 3%, heartbeat마다) 연결이 살아 있어도 분산으로 넘어갔다 돌아오기를 되풀이한다. 전환 횟수를 기록해 결과에서 따로 본다. C안(서버가 Ack 왕복시간 P95로 판단)이 이 경우를 풀 수 있다.
 - 로봇 → 서버 토픽에도 장애를 거는 실험(양방향, 10/21~)에서는 `TaskStatus`가 늦거나 빠져 정리가 늦어진다.
 - 서버가 재시작하면 장부가 비어 이 규칙과 상관없이 작업을 잃는다 (amr_fleet_manager README 미결).
+- 모드 알림(`/fleet/robot_modes`)은 로봇 → 모두 방향이라 장애를 거치지 않는다(D8). 서버와 다른 로봇은 끊긴 로봇이 분산으로 넘어간 것을 바로 안다. 실제 망에서는 이 알림도 늦거나 빠질 수 있어, 연구 1 하이브리드 결과는 이 점에서 낙관적이다 (#215 리뷰 4).
 - 이번 범위는 가짜 로봇(`fake_robot_node`)이다. `amr_bt`가 같은 규칙을 따르는 일은 따로 맞춘다.
 
 **구현** (PR-1 #214, PR-2): 모드 전환은 경매 노드(`amr_fleet_decentralized` `fleet_mode:=hybrid`)가 하고 `/fleet/robot_modes`(`RobotFleetMode`, 로봇 → 모두)로 알린다. 서버는 분산 모드 로봇에게 작업을 맡기지 않고 확인 전 명령을 거둔다. 주인 규칙은 `amr_fleet_core.claims`를 서버·가짜 로봇·경매 노드가 같이 쓴다. 기록은 `fleet_modes.csv`와 요약 `fleet.fallbacks`(분산 전환 횟수)·`fleet.decentral_s`(분산 모드 시간 합), `fleet.duplicate_tasks`.
