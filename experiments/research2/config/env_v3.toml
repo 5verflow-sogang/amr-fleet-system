@@ -90,14 +90,16 @@ mass_obs_mode = "brake_ratio"    # 빈 차 대비 제동 능력. 제안 방법 �
 # 제약 RL (v3). 이 절이 있으면 train_ppo.py가 PPO-Lagrangian(payload_nav/lagrangian.py)으로 학습한다
 [constraint]
 cost_limit = 0.01        # δ. 학습 분포 에피소드 충돌 비율 상한. 사전 점검(VOI)에서 정보 값어치가 가장 큰 구간
+cost_limit_start = 0.5   # 안전 기준 조이기: 50%에서 시작해 anneal_steps 동안 1%까지 비율로 줄인다 (축소 실험 1차: 처음부터 1%면 λ 폭발)
+anneal_steps = 1000000
 cost_gamma = 1.0         # 비용은 할인하지 않는다 (늦게 나는 충돌도 같은 무게)
 cost_gae_lambda = 0.95
-pid_kp = 0.5             # 로그 공간 PID. 오차 = ln((이동평균 충돌 비율 + δ) / 2δ)
+pid_kp = 0.2             # 로그 공간 PID. 오차 = ln((이동평균 충돌 비율 + δ) / 2δ). 0.5면 한 롤아웃에 λ가 7배까지 뛴다
 pid_ki = 0.1             # 충돌 0이면 롤아웃마다 λ 약 7%씩 감소, δ의 5배면 약 12%씩 증가
 pid_kd = 0.0
 lambda_init = 0.1
 lambda_min = 0.01
-lambda_max = 100.0
+lambda_max = 20.0        # v2 충돌 벌점(−300)이 대략 λ 5~10
 cost_ema = 0.8
 cost_vf_lr = 3e-4
 cost_vf_epochs = 10

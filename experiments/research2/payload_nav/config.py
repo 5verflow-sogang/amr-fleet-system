@@ -20,15 +20,20 @@ class ConstraintConfig:
     제약: 학습 분포에서 에피소드 충돌 비율(비용 = 충돌 1) ≤ cost_limit. λ는 로그 공간 PID 라그랑지안
     (payload_nav/lagrangian.py PIDLagrangian)으로 롤아웃마다 갱신한다.
     """
-    cost_limit: float                   # δ. 에피소드 충돌 비율 상한 (예: 0.01)
+    cost_limit: float                   # δ. 에피소드 충돌 비율 상한 (예: 0.01). 체크포인트 선택도 이 값 기준
+    # 안전 기준 조이기: 학습 초반 δ를 cost_limit_start에서 anneal_steps 동안 cost_limit까지 기하적으로 줄인다.
+    # 처음부터 δ를 1%로 두면 무작위 정책의 충돌(약 100%)로 λ가 폭발해 "도착하기"를 배우기 전에 보상 신호가 묻힌다
+    # (v3 축소 실험 1차: 20만 스텝에 λ가 상한, 100만 스텝까지 성공률 0~30%). 기본은 조이지 않음(start = cost_limit)
+    cost_limit_start: Optional[float] = None
+    anneal_steps: int = 0
     cost_gamma: float = 1.0             # 비용 할인. 1이면 늦게 나는 충돌도 같은 무게 (제약이 "충돌 확률"이 되게)
     cost_gae_lambda: float = 0.95
-    pid_kp: float = 0.5                 # 로그 공간 이득 (오차 e = ln((J_c + δ) / 2δ))
+    pid_kp: float = 0.2                 # 로그 공간 이득 (오차 e = ln((J_c + δ) / 2δ))
     pid_ki: float = 0.1
     pid_kd: float = 0.0
     lambda_init: float = 0.1
     lambda_min: float = 0.01            # 로그 공간이라 0이 될 수 없다. 이 정도면 정책 이득에 거의 영향이 없다
-    lambda_max: float = 100.0
+    lambda_max: float = 20.0            # v2 충돌 벌점(−300)이 대략 λ 5~10. 100이면 보상 신호가 1% 수준으로 묻힌다
     cost_ema: float = 0.8               # 롤아웃 충돌 비율 이동평균 계수 (이전 값 비중). 롤아웃당 에피소드가 100개 남짓이라 잡음을 줄인다
     cost_vf_lr: float = 3e-4
     cost_vf_epochs: int = 10
@@ -48,6 +53,18 @@ class ConstraintConfig:
             raise ValueError(f'cost_ema는 [0, 1) 범위여야 한다: {self.cost_ema}')
         if self.cost_vf_epochs < 1 or self.cost_vf_batch_size < 1:
             raise ValueError('cost_vf_epochs·cost_vf_batch_size는 1 이상이어야 한다')
+        if self.cost_limit_start is not None and not self.cost_limit <= self.cost_limit_start < 1.0:
+            raise ValueError('cost_limit ≤ cost_limit_start < 1이어야 한다')
+        if self.anneal_steps < 0:
+            raise ValueError('anneal_steps는 0 이상이어야 한다')
+
+    def limit_at(self, timesteps: int) -> float:
+        """학습 스텝 timesteps에서의 δ. cost_limit_start → cost_limit을 anneal_steps 동안 기하적으로(비율로) 줄인다."""
+        start = self.cost_limit if self.cost_limit_start is None else self.cost_limit_start
+        if self.anneal_steps <= 0 or timesteps >= self.anneal_steps:
+            return self.cost_limit
+        frac = timesteps / self.anneal_steps
+        return float(start * (self.cost_limit / start) ** frac)
 
 
 @dataclass(frozen=True)

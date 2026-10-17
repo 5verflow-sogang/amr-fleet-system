@@ -6,6 +6,7 @@
   SB3 collect_rollouts는 callback.on_step()을 rollout_buffer.add()보다 먼저 부르므로, 그때 buffer.pos가 이 스텝 자리다
 - 비용 가치망 V_c: 정책과 따로 둔 MLP. 비용 GAE(cost_gamma, cost_gae_lambda)의 목표로 학습한다. 저장 파일에는 넣지 않는다
   (평가는 정책만 쓰므로 evaluate.py가 PPO.load로 그대로 읽는다)
+- δ: 학습 초반에는 cost_limit_start에서 cost_limit까지 줄여 간다 (ConstraintConfig.limit_at, 안전 기준 조이기)
 - λ: 롤아웃마다 끝난 에피소드의 충돌 비율 → 이동평균 J_c → 로그 공간 PID (Stooke et al. 2020, "Responsive Safety in RL
   by PID Lagrangian Methods"의 PID를 log λ에 건다. PIDLagrangian 설명 참고)
 - 정책 손실의 이득: Â = (Â_r' − λ·Â_c') / (1 + λ). Â_r'은 보상 이득을 표준화한 값, Â_c'은 비용 이득에서 평균만 뺀 값이다.
@@ -79,14 +80,16 @@ class PIDLagrangian:
         self.prev_error: Optional[float] = None
         self.value = c.lambda_init
 
-    def update(self, cost_rate: Optional[float]) -> float:
+    def update(self, cost_rate: Optional[float], limit: Optional[float] = None) -> float:
+        """limit은 이번 롤아웃의 δ (안전 기준 조이기, ConstraintConfig.limit_at). 없으면 cost_limit."""
         c = self.c
         if cost_rate is None:
             return self.value
         self.cost_ema = cost_rate if self.cost_ema is None else c.cost_ema * self.cost_ema + (1 - c.cost_ema) * cost_rate
         if self.fixed:
             return self.value
-        error = float(np.log((self.cost_ema + c.cost_limit) / (2.0 * c.cost_limit)))
+        limit = c.cost_limit if limit is None else limit
+        error = float(np.log((self.cost_ema + limit) / (2.0 * limit)))
         lo, hi = np.log(c.lambda_min), np.log(c.lambda_max)
         self.log_integral = float(np.clip(self.log_integral + c.pid_ki * error, lo, hi))
         derivative = 0.0 if self.prev_error is None else max(0.0, error - self.prev_error)
@@ -165,10 +168,12 @@ class PPOLagrangian(PPO):
                            np.asarray(self._last_episode_starts), c.cost_gamma, c.cost_gae_lambda)
 
         cost_rate = float(np.mean(self._episode_costs)) if self._episode_costs else None
-        lam = self.lagrangian.update(cost_rate)
+        limit = c.limit_at(self.num_timesteps)
+        lam = self.lagrangian.update(cost_rate, limit)
         buf.advantages = combine_advantages(buf.advantages, adv_c, lam)
 
         self.logger.record('lagrangian/lambda', lam)
+        self.logger.record('lagrangian/cost_limit', limit)
         self.logger.record('lagrangian/cost_rate_ema', self.lagrangian.cost_ema if self.lagrangian.cost_ema is not None else float('nan'))
         if cost_rate is not None:
             self.logger.record('lagrangian/cost_rate_rollout', cost_rate)

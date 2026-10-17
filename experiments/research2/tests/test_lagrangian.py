@@ -295,3 +295,26 @@ def test_checkpoint_selection_prefers_feasible_then_return(tmp_path, monkeypatch
     info = json.loads((tmp_path / 'best_info.json').read_text())
     assert info['feasible'] and info['return'] == 60.0 and info['threshold'] == pytest.approx(0.02)
     assert Fake.saves == 4
+
+
+def test_cost_limit_annealing_schedule():
+    c = ConstraintConfig(cost_limit=0.01, cost_limit_start=0.5, anneal_steps=1000)
+    assert c.limit_at(0) == pytest.approx(0.5)
+    assert c.limit_at(500) == pytest.approx(np.sqrt(0.5 * 0.01))      # 기하 평균 (비율로 줄임)
+    assert c.limit_at(1000) == 0.01 and c.limit_at(5000) == 0.01
+    assert all(c.limit_at(t) >= c.limit_at(t + 100) for t in range(0, 1000, 100))
+    assert ConstraintConfig(cost_limit=0.01).limit_at(0) == 0.01        # 기본은 조이지 않음
+    with pytest.raises(ValueError):
+        ConstraintConfig(cost_limit=0.05, cost_limit_start=0.01, anneal_steps=10)
+
+
+def test_pid_uses_current_limit():
+    # 같은 충돌 비율이라도 그때의 δ가 느슨하면 λ가 내려가고, 조이면 올라간다
+    loose, tight = _pid(cost_ema=0.0, lambda_init=1.0), _pid(cost_ema=0.0, lambda_init=1.0)
+    assert loose.update(0.1, limit=0.5) < 1.0 < tight.update(0.1, limit=0.01)
+
+
+def test_v3_config_anneals():
+    c = load_experiment(CONFIG_DIR / 'env_v3.toml').constraint
+    assert c.limit_at(0) == pytest.approx(0.5) and c.limit_at(c.anneal_steps) == c.cost_limit == 0.01
+    assert c.lambda_max == 20.0 and c.pid_kp == 0.2
