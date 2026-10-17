@@ -782,3 +782,29 @@ def test_task_taken_reject_not_reauctioned():
         for node in nodes.values():
             node.destroy_node()
         rclpy.shutdown()
+
+
+def test_isolated_auctioneer_awards_itself_without_echo():
+    """끊긴 로봇(입찰·낙찰 중계본을 못 받음)도 자기 경매에 자기가 낙찰돼 작업을 맡는다 (하이브리드 폴백의 전제).
+    자기 AWARD·ACCEPT는 중계를 거치지 않고 바로 처리한다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = _fleet(['amr_03'], bus, clock)
+        bus.drop = lambda msg: isinstance(msg, TaskBid)     # 장애 주입기 끊김: 경매 토픽 중계본이 안 온다
+        _deliver_task_request(nodes, _task('task_alone', x=4.0, y=0.0))
+        bus.pump()
+        clock[0] += 2.1
+        nodes['amr_03']._on_timer()
+        bus.pump()
+        assignments = [m for m in bus.log if isinstance(m, TaskAssignment)]
+        assert [(m.robot_id, m.task.task_id) for m in assignments] == [('amr_03', 'task_alone')]
+        [state] = nodes['amr_03']._auctions.values()
+        assert state.phase == 'done'                         # ACCEPT 에코 없이도 확정
+        assert [m.type for m in bus.dropped] == [TaskBid.TYPE_BID, TaskBid.TYPE_AWARD, TaskBid.TYPE_ACCEPT]
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()

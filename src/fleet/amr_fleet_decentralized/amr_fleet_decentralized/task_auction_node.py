@@ -602,6 +602,11 @@ class TaskAuctionNode(Node):
                 bid_time=received_time,
             )
             self._register_bid(key, bid, received_time)
+        elif self._is_own_loop(msg):
+            # 내 경매에 내가 보낸 AWARD·ACCEPT·WITHDRAW의 중계 에코 - 보낼 때 바로 처리했다(_send_award·
+            # _on_awarded). 자기 자신과는 네트워크 없이 주고받는다: 끊긴 로봇도 혼자 경매해 스스로 맡을 수 있어야
+            # 하고(하이브리드), 중계 지연이 자기 경매에 두 번 걸리지 않게 한다
+            return
         elif msg.type == TaskBid.TYPE_AWARD:
             # robot_id(보낸 경매인)로 자기 메시지를 거르지 않는다 - 경매인이 자기 경매에
             # 자기 입찰이 낙찰되면(제일 싸서) robot_id==winner_id==나인 메시지도 와야
@@ -619,6 +624,13 @@ class TaskAuctionNode(Node):
         elif msg.type == TaskBid.TYPE_WITHDRAW:
             self._on_withdraw(key, msg.robot_id)
 
+    def _is_own_loop(self, msg: TaskBid) -> bool:
+        if msg.auctioneer_id != self._robot_id:
+            return False
+        if msg.type == TaskBid.TYPE_AWARD:
+            return msg.winner_id == self._robot_id
+        return msg.type in (TaskBid.TYPE_ACCEPT, TaskBid.TYPE_WITHDRAW) and msg.robot_id == self._robot_id
+
     def _on_awarded(self, key: AuctionKey, msg: TaskBid):
         # AWARD를 받았다는 건 경매인이 이미 낙찰자(나)를 정했다는 뜻 - 더 입찰을
         # 재전송할 이유가 없다(#155·#171, ACCEPT·WITHDRAW 어느 쪽이든 마찬가지).
@@ -629,6 +641,8 @@ class TaskAuctionNode(Node):
             # 내가 이미 실행 중인 작업을 다른 로봇도 맡는다). 작업 실행(TaskAssignment)은 다시 하지
             # 않는다 - 처음 보낸 것이 같은 assignment_id로 Ack까지 재전송 중이다.
             self._bid_pub.publish(self._accept_msgs[key])
+            if msg.auctioneer_id == self._robot_id:
+                self._on_accept(key, self._robot_id)
             return
         task = self._tasks_seen.get(key)
         now = self._now()
@@ -659,6 +673,8 @@ class TaskAuctionNode(Node):
             self._bid_pub.publish(out)
             self.get_logger().info(
                 f'경매 {key}: 작업 {msg.task_id} ACCEPT t={self._now():.3f}')
+            if msg.auctioneer_id == self._robot_id:
+                self._on_accept(key, self._robot_id)
             if self._run_accepted_tasks:
                 self._send_assignment(key, msg.task_id)
             return
@@ -669,6 +685,8 @@ class TaskAuctionNode(Node):
         else:
             return
         self._bid_pub.publish(out)
+        if msg.auctioneer_id == self._robot_id:
+            self._on_withdraw(key, self._robot_id)
 
     def _send_assignment(self, key: AuctionKey, task_id: str):
         """ACCEPT한 작업을 나(amr_bt·가짜 로봇)에게 TaskAssignment로 보낸다. Ack가 올 때까지 다시 보낸다."""
@@ -936,6 +954,9 @@ class TaskAuctionNode(Node):
         self._bid_pub.publish(out)
         state.award_attempts += 1
         state.award_last_sent = now
+        if state.winner_id == self._robot_id:
+            # 내 경매에 내가 낙찰 - 중계를 거치지 않고 바로 받는다 (_is_own_loop)
+            self._on_awarded(key, out)
 
     def _reauction(self, key: AuctionKey, state: _AuctionState):
         owner = self._claims.owner(state.task.task_id, time.monotonic(), exclude=self._robot_id)
