@@ -198,19 +198,31 @@ double rectangleSurfaceDistance(
 
 bool DwaPlanner::evaluateDynamicObstacles(
   const std::vector<DynamicObstacle> & obstacles, double t, double x, double y, double yaw,
-  double * min_surface_distance) const
+  double * min_surface_distance, const std::vector<double> * start_distances) const
 {
+  // 이미 여유 안인 장애물에서 "지금보다 가까워졌다"를 가르는 허용 오차(m) - 나란히 가며 거리가
+  // 그대로인 궤적이 계산 오차로 충돌이 되지 않게 한다.
+  constexpr double kCloserTolerance = 1e-3;
   *min_surface_distance = std::numeric_limits<double>::infinity();
   const double predict_t = config_.predict_dynamic_obstacles ? t : 0.0;
 
-  for (const DynamicObstacle & obstacle : obstacles) {
+  for (std::size_t j = 0; j < obstacles.size(); ++j) {
+    const DynamicObstacle & obstacle = obstacles[j];
     const double obs_x = obstacle.x + obstacle.vx * predict_t;
     const double obs_y = obstacle.y + obstacle.vy * predict_t;
     const double to_rect = rectangleSurfaceDistance(
       x, y, yaw, config_.footprint_half_length, config_.footprint_half_width, obs_x, obs_y);
     const double surface_distance = to_rect - obstacle.radius;
 
-    if (surface_distance <= config_.dynamic_obstacle_safety_margin) {
+    bool hit = surface_distance <= config_.dynamic_obstacle_safety_margin;
+    if (hit && start_distances != nullptr &&
+      (*start_distances)[j] <= config_.dynamic_obstacle_safety_margin)
+    {
+      // 지금 이미 여유 안: 지금보다 가까워지거나 닿는 궤적만 충돌로 본다(#216)
+      hit = surface_distance <= 0.0 ||
+        surface_distance < (*start_distances)[j] - kCloserTolerance;
+    }
+    if (hit) {
       *min_surface_distance = std::max(0.0, surface_distance);
       return true;
     }
@@ -328,6 +340,16 @@ DwaCommand DwaPlanner::selectCommand(
     pathPointAheadFrom(path, path_start, state.x, state.y, base_distance).point;
   const bool adaptive = follow_path && config_.adaptive_lookahead;
 
+  // 지금 자세에서 동적 장애물마다 표면까지 거리 - 이미 안전 여유 안인 장애물은 멀어지는 궤적을
+  // 허용하는 기준이다(evaluateDynamicObstacles).
+  std::vector<double> start_distances;
+  start_distances.reserve(dynamic_obstacles.size());
+  for (const DynamicObstacle & obstacle : dynamic_obstacles) {
+    start_distances.push_back(rectangleSurfaceDistance(
+        state.x, state.y, state.yaw, config_.footprint_half_length, config_.footprint_half_width,
+        obstacle.x, obstacle.y) - obstacle.radius);
+  }
+
   const double dx = goal.x - state.x;
   const double dy = goal.y - state.y;
   if (std::hypot(dx, dy) <= config_.goal_tolerance) {
@@ -403,7 +425,8 @@ DwaCommand DwaPlanner::selectCommand(
           const double t = static_cast<double>(i + 1) * config_.dt;
           double point_min_distance = std::numeric_limits<double>::infinity();
           const bool dynamic_hit = evaluateDynamicObstacles(
-            dynamic_obstacles, t, point.x, point.y, point.yaw, &point_min_distance);
+            dynamic_obstacles, t, point.x, point.y, point.yaw, &point_min_distance,
+            &start_distances);
           min_dynamic_surface_distance = std::min(min_dynamic_surface_distance, point_min_distance);
           if (dynamic_hit) {
             collides = true;

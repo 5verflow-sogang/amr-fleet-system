@@ -132,7 +132,9 @@ struct DwaConfig
   bool predict_dynamic_obstacles = true;
 
   // 장애물 반경에 더하는 안전 여유(m). 풋프린트 표면이 이 여유 안으로 들어오면
-  // 충돌로 본다(정적 장애물의 lethal_cost_threshold와 같은 역할).
+  // 충돌로 본다(정적 장애물의 lethal_cost_threshold와 같은 역할). 지금 자세에서 이미 이 여유
+  // 안에 있는 장애물은 지금보다 가까워지거나 닿는 궤적만 충돌로 본다 - 아니면 멀어지는 궤적까지
+  // 첫 점부터 모두 버려져 장애물이 비킬 때까지 거의 멈춰 있게 된다(#216).
   double dynamic_obstacle_safety_margin = 0.2;
 
   // 장애물 표면에서 이 거리(m)보다 멀어지면 거리비용에 영향이 없다(소프트 코스트의
@@ -262,9 +264,11 @@ private:
 
   // dynamicObstacleCollides의 내부 버전. 충돌 여부와 함께(비충돌 시) 가장 가까운
   // 장애물의 표면까지 거리(음수 없음, 장애물이 없으면 +inf)를 돌려준다.
+  // start_distances(장애물마다 지금 자세에서 표면까지 거리)를 주면, 이미 안전 여유 안에 있는
+  // 장애물은 그 거리보다 가까워지거나 닿을 때만 충돌로 본다(멀어지는 궤적은 허용).
   bool evaluateDynamicObstacles(
     const std::vector<DynamicObstacle> & obstacles, double t, double x, double y, double yaw,
-    double * min_surface_distance) const;
+    double * min_surface_distance, const std::vector<double> * start_distances = nullptr) const;
 
   // 동적 장애물 거리비용 [0,1]. 표면까지 거리가 안전 여유(safety_margin)에 가까울수록
   // 1.0, dynamic_obstacle_influence_radius보다 멀면(장애물이 없을 때 포함) 0.0.

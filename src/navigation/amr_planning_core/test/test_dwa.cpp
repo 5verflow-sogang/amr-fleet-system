@@ -929,4 +929,49 @@ TEST(DwaPlannerTest, AdaptiveLookaheadKeepsSpeedWhenSlightlyOffPath)
   EXPECT_LE(result.stop_x, 15.0 + config.goal_tolerance);
 }
 
+TEST(DwaPlannerTest, DynamicObstacleAlreadyWithinMarginAllowsTrajectoriesMovingAway)
+{
+  // #216 증상 2(연구 2 S1 가로지름): 장애물이 이미 안전 여유(0.2 m) 안에 있으면 궤적 첫 점부터 여유
+  // 안이라, 멀어지는 궤적까지 모두 버려져 장애물이 비킬 때까지 거의 멈춰 있었다.
+  TestGrid test_grid(160, 80, 0.05);
+  const DwaPlanner planner(makeFastConfig());
+
+  RobotState state;
+  state.x = 2.0;
+  state.y = 2.0;
+  state.v = 0.5;
+  const Point2D goal{6.0, 2.0};
+
+  // 왼쪽 옆에 0.1 m 떨어져 서 있는 장애물(로봇 중심보다 조금 뒤) - 앞으로 가면 멀어진다
+  DynamicObstacle beside;
+  beside.radius = 0.25;
+  beside.x = 2.0 - 0.1;
+  beside.y = 2.0 + 0.2 + 0.1 + beside.radius;
+  const DwaCommand away =
+    planner.computeVelocityCommand(state, goal, test_grid.grid(), {beside});
+  ASSERT_EQ(away.status, DwaStatus::kOk);
+  EXPECT_GT(away.v, 0.5);
+  // 고른 궤적은 지금(0.1 m)보다 장애물에 가까워지지 않는다
+  for (const TrajectoryPoint & point : planner.simulateTrajectory(state, away.v, away.w)) {
+    const double dx = beside.x - point.x;
+    const double dy = beside.y - point.y;
+    const double lx = std::abs(dx * std::cos(point.yaw) + dy * std::sin(point.yaw)) - 0.3;
+    const double ly = std::abs(-dx * std::sin(point.yaw) + dy * std::cos(point.yaw)) - 0.2;
+    EXPECT_GE(std::hypot(std::max(0.0, lx), std::max(0.0, ly)) - beside.radius, 0.1 - 1e-3);
+  }
+
+  // 정면 0.1 m 앞에 있는 장애물은 앞으로 가면 가까워지므로 여전히 막는다
+  DynamicObstacle ahead;
+  ahead.radius = 0.25;
+  ahead.x = 2.0 + 0.3 + 0.1 + ahead.radius;
+  ahead.y = 2.0;
+  RobotState stopped = state;
+  stopped.v = 0.0;
+  const DwaCommand blocked =
+    planner.computeVelocityCommand(stopped, goal, test_grid.grid(), {ahead});
+  if (blocked.status == DwaStatus::kOk) {
+    EXPECT_LE(blocked.v, 1e-9);
+  }
+}
+
 }  // namespace amr_planning_core
