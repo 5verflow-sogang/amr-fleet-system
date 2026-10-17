@@ -59,7 +59,7 @@ uv run --frozen python scripts/check_reward_traps.py $cfgs --lists 310 311 --epi
 # rush·creep·halt의 "stop 대비"가 모두 음수여야 한다 (정상 주행보다 싼 실패가 없음)
 bad=$(awk '$1 ~ /^(rush|creep|halt)$/ { for (i = 1; i <= NF; i++) if ($i == "대비") { v = $(i + 1); if (v + 0 >= 0) print FILENAME": "$0 } }' "$D/check_traps.txt")
 if [ -n "$bad" ]; then err "함정 점검 통과 못 함: $bad. 중단"; exit 1; fi
-log "보상 검증·함정 점검 통과 (설정 $n_cfg개)"
+log "보상 검증·함정 점검 통과 (설정 ${n_cfg}개)"
 
 # ---------------------------------------------------------------- 1. 학습
 train_one() {   # $1 = 후보, $2 = 비교군, $3 = 시드
