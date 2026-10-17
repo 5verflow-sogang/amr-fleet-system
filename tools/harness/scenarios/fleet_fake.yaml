@@ -37,6 +37,11 @@ params:
   # 끊김 동안 메시지: delay(기본, 다시 이어지면 순서대로 전달) 또는 drop(버림, 더 가혹한 비교 조건)
   blackout_mode: delay
   algorithm: nearest
+  # 연구 1 원인·정책 비교 (10/17). max_resends: 할당 명령 재전송 한도(서버 기본 5, 넘으면 다른 로봇에 다시 맡김).
+  # pause_on_link_loss_s: 가짜 로봇이 서버 heartbeat가 이 시간 동안 끊기면 하던 작업을 멈춤(0이면 계속, 기본)
+  #   예: --set max_resends=0 --set loss_pct=50 / --set pause_on_link_loss_s=2 --set blackout_s=30 ...
+  max_resends: 5
+  pause_on_link_loss_s: 0
   # 연구 1 비교군 (central | decentral | hybrid). 아래 param_sets가 서버·경매 노드·중계·작업 생성기 대기 대상을 채운다
   #   --set fleet_mode=decentral   # 서버 없음, 경매 노드 N대, 장애 주입기가 경매 토픽도 중계
   #   --set fleet_mode=hybrid      # 서버 + 경매 노드 N대 (평시 중앙, heartbeat가 끊긴 로봇만 분산, #215)
@@ -56,6 +61,7 @@ processes:
       ros2 launch amr_fleet_manager fleet_manager.launch.py algorithm:={algorithm}
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
       kill_at_s:={kill_at_s} restart_after_s:={restart_after_s} fault_events_file:={run_dir}/fault_events.csv
+      max_resends:={max_resends}
     ready_topic: /fleet/heartbeat
     # 분산(decentral)에서는 서버를 띄우지 않는다. 떠 있으면 서버도 할당해 경매와 겹친다 (#208 하연 리뷰)
     enabled: "{server}"
@@ -70,7 +76,7 @@ processes:
     cmd: >-
       ros2 launch amr_fleet_manager fake_robots.launch.py count:={num_robots} relayed:=true
       kill_robot:={kill_robot} kill_robot_at_s:={kill_robot_at_s} restart_robot_after_s:={restart_robot_after_s}
-      fault_events_file:={run_dir}/fault_events.csv
+      fault_events_file:={run_dir}/fault_events.csv pause_on_link_loss_s:={pause_on_link_loss_s}
     settle_s: 3
   # 분산 경매 노드 (fleet_mode가 decentral·hybrid일 때만)
   - name: task_auctions

@@ -51,6 +51,16 @@ def _fleet_fake_procs(allow_blocked=True, **sets):
     return {p['name']: p for p in render(s['processes'], params) if enabled(p)}
 
 
+def test_resend_and_link_loss_policy_reach_processes():
+    # 연구 1 원인·정책 비교: 재전송 한도는 서버로, 끊기면 멈춤은 가짜 로봇으로 간다. 기본은 지금 동작(5회, 계속 수행)
+    procs = _fleet_fake_procs()
+    assert 'max_resends:=5' in procs['fleet_manager']['cmd']
+    assert 'pause_on_link_loss_s:=0' in procs['fake_robots']['cmd']
+    procs = _fleet_fake_procs(max_resends='0', pause_on_link_loss_s='2')
+    assert 'max_resends:=0' in procs['fleet_manager']['cmd']
+    assert 'pause_on_link_loss_s:=2' in procs['fake_robots']['cmd']
+
+
 def test_fleet_mode_processes():
     central = _fleet_fake_procs()
     assert 'task_auctions' not in central and 'fleet_manager' in central

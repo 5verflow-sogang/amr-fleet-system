@@ -53,7 +53,8 @@ def _robots(context):
             package='amr_fleet_manager',
             executable='fake_robot',
             namespace=robot_id,
-            parameters=[config, {'robot_id': robot_id, 'server_topic_prefix': prefix}],
+            parameters=[config, {'robot_id': robot_id, 'server_topic_prefix': prefix,
+                                 'pause_on_link_loss_s': float(arg('pause_on_link_loss_s'))}],
             output='screen',
         )
 
@@ -97,5 +98,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'fault_events_file', default_value='',
             description='강제종료·재시작 시각 기록 파일 (fault_events.csv). 비우면 기록하지 않는다'),
+        DeclareLaunchArgument(
+            'pause_on_link_loss_s', default_value='0.0',
+            description='서버 heartbeat가 이 시간(실제 시간, s) 동안 안 오면 하던 작업을 멈추고 기다린다(끊기면 멈춤 정책). 0이면 끄기'),
         OpaqueFunction(function=_robots),
     ])
