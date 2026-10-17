@@ -16,6 +16,7 @@ best_model.zip, best_vecnormalize.pkl, final_model.zip, final_vecnormalize.pkl, 
 
 import argparse
 from collections import deque
+import copy
 from dataclasses import asdict, replace
 import datetime
 import json
@@ -26,7 +27,9 @@ import sys
 
 import numpy as np
 import torch
+from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.vec_env import VecNormalize
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -148,6 +151,9 @@ def main():
                              '설정만 바꿔 동시에 돌릴 때 구분용')
     parser.add_argument('--val-config', type=Path, default=None,
                         help='검증(eval/*·eval_common/*) 시나리오([env.scenario])를 이 파일 것으로. 기본은 학습 시나리오')
+    parser.add_argument('--init-from', type=Path, default=None,
+                        help='이어 학습: 이 실행 폴더의 best_model(신경망 가중치)·best_vecnormalize(관측 정규화)에서 시작한다. '
+                             '보상 정규화와 옵티마이저는 새로 시작한다 (보상을 바꿔 이어 학습할 때)')
     parser.add_argument('--threads', type=int, default=int(os.environ.get('OMP_NUM_THREADS', '2')))
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
@@ -179,10 +185,16 @@ def main():
     # 학습 환경 시드는 학습 시드끼리 겹치지 않게 따로 둔다 (seeds.py, training.py)
     model, venv, env_seed = make_model(env_config, n_envs, args.seed, ppo, net_arch,
                                        tensorboard_log=str(run_dir / 'tb'))
+    if args.init_from:
+        # 신경망 구조는 설정 파일(net_arch)이 같아야 한다. 행동 표준편차(log_std)도 가중치라 같이 온다
+        model.policy.load_state_dict(PPO.load(args.init_from / 'best_model.zip', device='cpu').policy.state_dict())
+        old = VecNormalize.load(str(args.init_from / 'best_vecnormalize.pkl'), venv.venv)
+        venv.obs_rms = copy.deepcopy(old.obs_rms)
     (run_dir / 'config.json').write_text(json.dumps(
         {'variant': args.variant,
          'args': {**vars(args), 'config': str(args.config),
-                  'val_config': str(args.val_config) if args.val_config else None},
+                  'val_config': str(args.val_config) if args.val_config else None,
+                  'init_from': str(args.init_from) if args.init_from else None},
          'n_envs': n_envs, 'env_seed_base': env_seed, 'ppo': {**ppo, 'net_arch': net_arch},
          'env': asdict(env_config), 'val_scenario': asdict(val_config.scenario),
          'torch': torch.__version__}, indent=2, ensure_ascii=False))
