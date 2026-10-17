@@ -36,6 +36,9 @@ def generate_launch_description():
             'server_node', default_value='fleet_manager',
             description='이 노드가 /fleet/task_requests를 구독해야 일정을 시작한다. 비우면 아무 구독자나'),
         DeclareLaunchArgument(
+            'server_count', default_value='1',
+            description='server_node 이름의 구독 노드가 이만큼 있어야 시작한다. 분산 모드: server_node:=task_auction server_count:=<로봇 수>'),
+        DeclareLaunchArgument(
             'schedule_out', default_value='',
             description='만든 일정을 JSON Task 파일로 남길 경로. 하네스 실행 폴더의 tasks.json'),
         Node(
@@ -49,6 +52,7 @@ def generate_launch_description():
                 'schedule_out': ParameterValue(LaunchConfiguration('schedule_out'), value_type=str),
                 'map_origin_in_world': ParameterValue(LaunchConfiguration('map_origin_in_world'), value_type=List[float]),
                 'server_node': ParameterValue(LaunchConfiguration('server_node'), value_type=str),
+                'server_count': ParameterValue(LaunchConfiguration('server_count'), value_type=int),
             }],
             output='screen',
         ),

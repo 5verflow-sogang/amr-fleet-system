@@ -19,7 +19,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 HARNESS_DIR = Path(__file__).resolve().parents[1]
 REPO_DIR = HARNESS_DIR.parents[1]
@@ -56,6 +56,33 @@ def render(value, params: dict):
     if isinstance(value, dict):
         return {k: render(v, params) for k, v in value.items()}
     return value
+
+
+def enabled(process: dict) -> bool:
+    """프로세스의 enabled 값(params로 채운 뒤). 없으면 켠다. 예: enabled: "{auction}" (fleet_fake fleet_mode)"""
+    return str(process.get('enabled', 'true')).strip().lower() not in ('false', '0', 'no', 'off', '')
+
+
+def apply_param_sets(scenario: dict, params: dict, explicit: Iterable[str] = (), allow_blocked: bool = False) -> dict:
+    """param_sets: 한 param 값에 딸린 다른 param들을 채운다. --set으로 직접 준 이름은 덮어쓰지 않는다.
+
+    예 (fleet_fake): fleet_mode가 decentral이면 서버를 끄고 relay_auction·auction을 true로.
+    값 안의 {이름}은 다른 params로 채운다 (예: gen_count: "{num_robots}").
+    표에 없는 값이면 ValueError (오타로 엉뚱한 비교군을 돌리지 않게). 표의 _blocked에 이유가 있으면 그 값도
+    ValueError다 - 아직 다른 PR이 머지되지 않아 이름과 다른 실험이 도는 조건을 막는다 (allow_blocked면 통과, 스모크용).
+    """
+    out = dict(params)
+    for key, table in (scenario.get('param_sets') or {}).items():
+        value = str(out.get(key))
+        if value not in table:
+            raise ValueError(f'{key}={value}는 시나리오 param_sets에 없다 (가능: {", ".join(table)})')
+        sets = dict(table[value] or {})
+        blocked = sets.pop('_blocked', None)
+        if blocked and not allow_blocked:
+            raise ValueError(f'{key}={value}는 아직 돌릴 수 없다: {blocked}')
+        out.update({k: v.format_map(out) if isinstance(v, str) else v
+                    for k, v in sets.items() if k not in explicit})
+    return out
 
 
 def start(name: str, cmd: str, log_dir: Path, **kw) -> Proc:
@@ -319,6 +346,9 @@ def fault_meta(params: dict) -> Optional[dict]:
             # 로봇 장애 (fake_robots.launch.py kill_robot). 없으면 none, -1
             'kill_robot': str(params.get('kill_robot', 'none')),
             'kill_robot_at_s': float(params.get('kill_robot_at_s', -1)),
+            # 연구 1 비교군 (fleet_fake fleet_mode). index.csv relay_auction 열은 여기서 읽는다
+            **({'fleet_mode': str(params['fleet_mode'])} if 'fleet_mode' in params else {}),
+            **({'relay_auction': _flag(params['relay_auction'])} if 'relay_auction' in params else {}),
             **extended_fault_meta(params)}
 
 
@@ -374,6 +404,8 @@ def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[Co
     meta['ready_s'] = {}
     try:
         for p in render(scenario['processes'], params):
+            if not enabled(p):
+                continue
             procs.append(start(p['name'], p['cmd'], log_dir, stop_first=p.get('stop_first', False),
                                wait_files=p.get('wait_files', [])))
             if 'ready_topic' in p:

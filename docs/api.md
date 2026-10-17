@@ -159,7 +159,8 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 시각 | 인식 결과의 `header.stamp`는 처리 완료 시각이 아니라 **센서 촬영 시각**이다. 시각 필드는 모두 `builtin_interfaces/Time` |
 | 장애 주입기 | 중계할 때 `header.stamp`와 번호 필드(`assignment_id`, `request_id`, `epoch`, `seq`)를 바꾸지 않는다 |
 | 명령 번호와 확인 | 서버 명령(`assignment_id`)과 로봇 요청(`request_id`)은 보낸 쪽이 1씩 늘리고, 재전송할 때는 같은 번호를 쓴다. 받는 쪽은 번호를 그대로 되돌려 보낸다(echo). 이미 처리한 번호는 다시 처리하지 않고 확인만 다시 보낸다 |
-| 서버 재시작 | `FleetHeartbeat.epoch`가 바뀌면 로봇은 명령 번호 기준을 초기화한다 |
+| 명령 번호 출처 | 번호는 출처마다 따로 늘어나므로 로봇은 **같은 출처끼리만** 크기를 비교한다(작은 번호 무시·중복 확인). 출처는 번호대로 가린다: 1,000,000 미만 = Fleet 서버, `1,000,000 + k × 100,000 + 순번` = 분산 경매로 작업을 수락한 로봇 k가 자기에게 보낸 명령(`amr_fleet_decentralized`, #211). 하이브리드에서 서버·경매 명령이 섞여도 서로를 "작은 번호"로 버리지 않는다. 서버 번호는 1,000,000 미만, 경매 순번은 100,000 미만이어야 한다(넘으면 다른 출처로 읽혀 새 명령으로 다시 처리된다). 서버가 큰 번호대를 쓰는 방식은 중앙 → 분산 → 중앙을 되풀이하면 어느 쪽이든 다시 작아져서 쓰지 않는다(10/16 결정). 참고 구현: `amr_fleet_manager` `robot_sim.AssignmentFilter`, `amr_bt` `assignment_filter.hpp` |
+| 서버 재시작 | `FleetHeartbeat.epoch`가 바뀌면 로봇은 **서버 출처의** 명령 번호 기준을 초기화한다. 경매 번호는 서버 재시작과 무관하게 이어진다 |
 | 응답 시간 KPI | 실제 시간으로 잰다. 노드의 `header.stamp`는 시뮬레이션 시간이라 쓰지 않고, 하네스 기록기가 메시지를 받은 시각을 쓴다. `cmd_time`은 `TaskAssignment` 수신 시각, 확인 왕복 시간은 `TaskAssignment` → `TaskAssignmentAck` 수신 시각 차이. 둘 다 같은 `assignment_id`의 첫 수신 기준이라 재전송 시간이 들어간다 ([하네스 로그 포맷](../tools/harness/README.md#지표-csv)) |
 | 작업 로그 | `TaskStatus`의 마지막 이벤트(COMPLETED·FAILED)가 로그 한 줄이 된다. 소요 시간은 `end_time - start_time` |
 | 오류 코드 | `ErrorInfo.code` 대역: 100 할당 / 200 주행 / 300 교통 / 400 통신 / 500 작업 수행 / 900 도킹 (`Dock` 결과의 `error_code`, Nav2 DockRobot과 같은 값). 오류가 없으면 `NONE`(0) |
@@ -346,7 +347,7 @@ cmd_vel 체인: 최종 `cmd_vel`을 가로채는 건 안전 노드(`amr_safety`)
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
 | Subscribe | `<prefix>/task_assignments` | `amr_msgs/msg/TaskAssignment` | 자기 `robot_id`만. 수신 규칙은 `TaskAssignment.msg` 주석 |
-| Subscribe | `<prefix>/heartbeat` | `amr_msgs/msg/FleetHeartbeat` | `epoch`가 바뀌면 명령 번호 기준 초기화 |
+| Subscribe | `<prefix>/heartbeat` | `amr_msgs/msg/FleetHeartbeat` | `epoch`가 바뀌면 서버 출처의 명령 번호 기준 초기화 (4-3절 "명령 번호 출처") |
 | Publish | `/fleet/task_assignment_acks` | `amr_msgs/msg/TaskAssignmentAck` | 할당·취소마다. 재전송이면 같은 Ack |
 | Publish | `/fleet/task_status` | `amr_msgs/msg/TaskStatus` | PENDING → IN_PROGRESS(단계마다) → COMPLETED / FAILED |
 | Publish | `/fleet/robot_states` | `amr_msgs/msg/RobotState` | 2 Hz. 수락 즉시 `current_task_id`를 채운다. 가상 배터리, 충전 중 `MODE_CHARGING`, zone_client `failed`면 `MODE_ERROR` |

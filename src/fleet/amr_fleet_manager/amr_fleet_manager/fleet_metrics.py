@@ -43,6 +43,9 @@ ASSIGNMENTS_TOPIC = '/fleet/task_assignments'
 ACKS_TOPIC = '/fleet/task_assignment_acks'
 REQUESTS_TOPIC = '/fleet/task_requests'
 STATUS_TOPIC = '/fleet/task_status'
+# 분산 경매 입찰·낙찰·수락 (amr_fleet_decentralized, 원본은 늘 절대 경로). 낙찰 로봇의 수락(ACCEPT)을 할당으로 센다
+BIDS_TOPIC = '/fleet/task_bids'
+BID_ACCEPT = 2  # TaskBid.TYPE_ACCEPT
 STATES_TOPIC = '/fleet/robot_states'
 # 하이브리드 로봇별 모드 (RobotFleetMode, amr_fleet_decentralized fleet_mode:=hybrid)
 MODES_TOPIC = '/fleet/robot_modes'
@@ -267,7 +270,11 @@ def response_time(records: Sequence[Record], cutoff: Cutoff) -> list[list]:
 
 
 def _task_events(records: Sequence[Record]):
-    """작업별 요청 시각, 할당 [(시각, 로봇)], 끝 보고 [(시각, 로봇, 상태)]. 재전송은 첫 발송만 센다."""
+    """작업별 요청 시각, 할당 [(시각, 로봇)], 끝 보고 [(시각, 로봇, 상태)]. 재전송은 첫 발송만 센다.
+
+    할당은 서버 TaskAssignment(ASSIGN)와 분산 경매의 수락(TaskBid ACCEPT, 낙찰 로봇이 보냄) 둘 다다.
+    분산(fleet_mode=decentral)은 서버가 없어 경매 수락만, 하이브리드는 둘이 섞인다.
+    """
     requests: dict[str, float] = {}
     assigns: dict[str, list[tuple[float, str]]] = defaultdict(list)
     seen_cmds = set()
@@ -280,6 +287,11 @@ def _task_events(records: Sequence[Record]):
             if ident not in seen_cmds:
                 seen_cmds.add(ident)
                 assigns[r.msg.task.task_id].append((r.t, r.msg.robot_id))
+        elif r.topic == BIDS_TOPIC and r.msg.type == BID_ACCEPT:
+            ident = ('auction', r.msg.task_id, r.msg.auction_id, r.msg.robot_id)
+            if ident not in seen_cmds:
+                seen_cmds.add(ident)
+                assigns[r.msg.task_id].append((r.t, r.msg.robot_id))
         elif r.topic == STATUS_TOPIC and r.msg.state in STATE_NAMES:
             finishes[r.msg.task_id].append((r.t, r.msg.robot_id, r.msg.state))
     for series in (*assigns.values(), *finishes.values()):

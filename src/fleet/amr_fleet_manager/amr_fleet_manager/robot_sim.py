@@ -15,34 +15,62 @@ NEW = 'new'              # 처음 받은 명령: 처리하고 Ack
 DUPLICATE = 'duplicate'  # 마지막으로 처리한 명령의 재전송: 다시 처리하지 않고 같은 Ack만
 STALE = 'stale'          # 마지막보다 작은 번호 (지연으로 순서가 뒤바뀜): 무시
 
+# 명령 번호대 (TaskAssignment.msg, api.md 4-3절). 서버는 1부터, 분산 경매로 작업을 수락한 로봇은
+# 1,000,000 + 로봇 번호 × 100,000 + 로봇별 순번 (amr_fleet_decentralized, #211)
+SERVER_SOURCE = 'server'
+AUCTION_ID_BASE = 1_000_000
+AUCTION_ID_STRIDE = 100_000
+
+
+def assignment_source(assignment_id: int) -> str:
+    """명령을 낸 쪽. 번호는 출처마다 따로 늘어나므로 출처끼리만 크기를 비교한다."""
+    if assignment_id < AUCTION_ID_BASE:
+        return SERVER_SOURCE
+    return f'auction:{(assignment_id - AUCTION_ID_BASE) // AUCTION_ID_STRIDE}'
+
 
 class AssignmentFilter:
-    """assignment_id로 새 명령·재전송·뒤늦은 명령을 가른다."""
+    """assignment_id로 새 명령·재전송·뒤늦은 명령을 가른다. 출처(서버, 경매 로봇 k)마다 따로 본다.
+
+    하이브리드(평시 중앙, 끊기면 분산)에서는 서버 명령과 경매 명령이 섞여 온다. 번호 하나로 비교하면
+    경매 번호(1,000,000+) 뒤에 온 서버 명령이 "작은 번호"로 버려진다. 서버가 큰 번호대를 써도
+    중앙 → 분산 → 중앙을 되풀이하면 어느 한쪽이 다시 작아지므로 출처별 비교만 안전하다 (#211 결정).
+    """
 
     def __init__(self):
         self.epoch: Optional[int] = None
-        self.last_id = 0
-        # 마지막 명령에 보낸 Ack 내용. 재전송이 오면 그대로 다시 보낸다
+        # 출처 → (마지막으로 처리한 번호, 그 명령에 보낸 Ack 내용). 재전송이 오면 Ack를 그대로 다시 보낸다
+        self._last: dict[str, tuple[int, Any]] = {}
+        # 마지막으로 처리한 명령의 Ack 내용 (DUPLICATE일 때 다시 보낼 것). classify가 고른 출처의 값
         self.last_reply: Any = None
 
+    @property
+    def last_id(self) -> int:
+        """서버 명령의 마지막 번호 (RobotState.last_assignment_id). 서버는 자기 번호만 안다."""
+        return self._last.get(SERVER_SOURCE, (0, None))[0]
+
     def on_heartbeat(self, epoch: int) -> bool:
-        """서버 epoch가 바뀌면 번호 기준을 초기화하고 True. 처음 받은 epoch는 재시작으로 보지 않는다."""
+        """서버 epoch가 바뀌면 서버 번호 기준만 초기화하고 True. 처음 받은 epoch는 재시작으로 보지 않는다.
+
+        경매 번호는 서버 재시작과 무관하게 이어지므로 그대로 둔다.
+        """
         restarted = self.epoch is not None and epoch != self.epoch
         if restarted:
-            self.last_id = 0
-            self.last_reply = None
+            self._last.pop(SERVER_SOURCE, None)
         self.epoch = epoch
         return restarted
 
     def classify(self, assignment_id: int) -> str:
-        if assignment_id == self.last_id and self.last_reply is not None:
+        last_id, last_reply = self._last.get(assignment_source(assignment_id), (0, None))
+        if assignment_id == last_id and last_reply is not None:
+            self.last_reply = last_reply
             return DUPLICATE
-        if assignment_id <= self.last_id:
+        if assignment_id <= last_id:
             return STALE
         return NEW
 
     def record(self, assignment_id: int, reply: Any) -> None:
-        self.last_id = assignment_id
+        self._last[assignment_source(assignment_id)] = (assignment_id, reply)
         self.last_reply = reply
 
 
