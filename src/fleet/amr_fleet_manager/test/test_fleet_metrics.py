@@ -257,6 +257,25 @@ def test_task_outcome_hybrid_owner_completes():
     assert task_outcomes(records[:5])[0][4] == ''
 
 
+def bid(task_id, robot, kind, auction_id=1):
+    return NS(task_id=task_id, robot_id=robot, type=kind, auction_id=auction_id)
+
+
+def test_task_outcome_decentral_accept_is_assignment():
+    """분산: 서버가 없어 TaskAssignment가 없다. 낙찰 로봇의 수락(ACCEPT)이 할당이다. 입찰·낙찰 통보는 할당이 아니다."""
+    records = [rec('/fleet/task_requests', 0.5, request('t1')),
+               rec('/fleet/task_bids', 1.0, bid('t1', 'amr_02', 0)),
+               rec('/fleet/task_bids', 3.0, bid('t1', 'amr_02', 2)),
+               rec('/fleet/task_bids', 3.1, bid('t1', 'amr_02', 2)),       # 같은 ACCEPT 에코는 한 번
+               rec('/fleet/task_status', 3.5, status('t1', 'amr_02', FAILED)),
+               rec('/fleet/task_bids', 5.0, bid('t1', 'amr_04', 2, auction_id=2)),   # 재경매
+               rec('/fleet/task_status', 9.0, status('t1', 'amr_04', COMPLETED, distance=6.0))]
+    row = task_outcomes(records)[0]
+    assert row[2:8] == ['3.000000', 'amr_02 amr_04', 'COMPLETED', '9.000000', '8.500', '6.000']
+    # 재경매 전이면 amr_02의 FAILED가 끝이다 (마지막 할당 = 수락한 amr_02)
+    assert task_outcomes(records[:5])[0][4] == 'FAILED'
+
+
 def test_recovery_busy_and_idle_robot():
     rows = recovery(kill_scenario(), [(15.0, 'amr_01'), (15.0, 'amr_03')])
     assert rows == [
