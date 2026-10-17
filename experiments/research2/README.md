@@ -171,7 +171,7 @@ uv run python scripts/evaluate.py raw/r2_s0_* --rule mass_aware --eval-list 0   
 명세서 4-4절의 기존 방법 비교군이다(`payload_nav/dwa_policy.py`). **이진의 DWA C++ 원본(`src/navigation/amr_planning_core`, #41)을 수정 없이 그대로 부른다.** Python으로 옮겨 쓰지 않는다. 옮기면 원본과 달라진 부분(rolling window, 장애물 층, 도착 판정 등)이 결과에 섞이기 때문이다.
 
 - 원본을 공유 라이브러리로 빌드해 ctypes로 부른다(`dwa_cpp/dwa_c_api.cpp`, 처음 쓸 때 g++/clang++로 `dwa_cpp/build/`에 빌드, git 제외). 판단(`DwaPlanner::computeVelocityCommand`, 목표 방향 회전)은 C++ 원본이 한다
-- Python은 ROS 노드가 하던 일만 맡는다: Nav2 local costmap 래스터(로봇 중심 3 × 3 m, 0.05 m 셀, 통로 벽 + LiDAR가 찍는 장애물의 지금 위치 + Nav2 inflation), 추적 결과(환경 장애물의 위치·속도·반경, 나타난 뒤에만 보임), 전역 경로(통로 중심선)의 lookahead 지점. 파라미터는 `amr_bringup/config/nav2_params.yaml`의 DWA 블록 그대로다. `xy_goal_tolerance`만 환경 도착 기준(0.2 m)에 맞춘다
+- Python은 ROS 노드가 하던 일만 맡는다: Nav2 local costmap 래스터(로봇 중심 3 × 3 m, 0.05 m 셀, 통로 벽 + LiDAR가 찍는 장애물의 지금 위치 + Nav2 inflation), 추적 결과(환경 장애물의 위치·속도·반경, 나타난 뒤에만 보임), 전역 경로(통로 중심선 전체, 플러그인처럼 경로째 넘긴다). 파라미터는 `amr_bringup/config/nav2_params.yaml`의 DWA 블록 그대로다(`lookahead_distance` 0.5 m, #195의 허용 속도·목표 앞 감속·속도 비례 기준점 켬). `xy_goal_tolerance`만 환경 도착 기준(0.2 m)에 맞춘다
 - 질량은 가속 한계 `acc_v`로만 들어간다
   - **B1** (`b1`): 빈 차 기준 a_max(0 kg) 고정
   - **B2** (`b2`): 관측 질량 기준 a_max(m_obs). 질량을 모르면 B1과 같다. 정보 조건(정확·±30%·모름)은 B2에만 의미가 있다
@@ -196,6 +196,19 @@ uv run --frozen --with pytest pytest tests/test_dwa_policy.py
 - 원본 DWA는 `acc_v`를 동적 창(한 주기에 바꿀 수 있는 속도 폭, `computeDynamicWindow`)에만 쓴다. 그래서 질량을 알아도 "무거우니 미리 천천히 간다"는 속도 선택이 생기지 않는다. 충돌은 모두 "나타난 순간 이미 설 수 없던" 경우다(설 수 있었는데 충돌 0건)
 - **이것이 연구 2가 다루는 문제다.** 기존 DWA가 질량 정보를 반영할 수 있는 방법은 가속 한계뿐이고, 질량에 맞춘 속도 선택은 RL 제안 방법이 학습으로 얻으려는 것이다. B2는 원본 그대로 두고 고치지 않는다(10/15 결정)
 - 이 결과는 DWA 코드를 커밋하기 전에 잰 예비 값이다(`git_dirty`). 본 실험에서 같은 코드로 다시 잰다
+
+**경로 호출로 바꿈 (10/16, #195 이후)**: 위 결과와 본 실험 v1은 점 하나를 받는 `computeVelocityCommand`를 `final_goal` 없이 불렀다(`lookahead_distance` 1.5 m). 이 호출에서는 #195의 목표 앞 감속·속도 비례 기준점이 꺼진다. 플러그인처럼 전역 경로를 넘기도록 바꿨다. 튜닝 목록 290·291, B2, 질량별 S1·S2 각 100회:
+
+| 호출 | 질량 | S2 성공 | S2 벽 충돌 | S2 목표 지나침 | S1 충돌 |
+| --- | --- | --- | --- | --- | --- |
+| 점 (v1, #195 전) | 0 / 10 / 25 kg | 50 / 17 / 19% | 0 / 0 / 46% | 39 / 29 / 25% | 30 / 42 / 56% |
+| 점 (#195 합침) | 0 / 10 / 25 kg | 18 / 20 / 19% | 2 / 0 / 46% | 49 / 56 / 25% | 31 / 42 / 56% |
+| **경로 (#195 합침)** | 0 / 10 / 25 kg | **88 / 100 / 98%** | **0 / 0 / 0%** | **0 / 0 / 2%** | 20 / 47 / 46% |
+
+- v1의 DWA 정밀 정지 실패(S2 성공 31%)와 목표 지나침은 호출 방식 때문이었다. **v1 B1·B2 결과는 원고에 쓰지 않고 이 코드로 다시 잰다**
+- 경로 호출에서는 목표 앞 감속이 `acc_v`를 써서 B2가 질량을 반영한다(S2 평균 속도 0 kg 1.28 → 25 kg 1.16 m/s)
+- 돌발 장애물(S1) 충돌은 그대로 많다. 미리 감속하지 않는 DWA의 성질이다
+- `DwaParams(follow_path=False, lookahead_distance=1.5, ...)`로 이전 호출을 재현할 수 있다
 
 ## v0 튜닝 기록 (10/11)
 
@@ -493,6 +506,30 @@ uv run python scripts/judge_v2_tuning.py raw/v2_track_b --cands b1 b2   # 판정
 - 하연 Mac(M5), 10/16 15:23~16:37, 실행 커밋 `efb6c9b`(브랜치 `exp/research2-v2-track-b`, 하연 포크). 원자료: `gs://amr-fleet-results/research2/tuning_v2/track_b/`
 - `run_v2_track_b.sh`는 같은 비교군·시드를 후보마다 동시에 돌리므로 `--tag`(#203)가 있어야 결과 폴더가 겹치지 않는다
 
+## v2 튜닝 트랙 A(보상)와 합친 후보 (10/17)
+
+트랙 A는 충돌 고정 벌점과 시간 초과 벌점만 키운다(충돌 : 시간 초과 = 4 : 1 유지, 충돌 속도 벌점 40 등은 G 그대로). 채택 규칙은 트랙 B와 같은 `v2_plan.md` 1-3절이다. A·B가 둘 다 채택돼 두 채택안을 합친 후보 ab(A2 + B1)를 따로 돌렸다.
+
+```bash
+caffeinate -i scripts/run_v2_track_a.sh                       # base·a1·a2 × proposed·r2 × 시드 200~209 학습·평가
+uv run python scripts/judge_v2_tuning.py raw/v2_track_a --cands a1 a2
+caffeinate -i scripts/run_v2_combined.sh                      # base·ab × proposed·r2 × 시드 220~229 학습·평가
+uv run python scripts/judge_v2_tuning.py raw/v2_combined --cands ab
+```
+
+| 후보 | 설정 | ① 제안 25 kg 충돌 Δ (95% CI) | ② 시간 초과 Δ | ③ R2 성공 Δ | 결과 |
+| --- | --- | --- | --- | --- | --- |
+| a1 | `config/env_v2_a1.toml` (충돌 −200, 시간 초과 −50) | −3.9%p (−10.3 ~ +2.3) | −0.0%p | +2.0%p | 통과, ①이 a2보다 높음 |
+| a2 | `config/env_v2_a2.toml` (충돌 −300, 시간 초과 −75) | −6.0%p (−10.9 ~ −0.8) | +0.0%p | +1.3%p | **트랙 A 채택** |
+| ab | `config/env_v2_ab.toml` (a2 + `popout_prob` 0.9) | −9.0%p (−12.0 ~ −5.9) | +1.1%p | +0.8%p | **채택 → v2 설정** |
+
+- ab는 자기 기준선(같은 Mac, 시드 220~229) 대비 개선 폭 9.0%p가 A2(6.0)·B1(6.6) 단독보다 커서 합친 것을 골랐다(`v2_plan.md` 1-3절 합치기). `judge_v2_tuning.py`의 "선택"은 ①②③만 보므로 이 비교는 따로 한다
+- 셋 다 R2도 같은 만큼 좋아졌다 (25 kg 충돌 A: 16.8 → 11.3%, ab: 20.1 → 8.8%). 제안 − R2 차이는 A2 −1.5 → −2.1%p, ab −5.3 → −3.0%p로 벌어지지 않았고, 제안의 0 → 25 kg 감속도 A2 −8.3 → −7.8%, ab −4.7 → −5.5%로 그대로다. 트랙 B와 같이 모든 RL을 더 조심하게 만든 효과다
+- 무너진 시드(학습 질량 성공 < 85% 또는 시간 초과 > 10%)는 A2 R2 s208(성공 84.9%, 시간 초과 10.4%)과 ab R2 s225(84.4%, 11.2%) 둘이다. 제안·a1·기준선은 없다. 벌점을 키우면 질량을 모르는 R2가 멈추거나 기어가는 쪽으로 기우는 것으로 보인다
+- 학습 전 점검: `check_reward.py`로 모든 설정에서 안전 순항 속도가 최적, ab는 바꾼 시나리오에서 규칙 정책 충돌 0건 (질량 4개 × S1·S2 × 200판). 스크립트가 통과 못 하면 시작하지 않는다
+- 연우 Mac(M5). 트랙 A 10/17 00:59~02:41, 실행 커밋 `4866273`(브랜치 `exp/research2-v2-track-a`). 합친 후보 12:24~13:34, `ee4a222`(`exp/research2-v2-combined`). 둘 다 연우 포크, 오류 0건. 원자료는 연우 Mac `raw/v2_track_a/`·`raw/v2_combined/`(요청하면 공유)
+- 시험 실행에 예비 시드 299를 썼다 (2만 스텝, 결과 버림)
+
 ## 탐색 실험: 질량 정보 값어치 (10/17, v2와 별개)
 
 v2 튜닝(A2·B1·ab)이 모두 제안과 R2를 똑같이 좋아지게 해서, 질량 정보 효과가 왜 작은지 보고 키울 수 있는지 시험했다. **사전 등록된 v2와 별개인 후속 탐색**이고, 판정 기준은 실행 전에 공유 문서에 적었다.
@@ -520,6 +557,7 @@ uv run python scripts/judge_info_pilot.py raw/info_warm --cand i2warm --base gwa
 - 사후 관찰 (가설): G로 더 학습한 대조군(4.5M)은 base(3M)보다 제안 − R2 차이가 −0.3 → −3.9%p(CI −8.6 ~ +1.3)로 벌어지고 0 kg에서 제안이 0.73 s 더 빨랐다
 - 함정 점검에서 A2·ab는 지나치기 − 기어가기 차이가 G의 3배다 (지나침 벌점을 안 키워서). v2에서 시드별 지나침·시간 초과를 확인한다
 - 하연 Mac(M5), 브랜치 `exp/research2-info-pilot`(하연 포크) 실행 `4a0a820`·`7246829`. 자세한 기록은 공유 문서 "탐색 실험" 절
+
 
 ## 결과 분석 (가설 판정)
 

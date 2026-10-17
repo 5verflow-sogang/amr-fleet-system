@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 from amr_fleet_core.assignment import ALGORITHMS, RobotInfo, TaskInfo, euclidean_cost, filter_candidates
 
-from .claims import TaskClaims
+from amr_fleet_core.claims import TaskClaims
 
 # amr_msgs/msg/TaskStatus.STATE_* 와 같은 값
 STATE_PENDING = 0
@@ -80,6 +80,8 @@ class RobotEntry:
     load: int = 0
     # 서버가 맡긴 작업. 완료·실패 보고 전까지 다른 작업을 주지 않는다
     task_id: str = ''
+    # 하이브리드: 서버와 끊겨 분산 모드로 도는 로봇 (RobotFleetMode). 명령이 닿지 않으므로 맡기지 않는다
+    decentral: bool = False
 
 
 @dataclass
@@ -236,7 +238,7 @@ class Dispatcher:
         queued = [t.info for t in self.tasks.values() if t.state == STATE_PENDING and not t.assignee]
         free = [
             replace(r.info, load=r.load) for r in self.robots.values()
-            if not r.task_id and now - r.last_seen <= self.config.robot_timeout_s
+            if not r.task_id and not r.decentral and now - r.last_seen <= self.config.robot_timeout_s
         ]
         candidates = filter_candidates(free, self.config.min_battery_percent)
         if not queued or not candidates:
@@ -289,6 +291,23 @@ class Dispatcher:
             pending.last_sent = now
             resend.append(Outgoing(assignment_id, pending.robot_id, pending.task_id, first=False))
         return resend, given_up
+
+    def set_robot_mode(self, robot_id: str, decentral: bool) -> list[str]:
+        """하이브리드 로봇의 모드 (RobotFleetMode, architecture.md 5-2절). 분산 모드 로봇에게는 맡기지 않고,
+        아직 확인되지 않은 명령은 거둬 큐로 되돌린다(task_id 목록). 이미 시작한 작업은 그 로봇이 끝까지 한다."""
+        robot = self.robots.get(robot_id)
+        if robot is None or robot.decentral == decentral:
+            return []
+        robot.decentral = decentral
+        if not decentral:
+            return []
+        released = []
+        for assignment_id, pending in list(self._pending.items()):
+            if pending.robot_id == robot_id:
+                del self._pending[assignment_id]
+                self._release(pending.task_id, robot_id)
+                released.append(pending.task_id)
+        return released
 
     def robot_priority(self, robot_id: str) -> int:
         """로봇이 맡은 작업의 우선순위. 맡은 작업이 없으면 0 (구역 허가 순서에 쓴다)."""

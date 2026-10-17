@@ -190,7 +190,7 @@ sequenceDiagram
 | 분산으로 | 자기 중계본 `/<robot_id>/fleet/heartbeat`가 **2초**(`fallback_timeout_s`) 동안 안 오면. heartbeat 주기 0.2초의 10배다 |
 | 중앙으로 복귀 | heartbeat가 다시 오기 시작한 뒤 **5초**(`return_stable_s`) 동안 2초 넘게 끊기지 않으면. 짧게 붙었다 끊기기를 되풀이할 때 모드가 흔들리지 않게 한다 |
 | 분산 모드에서 할 일 | 새 작업 방송(`/fleet/task_requests`)과 마지막으로 받은 작업표(`FleetTaskTable`)의 미할당 작업(PENDING, 맡은 로봇 없음)을 분산 모드 로봇끼리 경매한다 ([api.md 4-4절](api.md#4-4-쟁점-정리) 분산 할당 규칙 그대로) |
-| 중앙 모드에서 할 일 | 경매를 열지도, 입찰하지도 않는다. 서버 명령만 받는다 |
+| 중앙 모드에서 할 일 | 경매를 열지도, 입찰하지도 않는다. 서버 명령만 받는다. 서버는 `/fleet/robot_modes`로 분산 모드 로봇을 알고 그 로봇에게는 맡기지 않는다 |
 | 복귀할 때 하던 작업 | 끝까지 한다. 서버는 그 로봇의 `TaskStatus`를 보고 장부에 맡은 로봇으로 올린다 (아래 "먼저 수락한 쪽이 주인") |
 | C안 자리 | `FleetHeartbeat.mode`가 `MODE_DECENTRALIZED`로 오면 시간을 재지 않고 바로 분산으로, `MODE_CENTRALIZED`로 돌아오면 위 복귀 규칙을 따른다. B안 서버는 늘 `MODE_CENTRALIZED`를 보낸다 |
 
@@ -209,16 +209,18 @@ sequenceDiagram
 | 값 | 어디서 | 뜻 |
 | --- | --- | --- |
 | 중복 실행 작업 수 | `task_outcomes.csv`의 `runners` (IN_PROGRESS를 보고한 로봇이 둘 이상) | 정리 규칙이 늦게 먹은 정도 |
-| 전환 횟수, 분산 모드 시간 | 로봇별 모드 전환 시각 (PR-2) | 흔들림(flapping), 폴백이 얼마나 오래 걸렸나 |
+| 전환 횟수, 분산 모드 시간 | `fleet_modes.csv` (`/fleet/robot_modes`), 요약 `fleet.fallbacks`·`fleet.decentral_s` | 흔들림(flapping), 폴백이 얼마나 오래 걸렸나 |
 
 **위험과 한계**
 
 - 손실률이 높으면(70%) heartbeat 10개가 연달아 사라질 확률이 커서(0.7¹⁰ ≈ 3%, heartbeat마다) 연결이 살아 있어도 분산으로 넘어갔다 돌아오기를 되풀이한다. 전환 횟수를 기록해 결과에서 따로 본다. C안(서버가 Ack 왕복시간 P95로 판단)이 이 경우를 풀 수 있다.
 - 로봇 → 서버 토픽에도 장애를 거는 실험(양방향, 10/21~)에서는 `TaskStatus`가 늦거나 빠져 정리가 늦어진다.
 - 서버가 재시작하면 장부가 비어 이 규칙과 상관없이 작업을 잃는다 (amr_fleet_manager README 미결).
+- 작업 방송(`/fleet/task_requests`)도 장애 주입기를 거치지 않아, 끊긴 로봇이 끊긴 동안 들어온 새 작업까지 듣고 맡는다. 실제로는 주문이 서버를 거쳐 오므로 끊긴 로봇은 작업표에서 이어받은 일만 할 수 있다. 그래서 지금 하이브리드 결과는 **상한**이다 (10/17 하연 확인).
+- 모드 알림(`/fleet/robot_modes`)은 로봇 → 모두 방향이라 장애를 거치지 않는다(D8). 서버와 다른 로봇은 끊긴 로봇이 분산으로 넘어간 것을 바로 안다. 실제 망에서는 이 알림도 늦거나 빠질 수 있어, 연구 1 하이브리드 결과는 이 점에서 낙관적이다 (#215 리뷰 4).
 - 이번 범위는 가짜 로봇(`fake_robot_node`)이다. `amr_bt`가 같은 규칙을 따르는 일은 따로 맞춘다.
 
-구현 순서: PR-1 (amr_msgs `ASSIGN_TASK_TAKEN`, 서버 장부, 가짜 로봇, `runners` 기록) → PR-2 (#211 머지 뒤, 경매 노드 모드 전환과 작업표 이어받기).
+**구현** (PR-1 #214, PR-2): 모드 전환은 경매 노드(`amr_fleet_decentralized` `fleet_mode:=hybrid`)가 하고 `/fleet/robot_modes`(`RobotFleetMode`, 로봇 → 모두)로 알린다. 서버는 분산 모드 로봇에게 작업을 맡기지 않고 확인 전 명령을 거둔다. 주인 규칙은 `amr_fleet_core.claims`를 서버·가짜 로봇·경매 노드가 같이 쓴다. 기록은 `fleet_modes.csv`와 요약 `fleet.fallbacks`(분산 전환 횟수)·`fleet.decentral_s`(분산 모드 시간 합), `fleet.duplicate_tasks`.
 
 ### 5-3. 이후 추가할 시나리오
 

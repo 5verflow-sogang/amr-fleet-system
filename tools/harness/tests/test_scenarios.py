@@ -51,6 +51,18 @@ def _fleet_fake_procs(allow_blocked=True, **sets):
     return {p['name']: p for p in render(s['processes'], params) if enabled(p)}
 
 
+def test_resend_and_link_loss_policy_reach_processes():
+    # 연구 1 원인·정책 비교: 재전송 한도는 서버로, 끊기면 멈춤은 가짜 로봇으로 간다. 기본은 지금 동작(5회, 계속 수행)
+    procs = _fleet_fake_procs()
+    assert 'max_resends:=5' in procs['fleet_manager']['cmd']
+    assert 'pause_on_link_loss_s:=0' in procs['fake_robots']['cmd']
+    procs = _fleet_fake_procs(max_resends='0', pause_on_link_loss_s='2', robot_speed_mps='3')
+    assert 'max_resends:=0' in procs['fleet_manager']['cmd']
+    assert 'pause_on_link_loss_s:=2' in procs['fake_robots']['cmd']
+    assert 'speed_mps:=3' in procs['fake_robots']['cmd']
+    assert 'speed_mps:=1.0' in _fleet_fake_procs()['fake_robots']['cmd']
+
+
 def test_fleet_mode_processes():
     central = _fleet_fake_procs()
     assert 'task_auctions' not in central and 'fleet_manager' in central
@@ -73,8 +85,8 @@ def test_fleet_mode_processes():
 
 
 @pytest.mark.parametrize('mode', ['decentral', 'hybrid'])
-def test_fleet_mode_blocked_until_prerequisites_merge(mode):
-    # 선행 PR(#213·#215) 머지 전에는 분산 이름의 중앙 데이터가 쌓이지 않게 막는다. 머지되면 _blocked 줄을 지우고 이 테스트도 지운다
-    with pytest.raises(ValueError, match='아직 돌릴 수 없다'):
-        _fleet_fake_procs(allow_blocked=False, fleet_mode=mode)
+def test_fleet_mode_runs_after_prerequisites_merge(mode):
+    # 선행 PR(#213 작업 생성기 server_count, #215 경매 노드 fleet_mode·하이브리드 폴백)이 들어가 막지 않는다
+    procs = _fleet_fake_procs(allow_blocked=False, fleet_mode=mode)
+    assert f'fleet_mode:={mode}' in procs['task_auctions']['cmd']
     assert 'task_auctions' not in _fleet_fake_procs(allow_blocked=False)      # central은 그대로

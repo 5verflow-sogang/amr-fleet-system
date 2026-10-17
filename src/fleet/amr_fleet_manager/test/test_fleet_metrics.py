@@ -393,3 +393,20 @@ def test_convert_writes_zone_and_stall_files_only_when_recorded(tmp_path):
     convert([rec('/fleet/zone_requests', 1.0, zone_request('amr_01', 'narrow_01', 1)),
              rec('/amr_01/odom', 1.0, odom(0.0, 1))], tmp_path, delay_ms=0.0)
     assert (tmp_path / 'zone_waits.csv').exists() and (tmp_path / 'stalls.csv').exists()
+
+
+def test_fleet_modes_segments():
+    """하이브리드: 로봇별 모드 구간. 1초마다 같은 모드가 와도 구간은 바뀔 때만 나뉜다."""
+    from amr_fleet_manager.fleet_metrics import fleet_modes
+
+    def mode(robot, m):
+        return NS(robot_id=robot, mode=m, transitions=0)
+    records = [rec('/fleet/robot_modes', t, mode('amr_03', m)) for t, m in
+               [(1.0, 0), (2.0, 0), (40.5, 1), (41.5, 1), (75.0, 0), (76.0, 0)]]
+    records.append(rec('/fleet/robot_modes', 1.0, mode('amr_01', 0)))
+    assert fleet_modes(records, 100.0) == [
+        ['amr_01', 'central', '1.000000', '100.000000', '99.000'],
+        ['amr_03', 'central', '1.000000', '40.500000', '39.500'],
+        ['amr_03', 'decentral', '40.500000', '75.000000', '34.500'],
+        ['amr_03', 'central', '75.000000', '100.000000', '25.000'],
+    ]

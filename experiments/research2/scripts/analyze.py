@@ -41,6 +41,9 @@ INFO_ERRORS = ('plus30', 'minus30', 'unknown')
 
 INFO_ALIASES = {'true': 'exact', 'exact': 'exact', 'none': 'unknown', 'unknown': 'unknown',
                 'scale:1.3': 'plus30', 'plus30': 'plus30', 'scale:0.7': 'minus30', 'minus30': 'minus30'}
+# evaluate.py --dwa는 run·variant 열에 dwa_b1·dwa_b2를 쓴다 (#185). 가설 판정은 b1·b2 이름으로 찾는다
+VARIANT_ALIASES = {'dwa_b1': 'b1', 'dwa_b2': 'b2'}
+KNOWN_VARIANTS = {'proposed', 'r1', 'r2', 'b1', 'b2', 'rule_agnostic', 'rule_aware'}
 RUN_SEED = re.compile(r'_s(\d+)(?:_|$)')
 
 
@@ -51,6 +54,9 @@ def truthy(v) -> bool:
 def normalize(row: dict, warn: set) -> dict:
     """CSV 한 행 → 분석에 쓰는 값."""
     variant = row.get('variant', '').lower()
+    variant = VARIANT_ALIASES.get(variant, variant)
+    if variant not in KNOWN_VARIANTS:
+        warn.add(f'알 수 없는 variant: {variant} (가설 판정에 안 쓴다)')
     # 짝짓기 키: eval_list → train_seed → run 이름
     seed = row.get('eval_list', '')
     if seed in ('', None):

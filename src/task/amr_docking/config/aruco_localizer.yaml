@@ -1,0 +1,28 @@
+# ArUco 위치 노드 (aruco_localizer) 파라미터. Kidnapped 복구용 로봇 map 자세 (aruco_pose)
+/**:
+  ros__parameters:
+    # 비우면 share/amr_docking/config/dock_stations.yaml (도킹 서버·Gazebo 마커 배치와 같은 파일)
+    stations_file: ""
+    # 비우면 <네임스페이스>/base_footprint
+    base_frame: ""
+    map_frame: map
+    # world → map TF (system.launch.py가 정렬 원점으로 낸다). 판 위치는 world 좌표다
+    world_frame: world
+    image_topic: camera/color/image_raw
+    camera_info_topic: camera/camera_info
+    state_topic: kidnap_recovery/state
+    pose_topic: aruco_pose
+    # true면 kidnap_recovery/state가 tracking이 아닐 때만 인식한다 (카메라 처리가 무겁다).
+    # 상태가 state_stale_s 넘게 안 오면 tracking으로 본다 (복구 노드가 없으면 인식하지 않는다)
+    only_when_lost: true
+    state_stale_s: 5.0
+    # 인식 주기 상한 [Hz]
+    max_hz: 5.0
+    # 이보다 먼 판은 쓰지 않는다 [m]. Gazebo에서 큰 판(도크)은 8 m, 작은 판(랙)은 5 m까지 인식했다
+    max_distance: 8.0
+    # 판까지 거리 d, 마커 간격 spacing에 따른 표준편차 (localize.SigmaModel, experiments/aruco_localizer 측정):
+    #   σ_yaw = yaw0 + yaw1·d·(0.32 / spacing),  σ_xy = xy0 + xy2·d² + d·σ_yaw
+    sigma_xy0: 0.02
+    sigma_xy2: 0.005
+    sigma_yaw0_deg: 1.0
+    sigma_yaw1_deg: 2.0

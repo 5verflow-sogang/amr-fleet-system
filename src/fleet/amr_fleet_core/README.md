@@ -8,6 +8,18 @@
 
 ROS 토픽을 직접 다루지 않는다. 공개 함수·클래스 목록을 여기에 적는다.
 
+### 작업 주인 (`claims.TaskClaims`)
+
+같은 작업을 두 로봇이 맡았을 때 누가 계속할지 정한다. COMPLETED를 보고한 로봇, 아니면 `TaskStatus.start_time`(수락 시각)이 가장 이른 로봇이 주인이다. RobotState가 `timeout_s` 동안 끊기거나 그 뒤 RobotState가 다른 작업을 하면 그 로봇의 주장은 뺀다. 서버(`amr_fleet_manager`)·가짜 로봇·경매 노드(`amr_fleet_decentralized`)가 같이 쓴다 ([architecture.md 5-2절](../../../docs/architecture.md#5-2-하이브리드-폴백-연구-1-비교군-1016-하연-설계)).
+
+| 메서드 | 뜻 |
+| --- | --- |
+| `observe(task_id, robot_id, state, start, now)` | `TaskStatus` 1건 |
+| `robot_state(robot_id, current_task_id, now)` | `RobotState` 1건 |
+| `owner(task_id, now, exclude='')` | 주인 robot_id 또는 None |
+| `rival(task_id, robot_id, start, now)` | robot_id(수락 시각 start, 수락 전이면 None)보다 먼저 맡은 다른 로봇 |
+| `completed(task_id, robot_id)` | 그 로봇이 COMPLETED를 보고했는지 |
+
 ### 작업 할당 (설계 초안)
 
 > 상태: 알고리즘 3종 구현 완료(2주차). 기본 알고리즘 선택과 비교 실험은 아래 미결 참고. 호출 흐름은 [architecture.md 5-1절](../../../docs/architecture.md#5-1-작업-요청--할당--이동--완료-보고-중앙집중-모드) 4~5번이다.

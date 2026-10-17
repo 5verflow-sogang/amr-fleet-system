@@ -10,6 +10,8 @@
   <!-- task_auction_node: TaskAuction/TaskBid 구독·발행, 자기 RobotState로 입찰 판단 -->
   <exec_depend>rclpy</exec_depend>
   <exec_depend>amr_msgs</exec_depend>
+  <!-- 먼저 수락한 쪽이 주인 (amr_fleet_core.claims). 단위 테스트에서도 import하므로 depend로 둔다 -->
+  <depend>amr_fleet_core</depend>
 
   <test_depend>python3-pytest</test_depend>
   <test_depend>launch</test_depend>

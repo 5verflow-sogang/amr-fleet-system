@@ -9,8 +9,9 @@
   2.5 m 안). inflation은 Nav2 InflationLayer 식 (inscribed 0.21 m, inflation_radius 0.5 m, cost_scaling 3.0)
 - 추적 결과: TrackedObstacleArray 대신 환경 장애물의 위치·속도·반경. RL 정책처럼 나타난 뒤에만 보이고,
   서 있는 동안은 속도 0 (env._observe와 같다). 추적 지연·잡음은 넣지 않는다
-- 플러그인(amr_nav2_plugins dwa_controller.cpp): 전역 경로(통로 중심선)에서 lookahead_distance 앞의 점을 다음
-  지점으로, 목표 xy_goal_tolerance 안이면 제자리 회전. no_valid·goal_reached면 정지
+- 플러그인(amr_nav2_plugins dwa_controller.cpp): 전역 경로(통로 중심선 전체)를 코어에 넘긴다(#195). heading
+  기준점(lookahead_distance, adaptive_lookahead)과 목표 앞 감속의 최종 목표(경로 끝)는 코어가 고른다. 목표
+  xy_goal_tolerance 안이면 제자리 회전. no_valid·goal_reached면 정지
 - xy_goal_tolerance만 Gazebo(0.25 m)와 다르게 환경 도착 기준(0.2 m)으로 둔다. 플러그인 주석대로 goal_checker와
   같아야 하고, 0.25 m면 도착 반경 밖에서 서 버린다
 
@@ -63,8 +64,13 @@ class DwaParams:
     dynamic_obstacle_safety_margin: float = 0.2
     dynamic_obstacle_influence_radius: float = 1.0
     dynamic_weight: float = 0.3
+    use_admissible_velocity: bool = True
+    use_goal_slowdown: bool = True
+    adaptive_lookahead: bool = True
+    follow_path: bool = True          # 플러그인처럼 전역 경로를 넘긴다 (#195). False면 예전 지점 호출
+    path_resolution: float = 0.05
     # 플러그인
-    lookahead_distance: float = 1.5
+    lookahead_distance: float = 0.5
     xy_goal_tolerance: Optional[float] = None   # None이면 환경 도착 기준 (Gazebo goal_checker는 0.25 m)
     yaw_goal_tolerance: float = 0.25
     # local costmap
@@ -86,7 +92,9 @@ class _CConfig(ctypes.Structure):
         ('velocity_weight', ctypes.c_double), ('goal_tolerance', ctypes.c_double),
         ('predict_dynamic_obstacles', ctypes.c_int),
         ('dynamic_obstacle_safety_margin', ctypes.c_double), ('dynamic_obstacle_influence_radius', ctypes.c_double),
-        ('dynamic_weight', ctypes.c_double)]
+        ('dynamic_weight', ctypes.c_double),
+        ('use_admissible_velocity', ctypes.c_int), ('use_goal_slowdown', ctypes.c_int),
+        ('lookahead_distance', ctypes.c_double), ('adaptive_lookahead', ctypes.c_int)]
 
 
 _lib = None
@@ -118,6 +126,10 @@ def load_library() -> ctypes.CDLL:
         ctypes.POINTER(_CConfig), dptr, dptr, ctypes.c_int, ctypes.c_int, ctypes.c_double,
         ctypes.POINTER(ctypes.c_uint8), dptr, ctypes.c_int, dptr]
     lib.dwa_compute_velocity_command.restype = ctypes.c_int
+    lib.dwa_compute_velocity_command_path.argtypes = [
+        ctypes.POINTER(_CConfig), dptr, dptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double,
+        ctypes.POINTER(ctypes.c_uint8), dptr, ctypes.c_int, dptr]
+    lib.dwa_compute_velocity_command_path.restype = ctypes.c_int
     lib.dwa_rotate_to_goal_yaw.argtypes = [ctypes.POINTER(_CConfig), dptr, ctypes.c_double, ctypes.c_double, dptr]
     lib.dwa_rotate_to_goal_yaw.restype = ctypes.c_int
     _lib = lib
@@ -164,7 +176,9 @@ class DwaPolicy:
                         p.footprint_half_length, p.footprint_half_width, p.lethal_cost_threshold,
                         p.heading_weight, p.clearance_weight, p.velocity_weight, p.goal_tolerance,
                         int(p.predict_dynamic_obstacles), p.dynamic_obstacle_safety_margin,
-                        p.dynamic_obstacle_influence_radius, p.dynamic_weight)
+                        p.dynamic_obstacle_influence_radius, p.dynamic_weight,
+                        int(p.use_admissible_velocity), int(p.use_goal_slowdown), p.lookahead_distance,
+                        int(p.adaptive_lookahead))
 
     # ------------------------------------------------------------ ROS 노드가 하던 일
     @staticmethod
@@ -215,7 +229,28 @@ class DwaPolicy:
         """전역 경로(중심선 y = 0, 출발 → 목표)에서 lookahead_distance 앞의 점. 경로 끝을 넘지 않는다."""
         return (min(env.goal[0], env.state.x + self.params.lookahead_distance), 0.0)
 
+    def global_path(self, env):
+        """전역 경로: 통로 중심선을 출발점(x = 0)부터 목표까지 path_resolution 간격으로."""
+        n = max(2, int(math.ceil(env.goal[0] / self.params.path_resolution)) + 1)
+        return [(x, 0.0) for x in np.linspace(0.0, env.goal[0], n)]
+
     # ------------------------------------------------------------ C++ 호출
+    def compute_velocity_command_path(self, env, acc_v: float):
+        """DwaPlanner::computeVelocityCommand(state, path, ...) (C++). 반환 (status, v, w)."""
+        s = env.state
+        ox, oy, n, cost = self.costmap(env)
+        state = np.array([s.x - ox, s.y - oy, s.theta, s.v, s.w], dtype=np.float64)
+        path = np.array([(x - ox, y - oy) for x, y in self.global_path(env)], dtype=np.float64).reshape(-1)
+        obs = np.array([(x - ox, y - oy, vx, vy, r) for x, y, vx, vy, r in self.obstacles(env)],
+                       dtype=np.float64).reshape(-1)
+        out = np.zeros(2)
+        cfg = self.config(acc_v)
+        code = self._lib.dwa_compute_velocity_command_path(
+            ctypes.byref(cfg), _dptr(state), _dptr(path), path.size // 2, n, n, self.params.resolution,
+            cost.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), _dptr(obs) if obs.size else None,
+            obs.size // 5, _dptr(out))
+        return _STATUS[code], float(out[0]), float(out[1])
+
     def compute_velocity_command(self, env, goal, acc_v: float):
         """DwaPlanner::computeVelocityCommand (C++). 반환 (status, v, w)."""
         s = env.state
@@ -249,7 +284,10 @@ class DwaPolicy:
         tolerance = env.cfg.arrive_dist if p.xy_goal_tolerance is None else p.xy_goal_tolerance
         if math.hypot(env.goal[0] - s.x, env.goal[1] - s.y) <= tolerance:
             return 0.0, self.rotate_to_goal_yaw(env, 0.0)
-        status, v, w = self.compute_velocity_command(env, self.lookahead_waypoint(env), self.acc_v(env))
+        if p.follow_path:
+            status, v, w = self.compute_velocity_command_path(env, self.acc_v(env))
+        else:
+            status, v, w = self.compute_velocity_command(env, self.lookahead_waypoint(env), self.acc_v(env))
         if status != 'ok':
             return 0.0, 0.0
         return v, w
