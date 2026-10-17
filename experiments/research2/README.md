@@ -50,7 +50,7 @@ uv run tensorboard --logdir raw
 
 - 평가 시나리오 분포(`[env.scenario]`)는 학습한 실행도 `--config`(기본 `config/env_v0.toml`) 것을 쓴다. 학습 시나리오만 바꾼 후보(예: 돌발 장애물을 더 자주)도 기준선·DWA와 같은 시나리오로 짝지어 평가된다. 관측·보상·로봇 설정은 실행의 `config.json` 그대로다. 학습 시나리오가 다르면 실행할 때 알리고 `meta.json`의 `train_scenario_differs`에 남긴다.
 - 학습 시나리오만 바꾼 후보는 `train_ppo.py --val-config config/env_v0.toml`로 학습한다. 검증(`eval/*` 체크포인트 선택, `eval_common/*`)도 기준선과 같은 시나리오로 재서, 효과가 학습 데이터 때문인지 체크포인트 고르는 시험지 때문인지 섞이지 않는다. 쓴 값은 `config.json`의 `args.val_config`·`val_scenario`에 남는다.
-- **후보와 기준선은 따로 평가하고 따로 analyze한다.** `--tag`로 학습한 후보도 `variant`는 `proposed` 그대로라, 같은 평가나 같은 analyze 입력에 섞이면 같은 비교군·같은 시드로 합쳐진다(경고 없음, analyze 경고는 민지 #203 리뷰 후속). 기준선은 태그 없는 폴더만 잡는 glob(`raw/proposed_s0_2026*`, 폴더 이름 `<비교군>_s<시드>_<시각>`)을 쓰고, 후보(`raw/proposed_s0_<태그>_*`)는 평가 폴더(`--out-dir`)를 따로 만든다.
+- **후보와 기준선은 따로 평가하고 따로 analyze한다.** `--tag`로 학습한 후보도 `variant`는 `proposed` 그대로라, 같은 평가나 같은 analyze 입력에 섞이면 같은 비교군·같은 시드로 합쳐진다. `episodes.csv`의 `tag` 열(`--tag` 값, 기준선·규칙·DWA는 빈칸)로 가를 수 있다(analyze 경고는 민지 #203 리뷰 후속). 기준선은 태그 없는 폴더만 잡는 glob(`raw/proposed_s0_2026*`, 폴더 이름 `<비교군>_s<시드>_<시각>`)을 쓰고, 후보(`raw/proposed_s0_<태그>_*`)는 평가 폴더(`--out-dir`)를 따로 만든다.
 - **v1 결과를 다시 만들 때**: 평가 시나리오가 `--config`에서 오므로 `config/env_v0.toml`의 `[env.scenario]`가 v1 때와 같아야 같은 결과가 나온다. 바뀌었으면 v1 실행 폴더의 `config.toml`을 `--config`로 준다.
 
 | 파일 | 내용 |

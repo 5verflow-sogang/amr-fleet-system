@@ -158,6 +158,7 @@ def main():
     base = load_experiment(args.config).env
     run_meta = []
     targets = []   # (run 이름, variant, 학습 시드, 평가 목록, env, act(obs), 정보 조건 목록)
+    tags = {}      # run 이름 → train_ppo --tag (규칙·DWA·태그 없는 실행은 빈칸)
     for run in runs:
         meta = json.loads((run / 'config.json').read_text())
         train_seed = meta['args']['seed']
@@ -174,8 +175,10 @@ def main():
         # 질량을 보지 않는 비교군(R1·R2)은 정보 조건이 결과를 바꾸지 않는다
         run_labels = labels if env.cfg.observe_mass else ['exact']
         ckpt = run / f'{args.checkpoint}_model.zip'
+        # train_ppo --tag (후보 이름). variant는 후보여도 그대로라, 기준선과 후보를 이 열로 가른다
+        tags[run.name] = meta['args'].get('tag') or ''
         run_meta.append({
-            'run': str(run), 'variant': meta['variant'], 'train_seed': train_seed,
+            'run': str(run), 'variant': meta['variant'], 'tag': tags[run.name], 'train_seed': train_seed,
             'env_seed_base': meta.get('env_seed_base'), 'mass_obs': run_labels,
             'eval_list': eval_list,
             'scenario_seeds': [eval_seed(eval_list, 0), eval_seed(eval_list, args.episodes - 1)],
@@ -227,7 +230,7 @@ def main():
                         options = {'payload_kg': mass, 'mass_obs_kg': mass_obs_for(label, mass),
                                    'popout': SCENARIOS[scenario]}
                         result = run_policy_episode(act, env, seed, options)
-                        rows.append({'run': name, 'variant': variant,
+                        rows.append({'run': name, 'variant': variant, 'tag': tags.get(name, ''),
                                      'train_seed': train_seed, 'eval_list': eval_list,
                                      'scenario': scenario, 'scenario_seed': seed, 'mass_obs': label,
                                      'mass_obs_kg': options['mass_obs_kg'], 'episode': ep, **result})
