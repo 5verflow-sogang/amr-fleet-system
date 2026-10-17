@@ -203,9 +203,6 @@ def _queued_core():
 DETOUR = straight_path(2.0, 10.0, y=5.0)  # z1을 안 지나는 경로 (y=5로 우회)
 
 
-ON_PATH_CONFIRM_S = ZoneClientConfig(robot_id='amr_01').on_path_confirm_s
-
-
 def test_path_detour_near_zone_keeps_request_and_stop_cap_during_grace():
     core, rid = _queued_core()
     # 로봇은 그대로 z1 3 m 앞(직선 거리 3.0 = trigger 거리 안), 경로만 우회로 바뀐다
@@ -216,14 +213,13 @@ def test_path_detour_near_zone_keeps_request_and_stop_cap_during_grace():
     # 같은 request_id로 연장 요청을 계속 보낸다 (대기열 순서 유지)
     outgoing, _, _, _ = core.update(1.0, DETOUR, (2.0, 0.0))
     assert [(o.zone_id, o.request_id, o.type) for o in outgoing] == [('z1', rid, TYPE_ACCESS)]
-    # 그 사이 경로가 다시 z1을 지나면(on_path_confirm_s 동안 끊기지 않고 계속) 그대로 이어간다
-    # (새 request_id 없음) - 한 틱만 보고 바로 믿지 않는다(10/16 fleet_deadlock 재현, 재계획
-    # 주기로 한 틱만 잡혔다 다시 빠지는 흔들림에 매번 속지 않으려고)
+    # 그 사이 경로가 lookahead_m 안에서 다시 z1을 지나면 그대로 이어간다(새 request_id 없음) -
+    # "경로에 있음" 판정 자체가 lookahead_m까지로 좁아져(10/18 하연 수정), 한 틱만 봐도 믿을 수
+    # 있다(별도 유지 시간 없이 즉시 grace 취소)
     core.update(2.0, straight_path(2.0, 10.0), (2.0, 0.0))
-    core.update(2.0 + ON_PATH_CONFIRM_S + 0.01, straight_path(2.0, 10.0), (2.0, 0.0))
     assert core.request_id('z1') == rid and core.grant('z1') == GRANT_QUEUED
     # 이어간 뒤 다시 우회해도 grace는 새로 잰다 (앞의 우회 시간을 이어 세지 않는다)
-    outgoing, _, _, _ = core.update(2.0 + ON_PATH_CONFIRM_S + 0.01 + 2.0, DETOUR, (2.0, 0.0))
+    outgoing, _, _, _ = core.update(2.0 + 2.0, DETOUR, (2.0, 0.0))
     assert all(o.type != TYPE_RELEASE for o in outgoing)
     assert core.phase('z1') is Phase.APPROACHING
 
@@ -822,12 +818,13 @@ def test_adjacent_zone_queued_detour_path_keeps_stop_cap():
     assert x <= EAST[0] - 0.5 + 0.05, f'허가 없이 정지선을 넘음: x={x:.3f}'
 
 
-def test_dropped_from_path_grace_does_not_reset_on_far_future_revisit():
-    # fleet_deadlock #177 회귀(10/16): 이미 다루는 구역은 remaining_distance_to_rect가 거리를 안 끊어
-    # 뒤쪽 경유점에서 다시 지나는 먼 미래 구간도 찾아낸다. 경로가 일시적으로 끊기는 틱(재계획 등)과
-    # 그런 먼 재방문이 발견되는 틱이 반복되면, 예전 코드는 "경로가 다시 이 구역을 지난다"로 보고
-    # off_path_since를 매번 리셋해 drop_grace_s가 한 번도 다 차지 않았다 - 구역을 무기한 붙든 채
-    # 정지 상한이 매 틱 오락가락(먼 거리=제한 없음 ↔ 직선 거리=거의 0)해, amr_01이 영원히 멈춰 있었다.
+def test_dropped_from_path_persistent_far_revisit_releases_after_drop_grace():
+    # fleet_deadlock #177/#189 회귀(10/18 하연 수정): "경로에 있음/없음" 판정 자체를 lookahead_m
+    # 까지만 보게 좁혔다 - 예전엔(#66 원래 결정대로 끝까지 찾음) 뒤쪽 경유점에서나 다시 지나는 먼
+    # 재방문도 "경로에 있음"으로 잡혀, 그게 매 틱 계속 발견되는 한 off_path_since가 한 번도 못
+    # 차서 구역을 무기한 붙들 수 있었다(#189). 이 경로는 매 틱 계속 존재하되 lookahead_m(기본
+    # 5.0)보다 훨씬 먼 재방문만 담고 있으니, 지금은 "경로에 없음"으로 보고 드롭 카운트가 쉬지
+    # 않고 쌓여 drop_grace_s 뒤 반납해야 한다.
     core = make_core(drop_grace_s=3.0)
     core.update(0.0, straight_path(2.0, 10.0), (2.0, 0.0))
     assert core.phase('z1') is Phase.APPROACHING
@@ -836,41 +833,69 @@ def test_dropped_from_path_grace_does_not_reset_on_far_future_revisit():
     # 22.5 m 뒤에야 구역에 닿는다(_closest_index가 로봇과 가장 가까운 점부터 걷게 하려고 앞쪽에
     # 가까운 점을 둔다)
     far_revisit = [(2.0, 0.1), (2.0, 5.0), (2.0, 10.0), (5.5, 10.0), (5.5, 0.0)]
-    for i in range(1, 15):
-        now = float(i)
-        path = [] if i % 2 else far_revisit  # 홀수 틱: 경로 일시 끊김 / 짝수 틱: 먼 재방문 발견
-        core.update(now, path, (2.0, 0.0))
+    for i in range(1, 50):  # 10 Hz 틱으로 drop_grace_s(3초)를 충분히 넘길 때까지
+        now = round(float(i) * 0.1, 1)
+        core.update(now, far_revisit, (2.0, 0.0))
+        if core.phase('z1') is Phase.IDLE:
+            break
 
-    # drop_grace_s(3 초)가 지났으니 반납하고 IDLE로 돌아가야 한다 - 무기한 붙들려 있으면 안 된다
+    # drop_grace_s(3 초) 안에 반납하고 IDLE로 돌아가야 한다 - 계속 "발견"되는 먼 재방문에
+    # 무기한 붙들려 있으면 안 된다
     assert core.phase('z1') is Phase.IDLE
 
 
-def test_dropped_from_path_grace_does_not_reset_on_single_tick_near_flicker():
-    # fleet_deadlock #177 두 번째 회귀(10/16 Gazebo 재현 - 먼 재방문 수정 뒤에도 재현됨): 전역
-    # 재계획 주기(약 1 Hz)로 경로가 구역을 짧게 잡았다 다음 주기에 다시 놓치는 식으로 흔들리면,
-    # 한 틱만 보고 바로 "돌아왔다"고 믿어서는(on_path_confirm_s 없이) 매번 off_path_since가
-    # 리셋돼 drop_grace_s가 한 번도 다 차지 않아 영원히(무한 반복) 반납하지 못했다 - amr_01이
-    # narrow_01 경계에서 멈춰 선 채 컨트롤러가 ~1.1~1.15 s 간격으로 진행 실패를 반복했다(실제
-    # 재현 로그와 일치). 로봇이 그대로 trigger 거리 안에 있으면(이 테스트처럼) 반납 뒤 바로
-    # 다시 트리거돼 또 반납하는 주기를 반복할 수 있지만(그건 서버 쪽에서 다시 다루면 된다),
-    # 적어도 drop_grace_s 안에 반납은 한 번 일어나야 한다 - 안 그러면 진짜 무한 정지다.
-    core = make_core(drop_grace_s=3.0, on_path_confirm_s=0.3, resend_period_s=1.0)
-    core.update(0.0, straight_path(2.0, 10.0), (2.0, 0.0))
+def test_1hz_replan_flicker_keeps_waiting_without_release():
+    # 전역 경로가 1 Hz로 다시 계산되면서, 구역이 경로에 1초 있었다 1초 없었다를 반복하는 현실적인
+    # 흔들림(0.1초 틱 하나가 아니라 실제 재계획 주기 전체) - 10/18 하연 리뷰로 "경로에 있음/없음"
+    # 판정을 lookahead_m까지로 좁힌 뒤로는, 있는 동안(1초)은 매 틱 정상적으로 다시 "경로에 있음"
+    # 으로 잡혀 off_path_since를 바로 지우므로(별도 유지 시간 없음), 없는 동안(1초)이
+    # drop_grace_s(3초)보다 짧은 한 반납이 일어나지 않아야 한다.
+    core = make_core(drop_grace_s=3.0, resend_period_s=1.0)
+    near_path = straight_path(2.0, 10.0)
+    off_path = DETOUR
+
+    now = 0.0
+    sent_release = False
+    for i in range(1, 61):  # 10 Hz 틱으로 6초(1초 on/off 3쌍)
+        now = round(i * 0.1, 1)
+        on = (int(now) % 2) == 0  # [0,1) on, [1,2) off, [2,3) on, ...
+        path = near_path if on else off_path
+        outgoing, cap, _, _ = core.update(now, path, (2.0, 0.0))
+        if any(o.type == TYPE_RELEASE for o in outgoing):
+            sent_release = True
+        assert cap is not None  # 반납되지 않는 한 정지 상한(직선 또는 경로 거리)은 계속 걸린다
+
+    assert not sent_release, '1초 on/off 흔들림만으로는 drop_grace_s(3초)를 못 채우니 반납하면 안 된다'
     assert core.phase('z1') is Phase.APPROACHING
 
-    near_path = straight_path(2.0, 10.0)
-    off_path = []
-    now = 0.0
-    released = False
-    # 10 Hz 틱(0.1 s)에서, 재계획 주기(1 s)마다 "경로에 잡힘"이 딱 한 틱만 지속되고 바로 다시
-    # 놓치는 가장 가혹한 흔들림
-    for i in range(1, 50):
-        now += 0.1
-        path = near_path if i % 10 == 0 else off_path
-        core.update(now, path, (2.0, 0.0))
-        if 'z1' not in core._state or core.phase('z1') is Phase.IDLE:
-            released = True
-            break
 
-    assert released, '한 틱짜리 근접 재방문이 반복돼도 drop_grace_s 안에 반납(IDLE)해야 한다'
+def test_long_standing_wait_single_drop_tick_starts_grace_instead_of_releasing():
+    # core.py 389행류 버그(스테일 off_path_since로 바로 반납) 재발 방지: 구역을 10초 동안 계속
+    # 요청하며 기다린(이미 GRANT_QUEUED) 상태에서 경로가 '딱 한 틱'만 놓쳐도, 그 묵은 대기
+    # 흔적 때문에 바로 반납하면 안 된다 - 그 틱에 off_path_since를 "지금"으로 새로 잡고 drop_grace_s
+    # 부터 다시 센다("대기부터").
+    core, rid = _queued_core()
+    near_path = straight_path(2.0, 10.0)
+    now = 0.0
+    for i in range(1, 101):  # 10 Hz 틱으로 10초 동안 계속 경로에 잡혀 있다(흔적 축적)
+        now = round(i * 0.1, 1)
+        core.update(now, near_path, (2.0, 0.0))
+    assert core.phase('z1') is Phase.APPROACHING and core.grant('z1') == GRANT_QUEUED
+
+    # 한 틱만 경로에서 빠진다
+    drop_tick = round(now + 0.1, 1)
+    outgoing, cap, _, _ = core.update(drop_tick, DETOUR, (2.0, 0.0))
+    assert outgoing == [], '10초짜리 대기 흔적 때문에 한 틱만 빠져도 바로 반납하면 안 된다'
+    assert core.phase('z1') is Phase.APPROACHING and core.grant('z1') == GRANT_QUEUED
+
+    # drop_grace_s(3초)가 새로 다 차야 반납한다 - 묵은 흔적을 이어 세면 더 일찍 반납될 것이다
+    just_before = round(drop_tick + 3.0 - 0.1, 1)
+    outgoing, _, _, _ = core.update(just_before, DETOUR, (2.0, 0.0))
+    assert all(o.type != TYPE_RELEASE for o in outgoing), 'grace가 drop_tick부터 새로 시작해야 한다'
+    assert core.phase('z1') is Phase.APPROACHING
+
+    past_grace = round(drop_tick + 3.0 + 0.1, 1)
+    outgoing, _, _, _ = core.update(past_grace, DETOUR, (2.0, 0.0))
+    assert [(o.zone_id, o.request_id, o.type) for o in outgoing] == [('z1', rid, TYPE_RELEASE)]
+    assert core.phase('z1') is Phase.IDLE
 
