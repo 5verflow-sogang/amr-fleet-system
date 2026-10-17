@@ -73,8 +73,8 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 시나리오 파일은 `processes`(띄울 명령, `ready_topic`으로 준비 확인, `stop_first`·`wait_files`로 기록 노드를 먼저 끝냄), `driver`(`segments`: `cmd_vel` 구간 / `wait`: 시간만 기다림 / `command`: 셸 명령이 끝날 때까지, 0이 아닌 종료 코드면 주행 실패), `postprocess`(예: `fleet_metrics`), `cleanup`으로 이루어진다. 명령 안의 `{run_dir}`, `{seed}`, `params` 이름은 실행마다 채워진다.
 
 - 프로세스에 `enabled: "{이름}"`을 두면 채운 값이 `false`·`0`·`no`·`off`·빈칸일 때 그 프로세스를 띄우지 않는다.
-- `param_sets`는 param 하나의 값에 딸린 다른 params를 채운다. `--set`으로 직접 준 이름은 덮어쓰지 않고, 표에 없는 값이면 실행 전에 멈춘다.
-  - `fleet_fake`의 `fleet_mode`(연구 1 비교군): `central`(기본) / `decentral` / `hybrid`. `decentral`·`hybrid`면 분산 경매 노드 N대(`task_auctions`)를 띄우고 장애 주입기가 경매 토픽도 중계한다(`relay_auction`). 서버는 아직 모든 모드에서 뜬다(경매 트리거 설계 뒤 정함).
+- `param_sets`는 param 하나의 값에 딸린 다른 params를 채운다. `--set`으로 직접 준 이름은 덮어쓰지 않고, 표에 없는 값이면 실행 전에 멈춘다. 값 안의 `{이름}`은 다른 params로 채운다. 표에 `_blocked: 이유`가 있으면 그 값은 실행 전에 멈춘다(선행 PR 머지 전. 로컬 스모크만 `--allow-blocked`).
+  - `fleet_fake`의 `fleet_mode`(연구 1 비교군): `central`(기본, 서버만) / `decentral`(서버 없음, 로봇마다 경매 노드, 작업 생성기는 경매 노드 N개가 붙을 때까지 기다림) / `hybrid`(서버 + 경매 노드, 경매 노드에 `fleet_mode:=hybrid`). 분산·하이브리드면 장애 주입기가 경매 토픽도 중계한다(`relay_auction`). `meta.json` `fault`에 `fleet_mode`·`relay_auction`이 남는다. 분산·하이브리드는 #213·#215 머지 전까지 `_blocked`다.
   - 예: `python3 tools/harness/run.py fleet_fake -n 10 --set fleet_mode=decentral --set delay_ms=200 --label dec_d200`
 
 **그림과 녹화** (`loc_basic`, `nav_kpi`, `fleet_fake`)

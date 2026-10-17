@@ -80,6 +80,10 @@ def test_render_and_fault_meta():
                  'kill_at_s': -1.0, 'restart_after_s': -1.0, 'kill_robot': 'none', 'kill_robot_at_s': -1.0}
     f = fault_meta({'delay_ms': '0', 'kill_robot': 'amr_03', 'kill_robot_at_s': '120'})
     assert (f['kill_robot'], f['kill_robot_at_s']) == ('amr_03', 120.0)
+    # 연구 1 비교군: fleet_fake fleet_mode·relay_auction (index.csv relay_auction 열). 'false' 문자열은 False
+    f = fault_meta({'delay_ms': '0', 'fleet_mode': 'decentral', 'relay_auction': 'true'})
+    assert (f['fleet_mode'], f['relay_auction']) == ('decentral', True)
+    assert fault_meta({'delay_ms': '0', 'relay_auction': 'false'})['relay_auction'] is False
 
 
 def test_fault_meta_extended_conditions():

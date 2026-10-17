@@ -44,22 +44,37 @@ def test_config_patch_values_are_filled_from_params():
     assert run.render_patch({'a.b': 3, 'c': 'plain'}, {}) == {'a.b': 3, 'c': 'plain'}
 
 
-def _fleet_fake_procs(**sets):
+def _fleet_fake_procs(allow_blocked=True, **sets):
     s = run.load_scenario('fleet_fake')
     params = apply_param_sets(s, {**s['params'], **sets, 'run_dir': '/tmp/r', 'seed': 1, 'repeat': 0, 'label': ''},
-                              explicit=sets)
+                              explicit=sets, allow_blocked=allow_blocked)
     return {p['name']: p for p in render(s['processes'], params) if enabled(p)}
 
 
-def test_fleet_mode_turns_on_auctions_and_relay():
+def test_fleet_mode_processes():
     central = _fleet_fake_procs()
-    assert 'task_auctions' not in central
+    assert 'task_auctions' not in central and 'fleet_manager' in central
     assert 'relay_auction:=false' in central['fault_injector']['cmd']
-    for mode in ('decentral', 'hybrid'):
-        procs = _fleet_fake_procs(fleet_mode=mode, num_robots='7')
-        assert 'count:=7' in procs['task_auctions']['cmd']
-        assert 'relay_auction:=true' in procs['fault_injector']['cmd']
+    assert 'server_node:=fleet_manager server_count:=1' in central['task_generator']['cmd']
+    # 분산: 서버 없음, 작업 생성기는 경매 노드 N개를 기다린다 ({num_robots}가 param_sets 안에서 채워진다)
+    dec = _fleet_fake_procs(fleet_mode='decentral', num_robots='7')
+    assert 'fleet_manager' not in dec
+    assert 'count:=7' in dec['task_auctions']['cmd'] and 'fleet_mode:=decentral' in dec['task_auctions']['cmd']
+    assert 'relay_auction:=true' in dec['fault_injector']['cmd']
+    assert 'server_node:=task_auction server_count:=7' in dec['task_generator']['cmd']
+    # 하이브리드: 서버 + 경매 노드, 경매 노드에 fleet_mode:=hybrid
+    hyb = _fleet_fake_procs(fleet_mode='hybrid')
+    assert 'fleet_manager' in hyb and 'fleet_mode:=hybrid' in hyb['task_auctions']['cmd']
+    assert 'server_node:=fleet_manager server_count:=1' in hyb['task_generator']['cmd']
     # --set으로 직접 준 값은 param_sets가 덮어쓰지 않는다
     assert 'relay_auction:=true' in _fleet_fake_procs(relay_auction='true')['fault_injector']['cmd']
     with pytest.raises(ValueError, match='fleet_mode=decentralized'):
         _fleet_fake_procs(fleet_mode='decentralized')
+
+
+@pytest.mark.parametrize('mode', ['decentral', 'hybrid'])
+def test_fleet_mode_blocked_until_prerequisites_merge(mode):
+    # 선행 PR(#213·#215) 머지 전에는 분산 이름의 중앙 데이터가 쌓이지 않게 막는다. 머지되면 _blocked 줄을 지우고 이 테스트도 지운다
+    with pytest.raises(ValueError, match='아직 돌릴 수 없다'):
+        _fleet_fake_procs(allow_blocked=False, fleet_mode=mode)
+    assert 'task_auctions' not in _fleet_fake_procs(allow_blocked=False)      # central은 그대로

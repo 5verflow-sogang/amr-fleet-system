@@ -72,6 +72,8 @@ def main(argv=None) -> int:
     ap.add_argument('--seed-base', type=int, default=None,
                     help='반복 i의 seed = seed_base + i (기본 1 = 본 실험. 튜닝·예비 실험은 1001)')
     ap.add_argument('--label', default='', help='조건 이름. 요약에서 같은 라벨끼리 묶는다')
+    ap.add_argument('--allow-blocked', action='store_true',
+                    help='param_sets의 _blocked 조건도 돌린다 (선행 PR 머지 전 로컬 스모크용. 본 실험에 쓰지 않는다)')
     ap.add_argument('--set', action='append', help='시나리오 params 덮어쓰기 (이름=값, 여러 번)')
     ap.add_argument('--config', action='append', default=[],
                     help='설치된 설정 파일을 실행 동안 바꿔 끼움: <패키지>/<share 경로>=<파일>')
@@ -91,7 +93,7 @@ def main(argv=None) -> int:
     params = {**(scenario.get('params') or {}), **sets, 'label': args.label}
     # param_sets: 비교군(fleet_mode) 같은 값 하나에 딸린 params를 채운다 (--set으로 준 이름은 그대로)
     try:
-        params = apply_param_sets(scenario, params, explicit=sets)
+        params = apply_param_sets(scenario, params, explicit=sets, allow_blocked=args.allow_blocked)
     except ValueError as e:
         ap.error(str(e))
     seed_base = args.seed_base if args.seed_base is not None else int(scenario.get('seed_base', 1))
