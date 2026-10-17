@@ -530,6 +530,41 @@ uv run python scripts/judge_v2_tuning.py raw/v2_combined --cands ab
 - 연우 Mac(M5). 트랙 A 10/17 00:59~02:41, 실행 커밋 `4866273`(브랜치 `exp/research2-v2-track-a`). 합친 후보 12:24~13:34, `ee4a222`(`exp/research2-v2-combined`). 둘 다 연우 포크, 오류 0건. 원자료는 연우 Mac `raw/v2_track_a/`·`raw/v2_combined/`(요청하면 공유)
 - 시험 실행에 예비 시드 299를 썼다 (2만 스텝, 결과 버림)
 
+## 탐색 실험: 질량 정보 값어치 (10/17, v2와 별개)
+
+v2 튜닝(A2·B1·ab)이 모두 제안과 R2를 똑같이 좋아지게 해서, 질량 정보 효과가 왜 작은지 보고 키울 수 있는지 시험했다. **사전 등록된 v2와 별개인 후속 탐색**이고, 판정 기준은 실행 전에 공유 문서에 적었다.
+
+**도구 (RL 없이, 규칙 정책으로 보상을 미리 잰다)**
+
+| 스크립트 | 보는 것 |
+| --- | --- |
+| `scripts/info_value.py` | 질량 정보 값어치 = 알 때 최고 보상 − 모를 때 최고 보상. G·A2·B1·ab 모두 1.8점(1.1%) |
+| `scripts/constrained_info_value.py` | 제약 RL(평균 충돌 ≤ 한도에서 가장 빨리)일 때의 값어치. 한도 1% → 11.7%, 5% → 2.7% |
+| `scripts/check_reward_traps.py` | 실패 비용 구조: 정상·과속·지나치기·기어가기·안 가기를 같은 보상으로 채점. `check_reward.py`(최적점만 봄)로는 안 보이는 학습 함정을 찾는다 |
+
+**실험**
+
+| 실험 | 보상 | 학습 | 결과 |
+| --- | --- | --- | --- |
+| 1 | I: 시간 −0.5/스텝, 충돌 −1000, 시간 초과 −250 (`env_v3_info.toml`, 값어치 8.3) | 처음부터 3M | 시드 10개 중 8개가 무너짐. 지나침 벌점을 안 키워 "지나치기"(−25)가 "시간 초과"(−400)보다 훨씬 싸서 그 함정에 갇힘. PPO 지표(KL·엔트로피·EV)는 정상 |
+| 2 | I2: I + 지나침 −125/m (`env_v3_info2.toml`) | 트랙 B base에서 이어 1.5M (`train_ppo.py --init-from`), 대조군은 G로 이어 1.5M | 40개 모두 정상. 하지만 제안·R2가 같이 조심해져 제안 − R2 차이는 −3.9 → −1.7%p로 안 커짐 (기준 미달) |
+
+- **시드**: 두 실험 모두 제안·R2 × 시드 210~219(= 튜닝 평가 목록 210~219)다. 트랙 B 튜닝 시드를 다시 썼고 기준선도 트랙 B base다. 최종 평가 목록(0~19, 20~39)과는 겹치지 않는다. 사전 등록 1-1의 예비 범위(240~299, 쓰기 전에 알린다)가 아니어서 `v2_plan.md` 1-5에 사후 기록으로 남긴다
+
+```bash
+# 실험 1: 실행 커밋 4a0a820의 run_v2_track_b.sh에 info 후보를 더해 돌렸다. dev의 트랙 B 스크립트는 실행 커밋 efb6c9b 그대로 둔다
+git checkout 4a0a820 -- scripts/run_v2_track_b.sh && D=raw/info_pilot CANDS=info scripts/run_v2_track_b.sh
+uv run python scripts/judge_info_pilot.py raw/info_pilot --cand info --base base   # base = 트랙 B eval_base_*를 같은 폴더에
+# 실험 2
+scripts/run_info_warm.sh                                              # BASEM=트랙 B base 모델 폴더
+uv run python scripts/judge_info_pilot.py raw/info_warm --cand i2warm --base gwarm
+```
+
+- 사후 관찰 (가설): G로 더 학습한 대조군(4.5M)은 base(3M)보다 제안 − R2 차이가 −0.3 → −3.9%p(CI −8.6 ~ +1.3)로 벌어지고 0 kg에서 제안이 0.73 s 더 빨랐다
+- 함정 점검에서 A2·ab는 지나치기 − 기어가기 차이가 G의 3배다 (지나침 벌점을 안 키워서). v2에서 시드별 지나침·시간 초과를 확인한다
+- 하연 Mac(M5), 브랜치 `exp/research2-info-pilot`(하연 포크) 실행 `4a0a820`·`7246829`. 평가 원자료: `gs://amr-fleet-results/research2/explore/` (모델은 안 올림). 자세한 기록은 공유 문서 "탐색 실험" 절
+
+
 ## 결과 분석 (가설 판정)
 
 `scripts/evaluate.py`가 만든 `episodes.csv`들을 모아 시드별 요약과 H1~H3 판정표를 만든다. 판정 기준은 [명세서 4장](../../docs/project-spec.md)과 실험 설계 메모(#72)를 따른다.
