@@ -17,8 +17,8 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
-from .task_gen import (ITEMS, TASK_TYPES, TaskSpec, dump_tasks_json, generate, load_stations, load_tasks_json,
-                       world_to_map, yaw_to_quaternion)
+from .task_gen import (ITEMS, TASK_TYPES, TaskSpec, count_ready, dump_tasks_json, generate, load_stations,
+                       load_tasks_json, world_to_map, yaw_to_quaternion)
 
 
 class TaskGenerator(Node):
@@ -34,6 +34,11 @@ class TaskGenerator(Node):
         tick_s = self.declare_parameter('tick_s', 0.1).value
         # 이 이름의 노드가 /fleet/task_requests를 구독해야 일정을 시작한다. 비우면 아무 구독자나
         self._server_node = self.declare_parameter('server_node', 'fleet_manager').value
+        # 그 이름의 구독 노드가 몇 개 있어야 하는지. 분산 모드는 서버 없이 로봇마다 경매 노드가 받으므로
+        # server_node:=task_auction server_count:=<로봇 수>. 한 대라도 늦게 뜨면 그 로봇이 열어야 할 작업이 사라진다
+        self._server_count = self.declare_parameter('server_count', 1).value
+        if self._server_count < 1:
+            raise ValueError(f'server_count는 1 이상: {self._server_count}')
 
         self._stations = load_stations(stations_file)
         if tasks_file:
@@ -60,7 +65,10 @@ class TaskGenerator(Node):
         self._next = 0
         self._start_ns: int | None = None
         self.create_timer(tick_s, self._tick)
-        self.get_logger().info(f'작업 {len(self._tasks)}건 준비: {source}. Fleet 서버({self._server_node or "아무 구독자"}) 구독을 기다린다')
+        waiting = self._server_node or '아무 구독자'
+        if self._server_count > 1:
+            waiting += f' {self._server_count}개'
+        self.get_logger().info(f'작업 {len(self._tasks)}건 준비: {source}. 구독({waiting})을 기다린다')
 
     def _tick(self):
         now_ns = self.get_clock().now().nanoseconds
@@ -79,12 +87,10 @@ class TaskGenerator(Node):
 
     def _server_ready(self) -> bool:
         # 그래프에 보이는 것(발견)과 실제로 연결된 것(match)은 다르다. 연결 전에 보낸 작업은 사라지므로 둘 다 본다
-        if self._pub.get_subscription_count() < 1:
+        if self._pub.get_subscription_count() < self._server_count:
             return False
         subscribers = self.get_subscriptions_info_by_topic('/fleet/task_requests')
-        if not self._server_node:
-            return len(subscribers) > 0
-        return any(info.node_name == self._server_node for info in subscribers)
+        return count_ready(subscribers, self._server_node) >= self._server_count
 
     def _to_msg(self, spec: TaskSpec) -> Task:
         now = self.get_clock().now()
