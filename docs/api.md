@@ -143,6 +143,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 분산 | `/fleet/task_bids` | 토픽 | `amr_msgs/msg/TaskBid` | `amr_fleet_decentralized` | `amr_fleet_decentralized` (장애 주입 실험에서는 네임스페이스 안 `fleet/task_bids` 중계본) | 경매 진행 중 |
 | 하이브리드 | `/fleet/robot_modes` | 토픽 | `amr_msgs/msg/RobotFleetMode` | `amr_fleet_decentralized` (`fleet_mode:=hybrid`) | `amr_fleet_manager`, `amr_fleet_decentralized`, 하네스 | 1 Hz와 바뀔 때. 로봇 → 모두라 장애를 주입하지 않는다 ([architecture.md 5-2절](architecture.md#5-2-하이브리드-폴백-연구-1-비교군-1016-하연-설계)) |
 | 로봇 | `docking/dock` | 액션 | `amr_msgs/action/Dock` | `amr_docking` | `amr_bt` | BT가 요청할 때 |
+| 로봇 | `aruco_pose` | 토픽 | `geometry_msgs/msg/PoseWithCovarianceStamped` | `amr_docking` `aruco_localizer` | `kidnap_recovery` (연결 예정, 민지) | 위치를 잃었을 때(복구 상태 ≠ tracking) 마커판이 보이면 최대 5 Hz |
 
 서버 → 로봇 토픽(`/fleet/task_assignments`, `/fleet/heartbeat`, `/fleet/zone_grants`, `/fleet/task_table`)은 장애 주입기(`amr_fault_injector`)가 중계하며 지연·손실을 건다.
 
@@ -339,6 +340,8 @@ cmd_vel 체인: 최종 `cmd_vel`을 가로채는 건 안전 노드(`amr_safety`)
 | Action | `docking/dock` | `amr_msgs/action/Dock` | 스테이션(`config/dock_stations.yaml`)의 ArUco 마커판을 보고 도킹. 한 번 호출에 한 번 시도 |
 | Subscribe | `camera/color/image_raw`, `camera/camera_info` | `sensor_msgs/msg/Image`, `CameraInfo` | 도킹 중에만 처리 |
 | Publish | `cmd_vel_nav` | `geometry_msgs/msg/Twist` | Nav2 컨트롤러와 같은 자리 (도킹 중에는 Nav2 목표가 없다) |
+| Publish | `aruco_pose` (`aruco_localizer`) | `geometry_msgs/msg/PoseWithCovarianceStamped` | 마커판으로 구한 로봇 자세 (map 기준, 영상 시각). 공분산은 판까지 거리·판 크기에 따라 커진다. Kidnapped 복구용 |
+| Subscribe | `kidnap_recovery/state` (`aruco_localizer`) | `std_msgs/msg/String` | 기본은 `tracking`이 아닐 때만 인식 |
 
 ### amr_bt (로봇별)
 

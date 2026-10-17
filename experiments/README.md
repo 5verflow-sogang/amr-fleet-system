@@ -7,6 +7,7 @@
 - `research2/`: 연구 2 (AI/ML, 연우). 주제는 10/5 회의에서 확정한다([명세서 4장](../docs/project-spec.md))
 - `payload_braking/`: 적재 질량 제동 거리 (이진)
 - `odom_drift/`: 휠 오도메트리 드리프트, 10 m 사각형 복귀 오차 (지수, D9)
+- `aruco_localizer/`: ArUco 위치 노드(마커판 → 로봇 map 자세) 거리별 인식·오차와 공분산 (지수, Kidnapped 다른 통로용)
 - `bt_kidnap/`: 배송 중 순간 이동(Kidnapped) → 위치 복구 노드와 BT 멈춤·재개·실패, 서버 재할당 (지수, 4주차 작업 5)
 - `bt_cycle/`: Fleet 작업 → BT → Nav2 이동 → ArUco 도킹 → COMPLETED 한 사이클과 단일 작업 성공률 (지수, 4주차 작업 1·3)
 
