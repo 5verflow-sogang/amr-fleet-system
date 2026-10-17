@@ -43,11 +43,16 @@ ASSIGNMENTS_TOPIC = '/fleet/task_assignments'
 ACKS_TOPIC = '/fleet/task_assignment_acks'
 REQUESTS_TOPIC = '/fleet/task_requests'
 STATUS_TOPIC = '/fleet/task_status'
+# 분산 경매 입찰·낙찰·수락 (amr_fleet_decentralized, 원본은 늘 절대 경로). 낙찰 로봇의 수락(ACCEPT)을 할당으로 센다
+BIDS_TOPIC = '/fleet/task_bids'
+BID_ACCEPT = 2  # TaskBid.TYPE_ACCEPT
 STATES_TOPIC = '/fleet/robot_states'
 # TaskStatus.STATE_*
 STATE_COMPLETED = 2
 STATE_FAILED = 3
 STATE_NAMES = {STATE_COMPLETED: 'COMPLETED', STATE_FAILED: 'FAILED'}
+# amr_msgs/msg/ErrorInfo.ASSIGN_TASK_TAKEN. 다른 로봇이 먼저 맡아 물러난 FAILED는 작업의 끝이 아니다
+ERROR_TASK_TAKEN = 104
 ACTION_ASSIGN = 0  # TaskAssignment.ACTION_ASSIGN
 STATE_IN_PROGRESS = 1
 ZONE_REQUESTS_TOPIC = '/fleet/zone_requests'
@@ -72,7 +77,7 @@ ANGULAR_THRESHOLD = 0.05  # rad/s
 
 FLEET_LATENCY_HEADER = ['topic', 'robot', 'key', 'send_time', 'recv_time', 'latency_ms', 'delivered']
 TASK_OUTCOMES_HEADER = ['task_id', 'request_time', 'first_assign_time', 'robots', 'final_state', 'end_time',
-                        'task_time_s', 'distance_m', 'error_code']
+                        'task_time_s', 'distance_m', 'error_code', 'runners']
 ZONE_WAITS_HEADER = ['robot', 'zone', 'request_id', 'request_time', 'grant_time', 'wait_s', 'outcome', 'release_time']
 STALLS_HEADER = ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s']
 RECOVERY_HEADER = ['robot', 'kill_time', 'task_id', 'reassign_time', 'reassigned_robot', 'recovery_s', 'completed']
@@ -261,7 +266,11 @@ def response_time(records: Sequence[Record], cutoff: Cutoff) -> list[list]:
 
 
 def _task_events(records: Sequence[Record]):
-    """작업별 요청 시각, 할당 [(시각, 로봇)], 끝 보고 [(시각, 로봇, 상태)]. 재전송은 첫 발송만 센다."""
+    """작업별 요청 시각, 할당 [(시각, 로봇)], 끝 보고 [(시각, 로봇, 상태)]. 재전송은 첫 발송만 센다.
+
+    할당은 서버 TaskAssignment(ASSIGN)와 분산 경매의 수락(TaskBid ACCEPT, 낙찰 로봇이 보냄) 둘 다다.
+    분산(fleet_mode=decentral)은 서버가 없어 경매 수락만, 하이브리드는 둘이 섞인다.
+    """
     requests: dict[str, float] = {}
     assigns: dict[str, list[tuple[float, str]]] = defaultdict(list)
     seen_cmds = set()
@@ -274,6 +283,11 @@ def _task_events(records: Sequence[Record]):
             if ident not in seen_cmds:
                 seen_cmds.add(ident)
                 assigns[r.msg.task.task_id].append((r.t, r.msg.robot_id))
+        elif r.topic == BIDS_TOPIC and r.msg.type == BID_ACCEPT:
+            ident = ('auction', r.msg.task_id, r.msg.auction_id, r.msg.robot_id)
+            if ident not in seen_cmds:
+                seen_cmds.add(ident)
+                assigns[r.msg.task_id].append((r.t, r.msg.robot_id))
         elif r.topic == STATUS_TOPIC and r.msg.state in STATE_NAMES:
             finishes[r.msg.task_id].append((r.t, r.msg.robot_id, r.msg.state))
     for series in (*assigns.values(), *finishes.values()):
@@ -284,10 +298,14 @@ def _task_events(records: Sequence[Record]):
 def task_outcomes(records: Sequence[Record]) -> list[list]:
     """task_outcomes.csv 행. 작업 1건마다 1행.
 
-    final_state: 마지막 끝 보고(COMPLETED·FAILED)가 그 작업의 마지막 할당 뒤에 왔으면 그 상태, 아니면 빈칸
-    (실행이 끝날 때 아직 하는 중이거나, FAILED 뒤 다시 할당됐거나, 맡은 로봇이 죽었다).
+    final_state: 어느 로봇이든 COMPLETED를 보고했으면 COMPLETED (첫 보고). 하이브리드에서는 서버가 맡긴 로봇이
+    아니라 분산 경매로 맡은 로봇이 끝낼 수 있다(architecture.md 5-2절). 아니면 마지막 할당 뒤 그 로봇의 FAILED,
+    없으면 빈칸 (실행이 끝날 때 아직 하는 중이거나, FAILED 뒤 다시 할당됐거나, 맡은 로봇이 죽었다).
+    다른 로봇이 먼저 맡아 물러난 FAILED(ASSIGN_TASK_TAKEN)는 끝으로 보지 않는다.
     error_code: final_state가 FAILED일 때 그 보고의 ErrorInfo.code (amr_msgs, #173 대역: 203 위치, 501 작업 시간 초과,
     502 충전 시간 초과 등). 하네스 요약이 실패 원인별로 센다(fleet.tasks_failed_*). FAILED가 아니면 빈칸.
+    runners: IN_PROGRESS를 보고한 로봇 (처음 보고한 순서, 공백 구분). 둘 이상이면 같은 작업을 여러 로봇이 실제로
+    움직이며 했다는 뜻이다 (하이브리드 중복 실행, 하네스 요약 fleet.duplicate_tasks).
     """
     requests, assigns, finishes = _task_events(records)
     # 끝 보고의 이동 거리 (TaskStatus.distance_traveled, #141)
@@ -295,13 +313,24 @@ def task_outcomes(records: Sequence[Record]) -> list[list]:
                 for r in records if r.topic == STATUS_TOPIC and r.msg.state in STATE_NAMES}
     error = {(r.msg.task_id, r.msg.robot_id, r.t): getattr(getattr(r.msg, 'error', None), 'code', 0)
              for r in records if r.topic == STATUS_TOPIC and r.msg.state in STATE_NAMES}
+    runners: dict[str, list[str]] = defaultdict(list)
+    for r in records:
+        if r.topic == STATUS_TOPIC and r.msg.state == STATE_IN_PROGRESS \
+                and r.msg.robot_id not in runners[r.msg.task_id]:
+            runners[r.msg.task_id].append(r.msg.robot_id)
     rows = []
     for task_id in sorted(set(requests) | set(assigns), key=lambda t: (requests.get(t, math.inf), t)):
         series = assigns.get(task_id, [])
         last_assign = series[-1] if series else None
         final = end = dist = code = None
-        for t, robot, state in finishes.get(task_id, []):
-            if last_assign is not None and t >= last_assign[0] and robot == last_assign[1]:
+        events = finishes.get(task_id, [])
+        done = [(t, robot) for t, robot, state in events if state == STATE_COMPLETED]
+        if done:
+            end, robot = done[0]
+            final, dist = 'COMPLETED', distance.get((task_id, robot, end))
+        for t, robot, state in ([] if done else events):
+            if last_assign is not None and t >= last_assign[0] and robot == last_assign[1] \
+                    and error.get((task_id, robot, t)) != ERROR_TASK_TAKEN:
                 final, end, dist = STATE_NAMES[state], t, distance.get((task_id, robot, t))
                 code = error.get((task_id, robot, t)) if final == 'FAILED' else None
                 break
@@ -310,7 +339,7 @@ def task_outcomes(records: Sequence[Record]) -> list[list]:
         rows.append([task_id, _fmt(request), _fmt(series[0][0] if series else None),
                      ' '.join(robot for _, robot in series), final or '', _fmt(end),
                      _fmt(task_time, 3), _fmt(None if dist is None else float(dist), 3),
-                     '' if code is None else str(int(code))])
+                     '' if code is None else str(int(code)), ' '.join(runners.get(task_id, []))])
     return rows
 
 

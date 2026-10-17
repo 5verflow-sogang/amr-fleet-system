@@ -7,9 +7,10 @@
 namespace amr_nav2_plugins
 {
 
-// amr_planning_core::DwaPlanner는 "다음 지점"(Point2D) 하나만 목표로 받는다(전역 경로
-// 추종이 아니라 지역 추종). 전역 경로(setPlan으로 받은 global_plan)에서 로봇 바로
-// 앞의 그 지점을 고르는 순수 함수 - rclcpp::Node 없이 단위 테스트할 수 있도록 분리했다.
+// 전역 경로(setPlan으로 받은 global_plan)에서 로봇 바로 앞의 추종 지점을 고르는 순수
+// 함수 - rclcpp::Node 없이 단위 테스트할 수 있도록 분리했다. DwaController는 이제 경로를
+// 통째로 amr_planning_core::DwaPlanner에 넘기고, 코어의 pathPointAhead가 같은 규칙으로
+// 기준점을 고른다(adaptive_lookahead).
 //
 // 로봇에 가장 가까운 점부터 시작해, 누적 거리가 lookahead_distance를 넘는 첫 점을
 // 돌려준다(Pure Pursuit의 lookahead point 선택과 같은 방식). 경로가 lookahead보다

@@ -10,6 +10,8 @@
 # HARNESS_PREP:  빌드 전에 컨테이너에서 실행할 명령 (예: 이미지에 없는 apt 패키지 설치)
 # HARNESS_PACKAGES: 빌드할 패키지 목록 (기본: loc_basic·fleet_fake에 필요한 것)
 # HARNESS_DISCORD_WEBHOOK: 있으면 끝나고 요약을 Discord로 보낸다. 값은 명령줄에 안 남게 이름만 넘긴다
+# HARNESS_RUNNER_MACHINE, HARNESS_RUNNER_SLOT, HARNESS_TRIGGERED_BY: GCP 러너 VM 종류·슬롯, 실행한 GitHub 계정
+#   (fleet-test.yml이 준다). meta.json host와 Discord 요약에 남는다
 # HARNESS_FRESH: 1이면 반복 하나마다 컨테이너를 새로 띄운다. 기본(한 컨테이너)도 시도마다 DDS 도메인을 바꾸고
 #                흔적을 지우지만, 그래도 뒤 반복으로 갈수록 결과가 달라지는지 확인할 때 쓴다.
 #                빌드 결과는 이번 실행 동안만 쓰는 볼륨에 두어 두 번째 컨테이너부터는 빌드가 거의 없다
@@ -29,7 +31,8 @@ run_container() {
   local extra="$1"; shift
   # --init: 부모가 먼저 끝난 프로세스(Gazebo 실행기 등)를 거둬 좀비가 쌓이지 않게 한다
   # shellcheck disable=SC2086
-  docker run --rm --init -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-}" -e HARNESS_DISCORD_WEBHOOK $extra \
+  docker run --rm --init -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-}" -e HARNESS_DISCORD_WEBHOOK \
+    -e HARNESS_RUNNER_MACHINE -e HARNESS_RUNNER_SLOT -e HARNESS_TRIGGERED_BY $extra \
     -v "$REPO:/repo" -w /repo "$IMAGE" bash -c "
       set -e
       # 이미지의 가장 위 underlay를 source한다 (/opt/teb_ws → /opt/tracing_ws → /opt/ros, Dockerfile 체인).

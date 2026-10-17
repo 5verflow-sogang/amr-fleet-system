@@ -196,6 +196,7 @@ public:
     ctx_->nav_retries = static_cast<int>(declare_parameter<int64_t>("nav_retries", 2));
     ctx_->pause_timeout_s = declare_parameter<double>("pause_timeout_s", 60.0);
     ctx_->kidnap_pause_timeout_s = declare_parameter<double>("kidnap_pause_timeout_s", 120.0);
+    ctx_->task_timeout_s = declare_parameter<double>("task_timeout_s", 1800.0);
     ctx_->resume_hold_s = declare_parameter<double>("resume_hold_s", 0.3);
     kidnap_stale_s_ = declare_parameter<double>("kidnap_state_stale_s", 5.0);
     ctx_->charge_target = declare_parameter<double>("battery.charge_target_percent", 100.0);
@@ -248,7 +249,12 @@ public:
     // 노드 시계 기준 (use_sim_time이면 시뮬레이션 시간)
     tick_timer_ = rclcpp::create_timer(
       this, get_clock(), rclcpp::Duration::from_seconds(1.0 / tick_hz),
-      [this]() {tree_.tickRoot();});
+      [this]() {
+        if (expire_task(tree_, *ctx_)) {
+          RCLCPP_WARN(get_logger(), "작업 전체 시간 상한 %.0f s 초과 → FAILED(TASK_TIMEOUT)", ctx_->task_timeout_s);
+        }
+        tree_.tickRoot();
+      });
     state_timer_ = rclcpp::create_timer(
       this, get_clock(), rclcpp::Duration::from_seconds(1.0 / state_rate_hz),
       [this]() {
@@ -347,7 +353,7 @@ private:
   {
     if (ctx_->zone_state == "failed") {
       // zone_client가 후진 안전 한도로 멈춰 선 상태(#137): 사람이 확인하기 전엔 움직일 수 없다
-      return std::make_pair(ErrorInfo::TRAFFIC_REVOKED, std::string("zone_client failed, manual check needed"));
+      return std::make_pair(ErrorInfo::TRAFFIC_BACKING_FAILED, std::string("zone_client failed, manual check needed"));
     }
     if (ctx_->kidnap_state == "failed") {
       // 위치 복구가 실패한 상태(#79). 복구 노드가 failed에서도 수렴하면 tracking으로 돌아오고 그때 다시 받는다.

@@ -21,7 +21,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness.runner import ConfigOverrides, dds_domain, dds_reset, installed_path, patch_yaml, run_once  # noqa: E402
+from harness.runner import (ConfigOverrides, apply_param_sets, dds_domain, dds_reset, installed_path,  # noqa: E402
+                            patch_yaml, run_once)
 from harness.notify import notify  # noqa: E402
 from harness.summary import summarize, to_markdown  # noqa: E402
 
@@ -71,6 +72,8 @@ def main(argv=None) -> int:
     ap.add_argument('--seed-base', type=int, default=None,
                     help='반복 i의 seed = seed_base + i (기본 1 = 본 실험. 튜닝·예비 실험은 1001)')
     ap.add_argument('--label', default='', help='조건 이름. 요약에서 같은 라벨끼리 묶는다')
+    ap.add_argument('--allow-blocked', action='store_true',
+                    help='param_sets의 _blocked 조건도 돌린다 (선행 PR 머지 전 로컬 스모크용. 본 실험에 쓰지 않는다)')
     ap.add_argument('--set', action='append', help='시나리오 params 덮어쓰기 (이름=값, 여러 번)')
     ap.add_argument('--config', action='append', default=[],
                     help='설치된 설정 파일을 실행 동안 바꿔 끼움: <패키지>/<share 경로>=<파일>')
@@ -86,7 +89,13 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     scenario = load_scenario(args.scenario)
-    params = {**(scenario.get('params') or {}), **parse_set(args.set), 'label': args.label}
+    sets = parse_set(args.set)
+    params = {**(scenario.get('params') or {}), **sets, 'label': args.label}
+    # param_sets: 비교군(fleet_mode) 같은 값 하나에 딸린 params를 채운다 (--set으로 준 이름은 그대로)
+    try:
+        params = apply_param_sets(scenario, params, explicit=sets, allow_blocked=args.allow_blocked)
+    except ValueError as e:
+        ap.error(str(e))
     seed_base = args.seed_base if args.seed_base is not None else int(scenario.get('seed_base', 1))
     if seed_base < 1:
         # 0은 패키지마다 뜻이 다르다(매번 무작위 / 고정값). 하네스는 0을 넘기지 않는다 (README "seed 규칙")

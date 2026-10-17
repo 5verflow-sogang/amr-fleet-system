@@ -12,7 +12,7 @@ import math
 import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable, Sequence
 
 import yaml
 
@@ -131,3 +131,14 @@ def dump_tasks_json(tasks: Sequence[TaskSpec], path: str, meta: dict | None = No
     file.parent.mkdir(parents=True, exist_ok=True)
     data = {'meta': meta or {}, 'tasks': [asdict(t) for t in tasks]}
     file.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+
+def count_ready(subscribers: Iterable, server_node: str) -> int:
+    """/fleet/task_requests 구독자 정보(node_name 속성) 중 일정을 시작해도 되는 수.
+
+    server_node가 비면 구독자 전부, 아니면 그 이름의 노드만 센다. 분산 모드는 로봇마다 경매 노드
+    (task_auction, 네임스페이스만 다름)가 구독하므로 이름으로 세서 로봇 수와 비교한다 (task_generator server_count).
+    """
+    if not server_node:
+        return sum(1 for _ in subscribers)
+    return sum(1 for info in subscribers if info.node_name == server_node)

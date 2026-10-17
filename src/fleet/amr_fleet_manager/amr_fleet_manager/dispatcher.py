@@ -10,6 +10,8 @@ from typing import Any, Optional
 
 from amr_fleet_core.assignment import ALGORITHMS, RobotInfo, TaskInfo, euclidean_cost, filter_candidates
 
+from .claims import TaskClaims
+
 # amr_msgs/msg/TaskStatus.STATE_* 와 같은 값
 STATE_PENDING = 0
 STATE_IN_PROGRESS = 1
@@ -18,6 +20,8 @@ STATE_FAILED = 3
 FINISHED = (STATE_COMPLETED, STATE_FAILED)
 # amr_msgs/msg/ErrorInfo.ASSIGN_CANCELED 와 같은 값. 서버가 취소한 작업의 FAILED는 다시 할당하지 않는다
 ERROR_CANCELED = 103
+# amr_msgs/msg/ErrorInfo.ASSIGN_TASK_TAKEN 와 같은 값. 다른 로봇이 먼저 맡아 물러난 것이라 재시도로 세지 않는다
+ERROR_TASK_TAKEN = 104
 
 COST_FN_NAME = 'euclidean'
 
@@ -122,6 +126,9 @@ class Dispatcher:
         self._pending: dict[int, _PendingAck] = {}
         self._next_assignment_id = 1
         self._next_call_id = 1
+        # 먼저 수락한 쪽이 주인 (architecture.md 5-2절). 죽은 로봇의 주장은 회수와 같은 시간 뒤에 뺀다
+        timeout = self.config.reclaim_timeout_s if self.config.reclaim_timeout_s > 0 else float('inf')
+        self.claims = TaskClaims(timeout)
 
     # ---- 입력 ----
 
@@ -145,28 +152,61 @@ class Dispatcher:
         # 로봇이 epoch를 바꾸기 전에 보낸 큰 번호를 확인으로 잘못 볼 수 있다
         if current_task_id:
             self._confirm(info.robot_id, current_task_id)
+        self.claims.robot_state(info.robot_id, current_task_id, now)
 
-    def on_ack(self, robot_id: str, assignment_id: int, accepted: bool) -> bool:
-        """TaskAssignmentAck 수신. 처음 받은 확인이면 True. 거부면 작업을 큐로 되돌린다."""
+    def on_ack(self, robot_id: str, assignment_id: int, accepted: bool, error_code: int = 0,
+               now: float = 0.0) -> bool:
+        """TaskAssignmentAck 수신. 처음 받은 확인이면 True. 거부면 작업을 큐로 되돌린다.
+
+        다른 로봇이 먼저 맡았다는 거부(ERROR_TASK_TAKEN)이고 서버도 그 주인을 알면 주인에게 넘긴다.
+        """
         pending = self._pending.get(assignment_id)
         if pending is None or pending.robot_id != robot_id:
             return False
         del self._pending[assignment_id]
         if not accepted:
-            self._release(pending.task_id, robot_id)
+            owner = self.claims.owner(pending.task_id, now) if error_code == ERROR_TASK_TAKEN else None
+            task = self.tasks.get(pending.task_id)
+            if owner is not None and task is not None and task.assignee == robot_id:
+                self._hand_over(task, owner, STATE_COMPLETED if self.claims.completed(pending.task_id, owner)
+                                else STATE_IN_PROGRESS)
+            else:
+                self._release(pending.task_id, robot_id)
         return True
 
-    def on_status(self, task_id: str, robot_id: str, state: int, error_code: int = 0) -> bool:
-        """TaskStatus 수신. 맡긴 로봇의 보고가 아니거나 이미 끝난 작업이면 무시하고 False.
+    def on_status(self, task_id: str, robot_id: str, state: int, error_code: int = 0,
+                  start: float = 0.0, now: float = 0.0) -> bool:
+        """TaskStatus 수신. 장부가 바뀌지 않았으면(모르는 작업, 이미 끝난 작업, 주인이 아닌 로봇) False.
+
+        start는 그 로봇의 수락 시각(TaskStatus.start_time), now는 update_robot과 같은 시계다.
+        맡기지 않은 로봇의 보고라도 그 로봇이 주인(먼저 수락한 쪽)이면 맡은 로봇을 그 로봇으로 바꾼다.
+        분산 경매로 맡았거나, 서버가 다른 로봇에게 다시 맡긴 뒤 옛 명령이 늦게 도착한 경우다 (architecture.md 5-2절).
 
         FAILED는 failed_retries번까지 큐로 되돌려(state PENDING) 다시 할당받게 한다. 그 뒤에는 실패로 남긴다.
         취소(error_code ERROR_CANCELED)로 온 FAILED는 서버가 스스로 멈춘 것이므로 다시 할당하지 않는다.
+        다른 로봇이 먼저 맡아 물러난 FAILED(ERROR_TASK_TAKEN)는 주인에게 넘기고 재시도로 세지 않는다.
         """
+        # 작업 요청보다 먼저 온 보고도 남긴다 (분산 경매가 서버보다 먼저 맡을 수 있다). assign()이 본다
+        self.claims.observe(task_id, robot_id, state, start, now)
         task = self.tasks.get(task_id)
-        if task is None or task.assignee != robot_id or task.state in FINISHED:
+        if task is None or task.state in FINISHED:
             return False
+        if task.assignee != robot_id:
+            if self.claims.owner(task_id, now) != robot_id:
+                return False
+            self._hand_over(task, robot_id, state)
+            return True
         # 상태 보고가 왔으면 명령을 받은 것이다
         self._confirm(robot_id, task_id)
+        if state == STATE_FAILED and error_code == ERROR_TASK_TAKEN:
+            owner = self.claims.owner(task_id, now)
+            if owner is not None:
+                self._hand_over(task, owner, STATE_COMPLETED if self.claims.completed(task_id, owner)
+                                else STATE_IN_PROGRESS)
+            else:
+                # 주인이 안 보이면(그 사이 놓았거나 죽음) 큐로 되돌려 다시 맡긴다
+                self._release(task_id, robot_id)
+            return True
         if state == STATE_FAILED and error_code != ERROR_CANCELED and task.failures < self.config.failed_retries:
             task.failures += 1
             task.state = STATE_PENDING
@@ -183,7 +223,16 @@ class Dispatcher:
     # ---- 출력 ----
 
     def assign(self, now: float) -> tuple[list[Outgoing], list[AssignmentRow]]:
-        """큐의 작업을 놀고 있는 로봇에 맡긴다. 작업이나 후보가 없으면 알고리즘을 부르지 않는다."""
+        """큐의 작업을 놀고 있는 로봇에 맡긴다. 작업이나 후보가 없으면 알고리즘을 부르지 않는다.
+
+        이미 다른 로봇이 맡았다고 보고한 작업은 맡기지 않고 그 로봇(주인)에게 넘긴다.
+        """
+        for t in self.tasks.values():
+            if t.state == STATE_PENDING and not t.assignee:
+                owner = self.claims.owner(t.info.task_id, now)
+                if owner is not None:
+                    self._hand_over(t, owner, STATE_COMPLETED if self.claims.completed(t.info.task_id, owner)
+                                    else STATE_IN_PROGRESS)
         queued = [t.info for t in self.tasks.values() if t.state == STATE_PENDING and not t.assignee]
         free = [
             replace(r.info, load=r.load) for r in self.robots.values()
@@ -250,9 +299,9 @@ class Dispatcher:
     def reclaim_lost(self, now: float) -> list[tuple[str, str]]:
         """맡은 로봇의 RobotState가 reclaim_timeout_s 동안 없으면 작업을 큐로 되돌린다. (task_id, 죽은 robot_id) 목록.
 
-        되돌린 작업은 다음 assign()에서 살아 있는 로봇에게 새 assignment_id로 간다. 죽은 로봇의 늦은 보고는
-        맡은 로봇이 아니라서 무시된다(on_status). 로봇이 살아 돌아와 옛 작업을 계속하면 두 로봇이 같은 작업을 하게
-        되는데, 그 로봇에 취소를 보내는 일은 아직 없다 (README 미결).
+        되돌린 작업은 다음 assign()에서 살아 있는 로봇에게 새 assignment_id로 간다. 죽은 로봇의 주장도 같은 시간 뒤
+        빠진다(claims). 로봇이 살아 돌아와 옛 작업을 계속 보고하면 먼저 수락한 쪽이 주인이라 그 로봇이 다시 맡고,
+        새로 맡은 로봇은 그 보고를 보고 스스로 물러난다(ERROR_TASK_TAKEN, architecture.md 5-2절).
         """
         if self.config.reclaim_timeout_s <= 0:
             return []
@@ -281,6 +330,21 @@ class Dispatcher:
         for assignment_id, pending in list(self._pending.items()):
             if pending.robot_id == robot_id and pending.task_id == task_id:
                 del self._pending[assignment_id]
+
+    def _hand_over(self, task: TaskEntry, robot_id: str, state: int) -> None:
+        """작업의 맡은 로봇을 robot_id(주인)로 바꾼다. 원래 로봇에게 보내던 명령의 재전송은 그만둔다."""
+        task_id = task.info.task_id
+        old = task.assignee
+        if old:
+            self._confirm(old, task_id)
+            self._release(task_id, old)
+        task.assignee = robot_id
+        task.assignment_id = 0
+        task.state = state
+        robot = self.robots.get(robot_id)
+        if robot is not None and state not in FINISHED:
+            robot.task_id = task_id
+            robot.load += 1
 
     def _release(self, task_id: str, robot_id: str) -> None:
         """작업을 큐로 되돌리고 로봇을 비운다. 전달되지 않은 할당이므로 load에서도 뺀다."""

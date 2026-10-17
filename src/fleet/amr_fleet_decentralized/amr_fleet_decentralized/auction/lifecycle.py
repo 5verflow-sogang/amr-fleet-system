@@ -9,6 +9,8 @@
 
 from typing import Dict, Optional
 
+from .types import MODE_IDLE
+
 
 def should_resend_award(
     attempts_sent: int, last_sent_time: float, now_s: float,
@@ -53,6 +55,42 @@ def can_withdraw(accepted: bool) -> bool:
     다시 경매한다(이 모듈은 TaskStatus 발행까지는 안 다룬다 - 노드 몫).
     """
     return not accepted
+
+
+def should_withdraw_award(holding_other_task: bool, withdrew_before: bool) -> bool:
+    """AWARD에 ACCEPT 대신 WITHDRAW를 보내야 하는지(동시 낙찰 경합).
+
+    경매가 동시에 여러 개 열리면 IDLE 로봇 하나가 여러 경매에 입찰해 여러 개를 동시에
+    낙찰받을 수 있다. 로봇이 수락하고 나서도 자기 RobotState가 BUSY로 바뀌기 전에는
+    decide_bid(IDLE 확인)만으로는 못 거른다 - 그래서 이미 다른 작업을 ACCEPT했으면
+    (holding_other_task) 새 AWARD는 WITHDRAW한다. 한 번 포기한 경매(withdrew_before)는
+    그 뒤 재전송된 AWARD가 와도 다시 포기한다 - 경매인이 이미 다음 순위에게 줬을 수 있어서
+    뒤늦게 수락하면 같은 작업을 두 로봇이 맡게 된다.
+    """
+    return holding_other_task or withdrew_before
+
+
+def task_finished_by_state(seen_busy: bool, mode: int) -> bool:
+    """맡은 작업이 끝났다고 RobotState로 판단할 수 있는지: ACCEPT 뒤 BUSY를 한 번 봤고 지금 IDLE이다.
+
+    TaskStatus COMPLETED/FAILED가 유실되거나 안 와도 맡은 작업이 영원히 안 풀리지 않게 하는
+    안전장치다. ACCEPT 직후의 IDLE(아직 작업 시작 전)은 끝난 게 아니므로 BUSY를 먼저 봐야 한다.
+    """
+    return seen_busy and mode == MODE_IDLE
+
+
+def commit_timed_out(
+    accepted_at: float, now_s: float, seen_busy: bool, commit_timeout_s: float,
+) -> bool:
+    """ACCEPT 뒤 commit_timeout_s 동안 RobotState가 한 번도 BUSY가 안 됐는지(작업이 시작 안 됨).
+
+    ACCEPT를 받아 실제로 작업을 시작시키는 쪽(TaskAssignment를 받는 amr_bt·가짜 로봇)이 없거나
+    전달이 끊긴 경우, 로봇이 맡은 작업을 쥐고 영원히 입찰을 못 하지 않게 푼다. 시각은 같은 시계
+    (실제 시간)여야 한다. commit_timeout_s가 0 이하면 풀지 않는다.
+    """
+    if commit_timeout_s <= 0 or seen_busy:
+        return False
+    return now_s - accepted_at >= commit_timeout_s
 
 
 # amr_msgs/msg/ErrorInfo.ASSIGN_CANCELED 와 같은 값 (amr_fleet_manager dispatcher.ERROR_CANCELED와 같음)

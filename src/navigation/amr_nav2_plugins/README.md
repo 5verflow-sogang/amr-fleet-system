@@ -20,10 +20,10 @@
    `amr_msgs/msg/TrackedObstacleArray`)를 구독한다. 움직이는 트랙(`is_dynamic`)만
    동적 장애물로 쓴다 - 정적 트랙은 costmap에 이미 있다(`obstacles.hpp`).
 2. `computeVelocityCommands()`에서: local costmap을 `amr_planning_core::Grid`로
-   감싸고(costmap origin을 빼 Grid-로컬 좌표로), 전역 경로에서
-   `lookahead_distance`만큼 앞의 점을 "다음 목표"로 고르고(`waypoint.hpp`,
-   Pure Pursuit류), 구독해 둔 장애물을 `DynamicObstacle`로 바꿔 `DwaPlanner`에
-   위임한다.
+   감싸고(costmap origin을 빼 Grid-로컬 좌표로), 전역 경로를 같은 좌표의 점 목록으로
+   바꿔 구독해 둔 장애물과 함께 `DwaPlanner`에 위임한다. heading 기준점(경로를 따라
+   `max(lookahead_distance, |v|·sim_time)` 앞, `adaptive_lookahead`)과 목표 앞 감속의
+   최종 목표(경로 마지막 점)는 코어가 고른다(docs/algorithms/navigation.md 4-7·4-8절).
 3. `setPlan()`에서 전역 경로가 costmap 전역 좌표계와 다르면 tf로 변환한다.
 4. `setSpeedLimit()`은 Nav2 관례(음수=제한 없음, `percentage`면 `max_v` 대비 비율)를
    그대로 따른다.
@@ -39,7 +39,10 @@
 
 | 파라미터 | 기본값 | 설명 |
 | --- | --- | --- |
-| `lookahead_distance` | `1.5` m | 전역 경로에서 이 거리만큼 앞의 점을 DWA의 목표로 쓴다 |
+| `lookahead_distance` | `1.5` m | 전역 경로에서 이 거리만큼 앞의 점을 DWA의 heading 기준점으로 쓴다(`adaptive_lookahead`면 최솟값) |
+| `adaptive_lookahead` | `true` | heading 기준점을 궤적 길이(`|v|·sim_time`)만큼 앞으로 늘린다 |
+| `use_admissible_velocity` | `true` | 허용 속도 조건 `v <= sqrt(2·acc_v·dist)` (dist: 궤적상 장애물까지) |
+| `use_goal_slowdown` | `true` | 목표 앞 감속 `v <= sqrt(2·acc_v·d_goal)` (d_goal: 최종 목표까지 직선 거리) |
 
 ## 실행
 

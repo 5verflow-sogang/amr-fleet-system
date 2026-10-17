@@ -22,6 +22,10 @@ HARNESS_FRESH=1 tools/harness/docker_run.sh loc_basic -n 10   # 반복마다 새
 
 # GCP 러너로 (같은 인자, 지금 브랜치의 PR 코드. RTF 1.0, 결과는 버킷)
 tools/harness/gcp_run.sh loc_basic -n 10
+tools/harness/gcp_run.sh fleet_fake -n 10 --set delay_ms=200 --ref dev --slot b1   # 슬롯 b1 (c2d-standard-8)
+
+# 여러 조건을 슬롯에 줄 세워 (GitHub는 같은 슬롯에 대기 실행을 1개만 남긴다. GCP README "슬롯")
+caffeinate -i python3 tools/harness/gcp_batch.py conditions.txt --slots b1,b2,b3,b4 --ref dev
 
 # 실행 목록(index.csv)에 한 줄 더하기 (fleet-test.yml이 버킷에 올리며 쓴다, ROS 불필요)
 python3 tools/harness/index_run.py tools/harness/results/<out 폴더> --index index.csv --path <결과 위치>
@@ -68,6 +72,11 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 
 시나리오 파일은 `processes`(띄울 명령, `ready_topic`으로 준비 확인, `stop_first`·`wait_files`로 기록 노드를 먼저 끝냄), `driver`(`segments`: `cmd_vel` 구간 / `wait`: 시간만 기다림 / `command`: 셸 명령이 끝날 때까지, 0이 아닌 종료 코드면 주행 실패), `postprocess`(예: `fleet_metrics`), `cleanup`으로 이루어진다. 명령 안의 `{run_dir}`, `{seed}`, `params` 이름은 실행마다 채워진다.
 
+- 프로세스에 `enabled: "{이름}"`을 두면 채운 값이 `false`·`0`·`no`·`off`·빈칸일 때 그 프로세스를 띄우지 않는다.
+- `param_sets`는 param 하나의 값에 딸린 다른 params를 채운다. `--set`으로 직접 준 이름은 덮어쓰지 않고, 표에 없는 값이면 실행 전에 멈춘다. 값 안의 `{이름}`은 다른 params로 채운다. 표에 `_blocked: 이유`가 있으면 그 값은 실행 전에 멈춘다(선행 PR 머지 전. 로컬 스모크만 `--allow-blocked`).
+  - `fleet_fake`의 `fleet_mode`(연구 1 비교군): `central`(기본, 서버만) / `decentral`(서버 없음, 로봇마다 경매 노드, 작업 생성기는 경매 노드 N개가 붙을 때까지 기다림) / `hybrid`(서버 + 경매 노드, 경매 노드에 `fleet_mode:=hybrid`). 분산·하이브리드면 장애 주입기가 경매 토픽도 중계한다(`relay_auction`). `meta.json` `fault`에 `fleet_mode`·`relay_auction`이 남는다. 분산·하이브리드는 #213·#215 머지 전까지 `_blocked`다.
+  - 예: `python3 tools/harness/run.py fleet_fake -n 10 --set fleet_mode=decentral --set delay_ms=200 --label dec_d200`
+
 **그림과 녹화** (`loc_basic`, `nav_kpi`, `fleet_fake`)
 
 - 실행이 끝나면 `postprocess`가 `plot_run.py`로 `plots/*.png`를 남긴다. 위치추정: `loc_traj.png`(지도 위 GT·EKF·AMCL 궤적), `loc_error.png`(시간에 따른 오차, 구간 색, KPI 점선). Nav KPI: `nav_map.png`(지도 위 계획 경로·GT 궤적·성공/실패 목표), `nav_time.png`(예측·실제 주행시간). 그림이 실패해도 실행 결과는 그대로다(늘 0으로 끝남). 지난 결과도 `python3 tools/harness/plot_run.py <실행 폴더> --map <지도 yaml>`로 다시 그린다 (ROS 불필요)
@@ -88,7 +97,7 @@ seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도
 
 **회피 지표** (`nav_avoidance`, test-plan I17): `avoid.<로봇>.collisions`·`min_clearance`·`max_deviation`·`max_return_s`·`pass`(`avoidance_summary.json`). 원 명세 KPI는 "30회 모두 충돌 0건·이탈 1 m·복귀 5초"라 평균·CI가 아니라 최악값으로 판정해야 하므로 요약의 KPI 열은 비워 두고, 판정은 `ros2 run amr_safety avoidance_report <실행 폴더들>`로 한다.
 
-**작업·로봇 장애 지표** (`fleet_fake`): `fleet.tasks_requested`·`tasks_completed`·`task_completion_rate`(`task_outcomes.csv`), 로봇 장애 실행이면 `fleet.reclaimed_tasks`·`recovery_s.mean`·`recovery_s.max`·`reclaimed_completed_rate`(`recovery.csv`). 실행 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로 완료율은 같은 seed(같은 작업 일정)의 장애 있음·없음끼리 비교한다.
+**작업·로봇 장애 지표** (`fleet_fake`): `fleet.tasks_requested`·`tasks_completed`·`task_completion_rate`(`task_outcomes.csv`), 완료한 작업의 `fleet.task_time_s.mean`(요청~완료)·`distance_m.total`·`distance_m.mean`, `fleet.throughput_per_min`(완료 작업 수 / 첫 요청~마지막 완료 분), `fleet.duplicate_tasks`(같은 작업을 둘 이상의 로봇이 움직이며 한 수, `runners` 열. 하이브리드 중복 실행), 로봇 장애 실행이면 `fleet.reclaimed_tasks`·`recovery_s.mean`·`recovery_s.max`·`reclaimed_completed_rate`(`recovery.csv`). 실행 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로 완료율은 같은 seed(같은 작업 일정)의 장애 있음·없음끼리 비교한다.
 
 **요약** (`summary_<시나리오>-<라벨>_<시각>.md`): 지표마다 실행별 값의 평균·표준편차·범위와 95% 신뢰구간. KPI가 있는 지표는 CI 상한까지 기준 안이면 PASS, 평균만 기준 안이면 MARGINAL, 아니면 FAIL이다.
 
@@ -165,7 +174,7 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
 | `hop_latency.csv` | — (연구 1, 아래) | — | 구독 수신 1건마다 1행 | 하연 (트레이스 변환) |
 | `tasks.csv` | 명세서 작업 로그 필드 (아래) | — | 작업마다 1행 | 하네스 기록기 (민지) |
 | `assignments.csv` | — (팀 정의, 아래) | — | 할당 호출마다 | 하연 (`amr_fleet_manager`) |
-| `task_outcomes.csv` | — (팀 정의) | `task_id, request_time, first_assign_time, robots, final_state, end_time, task_time_s, distance_m, error_code` | 작업마다 1행 | 하연 (`fleet_metrics`, bag에서 만든 Fleet 쪽 결과. 로봇 BT 작업 로그 `tasks.csv`와 별개) |
+| `task_outcomes.csv` | — (팀 정의) | `task_id, request_time, first_assign_time, robots, final_state, end_time, task_time_s, distance_m, error_code, runners` | 작업마다 1행 | 하연 (`fleet_metrics`, bag에서 만든 Fleet 쪽 결과. 로봇 BT 작업 로그 `tasks.csv`와 별개) |
 | `recovery.csv` | — (연구 1 로봇 장애) | `robot, kill_time, task_id, reassign_time, reassigned_robot, recovery_s, completed` | 로봇 강제종료 × 하던 작업마다 1행 | 하연 (`fleet_metrics`) |
 | `coverage/` | `colcon test --coverage` 텍스트·HTML | 모듈별 하위 폴더 | — | 전원 |
 

@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
 
-from amr_fleet_manager.dispatcher import (ERROR_CANCELED, STATE_COMPLETED, STATE_FAILED, STATE_IN_PROGRESS,
-                                          STATE_PENDING, Dispatcher, DispatcherConfig)
+from amr_fleet_manager.dispatcher import (ERROR_CANCELED, ERROR_TASK_TAKEN, STATE_COMPLETED, STATE_FAILED,
+                                          STATE_IN_PROGRESS, STATE_PENDING, Dispatcher, DispatcherConfig)
 from amr_fleet_manager.records import (ASSIGNMENTS_HEADER, AssignmentLog, append_fault_event, load_zones,
                                        next_epoch)
 
@@ -152,7 +152,8 @@ def test_status_flow_frees_robot():
     # 상태 보고만 와도 Ack로 본다
     assert d.on_status('t1', 'amr_01', STATE_IN_PROGRESS)
     assert d.pending_ids() == set()
-    assert not d.on_status('t1', 'amr_02', STATE_COMPLETED)
+    # 늦게 수락한 다른 로봇의 보고는 장부를 바꾸지 않는다 (먼저 수락한 쪽이 주인)
+    assert not d.on_status('t1', 'amr_02', STATE_IN_PROGRESS, start=1.0)
     assert d.on_status('t1', 'amr_01', STATE_COMPLETED)
     assert not d.on_status('t1', 'amr_01', STATE_FAILED)
     assert d.tasks['t1'].state == STATE_COMPLETED
@@ -296,9 +297,12 @@ def test_dead_robot_task_reclaimed_and_reassigned():
 
     [second], _ = d.assign(6.0)
     assert (second.robot_id, second.task_id, second.assignment_id) == ('amr_02', 't1', first.assignment_id + 1)
-    # 죽은 로봇의 늦은 보고는 무시한다
-    assert not d.on_status('t1', 'amr_01', STATE_COMPLETED)
-    assert d.on_status('t1', 'amr_02', STATE_COMPLETED)
+    # 죽은 줄 알았던 로봇이 끝냈다고 보고하면 끝난 작업으로 본다 (끝낸 쪽이 주인)
+    assert d.on_status('t1', 'amr_01', STATE_COMPLETED, now=6.5)
+    assert (d.tasks['t1'].state, d.tasks['t1'].assignee) == (STATE_COMPLETED, 'amr_01')
+    assert d.robots['amr_02'].task_id == ''   # 다시 맡았던 로봇은 풀린다
+    assert d.pending_ids() == set()
+    assert not d.on_status('t1', 'amr_02', STATE_COMPLETED)
 
 
 def test_reclaim_drops_pending_ack_of_dead_robot():
@@ -323,3 +327,121 @@ def test_idle_or_disabled_robot_not_reclaimed():
     assert off.reclaim_lost(100.0) == []
     with pytest.raises(ValueError):
         make(robot_timeout_s=3.0, reclaim_timeout_s=2.0)
+
+
+# ---- 먼저 수락한 쪽이 주인 (architecture.md 5-2절) ----
+
+def test_unassigned_robot_that_accepted_first_takes_queued_task():
+    """분산 경매로 맡은 로봇의 보고: 큐에 있던 작업을 그 로봇에게 넘기고 그 로봇에는 새 작업을 주지 않는다."""
+    d = make()
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    assert d.on_status('t1', 'amr_03', STATE_PENDING, start=0.5, now=0.1)
+    assert (d.tasks['t1'].assignee, d.tasks['t1'].assignment_id, d.tasks['t1'].state) == ('amr_03', 0, STATE_PENDING)
+    assert d.assign(0.2) == ([], [])          # t1은 이미 주인이 있다
+    assert d.on_status('t1', 'amr_03', STATE_COMPLETED, start=0.5, now=3.0)
+    assert d.tasks['t1'].state == STATE_COMPLETED
+
+
+def test_earlier_acceptor_takes_over_from_unconfirmed_assignment():
+    """서버 명령이 아직 확인되지 않았는데 다른 로봇이 먼저 수락했다: 재전송을 그만두고 장부를 넘긴다."""
+    d = make()
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.update_robot(robot('amr_02'), '', 0.0)
+    d.add_task(task('t1'))
+    [cmd], _ = d.assign(0.0)
+    assert cmd.robot_id == 'amr_01'
+    assert d.on_status('t1', 'amr_02', STATE_IN_PROGRESS, start=0.0, now=0.3)
+    assert d.tasks['t1'].assignee == 'amr_02'
+    assert d.pending_ids() == set()
+    assert d.robots['amr_01'].task_id == '' and d.robots['amr_01'].load == 0
+    assert d.robots['amr_02'].task_id == 't1'
+    # 늦게 온 amr_01의 수락(늦게 수락한 쪽)은 장부를 바꾸지 않는다
+    assert not d.on_ack('amr_01', cmd.assignment_id, True)
+    assert not d.on_status('t1', 'amr_01', STATE_PENDING, start=0.8, now=0.9)
+    assert d.tasks['t1'].assignee == 'amr_02'
+
+
+def test_server_assignee_that_accepted_first_keeps_task():
+    d = make()
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    d.assign(0.0)
+    assert d.on_status('t1', 'amr_01', STATE_PENDING, start=0.2, now=0.3)
+    assert not d.on_status('t1', 'amr_03', STATE_PENDING, start=0.4, now=0.5)
+    assert d.tasks['t1'].assignee == 'amr_01'
+    # 같은 시각이면 robot_id 순
+    assert not d.on_status('t1', 'amr_02', STATE_PENDING, start=0.2, now=0.5)
+    assert d.tasks['t1'].assignee == 'amr_01'
+
+
+def test_task_taken_failure_hands_over_without_retry_count():
+    d = make()
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    d.assign(0.0)
+    d.on_status('t1', 'amr_01', STATE_IN_PROGRESS, start=1.0, now=1.0)
+    # amr_02가 더 먼저 수락했다는 보고가 서버에 늦게 왔고, amr_01은 그걸 보고 이미 물러났다
+    d.claims.observe('t1', 'amr_02', STATE_IN_PROGRESS, 0.5, 1.1)
+    assert d.on_status('t1', 'amr_01', STATE_FAILED, ERROR_TASK_TAKEN, start=1.0, now=1.2)
+    assert (d.tasks['t1'].assignee, d.tasks['t1'].state, d.tasks['t1'].failures) == ('amr_02', STATE_IN_PROGRESS, 0)
+
+
+def test_task_taken_failure_without_known_owner_requeues():
+    d = make()
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    d.assign(0.0)
+    assert d.on_status('t1', 'amr_01', STATE_FAILED, ERROR_TASK_TAKEN, now=0.5)
+    assert (d.tasks['t1'].assignee, d.tasks['t1'].state, d.tasks['t1'].failures) == ('', STATE_PENDING, 0)
+
+
+def test_task_taken_reject_ack_hands_over_to_owner():
+    d = make()
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    [cmd], _ = d.assign(0.0)
+    # 서버가 아직 반영하지 못한 주인(amr_02)을 amr_01이 먼저 알고 거부했다
+    d.claims.observe('t1', 'amr_02', STATE_COMPLETED, 0.1, 0.2)
+    assert d.on_ack('amr_01', cmd.assignment_id, False, ERROR_TASK_TAKEN, now=0.3)
+    assert (d.tasks['t1'].assignee, d.tasks['t1'].state) == ('amr_02', STATE_COMPLETED)
+    assert d.assign(0.4) == ([], [])
+
+
+def test_returning_robot_that_accepted_first_takes_task_back():
+    """회수 뒤 살아 돌아온 로봇이 옛 작업을 계속 보고하면 그 로봇이 주인이다. 다시 맡은 로봇은 스스로 물러난다."""
+    d = make(reclaim_timeout_s=5.0)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.update_robot(robot('amr_02', (10.0, 0.0)), '', 0.0)
+    d.add_task(task('t1'))
+    d.assign(0.0)
+    d.on_status('t1', 'amr_01', STATE_IN_PROGRESS, start=0.0, now=0.1)
+    d.update_robot(robot('amr_02', (10.0, 0.0)), '', 5.5)
+    assert d.reclaim_lost(6.0) == [('t1', 'amr_01')]
+    [second], _ = d.assign(6.0)
+    d.on_status('t1', 'amr_02', STATE_PENDING, start=6.0, now=6.1)
+    assert d.claims.owner('t1', 6.2) == 'amr_02'   # 죽은 로봇의 주장은 빠졌다
+
+    d.update_robot(robot('amr_01', mode=BUSY), 't1', 7.0)
+    assert d.on_status('t1', 'amr_01', STATE_IN_PROGRESS, start=0.0, now=7.1)
+    assert d.tasks['t1'].assignee == 'amr_01'
+
+
+def test_restarted_robot_drops_its_claim():
+    """재시작한 로봇(RobotState current_task_id가 빔)의 옛 주장은 세지 않는다."""
+    d = make()
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('t1'))
+    d.on_status('t1', 'amr_01', STATE_IN_PROGRESS, start=0.0, now=0.1)
+    d.update_robot(robot('amr_01'), '', 1.0)
+    assert d.claims.owner('t1', 1.1) is None
+
+
+def test_report_before_request_is_kept_for_assign():
+    """분산 경매로 맡은 로봇의 보고가 작업 요청보다 먼저 왔다: 요청이 오면 맡기지 않고 그 로봇에게 넘긴다."""
+    d = make()
+    d.update_robot(robot('amr_01'), '', 0.0)
+    assert not d.on_status('t1', 'amr_03', STATE_PENDING, start=0.1, now=0.1)
+    d.add_task(task('t1'))
+    assert d.assign(0.2) == ([], [])
+    assert (d.tasks['t1'].assignee, d.tasks['t1'].state) == ('amr_03', STATE_IN_PROGRESS)

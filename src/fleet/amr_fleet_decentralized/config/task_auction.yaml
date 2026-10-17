@@ -23,6 +23,22 @@
     reclaim_timeout_s: 5.0
     # 회수 재경매 상한. -1이면 상한 없음(#132와 같음). failed_retries와 따로 센다.
     max_reclaims: -1
+    # 맡은 작업 해제 안전장치(동시 낙찰 경합): ACCEPT 뒤 이 시간(실제 시간, s) 동안 내 RobotState가 한 번도
+    # BUSY가 안 되면(작업이 시작 안 됨) 맡은 작업을 풀고 경고 로그를 남긴다. 0이면 끈다.
+    commit_timeout_s: 30.0
+    # 분산 모드 경매 트리거: 작업 방송을 구독하고, 살아 있는 로봇(RobotState를 최근 alive_timeout_s 안에
+    # 받은 로봇, robot_id 순) 중 crc32(task_id) mod 로봇 수 번째 로봇이 경매를 연다. false면 안 연다.
+    open_auctions: true
+    task_requests_topic: /fleet/task_requests
+    alive_timeout_s: 3.0
+    # 작업 방송으로 연 경매에 입찰이 없으면(모두 작업 중) 이 시간 뒤 새 auction_id로 다시 연다. 0이면 끝낸다.
+    no_bid_retry_s: 1.0
+    # ACCEPT 뒤 나에게 TaskAssignment를 보낸다(assignment_id = 1,000,000 + 로봇 번호 x 100,000 + 순번).
+    # relayed_assignments: true면 /<robot_id>/fleet/task_assignments(amr_bt·가짜 로봇의 relayed:=true 구독 이름)로.
+    # robot_index: -1이면 robot_id 끝 숫자(amr_03 -> 3).
+    run_accepted_tasks: true
+    relayed_assignments: true
+    robot_index: -1
     # TaskAuction·TaskBid 구독 접두어. 기본은 절대 경로 원본(/fleet, 중계 없이 직접 구독) -
     # relayed:=true(launch 인자) 또는 이 값을 'fleet'로 주면 상대 이름(장애 주입기
     # relay_auction 중계본)을 구독한다. amr_bt의 server_topic_prefix와 같은 방식.

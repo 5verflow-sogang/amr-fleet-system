@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from amr_fleet_manager.task_gen import (TaskSpec, dump_tasks_json, expand, generate, load_stations, load_tasks_json,
-                                        world_to_map, yaw_to_quaternion)
+from amr_fleet_manager.task_gen import (TaskSpec, count_ready, dump_tasks_json, expand, generate, load_stations,
+                                        load_tasks_json, world_to_map, yaw_to_quaternion)
 
 CONFIG = Path(__file__).resolve().parents[1] / 'config'
 
@@ -110,3 +110,17 @@ def test_response_short_uses_nearby_racks(stations):
         (px, py, _), (dx, dy, _) = stations[t.pickup], stations[t.dropoff]
         assert math.hypot(px - dx, py - dy) <= 25.0
 
+
+class _Sub:
+    def __init__(self, node_name):
+        self.node_name = node_name
+
+
+def test_count_ready_server_and_decentral():
+    """중앙: fleet_manager 하나면 시작. 분산: 로봇마다 task_auction이 다 붙어야 시작 (rosbag 녹화는 세지 않는다)."""
+    central = [_Sub('rosbag2_recorder'), _Sub('fleet_manager')]
+    assert count_ready(central, 'fleet_manager') == 1
+    decentral = [_Sub('rosbag2_recorder')] + [_Sub('task_auction')] * 4
+    assert count_ready(decentral, 'task_auction') == 4      # 5대 중 4대만 떴으면 아직 시작하지 않는다 (server_count 5)
+    assert count_ready(decentral, '') == 5                  # 비우면 아무 구독자나 (녹화 포함)
+    assert count_ready([], 'fleet_manager') == 0

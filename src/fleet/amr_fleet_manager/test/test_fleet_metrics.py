@@ -223,9 +223,9 @@ def test_task_outcomes():
     rows = task_outcomes(kill_scenario())
     assert [r[0] for r in rows] == ['t1', 't2', 't3']
     # 작업 시간 = 요청 → 끝 보고, 이동 거리 = 끝 보고의 distance_traveled (최적성 지표)
-    assert rows[0][3:] == ['amr_01', 'COMPLETED', '8.000000', '7.500', '12.500', '']
-    assert rows[1][2:] == ['11.000000', 'amr_01 amr_02', 'COMPLETED', '40.000000', '29.500', '30.000', '']
-    assert rows[2][2:] == ['', '', '', '', '', '', '']
+    assert rows[0][3:] == ['amr_01', 'COMPLETED', '8.000000', '7.500', '12.500', '', '']
+    assert rows[1][2:] == ['11.000000', 'amr_01 amr_02', 'COMPLETED', '40.000000', '29.500', '30.000', '', 'amr_01']
+    assert rows[2][2:] == ['', '', '', '', '', '', '', '']
 
 
 def test_task_outcome_failed_keeps_error_code():
@@ -233,7 +233,7 @@ def test_task_outcome_failed_keeps_error_code():
     records = [rec('/fleet/task_assignments', 1.0, assignment(1, 'amr_01', 1, 't1')),
                rec('/fleet/task_status', 5.0, status('t1', 'amr_01', FAILED, error_code=203))]
     row = task_outcomes(records)[0]
-    assert (row[4], row[-1]) == ('FAILED', '203')
+    assert (row[4], row[8]) == ('FAILED', '203')
 
 
 def test_task_outcome_failed_then_retried_is_not_final():
@@ -241,6 +241,39 @@ def test_task_outcome_failed_then_retried_is_not_final():
                rec('/fleet/task_status', 5.0, status('t1', 'amr_01', FAILED)),
                rec('/fleet/task_assignments', 6.0, assignment(2, 'amr_02', 6, 't1'))]
     assert task_outcomes(records)[0][4] == ''   # 다시 맡긴 뒤 아직 끝 보고 없음
+
+
+def test_task_outcome_hybrid_owner_completes():
+    """하이브리드: 서버가 amr_02에 맡겼지만 분산 경매로 먼저 맡은 amr_03이 끝냈다. amr_02는 물러났다 (104)."""
+    records = [rec('/fleet/task_requests', 0.5, request('t1')),
+               rec('/fleet/task_status', 1.0, status('t1', 'amr_03', IN_PROGRESS)),
+               rec('/fleet/task_assignments', 1.5, assignment(1, 'amr_02', 1, 't1')),
+               rec('/fleet/task_status', 1.6, status('t1', 'amr_02', IN_PROGRESS)),
+               rec('/fleet/task_status', 1.7, status('t1', 'amr_02', FAILED, error_code=104)),
+               rec('/fleet/task_status', 9.0, status('t1', 'amr_03', COMPLETED, distance=7.0))]
+    row = task_outcomes(records)[0]
+    assert row[3:] == ['amr_02', 'COMPLETED', '9.000000', '8.500', '7.000', '', 'amr_03 amr_02']
+    # 주인이 아직 하는 중이면 물러난 로봇의 FAILED를 끝으로 보지 않는다
+    assert task_outcomes(records[:5])[0][4] == ''
+
+
+def bid(task_id, robot, kind, auction_id=1):
+    return NS(task_id=task_id, robot_id=robot, type=kind, auction_id=auction_id)
+
+
+def test_task_outcome_decentral_accept_is_assignment():
+    """분산: 서버가 없어 TaskAssignment가 없다. 낙찰 로봇의 수락(ACCEPT)이 할당이다. 입찰·낙찰 통보는 할당이 아니다."""
+    records = [rec('/fleet/task_requests', 0.5, request('t1')),
+               rec('/fleet/task_bids', 1.0, bid('t1', 'amr_02', 0)),
+               rec('/fleet/task_bids', 3.0, bid('t1', 'amr_02', 2)),
+               rec('/fleet/task_bids', 3.1, bid('t1', 'amr_02', 2)),       # 같은 ACCEPT 에코는 한 번
+               rec('/fleet/task_status', 3.5, status('t1', 'amr_02', FAILED)),
+               rec('/fleet/task_bids', 5.0, bid('t1', 'amr_04', 2, auction_id=2)),   # 재경매
+               rec('/fleet/task_status', 9.0, status('t1', 'amr_04', COMPLETED, distance=6.0))]
+    row = task_outcomes(records)[0]
+    assert row[2:8] == ['3.000000', 'amr_02 amr_04', 'COMPLETED', '9.000000', '8.500', '6.000']
+    # 재경매 전이면 amr_02의 FAILED가 끝이다 (마지막 할당 = 수락한 amr_02)
+    assert task_outcomes(records[:5])[0][4] == 'FAILED'
 
 
 def test_recovery_busy_and_idle_robot():

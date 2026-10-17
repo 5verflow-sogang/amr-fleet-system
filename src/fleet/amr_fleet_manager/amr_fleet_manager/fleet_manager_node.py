@@ -126,17 +126,27 @@ class FleetManager(Node):
 
     def _on_ack(self, msg: TaskAssignmentAck):
         accepted = msg.result == TaskAssignmentAck.RESULT_ACCEPTED
-        if self._dispatcher.on_ack(msg.robot_id, msg.assignment_id, accepted) and not accepted:
+        if self._dispatcher.on_ack(msg.robot_id, msg.assignment_id, accepted, msg.error.code,
+                                   time.monotonic()) and not accepted:
             self.get_logger().warn(
                 f'{msg.robot_id}가 할당 {msg.assignment_id}를 거부: '
                 f'code={msg.error.code} {msg.error.message}')
             self._assign()
 
     def _on_status(self, msg: TaskStatus):
-        if not self._dispatcher.on_status(msg.task_id, msg.robot_id, msg.state, msg.error.code):
+        task = self._dispatcher.tasks.get(msg.task_id)
+        before = task.assignee if task is not None else ''
+        # 수락 시각. 비어 있으면 보고 시각으로 본다 (TaskStatus.msg)
+        start = stamp_to_sec(msg.start_time) or stamp_to_sec(msg.header.stamp)
+        if not self._dispatcher.on_status(msg.task_id, msg.robot_id, msg.state, msg.error.code,
+                                          start, time.monotonic()):
             return
-        if msg.state == TaskStatus.STATE_FAILED:
-            task = self._dispatcher.tasks[msg.task_id]
+        handed_over = bool(task.assignee) and task.assignee != before
+        if handed_over:
+            # 먼저 수락한 쪽이 주인 (architecture.md 5-2절)
+            self.get_logger().warn(
+                f'{msg.task_id}: {task.assignee}가 먼저 맡아 장부를 넘김 (원래 {before or "없음"})')
+        elif msg.state == TaskStatus.STATE_FAILED:
             if task.state == TaskStatus.STATE_PENDING:
                 self.get_logger().warn(
                     f'{msg.robot_id}가 {msg.task_id} 실패 보고 (code={msg.error.code} {msg.error.message}), '
@@ -145,7 +155,7 @@ class FleetManager(Node):
                 self.get_logger().info(f'{msg.robot_id}가 {msg.task_id} 취소 완료 보고, 다시 할당하지 않음')
             else:
                 self.get_logger().warn(f'{msg.task_id} 실패로 남김 (재할당 {task.failures}회 뒤)')
-        if msg.state in (TaskStatus.STATE_COMPLETED, TaskStatus.STATE_FAILED):
+        if handed_over or msg.state in (TaskStatus.STATE_COMPLETED, TaskStatus.STATE_FAILED):
             self._assign()
 
     def _on_zone_request(self, msg: ZoneRequest):

@@ -80,6 +80,22 @@ def test_render_and_fault_meta():
                  'kill_at_s': -1.0, 'restart_after_s': -1.0, 'kill_robot': 'none', 'kill_robot_at_s': -1.0}
     f = fault_meta({'delay_ms': '0', 'kill_robot': 'amr_03', 'kill_robot_at_s': '120'})
     assert (f['kill_robot'], f['kill_robot_at_s']) == ('amr_03', 120.0)
+    # 연구 1 비교군: fleet_fake fleet_mode·relay_auction (index.csv relay_auction 열). 'false' 문자열은 False
+    f = fault_meta({'delay_ms': '0', 'fleet_mode': 'decentral', 'relay_auction': 'true'})
+    assert (f['fleet_mode'], f['relay_auction']) == ('decentral', True)
+    assert fault_meta({'delay_ms': '0', 'relay_auction': 'false'})['relay_auction'] is False
+
+
+def test_fault_meta_extended_conditions():
+    """확장 조건 params가 있는 시나리오(fleet_fake)만 allow_out_of_spec·blackout을 남긴다."""
+    base = {'delay_ms': '100', 'loss_pct': '30', 'allow_out_of_spec': 'true', 'blackout_s': '0'}
+    f = fault_meta(base)
+    assert (f['loss_pct'], f['allow_out_of_spec']) == (30.0, True) and 'blackout' not in f
+    f = fault_meta({**base, 'blackout_s': '3', 'blackout_at_s': '60', 'blackout_period_s': '120',
+                    'blackout_robot': 'amr_03'})
+    assert f['blackout'] == {'at_s': 60.0, 'duration_s': 3.0, 'period_s': 120.0, 'robot': 'amr_03', 'mode': 'delay'}
+    # YAML false가 문자열 'False'로 렌더링돼도 거짓
+    assert fault_meta({'delay_ms': '0', 'allow_out_of_spec': 'False'})['allow_out_of_spec'] is False
 
 
 def test_fleet_task_and_recovery_metrics(tmp_path):
@@ -90,7 +106,14 @@ def test_fleet_task_and_recovery_metrics(tmp_path):
         't1,0,1,amr_01,COMPLETED,8\nt2,10,11,amr_01 amr_02,COMPLETED,40\nt3,50,,,,\nt4,51,52,amr_03,,\n')
     m = fleet_metrics(run)
     assert (m['fleet.tasks_requested'], m['fleet.tasks_completed'], m['fleet.task_completion_rate']) == (4, 2, 0.5)
+    assert m['fleet.throughput_per_min'] == pytest.approx(3.0)     # 완료 2건 / 첫 요청 0초~마지막 완료 40초
     assert 'fleet.reclaimed_tasks' not in m      # 로봇 장애 없는 실행
+    assert 'fleet.duplicate_tasks' not in m      # runners 열이 없는 옛 결과
+
+    (run / 'task_outcomes.csv').write_text(
+        'task_id,request_time,first_assign_time,robots,final_state,end_time,runners\n'
+        't1,0,1,amr_01,COMPLETED,8,amr_01\nt2,10,11,amr_02,COMPLETED,40,amr_03 amr_02\nt3,50,,,,,\n')
+    assert fleet_metrics(run)['fleet.duplicate_tasks'] == 1
 
     (run / 'recovery.csv').write_text(
         'robot,kill_time,task_id,reassign_time,reassigned_robot,recovery_s,completed\n'
@@ -104,6 +127,10 @@ def test_fleet_task_and_recovery_metrics(tmp_path):
                                       'amr_03,15,,,,,\n')       # 놀던 로봇이 죽음
     m = fleet_metrics(run)
     assert m['fleet.reclaimed_tasks'] == 0 and 'fleet.recovery_s.mean' not in m
+
+    (run / 'task_outcomes.csv').write_text('task_id,request_time,first_assign_time,robots,final_state,end_time\n'
+                                           't1,0,1,amr_01,,\n')            # 끝난 작업이 없으면 처리량 없음
+    assert 'fleet.throughput_per_min' not in fleet_metrics(run)
 
 
 def write_nav(root: Path, name: str, **result) -> Path:
