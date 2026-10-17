@@ -171,7 +171,7 @@ uv run python scripts/evaluate.py raw/r2_s0_* --rule mass_aware --eval-list 0   
 명세서 4-4절의 기존 방법 비교군이다(`payload_nav/dwa_policy.py`). **이진의 DWA C++ 원본(`src/navigation/amr_planning_core`, #41)을 수정 없이 그대로 부른다.** Python으로 옮겨 쓰지 않는다. 옮기면 원본과 달라진 부분(rolling window, 장애물 층, 도착 판정 등)이 결과에 섞이기 때문이다.
 
 - 원본을 공유 라이브러리로 빌드해 ctypes로 부른다(`dwa_cpp/dwa_c_api.cpp`, 처음 쓸 때 g++/clang++로 `dwa_cpp/build/`에 빌드, git 제외). 판단(`DwaPlanner::computeVelocityCommand`, 목표 방향 회전)은 C++ 원본이 한다
-- Python은 ROS 노드가 하던 일만 맡는다: Nav2 local costmap 래스터(로봇 중심 3 × 3 m, 0.05 m 셀, 통로 벽 + LiDAR가 찍는 장애물의 지금 위치 + Nav2 inflation), 추적 결과(환경 장애물의 위치·속도·반경, 나타난 뒤에만 보임), 전역 경로(통로 중심선)의 lookahead 지점. 파라미터는 `amr_bringup/config/nav2_params.yaml`의 DWA 블록 그대로다. `xy_goal_tolerance`만 환경 도착 기준(0.2 m)에 맞춘다
+- Python은 ROS 노드가 하던 일만 맡는다: Nav2 local costmap 래스터(로봇 중심 3 × 3 m, 0.05 m 셀, 통로 벽 + LiDAR가 찍는 장애물의 지금 위치 + Nav2 inflation), 추적 결과(환경 장애물의 위치·속도·반경, 나타난 뒤에만 보임), 전역 경로(통로 중심선 전체, 플러그인처럼 경로째 넘긴다). 파라미터는 `amr_bringup/config/nav2_params.yaml`의 DWA 블록 그대로다(`lookahead_distance` 0.5 m, #195의 허용 속도·목표 앞 감속·속도 비례 기준점 켬). `xy_goal_tolerance`만 환경 도착 기준(0.2 m)에 맞춘다
 - 질량은 가속 한계 `acc_v`로만 들어간다
   - **B1** (`b1`): 빈 차 기준 a_max(0 kg) 고정
   - **B2** (`b2`): 관측 질량 기준 a_max(m_obs). 질량을 모르면 B1과 같다. 정보 조건(정확·±30%·모름)은 B2에만 의미가 있다
@@ -196,6 +196,19 @@ uv run --frozen --with pytest pytest tests/test_dwa_policy.py
 - 원본 DWA는 `acc_v`를 동적 창(한 주기에 바꿀 수 있는 속도 폭, `computeDynamicWindow`)에만 쓴다. 그래서 질량을 알아도 "무거우니 미리 천천히 간다"는 속도 선택이 생기지 않는다. 충돌은 모두 "나타난 순간 이미 설 수 없던" 경우다(설 수 있었는데 충돌 0건)
 - **이것이 연구 2가 다루는 문제다.** 기존 DWA가 질량 정보를 반영할 수 있는 방법은 가속 한계뿐이고, 질량에 맞춘 속도 선택은 RL 제안 방법이 학습으로 얻으려는 것이다. B2는 원본 그대로 두고 고치지 않는다(10/15 결정)
 - 이 결과는 DWA 코드를 커밋하기 전에 잰 예비 값이다(`git_dirty`). 본 실험에서 같은 코드로 다시 잰다
+
+**경로 호출로 바꿈 (10/16, #195 이후)**: 위 결과와 본 실험 v1은 점 하나를 받는 `computeVelocityCommand`를 `final_goal` 없이 불렀다(`lookahead_distance` 1.5 m). 이 호출에서는 #195의 목표 앞 감속·속도 비례 기준점이 꺼진다. 플러그인처럼 전역 경로를 넘기도록 바꿨다. 튜닝 목록 290·291, B2, 질량별 S1·S2 각 100회:
+
+| 호출 | 질량 | S2 성공 | S2 벽 충돌 | S2 목표 지나침 | S1 충돌 |
+| --- | --- | --- | --- | --- | --- |
+| 점 (v1, #195 전) | 0 / 10 / 25 kg | 50 / 17 / 19% | 0 / 0 / 46% | 39 / 29 / 25% | 30 / 42 / 56% |
+| 점 (#195 합침) | 0 / 10 / 25 kg | 18 / 20 / 19% | 2 / 0 / 46% | 49 / 56 / 25% | 31 / 42 / 56% |
+| **경로 (#195 합침)** | 0 / 10 / 25 kg | **88 / 100 / 98%** | **0 / 0 / 0%** | **0 / 0 / 2%** | 20 / 47 / 46% |
+
+- v1의 DWA 정밀 정지 실패(S2 성공 31%)와 목표 지나침은 호출 방식 때문이었다. **v1 B1·B2 결과는 원고에 쓰지 않고 이 코드로 다시 잰다**
+- 경로 호출에서는 목표 앞 감속이 `acc_v`를 써서 B2가 질량을 반영한다(S2 평균 속도 0 kg 1.28 → 25 kg 1.16 m/s)
+- 돌발 장애물(S1) 충돌은 그대로 많다. 미리 감속하지 않는 DWA의 성질이다
+- `DwaParams(follow_path=False, lookahead_distance=1.5, ...)`로 이전 호출을 재현할 수 있다
 
 ## v0 튜닝 기록 (10/11)
 

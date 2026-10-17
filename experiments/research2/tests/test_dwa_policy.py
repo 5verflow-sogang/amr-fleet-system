@@ -120,3 +120,24 @@ def test_evaluate_output_is_read_by_analyze(tmp_path):
     import csv
     with (out / 'episodes.csv').open(newline='', encoding='utf-8') as fh:
         assert {r['run'] for r in csv.DictReader(fh)} == {'dwa_b1', 'dwa_b2'}
+
+
+@pytest.mark.parametrize('payload', [0.0, 25.0])
+def test_path_call_stops_at_goal(payload):
+    # 경로를 넘기면(플러그인과 같음, #195) 목표 앞 감속이 켜져 빠르게 다가가도 지나치거나 벽에 닿지 않는다
+    env = _env(_scenario(goal=8.0, v0=1.5), payload=payload)
+    policy = DwaPolicy('b2')
+    for _ in range(300):
+        _, _, terminated, truncated, info = env.step(policy(env))
+        if terminated or truncated:
+            break
+    assert info['outcome'] == 'success', info['outcome']
+
+
+def test_point_call_is_kept_for_comparison():
+    # follow_path=False는 #185 처음 방식(지점 하나, final_goal 없음). 같은 상태에서 두 호출 모두 동작한다
+    env = _env(_scenario(goal=8.0, v0=1.5))
+    for follow in (True, False):
+        policy = DwaPolicy('b2', replace(DwaPolicy().params, follow_path=follow))
+        v, _ = policy.command(env)
+        assert 0.0 <= v <= policy.params.max_v
