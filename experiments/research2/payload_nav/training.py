@@ -10,16 +10,20 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
 
+from .config import ConstraintConfig
 from .env import EnvConfig, PayloadNavEnv
+from .lagrangian import PPOLagrangian
 from .seeds import train_env_seed
 
 
 def make_model(env_config: EnvConfig, n_envs: int, train_seed: int, ppo_kwargs: dict,
                net_arch: Sequence[int], tensorboard_log: Optional[str] = None,
-               verbose: int = 1) -> Tuple[PPO, VecNormalize, int]:
+               verbose: int = 1, constraint: Optional[ConstraintConfig] = None) -> Tuple[PPO, VecNormalize, int]:
     """병렬 학습 환경(VecNormalize)과 PPO 모델을 만든다. 반환: (모델, 환경, 학습 환경 시드).
 
     ppo_kwargs의 lr_schedule: "constant"(기본) 또는 "linear"(learning_rate에서 학습 끝에 0까지 선형 감소).
+    constraint가 있으면(설정 파일 [constraint], v3) PPO-Lagrangian, 없으면 일반 PPO다. 보상 정규화(norm_reward)는
+    보상에만 걸리고 비용(info['cost'])은 그대로 쓴다.
     """
     ppo_kwargs = dict(ppo_kwargs)
     schedule = ppo_kwargs.pop('lr_schedule', 'constant')
@@ -34,10 +38,11 @@ def make_model(env_config: EnvConfig, n_envs: int, train_seed: int, ppo_kwargs: 
                         env_kwargs={'config': env_config})
     venv = VecNormalize(venv, norm_obs=True, norm_reward=True,
                         gamma=ppo_kwargs.get('gamma', 0.99))
-    model = PPO(
+    algo = dict(constraint=constraint) if constraint is not None else {}
+    model = (PPOLagrangian if constraint is not None else PPO)(
         'MlpPolicy', venv, seed=train_seed, device='cpu', verbose=verbose, **ppo_kwargs,
         policy_kwargs=dict(net_arch=dict(pi=list(net_arch), vf=list(net_arch))),
-        tensorboard_log=tensorboard_log,
+        tensorboard_log=tensorboard_log, **algo,
     )
     # PPO(seed=)는 모델을 만들면서 env.seed(train_seed)를 다시 불러 환경 i의 시드를 train_seed + i로
     # 덮어쓴다 (SB3 BaseAlgorithm.set_random_seed). 그러면 학습 시드 k와 k+1이 환경을 n_envs − 1개
