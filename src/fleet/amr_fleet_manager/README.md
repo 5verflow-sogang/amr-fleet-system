@@ -175,7 +175,7 @@
 | `assignment.failed_retries` | `1` | FAILED 보고된 작업을 큐로 되돌려 다시 할당하는 횟수. 넘으면 실패로 남긴다. 분산 재경매(최대 1회)와 같게 둔다 |
 | `assignment.reclaim_timeout_s` | `5.0` | 작업을 맡은 로봇의 `RobotState`가 이 시간 동안 끊기면 로봇이 죽은 것으로 보고 작업을 회수해 다시 할당한다 (실제 시간, s). 0이면 끄기. `robot_timeout_s` 이상 |
 | `robot_timeout_s` | `3.0` | 이 시간 동안 `RobotState`가 없으면 후보에서 뺀다 (s) |
-| `resend.interval_s` | `1.0` | Ack 없을 때 재전송 간격 (s) |
+| `resend.interval_s` | `1.0` | Ack 없을 때 재전송 간격 (s) launch 인자 `resend_interval_s`(연구 1 재시도 간격 비교) |
 | `resend.max_resends` | `5` | 재전송 한도. 첫 발송은 세지 않는다. launch 인자 `max_resends`(연구 1 재전송 비교) |
 | `heartbeat_period_s` | `0.2` | heartbeat 주기 (s). 연구 1 실험 변수 |
 | `task_table_period_s` | `1.0` | 작업표 방송 주기 (s) |
