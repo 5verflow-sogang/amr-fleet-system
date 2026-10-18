@@ -200,8 +200,10 @@ save(fig, 'figB_prediction')
 
 
 # ---------- 그림 C: 단절 로봇 정책 ----------
-policies = [('① 끊기면\n멈춤', 'central_bo30_r3_pause', '0.35', ''), ('② 받은 일\n계속', 'central_bo30_r3', '0.6', ''),
-            ('③ 새 일도\n스스로 (상한)', 'hybrid_bo30_r3', '0.9', '////')]
+policies = [('① 끊기면\n멈춤', 'central_bo30_r3_pause', '0.35', ''),
+            ('② 허가 지점\n대기', 'central_bo30_r3_leg', '0.5', ''),
+            ('③ 받은 일\n계속', 'central_bo30_r3', '0.65', ''),
+            ('④ 새 일도\n스스로 (상한)', 'hybrid_bo30_r3', '0.9', '////')]
 
 
 def panel_a3(ax):
@@ -227,7 +229,7 @@ def panel_time(ax):
                yerr=[[m[0] - m[1]], [m[2] - m[0]]], error_kw={'elinewidth': 0.6, 'capsize': 2})
         ax.text(i, max(m[2], 0) + 0.6, f'{m[0]:+.1f}%', ha='center', va='bottom', fontsize=6)
     ax.axhline(10, color='black', lw=0.7, ls='--')
-    ax.text(2.42, 10.5, '급락 기준 +10%', fontsize=5.6, ha='right')
+    ax.text(len(policies) - 0.58, 10.5, '급락 기준 +10%', fontsize=5.6, ha='right')
     ax.axhline(0, color='0.3', lw=0.6)
     ax.set_xticks(range(len(policies)))
     ax.set_xticklabels([p[0] for p in policies], fontsize=6)
