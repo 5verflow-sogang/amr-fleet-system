@@ -41,6 +41,8 @@ class FakeRobot(Node):
         step_hz = self.declare_parameter('step_hz', 10.0).value
         # 서버 → 로봇 토픽 앞부분. 장애 주입기를 거치면 상대 이름 'fleet'(→ /<robot_id>/fleet/...)
         prefix = self.declare_parameter('server_topic_prefix', '/fleet').value
+        # 로봇 → 서버 토픽 앞부분. 장애 주입기가 양방향 끊김을 걸 때(relay_uplink) 'uplink'(→ /<robot_id>/uplink/...)
+        uplink = self.declare_parameter('uplink_prefix', '/fleet').value
         # 다른 로봇의 작업 주장을 세는 시간 (서버 reclaim_timeout_s와 같게). 실제 시간
         claim_timeout_s = self.declare_parameter('claim_timeout_s', 5.0).value
         # 끊기면 멈춤 정책: 서버 heartbeat가 이 시간(실제 시간) 동안 안 오면 하던 작업을 멈춘다. 0이면 끄기(계속 수행)
@@ -60,9 +62,9 @@ class FakeRobot(Node):
         self._claims = TaskClaims(claim_timeout_s)
 
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
-        self._ack_pub = self.create_publisher(TaskAssignmentAck, '/fleet/task_assignment_acks', qos)
-        self._state_pub = self.create_publisher(RobotState, '/fleet/robot_states', qos)
-        self._status_pub = self.create_publisher(TaskStatus, '/fleet/task_status', qos)
+        self._ack_pub = self.create_publisher(TaskAssignmentAck, f'{uplink}/task_assignment_acks', qos)
+        self._state_pub = self.create_publisher(RobotState, f'{uplink}/robot_states', qos)
+        self._status_pub = self.create_publisher(TaskStatus, f'{uplink}/task_status', qos)
         self.create_subscription(TaskAssignment, f'{prefix}/task_assignments', self._on_assignment, qos)
         self.create_subscription(FleetHeartbeat, f'{prefix}/heartbeat', self._on_heartbeat, qos)
         # 다른 로봇의 보고 (로봇 → 서버 방향이라 장애 주입기를 거치지 않는다, D8)

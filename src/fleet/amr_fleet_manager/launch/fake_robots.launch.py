@@ -54,6 +54,7 @@ def _robots(context):
             executable='fake_robot',
             namespace=robot_id,
             parameters=[config, {'robot_id': robot_id, 'server_topic_prefix': prefix,
+                                 'uplink_prefix': 'uplink' if arg('uplink_relayed').lower() == 'true' else '/fleet',
                                  'pause_on_link_loss_s': float(arg('pause_on_link_loss_s')),
                                  'speed_mps': float(arg('speed_mps')),
                                  'pause_mode': arg('pause_mode')}],
@@ -100,6 +101,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'fault_events_file', default_value='',
             description='강제종료·재시작 시각 기록 파일 (fault_events.csv). 비우면 기록하지 않는다'),
+        DeclareLaunchArgument(
+            'uplink_relayed', default_value='false',
+            description='true면 로봇 → 서버 토픽을 /<robot_id>/uplink/*로 내보낸다 (장애 주입기 relay_uplink:=true가 /fleet/*로 옮김)'),
         DeclareLaunchArgument(
             'pause_mode', default_value='stop',
             description='pause_on_link_loss_s > 0일 때 끊긴 동안: stop(그 자리에서 멈춤) / leg(지금 구간은 마저 가고 다음 구간 앞에서 대기)'),
