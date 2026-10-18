@@ -228,9 +228,15 @@ fig.tight_layout(pad=0.3, rect=(0, 0, 1, 0.92))
 for ext in ('pdf', 'png'):
     fig.savefig(OUT / f'figB_prediction_wide.{ext}', dpi=300)
 plt.close(fig)
-fig, ax = plt.subplots(figsize=(88 * MM, 60 * MM))
+# 한 단 판: (a)·(b)를 따로 한 장씩 (원고에서 그림 2·3으로 나눠 넣는다)
+fig, ax = plt.subplots(figsize=(88 * MM, 66 * MM))
 panel_wait(ax)
-save(fig, 'figB_prediction')
+save(fig, 'figB_wait')
+fig, ax = plt.subplots(figsize=(88 * MM, 66 * MM))
+panel_thr(ax)
+ax.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], frameon=False, fontsize=5.5, loc='upper left',
+          handletextpad=0.3)
+save(fig, 'figB_throughput')
 
 
 # ---------- 그림 C: 단절 로봇 정책 ----------
