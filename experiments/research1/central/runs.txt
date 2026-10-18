@@ -3,7 +3,6 @@ central_bo10_r3, 38923174154, gs://amr-fleet-results/runs/fleet_fake-central_bo1
 central_bo30_r3, 38938028403, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3/20261016_38938028403/, 000b7d9, c2d-standard-8
 central_bo30_r3_leg, 39085225625, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_leg/20261018_39085225625/, f187492, c2d-standard-8
 central_bo30_r3_pause, 39017439092, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_pause/20261017_39017439092/, 9be39a1, c2d-standard-8
-central_bo30_r3_leg, 39085225625, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_leg/20261018_39085225625/, f187492, c2d-standard-8
 central_bo3_r3, 38923144357, gs://amr-fleet-results/runs/fleet_fake-central_bo3_r3/20261016_38923144357/, 000b7d9, c2d-standard-8
 central_d0, 38879623783, gs://amr-fleet-results/runs/fleet_fake-central_d0/20261016_38879623783/, 5b99e7c, c2d-standard-8
 central_d0_v2, 39017453106, gs://amr-fleet-results/runs/fleet_fake-central_d0_v2/20261017_39017453106/, 9be39a1, c2d-standard-8
