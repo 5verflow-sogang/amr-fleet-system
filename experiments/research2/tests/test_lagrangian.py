@@ -338,3 +338,12 @@ def test_penalty_configs_differ_from_v0_only_in_collision_and_clip(p):
     assert pen.env == replace(v0.env, r_collision=-float(p))
     assert pen.variants == v0.variants and pen.constraint is None
     assert pen.ppo == dict(v0.ppo, clip_reward=100.0)
+
+
+def test_v3_final_is_ab_with_clip_100():
+    # v3 최종 설정 = v2 채택안 ab(충돌 −300, 시간 초과 −75, 돌발 0.9) + 보상 자르기 한도 100. 다른 값은 v0와 같다
+    v0, fin = load_experiment(CONFIG_DIR / 'env_v0.toml'), load_experiment(CONFIG_DIR / 'env_v3_final.toml')
+    assert fin.env == replace(v0.env, r_collision=-300.0, r_timeout=-75.0,
+                              scenario=replace(v0.env.scenario, popout_prob=0.9))
+    assert fin.variants == v0.variants and fin.constraint is None
+    assert fin.ppo == dict(v0.ppo, clip_reward=100.0)
