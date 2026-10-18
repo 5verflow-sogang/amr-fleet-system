@@ -90,8 +90,8 @@ def time_ratio(a, b):
     return (np.mean([b['task_time'][k] for k in common]) / np.mean([a['task_time'][k] for k in common]) - 1) * 100
 
 
-def save(fig, name):
-    fig.tight_layout(pad=0.3)
+def save(fig, name, **layout):
+    fig.tight_layout(pad=0.3, **layout)
     for ext in ('pdf', 'png'):
         fig.savefig(OUT / f'{name}.{ext}', dpi=300)
     plt.close(fig)
@@ -282,10 +282,10 @@ panel_time(c2)
 c1.set_title('(a) 단절 로봇(amr_03)의 처리량', fontsize=7)
 c2.set_title('(b) 전체 로봇의 평균 완료 시간 변화 (단절 없음 대비)', fontsize=7)
 save(fig, 'figC_policy_wide')
-fig, (c1, c2) = plt.subplots(2, 1, figsize=(88 * MM, 100 * MM))
+fig, (c1, c2) = plt.subplots(2, 1, figsize=(88 * MM, 106 * MM))
 panel_a3(c1)
 panel_time(c2)
 c1.set_title('(a) 단절 로봇(amr_03)의 처리량', fontsize=7)
 c2.set_title('(b) 전체 로봇의 평균 완료 시간 변화 (단절 없음 대비)', fontsize=7)
-save(fig, 'figC_policy')
+save(fig, 'figC_policy', h_pad=1.6)
 print('ok')
