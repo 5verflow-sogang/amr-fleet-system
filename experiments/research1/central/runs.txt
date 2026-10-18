@@ -32,3 +32,7 @@ u80_d0, 39042099903, gs://amr-fleet-results/runs/fleet_fake-u80_d0/20261017_3904
 u80_loss70, 39042114659, gs://amr-fleet-results/runs/fleet_fake-u80_loss70/20261017_39042114659/, f47cea4, c2d-standard-8
 central_bo30_r3_up, 39097085298, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_up/20261018_39097085298/, e52765f, c2d-standard-8
 central_bo30_r3_up_pause, 39097096065, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_up_pause/20261018_39097096065/, e52765f, c2d-standard-8
+central_bo30_r3_up_rc40, 39127038979, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_up_rc40/20261018_39127038979/, 2fe11b7, c2d-standard-8
+central_bo30_r3_up_pause_rc40, 39127054374, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_up_pause_rc40/20261018_39127054374/, 2fe11b7, c2d-standard-8
+hybrid_loss70_t6, 39127068453, gs://amr-fleet-results/runs/fleet_fake-hybrid_loss70_t6/20261018_39127068453/, 2fe11b7, c2d-standard-8
+hybrid_bo30_r3_t6, 39127081538, gs://amr-fleet-results/runs/fleet_fake-hybrid_bo30_r3_t6/20261018_39127081538/, 2fe11b7, c2d-standard-8
