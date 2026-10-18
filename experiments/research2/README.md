@@ -606,6 +606,7 @@ uv run python scripts/judge_v3_main.py raw/v3_main       # 판정표 → raw/v3_
 awk '{print $2, $3, $4}' raw/v3_main/runs.txt | xargs -P 6 -n 3 bash -c 'k=$(($1-20)); uv run python scripts/evaluate.py "$2" \
   --config config/env_v0.toml --eval-list $k --masses 0 2 10 25 --episodes 100 --mass-obs exact unknown \
   --out-dir raw/v3_main_lists20-39/eval_$0_s$1_list$k'
+uv run python scripts/compare_v3_dwa.py raw/v3_main_lists20-39 raw/v2_dwa   # 비교표 → raw/v3_main_lists20-39/dwa_compare.md
 ```
 
 
