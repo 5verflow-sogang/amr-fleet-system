@@ -30,3 +30,5 @@ central_bo10p20_r3, 39050282766, gs://amr-fleet-results/runs/fleet_fake-central_
 u80_bo30_r3, 39042129785, gs://amr-fleet-results/runs/fleet_fake-u80_bo30_r3/20261017_39042129785/, f47cea4, c2d-standard-8
 u80_d0, 39042099903, gs://amr-fleet-results/runs/fleet_fake-u80_d0/20261017_39042099903/, f47cea4, c2d-standard-8
 u80_loss70, 39042114659, gs://amr-fleet-results/runs/fleet_fake-u80_loss70/20261017_39042114659/, f47cea4, c2d-standard-8
+central_bo30_r3_up, 39097085298, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_up/20261018_39097085298/, e52765f, c2d-standard-8
+central_bo30_r3_up_pause, 39097096065, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_up_pause/20261018_39097096065/, e52765f, c2d-standard-8
