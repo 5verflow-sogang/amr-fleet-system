@@ -198,19 +198,31 @@ double rectangleSurfaceDistance(
 
 bool DwaPlanner::evaluateDynamicObstacles(
   const std::vector<DynamicObstacle> & obstacles, double t, double x, double y, double yaw,
-  double * min_surface_distance) const
+  double * min_surface_distance, const std::vector<double> * start_distances) const
 {
+  // 이미 여유 안인 장애물에서 "지금보다 가까워졌다"를 가르는 허용 오차(m) - 나란히 가며 거리가
+  // 그대로인 궤적이 계산 오차로 충돌이 되지 않게 한다.
+  constexpr double kCloserTolerance = 1e-3;
   *min_surface_distance = std::numeric_limits<double>::infinity();
   const double predict_t = config_.predict_dynamic_obstacles ? t : 0.0;
 
-  for (const DynamicObstacle & obstacle : obstacles) {
+  for (std::size_t j = 0; j < obstacles.size(); ++j) {
+    const DynamicObstacle & obstacle = obstacles[j];
     const double obs_x = obstacle.x + obstacle.vx * predict_t;
     const double obs_y = obstacle.y + obstacle.vy * predict_t;
     const double to_rect = rectangleSurfaceDistance(
       x, y, yaw, config_.footprint_half_length, config_.footprint_half_width, obs_x, obs_y);
     const double surface_distance = to_rect - obstacle.radius;
 
-    if (surface_distance <= config_.dynamic_obstacle_safety_margin) {
+    bool hit = surface_distance <= config_.dynamic_obstacle_safety_margin;
+    if (hit && start_distances != nullptr &&
+      (*start_distances)[j] <= config_.dynamic_obstacle_safety_margin)
+    {
+      // 지금 이미 여유 안: 지금보다 가까워지거나 닿는 궤적만 충돌로 본다(#216)
+      hit = surface_distance <= 0.0 ||
+        surface_distance < (*start_distances)[j] - kCloserTolerance;
+    }
+    if (hit) {
       *min_surface_distance = std::max(0.0, surface_distance);
       return true;
     }
@@ -238,6 +250,13 @@ double DwaPlanner::dynamicObstacleCost(double min_surface_distance) const
 double DwaPlanner::admissibleVelocity(double obstacle_distance) const
 {
   return std::sqrt(2.0 * std::max(config_.acc_v, 0.0) * std::max(obstacle_distance, 0.0));
+}
+
+double DwaPlanner::goalStoppingVelocity(double goal_distance) const
+{
+  const double a = std::max(config_.acc_v, 0.0);
+  const double a_dt = a * config_.dt;
+  return std::max(0.0, std::sqrt(a_dt * a_dt + 2.0 * a * std::max(goal_distance, 0.0)) - a_dt);
 }
 
 double DwaPlanner::headingCost(const TrajectoryPoint & trajectory_end, const Point2D & goal) const
@@ -328,6 +347,16 @@ DwaCommand DwaPlanner::selectCommand(
     pathPointAheadFrom(path, path_start, state.x, state.y, base_distance).point;
   const bool adaptive = follow_path && config_.adaptive_lookahead;
 
+  // 지금 자세에서 동적 장애물마다 표면까지 거리 - 이미 안전 여유 안인 장애물은 멀어지는 궤적을
+  // 허용하는 기준이다(evaluateDynamicObstacles).
+  std::vector<double> start_distances;
+  start_distances.reserve(dynamic_obstacles.size());
+  for (const DynamicObstacle & obstacle : dynamic_obstacles) {
+    start_distances.push_back(rectangleSurfaceDistance(
+        state.x, state.y, state.yaw, config_.footprint_half_length, config_.footprint_half_width,
+        obstacle.x, obstacle.y) - obstacle.radius);
+  }
+
   const double dx = goal.x - state.x;
   const double dy = goal.y - state.y;
   if (std::hypot(dx, dy) <= config_.goal_tolerance) {
@@ -340,7 +369,7 @@ DwaCommand DwaPlanner::selectCommand(
     // 목표 앞 감속: acc_v로 줄여 최종 목표에 서는 속도까지만 샘플링한다. 그만큼 빨리 못
     // 줄이면(윈도우 최저 속도가 더 높으면) 최대 감속인 최저 속도만 남긴다.
     const double d_goal = std::hypot(final_goal->x - state.x, final_goal->y - state.y);
-    const double goal_cap = admissibleVelocity(d_goal);
+    const double goal_cap = goalStoppingVelocity(d_goal);
     window.max_v = std::max(window.min_v, std::min(window.max_v, goal_cap));
   }
 
@@ -356,18 +385,21 @@ DwaCommand DwaPlanner::selectCommand(
   for (int vi = 0; vi < config_.v_samples; ++vi) {
     const double v = sampleValue(window.min_v, window.max_v, vi, config_.v_samples);
 
-    // heading 기준점: 고정이면 goal, adaptive면 이 속도의 궤적 길이만큼 앞의 경로 점.
-    // 궤적이 경로 끝점을 지나치면 그 앞(goal_tolerance만큼 짧게)까지만 보고 heading을 잰다.
+    // heading 기준점: 고정이면 goal, adaptive면 이 속도의 궤적 끝보다 lookahead_distance 앞의 경로 점
+    // (궤적 길이 + lookahead_distance). 궤적 끝과 기준점이 붙어 있으면 끝 -> 기준점 방향이 튄다(#216).
+    // 기준점이 경로 끝점으로 잘리면(궤적 끝 + lookahead_distance가 경로 끝을 넘음) 끝점보다
+    // lookahead_distance 앞인 궤적 점까지만 보고 heading을 잰다 - 같은 이유로, 끝에 가까운 빠른 궤적의
+    // 끝과 경로 끝점이 붙어 방향이 튀지 않게 한다(지나치는 궤적은 끝점을 넘은 쪽에서 보면 뒤집힌다).
     Point2D heading_target = goal;
     std::size_t heading_steps = std::numeric_limits<std::size_t>::max();
     if (adaptive) {
       const double travel = std::abs(v) * config_.sim_time;
       const PathTarget target = pathPointAheadFrom(
-        path, path_start, state.x, state.y, std::max(config_.lookahead_distance, travel));
+        path, path_start, state.x, state.y, travel + config_.lookahead_distance);
       heading_target = target.point;
       const double step_length = std::abs(v) * config_.dt;
-      if (target.at_path_end && target.distance_from_robot < travel && step_length > 0.0) {
-        const double before_end = target.distance_from_robot - config_.goal_tolerance;
+      const double before_end = target.distance_from_robot - config_.lookahead_distance;
+      if (target.at_path_end && before_end < travel && step_length > 0.0) {
         heading_steps =
           static_cast<std::size_t>(std::max(1.0, std::floor(before_end / step_length)));
       }
@@ -400,7 +432,8 @@ DwaCommand DwaPlanner::selectCommand(
           const double t = static_cast<double>(i + 1) * config_.dt;
           double point_min_distance = std::numeric_limits<double>::infinity();
           const bool dynamic_hit = evaluateDynamicObstacles(
-            dynamic_obstacles, t, point.x, point.y, point.yaw, &point_min_distance);
+            dynamic_obstacles, t, point.x, point.y, point.yaw, &point_min_distance,
+            &start_distances);
           min_dynamic_surface_distance = std::min(min_dynamic_surface_distance, point_min_distance);
           if (dynamic_hit) {
             collides = true;
