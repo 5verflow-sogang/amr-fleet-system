@@ -150,6 +150,11 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
         # task_outcomes.csv에 runners 열이 있을 때만
         if 'runners' in tasks[0]:
             out['fleet.duplicate_tasks'] = sum(len(r['runners'].split()) > 1 for r in tasks)
+    # 하이브리드 폴백 (architecture.md 5-2절): 로봇이 분산으로 넘어간 횟수와 분산 모드로 돈 시간(로봇별 합)
+    if (run_dir / 'fleet_modes.csv').exists():
+        decentral = [r for r in _read_csv(run_dir / 'fleet_modes.csv') if r['mode'] == 'decentral']
+        out['fleet.fallbacks'] = len(decentral)
+        out['fleet.decentral_s'] = sum(_floats(decentral, 'duration_s'))
     # 구역 허가 대기와 교착 해소 (구역을 쓰는 시나리오만 파일이 있다)
     if (run_dir / 'zone_waits.csv').exists():
         zones = _read_csv(run_dir / 'zone_waits.csv')

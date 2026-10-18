@@ -5,6 +5,8 @@ amr_bt가 완성되기 전에 Fleet 서버·장애 주입기·하네스 기록�
 - 작업을 직선 이동과 고정 대기로 흉내 내며 TaskStatus를 보내고 (robot_sim.TaskRun)
 - RobotState를 주기적으로 보낸다
 - 다른 로봇이 먼저 맡은 작업은 거부하거나 멈춘다 (claims.TaskClaims, architecture.md 5-2절)
+- pause_on_link_loss_s > 0이면 서버 heartbeat가 끊긴 동안 기다린다 (robot_sim.LinkWatch). pause_mode가 stop이면 그 자리에서
+  멈추고, leg이면 지금 구간(선반까지·목적지까지·싣기·내리기)은 마저 하고 다음 구간 앞에서 기다린다(허가 지점 대기)
 """
 
 from __future__ import annotations
@@ -18,8 +20,8 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
-from .claims import TaskClaims
-from .robot_sim import DUPLICATE, STALE, AssignmentFilter, TaskRun
+from amr_fleet_core.claims import TaskClaims
+from .robot_sim import DUPLICATE, STALE, AssignmentFilter, LinkWatch, TaskRun
 
 
 def stamp_to_sec(stamp) -> float:
@@ -41,6 +43,13 @@ class FakeRobot(Node):
         prefix = self.declare_parameter('server_topic_prefix', '/fleet').value
         # 다른 로봇의 작업 주장을 세는 시간 (서버 reclaim_timeout_s와 같게). 실제 시간
         claim_timeout_s = self.declare_parameter('claim_timeout_s', 5.0).value
+        # 끊기면 멈춤 정책: 서버 heartbeat가 이 시간(실제 시간) 동안 안 오면 하던 작업을 멈춘다. 0이면 끄기(계속 수행)
+        self._link = LinkWatch(self.declare_parameter('pause_on_link_loss_s', 0.0).value)
+        self._paused = False
+        # stop: 그 자리에서 멈춤 / leg: 지금 구간은 마저 가고 다음 구간 앞에서 대기 (VDA 5050 확정 구간처럼)
+        self._pause_mode = self.declare_parameter('pause_mode', 'stop').value
+        if self._pause_mode not in ('stop', 'leg'):
+            raise ValueError(f'pause_mode는 stop 또는 leg: {self._pause_mode!r}')
 
         self._xy = (float(start[0]), float(start[1]))
         self._step_s = 1.0 / step_hz
@@ -67,6 +76,7 @@ class FakeRobot(Node):
             f'가짜 로봇 {self._robot_id} 시작: xy={self._xy}, 구독 {prefix}/task_assignments')
 
     def _on_heartbeat(self, msg: FleetHeartbeat):
+        self._link.on_heartbeat(time.monotonic())
         if self._filter.on_heartbeat(msg.epoch):
             self.get_logger().info(f'서버 재시작 감지 (epoch={msg.epoch}), 명령 번호 기준 초기화')
 
@@ -139,7 +149,17 @@ class FakeRobot(Node):
     def _step(self):
         if self._run is None:
             return
-        changed = self._run.step(self._step_s)
+        paused = self._link.lost(time.monotonic())
+        if paused != self._paused:
+            self._paused = paused
+            wait = '멈추고 기다림' if self._pause_mode == 'stop' else '지금 구간만 마치고 기다림'
+            self.get_logger().warn(
+                f'서버 heartbeat 끊김, {self._task.task_id} {wait}' if paused
+                else f'서버 heartbeat 돌아옴, {self._task.task_id} 이어서 수행')
+        if paused and self._pause_mode == 'stop':
+            self._run.velocity = (0.0, 0.0)
+            return
+        changed = self._run.step(self._step_s, hold_at_boundary=paused)
         self._xy = self._run.xy
         if self._run.done:
             self._finish(TaskStatus.STATE_COMPLETED, ErrorInfo())

@@ -3,6 +3,18 @@
 타이밍만 맡는다 - amr_nav2_plugins::DwaController가 amr_planning_core에 위임하는 것과
 같은 패턴.
 
+하이브리드 (fleet_mode:=hybrid, architecture.md 5-2절 B안): 평시에는 중앙 모드라 경매를 열지도 입찰하지도
+않는다. 자기 heartbeat 중계본(<server_topic_prefix>/heartbeat)이 fallback_timeout_s 동안 안 오면 분산 모드로
+바꾸고, 마지막 작업표(<server_topic_prefix>/task_table)의 미할당 작업과 새 작업 방송을 분산 모드 로봇끼리
+경매한다(경매를 여는 로봇도 분산 모드 로봇 중에서 고른다). heartbeat가 return_stable_s 동안 안정되면 중앙으로
+돌아와 아직 낙찰 전인 경매를 접는다(서버가 다시 맡긴다). 맡은 작업은 끝까지 한다. 모드는 /fleet/robot_modes
+(RobotFleetMode)로 1초마다·바뀔 때 알린다 - 서버는 분산 모드 로봇에게 작업을 맡기지 않는다.
+fleet_mode:=decentral(기본)은 기존 분산 비교군 그대로 늘 분산이다.
+
+먼저 수락한 쪽이 주인(amr_fleet_core.claims, 두 모드 공통): 다른 로봇이 그 작업을 맡았다고 TaskStatus로
+보고했으면 그 작업의 경매를 열지 않고, 입찰 수집 중인 경매도 접는다. 다른 로봇이 먼저 맡아 물러난
+FAILED·거부(ErrorInfo.ASSIGN_TASK_TAKEN)는 재경매하지 않는다.
+
 구독 기본값(절대 경로, 중계되기 전 원본 - BT·가짜 로봇과 같은 relayed 방식, 10/9
 하연·이진 결정 #107·#108):
     /fleet/task_auctions  TaskAuction   -> 공고를 보고 입찰할지 정한다(decide_bid)
@@ -69,8 +81,10 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import rclpy
+from amr_fleet_core.claims import TaskClaims
 from amr_msgs.msg import (
-    RobotState, Task, TaskAssignment, TaskAssignmentAck, TaskAuction, TaskBid, TaskStatus,
+    FleetHeartbeat, FleetTaskTable, RobotFleetMode, RobotState, Task, TaskAssignment, TaskAssignmentAck,
+    TaskAuction, TaskBid, TaskStatus,
 )
 from builtin_interfaces.msg import Duration as DurationMsg
 from builtin_interfaces.msg import Time as TimeMsg
@@ -79,9 +93,14 @@ from rclpy.node import Node
 
 from .auction import (
     ERROR_CANCELED,
+    ERROR_TASK_TAKEN,
+    MODE_CENTRALIZED,
+    MODE_DECENTRALIZED,
     AuctionParams,
     AuctionResult,
     Bid,
+    FallbackMode,
+    FallbackParams,
     RobotInfo,
     TaskInfo,
     TaskRetryLedger,
@@ -89,6 +108,7 @@ from .auction import (
     assignment_topic,
     auction_opener,
     award_exhausted,
+    backlog_task_ids,
     can_withdraw,
     commit_timed_out,
     decide_bid,
@@ -112,6 +132,15 @@ TASK_STATUS_TOPIC = '/fleet/task_status'
 # ACCEPT 뒤 보낸 TaskAssignment의 Ack - 로봇(amr_bt·가짜 로봇)이 서버에 보내는 것과 같은 토픽이다.
 # 서버는 모르는 assignment_id의 Ack를 무시한다(amr_fleet_manager Dispatcher.on_ack).
 TASK_ASSIGNMENT_ACKS_TOPIC = '/fleet/task_assignment_acks'
+# 하이브리드 로봇별 모드 (로봇 → 모두, 장애 주입 없음)
+ROBOT_MODES_TOPIC = '/fleet/robot_modes'
+FLEET_MODES = ('decentral', 'hybrid')
+MODE_NAMES = {MODE_CENTRALIZED: '중앙', MODE_DECENTRALIZED: '분산'}
+
+
+def _stamp_to_s(t: TimeMsg) -> float:
+    return t.sec + t.nanosec * 1e-9
+
 
 AuctionKey = Tuple[str, int]  # (auctioneer_id, auction_id)
 
@@ -218,6 +247,26 @@ class TaskAuctionNode(Node):
             robot_index(self._robot_id) if self._run_accepted_tasks else 0)
         self._assignment_topic = assignment_topic(self._robot_id, relayed_assignments)
 
+        # 하이브리드 (architecture.md 5-2절). decentral = 늘 분산(기존 분산 비교군), hybrid = 평시 중앙
+        self._fleet_mode = p('fleet_mode', 'decentral').value
+        if self._fleet_mode not in FLEET_MODES:
+            raise ValueError(f'fleet_mode는 {FLEET_MODES} 중 하나: {self._fleet_mode!r}')
+        self._fallback = FallbackMode(FallbackParams(
+            fallback_timeout_s=p('fallback_timeout_s', FallbackParams.fallback_timeout_s).value,
+            return_stable_s=p('return_stable_s', FallbackParams.return_stable_s).value))
+        # 서버 → 로봇 토픽 앞부분. 장애 주입기 중계본이면 'fleet'(→ /<robot_id>/fleet/...), 가짜 로봇과 같은 이름
+        server_topic_prefix = p('server_topic_prefix', '/fleet').value
+        self._last_table: Optional[FleetTaskTable] = None
+        # 중앙 모드에서 받은 작업 방송 중 아직 작업표에 안 나온 것. 작업표는 1초마다, 분산 전환은 2초 끊긴 뒤라
+        # 마지막 작업표 뒤 ~ 전환 사이에 들어온 작업은 표에 없다 - 분산으로 바뀌면 표의 미할당분과 같이 이어받는다
+        self._central_requests: Dict[str, Task] = {}
+        # 다른 로봇의 모드 (RobotFleetMode). 하이브리드에서 분산 모드 로봇끼리만 경매를 연다
+        self._robot_modes: Dict[str, int] = {}
+        # 먼저 수락한 쪽이 주인 - 다른 로봇이 맡은 작업은 경매를 열거나 이어가지 않는다. 죽은 로봇의 주장은
+        # 낙찰 로봇 장애 회수와 같은 시간 뒤에 뺀다
+        claim_timeout = self._params.reclaim_timeout_s if self._params.reclaim_timeout_s > 0 else float('inf')
+        self._claims = TaskClaims(claim_timeout)
+
         self._robot_info: Optional[RobotInfo] = None
         # 내가 경매인인 경매들 (auctioneer_id는 항상 나 자신이라 auction_id만 키로 써도 되지만,
         # TaskBid 처리 쪽과 자료형을 맞추려고 (auctioneer_id, auction_id) 그대로 쓴다).
@@ -283,12 +332,21 @@ class TaskAuctionNode(Node):
         self._assignment_pub = self.create_publisher(TaskAssignment, self._assignment_topic, 10)
         self._status_pub = self.create_publisher(TaskStatus, TASK_STATUS_TOPIC, 10)
         self.create_timer(1.0 / update_rate_hz, self._on_timer)
+        if self._fleet_mode == 'hybrid':
+            self.create_subscription(
+                FleetHeartbeat, server_topic_prefix + '/heartbeat', self._on_heartbeat, 10)
+            self.create_subscription(
+                FleetTaskTable, server_topic_prefix + '/task_table', self._on_task_table, 10)
+            self.create_subscription(RobotFleetMode, ROBOT_MODES_TOPIC, self._on_robot_mode, 10)
+            self._mode_pub = self.create_publisher(RobotFleetMode, ROBOT_MODES_TOPIC, 10)
+            self.create_timer(1.0, self._publish_mode)
 
         self.get_logger().info(
             f'task_auction({self._robot_id}): 구독 {task_auctions_sub_topic} (공고), '
             f'{task_bids_sub_topic} (입찰/낙찰/수락), {TASK_STATUS_TOPIC} (실패 보고), '
             f'{robot_states_topic} (내 상태), {task_requests_topic} (작업 방송) · 발행 '
-            f'{TASK_AUCTIONS_PUB_TOPIC}, {TASK_BIDS_PUB_TOPIC}, {self._assignment_topic} (수락한 작업)')
+            f'{TASK_AUCTIONS_PUB_TOPIC}, {TASK_BIDS_PUB_TOPIC}, {self._assignment_topic} (수락한 작업), '
+            f'fleet_mode={self._fleet_mode}')
 
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
@@ -297,6 +355,7 @@ class TaskAuctionNode(Node):
 
     def _on_robot_state(self, msg: RobotState):
         self._robot_last_seen[msg.robot_id] = time.monotonic()
+        self._claims.robot_state(msg.robot_id, msg.current_task_id, time.monotonic())
         if msg.robot_id != self._robot_id:
             return
         if self._active_task is not None:
@@ -362,14 +421,109 @@ class TaskAuctionNode(Node):
         task_id = msg.task_id
         if not self._open_auctions or not task_id or task_id in self._task_ids_seen:
             return
+        if not self._decentral():
+            # 중앙 모드(하이브리드)면 서버가 맡긴다. 본 것으로 적지 않고 모아 둔다 - 작업표에 나오면 지우고, 그 전에
+            # 분산으로 바뀌면 이어받는다(_take_over_backlog)
+            self._central_requests[task_id] = msg
+            return
         self._task_ids_seen.add(task_id)
-        robots = live_robots(self._robot_last_seen, time.monotonic(), self._alive_timeout_s)
+        if self._taken_by_other(task_id):
+            return
+        robots = self._auction_robots()
         opener = auction_opener(task_id, robots)
         if opener is None:
             self.get_logger().warn(f'작업 {task_id}: 살아 있는 로봇이 없어 경매를 못 연다')
             return
         if opener == self._robot_id:
             self._open_auction(msg)
+
+    def _decentral(self) -> bool:
+        return self._fleet_mode == 'decentral' or self._fallback.mode == MODE_DECENTRALIZED
+
+    def _auction_robots(self) -> List[str]:
+        """경매를 열 로봇 후보: 살아 있는 로봇. 하이브리드면 그중 분산 모드인 로봇만 (중앙 모드 로봇은 서버를 따른다)."""
+        robots = live_robots(self._robot_last_seen, time.monotonic(), self._alive_timeout_s)
+        if self._fleet_mode == 'decentral':
+            return robots
+        return [r for r in robots
+                if r == self._robot_id or self._robot_modes.get(r) == MODE_DECENTRALIZED]
+
+    def _taken_by_other(self, task_id: str) -> bool:
+        return self._claims.owner(task_id, time.monotonic(), exclude=self._robot_id) is not None
+
+    # --- 하이브리드: 모드 전환 ---
+
+    def _on_heartbeat(self, msg: FleetHeartbeat):
+        self._on_mode(self._fallback.on_heartbeat(time.monotonic(), msg.mode))
+
+    def _on_task_table(self, msg: FleetTaskTable):
+        self._last_table = msg
+        # 서버가 아는 작업은 작업표로 이어받는다 (미할당이면 경매, 다른 로봇에게 맡겼으면 서버에 맡김)
+        for r in msg.records:
+            self._central_requests.pop(r.task.task_id, None)
+
+    def _on_robot_mode(self, msg: RobotFleetMode):
+        if msg.robot_id != self._robot_id:
+            self._robot_modes[msg.robot_id] = msg.mode
+
+    def _publish_mode(self):
+        out = RobotFleetMode()
+        out.header.stamp = self.get_clock().now().to_msg()
+        out.robot_id = self._robot_id
+        out.mode = self._fallback.mode
+        out.transitions = self._fallback.transitions
+        self._mode_pub.publish(out)
+
+    def _on_mode(self, mode: Optional[int]):
+        if mode is None:
+            return
+        self.get_logger().warn(
+            f'{MODE_NAMES[mode]} 모드로 전환 ({self._fallback.transitions}번째) t={self._now():.3f}')
+        self._publish_mode()
+        if mode == MODE_DECENTRALIZED:
+            self._take_over_backlog()
+        else:
+            self._hand_back_to_server()
+
+    def _take_over_backlog(self):
+        """분산으로 바뀌었다: 마지막 작업표의 미할당 작업과 그 뒤 들어온 작업 방송 중 내가 열 차례인 것의 경매를 연다."""
+        if not self._open_auctions:
+            return
+        robots = self._auction_robots()
+        records = self._last_table.records if self._last_table is not None else []
+        tasks = {r.task.task_id: r.task for r in records}
+        backlog = backlog_task_ids(records, self._robot_id)
+        for task_id, task in self._central_requests.items():
+            if task_id not in tasks:
+                tasks[task_id] = task
+                backlog.append(task_id)
+        self._central_requests.clear()
+        opened = 0
+        for task_id in backlog:
+            if task_id in self._task_ids_seen or self._taken_by_other(task_id):
+                continue
+            self._task_ids_seen.add(task_id)
+            if auction_opener(task_id, robots) == self._robot_id:
+                self._open_auction(tasks[task_id])
+                opened += 1
+        seq = self._last_table.seq if self._last_table is not None else '-'
+        self.get_logger().info(
+            f'이어받기(작업표 seq {seq} + 그 뒤 방송): 후보 {len(backlog)}건, 경매 {opened}건 열음, 경매 참여 로봇 {robots}')
+
+    def _hand_back_to_server(self):
+        """중앙으로 돌아왔다: 아직 낙찰 전인 경매는 접고(서버가 다시 맡긴다), 확정된 경매는 감시를 끝낸다.
+        맡은 작업은 끝까지 한다 - 서버는 그 로봇의 TaskStatus를 보고 장부에 올린다."""
+        for key, state in list(self._auctions.items()):
+            if state.phase in ('collecting', 'awarded'):
+                del self._auctions[key]
+                # 다음에 또 분산으로 바뀌면 작업표에서 다시 이어받을 수 있게
+                self._task_ids_seen.discard(state.task.task_id)
+            elif state.phase == 'done':
+                state.phase = 'completed'
+        self._pending_bids.clear()
+        self._deferred_bids.clear()
+        # 남의 경매에 넣은 입찰도 거둔다 - 중앙 로봇이 낙찰되면 WITHDRAW하느라 그 경매가 늦어진다 (#215 리뷰 2)
+        self._bid_resends.clear()
 
     def _next_auction_id(self) -> int:
         next_id = self._next_reauction_id.get(self._robot_id, 1)
@@ -396,7 +550,7 @@ class TaskAuctionNode(Node):
         self._auctions[(self._robot_id, out.auction_id)].from_request = True
 
     def _maybe_bid(self, key: AuctionKey, msg: TaskAuction):
-        if key in self._bid_decided:
+        if key in self._bid_decided or not self._decentral():
             return
         if self._robot_info is None:
             # 내 상태(RobotState)를 아직 모른다 - "결정 끝"으로 기록하지 않고 미룬다.
@@ -468,6 +622,11 @@ class TaskAuctionNode(Node):
                 bid_time=received_time,
             )
             self._register_bid(key, bid, received_time)
+        elif self._is_own_loop(msg):
+            # 내 경매에 내가 보낸 AWARD·ACCEPT·WITHDRAW의 중계 에코 - 보낼 때 바로 처리했다(_send_award·
+            # _on_awarded). 자기 자신과는 네트워크 없이 주고받는다: 끊긴 로봇도 혼자 경매해 스스로 맡을 수 있어야
+            # 하고(하이브리드), 중계 지연이 자기 경매에 두 번 걸리지 않게 한다
+            return
         elif msg.type == TaskBid.TYPE_AWARD:
             # robot_id(보낸 경매인)로 자기 메시지를 거르지 않는다 - 경매인이 자기 경매에
             # 자기 입찰이 낙찰되면(제일 싸서) robot_id==winner_id==나인 메시지도 와야
@@ -485,6 +644,13 @@ class TaskAuctionNode(Node):
         elif msg.type == TaskBid.TYPE_WITHDRAW:
             self._on_withdraw(key, msg.robot_id)
 
+    def _is_own_loop(self, msg: TaskBid) -> bool:
+        if msg.auctioneer_id != self._robot_id:
+            return False
+        if msg.type == TaskBid.TYPE_AWARD:
+            return msg.winner_id == self._robot_id
+        return msg.type in (TaskBid.TYPE_ACCEPT, TaskBid.TYPE_WITHDRAW) and msg.robot_id == self._robot_id
+
     def _on_awarded(self, key: AuctionKey, msg: TaskBid):
         # AWARD를 받았다는 건 경매인이 이미 낙찰자(나)를 정했다는 뜻 - 더 입찰을
         # 재전송할 이유가 없다(#155·#171, ACCEPT·WITHDRAW 어느 쪽이든 마찬가지).
@@ -495,6 +661,8 @@ class TaskAuctionNode(Node):
             # 내가 이미 실행 중인 작업을 다른 로봇도 맡는다). 작업 실행(TaskAssignment)은 다시 하지
             # 않는다 - 처음 보낸 것이 같은 assignment_id로 Ack까지 재전송 중이다.
             self._bid_pub.publish(self._accept_msgs[key])
+            if msg.auctioneer_id == self._robot_id:
+                self._on_accept(key, self._robot_id)
             return
         task = self._tasks_seen.get(key)
         now = self._now()
@@ -502,7 +670,8 @@ class TaskAuctionNode(Node):
         # 작업을 ACCEPT했거나 이 경매를 한 번 포기했으면 수락하지 않는다(동시 낙찰 경합).
         holding_other_task = self._active_task is not None and self._active_task[0] != key
         still_eligible = (
-            not should_withdraw_award(holding_other_task, key in self._withdrawn)
+            self._decentral()
+            and not should_withdraw_award(holding_other_task, key in self._withdrawn)
             and self._robot_info is not None and task is not None
             and decide_bid(self._robot_info, task, now, self._params) is not None
         )
@@ -524,6 +693,8 @@ class TaskAuctionNode(Node):
             self._bid_pub.publish(out)
             self.get_logger().info(
                 f'경매 {key}: 작업 {msg.task_id} ACCEPT t={self._now():.3f}')
+            if msg.auctioneer_id == self._robot_id:
+                self._on_accept(key, self._robot_id)
             if self._run_accepted_tasks:
                 self._send_assignment(key, msg.task_id)
             return
@@ -534,6 +705,8 @@ class TaskAuctionNode(Node):
         else:
             return
         self._bid_pub.publish(out)
+        if msg.auctioneer_id == self._robot_id:
+            self._on_withdraw(key, self._robot_id)
 
     def _send_assignment(self, key: AuctionKey, task_id: str):
         """ACCEPT한 작업을 나(amr_bt·가짜 로봇)에게 TaskAssignment로 보낸다. Ack가 올 때까지 다시 보낸다."""
@@ -631,6 +804,14 @@ class TaskAuctionNode(Node):
     # --- 확정된 작업이 수행 중 실패했다는 보고(amr_bt가 TaskStatus로 발행) ---
 
     def _on_task_status(self, msg: TaskStatus):
+        start = _stamp_to_s(msg.start_time) or _stamp_to_s(msg.header.stamp)
+        self._claims.observe(msg.task_id, msg.robot_id, msg.state, start, time.monotonic())
+        if msg.robot_id != self._robot_id and msg.state != TaskStatus.STATE_FAILED:
+            # 다른 로봇이 맡았다(서버 할당이든 다른 경매든) - 낙찰 전인 내 경매는 접는다
+            for key, state in list(self._auctions.items()):
+                if state.task.task_id == msg.task_id and state.phase == 'collecting':
+                    del self._auctions[key]
+                    self.get_logger().info(f'경매 {key}: {msg.robot_id}가 작업 {msg.task_id}을 맡아 접는다')
         if msg.state not in (TaskStatus.STATE_FAILED, TaskStatus.STATE_COMPLETED):
             return
         if (
@@ -662,6 +843,10 @@ class TaskAuctionNode(Node):
             # 취소로 멈춘 작업: 재경매하지 않고 재시도 횟수에도 세지 않는다 (중앙 #107과 같음)
             state.phase = 'failed'
             self.get_logger().info(f'경매 {key}: 작업 {task_id} 취소(ASSIGN_CANCELED) - 재경매 안 함')
+        elif error_code == ERROR_TASK_TAKEN:
+            # 다른 로봇이 먼저 맡았다 - 주인이 하고 있으니 재경매하지 않는다 (architecture.md 5-2절)
+            state.phase = 'completed'
+            self.get_logger().info(f'경매 {key}: 작업 {task_id}을 다른 로봇이 먼저 맡음(ASSIGN_TASK_TAKEN) - 재경매 안 함')
         else:
             state.phase = 'failed'
             self.get_logger().error(
@@ -694,6 +879,8 @@ class TaskAuctionNode(Node):
         self._release_active_task(f'commit_timeout_s {self._params.commit_timeout_s:g}초')
 
     def _on_timer(self):
+        if self._fleet_mode == 'hybrid':
+            self._on_mode(self._fallback.update(time.monotonic()))
         now = self._now()
         self._maybe_resend_bids(now)
         self._maybe_resend_assignments()
@@ -787,8 +974,17 @@ class TaskAuctionNode(Node):
         self._bid_pub.publish(out)
         state.award_attempts += 1
         state.award_last_sent = now
+        if state.winner_id == self._robot_id:
+            # 내 경매에 내가 낙찰 - 중계를 거치지 않고 바로 받는다 (_is_own_loop)
+            self._on_awarded(key, out)
 
     def _reauction(self, key: AuctionKey, state: _AuctionState):
+        owner = self._claims.owner(state.task.task_id, time.monotonic(), exclude=self._robot_id)
+        if owner is not None and owner != state.winner_id:
+            # 그 사이 다른 로봇(서버 할당·다른 경매)이 맡았다 - 다시 경매하면 같은 작업을 두 로봇이 한다
+            self._auctions.pop(key, None)
+            self.get_logger().info(f'경매 {key}: 작업 {state.task.task_id}을 {owner}가 맡아 재경매하지 않는다')
+            return
         auctioneer_id, old_auction_id = key
         next_id = max(old_auction_id + 1, self._next_reauction_id.get(auctioneer_id, 0))
         self._next_reauction_id[auctioneer_id] = next_id + 1

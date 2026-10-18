@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'docking_server = amr_docking.docking_server_node:main',
+            'aruco_localizer = amr_docking.aruco_localizer_node:main',
         ],
     },
 )

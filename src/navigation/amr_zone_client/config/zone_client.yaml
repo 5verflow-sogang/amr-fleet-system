@@ -36,7 +36,9 @@
     # (10/15 하연·이진, #66의 "경로에서 빠지면 즉시 반납"을 바꿈 - 교착 중 Nav2의 잠깐 우회로 정지선을 넘던 문제)
     drop_grace_s: 3.0
     # 아직 안 건드린 구역은 로봇 앞 이 거리(m)까지만 찾아본다. 0.0이면 trigger_distance_m + 2.0m로
-    # 알아서 정한다(core.py _DEFAULT_LOOKAHEAD_MARGIN_M) - 긴 경로를 매번 끝까지 훑지 않게 한다 (#66)
+    # 알아서 정한다(core.py _DEFAULT_LOOKAHEAD_MARGIN_M) - 긴 경로를 매번 끝까지 훑지 않게 한다 (#66).
+    # APPROACHING·BLOCKED의 "경로에 있음/없음" 판정도 이 거리까지만 본다(10/18 하연 제안, #177·#189
+    # 회귀 수정) - INSIDE만 끝까지 본다
     lookahead_m: 0.0
     # SafetyStatus 연동 (#69·#70). safety/status는 네임스페이스 안 상대 이름(SafetyStatus.msg
     # 주석과 동일). 이 시간(s) 동안 못 받으면 끊김으로 보고 speed_limit 제한을 없앤다 - 최종

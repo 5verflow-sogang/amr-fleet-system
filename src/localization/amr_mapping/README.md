@@ -80,6 +80,10 @@ ros2 run amr_mapping map_quality ~/maps/warehouse.yaml \
 
 ![지도 v1](maps/warehouse_v1.png)
 
+**위치 KPI 측정 구역** (10/16 팀 합의, #183): map x −10–15 m, y −15–5 m. 구역 안 위치 오차 중앙값 3.5 cm, 밖 13.3 cm. 서쪽·북쪽 끝은 지도 휨으로 14–22 cm라 재매핑(5주차)으로 고친다. 칸별 표와 근거는 [localization.md 3-1절](../../../docs/algorithms/localization.md)
+
+![위치 KPI 측정 구역](maps/warehouse_v1_kpi_zone.png)
+
 **지도 정렬** (`map_quality`: 점유 칸 전체를 월드 물체 테두리에 강체 정합, 출발점 기준 회전)
 
 | 지도 | dx | dy | dθ | `map_origin_in_world` 보정값 |

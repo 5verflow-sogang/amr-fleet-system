@@ -3,6 +3,7 @@
 - 담당: 지수
 - 빌드 타입: ament_python
 - 책임: ArUco 마커 기반 정밀 도킹 (Dock.action 서버). 3회 재시도는 BT(`amr_bt` `DockWithRetry`)가 한다
+- 같은 마커판으로 Kidnapped 복구용 로봇 map 자세도 낸다 (`aruco_localizer`, 아래 [ArUco 위치 노드](#aruco-위치-노드-aruco_localizer))
 
 ## 제공 인터페이스
 
@@ -12,6 +13,8 @@
 | Subscribe | `camera/color/image_raw`, `camera/camera_info` | `sensor_msgs/msg/Image`, `CameraInfo` | 도킹 중에만 처리 (sim `enable_camera:=true` 필요) |
 | Publish | `cmd_vel_nav` (파라미터 `cmd_vel_topic`) | `geometry_msgs/msg/Twist` | Nav2 컨트롤러와 같은 자리. 구역·안전 노드를 그대로 거친다 |
 | TF | 카메라 광학 프레임 → `<ns>/base_footprint` | | URDF 고정 변환 |
+| Publish | `aruco_pose` (`aruco_localizer`) | `geometry_msgs/msg/PoseWithCovarianceStamped` | 마커판으로 구한 로봇 자세 (map 기준, 영상 시각). 공분산은 판까지 거리에 따라 커진다 |
+| Subscribe | `kidnap_recovery/state` (`aruco_localizer`) | `std_msgs/msg/String` | tracking이 아닐 때만 인식 (`only_when_lost`) |
 
 모두 네임스페이스 안 상대 이름이다. 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
@@ -68,6 +71,30 @@
 | `timeout_s` | `90.0` | 한 번 시도 (시뮬레이션 시간) |
 | `log_period_s` | `0.0` | 0보다 크면 단계·오차를 이 주기로 로그 (조정용) |
 
+## ArUco 위치 노드 (`aruco_localizer`)
+
+다른 통로로 옮겨진 로봇(Kidnapped)은 랙이 7.5 m 간격으로 반복돼 스캔만으로는 몇 번째 통로인지 모른다 (`amr_localization` 다른 통로 0/10, #148). 마커판은 스테이션마다 id가 달라서 하나만 보여도 창고 안 어디인지 안다. 이 노드가 그 자세를 `aruco_pose`로 내면 복구 노드(`kidnap_recovery`, 민지)가 그 근처로 초기 위치를 좁게 다시 잡는다 (10/16 합의, 10/19 안건 ③).
+
+- 보이는 판마다 도킹과 같은 판 PnP(`detector.board_from_corners`)로 왼쪽·오른쪽 마커 중심을 로봇 기준으로 구하고, 판의 world 자세(`dock_stations.yaml`)에서 로봇 world 자세를 역산한다 (`localize.robot_from_board`). world → map은 TF(system.launch.py 정렬 원점)
+- 판이 여럿 보이면 가장 가까운 판 하나로 낸다
+- 카메라 처리가 무거워 기본은 `kidnap_recovery/state`가 tracking이 아닐 때만 인식한다. 상태가 5 s 넘게 안 오면 tracking으로 본다 (복구 노드가 없으면 인식하지 않는다)
+- 판 하나로는 판이 로봇 쪽으로 얼마나 돌아 있는지(방향)가 가장 약하고, 그 오차가 판까지 거리만큼 위치 오차로 번진다. 공분산은 이걸 담는다 (`localize.SigmaModel`):
+  - σ_yaw = 1° + 2°/m · d · (0.32 m / 마커 간격), σ_xy = 2 cm + 0.005·d² + d·σ_yaw
+  - 랙 판(간격 0.32 m) 2 m: 21 cm·5°, 4 m: 73 cm·9° / 도크 판(0.80 m) 4 m: 39 cm·4°, 8 m: 1.4 m·7°
+- Gazebo 거리별 측정(40자리): 정면이면 랙 판 5 m 11 cm, 도크 판 6 m 6 cm. 비스듬히(옆 1–1.5 m, 25° 돌림) 보면 랙 판 4 m에서 최대 1.2 m·16°. 인식한 31자리 모두 위치·방향 오차가 2σ 안 (1σ 안 29자리). 통로 간격(7 m)보다 충분히 작아 통로는 헷갈리지 않는다. 자세한 표는 [experiments/aruco_localizer](../../../experiments/aruco_localizer/README.md)
+
+`config/aruco_localizer.yaml`:
+
+| 이름 | 기본값 | 설명 |
+| --- | --- | --- |
+| `only_when_lost` | `true` | tracking이 아닐 때만 인식. 거리별 측정은 `false` |
+| `state_stale_s` | `5.0` | 복구 상태가 이만큼 안 오면 tracking으로 본다 |
+| `max_hz` | `5.0` | 인식 주기 상한 (Gazebo 카메라로는 약 3 Hz가 나온다) |
+| `max_distance` | `8.0` | m. 도크 판은 8 m, 랙 판은 5 m까지 인식했다 |
+| `sigma_xy0` / `sigma_xy2` | `0.02` / `0.005` | 위 σ 식 |
+| `sigma_yaw0_deg` / `sigma_yaw1_deg` | `1.0` / `2.0` | 위 σ 식 (랙 판 간격 기준) |
+| `map_frame` / `world_frame` | `map` / `world` | 판 좌표(world) → map |
+
 ## 실행
 
 ```bash
@@ -76,6 +103,7 @@ ros2 launch amr_docking aruco_markers.launch.py
 # 도킹 서버 (로봇마다)
 ros2 launch amr_docking docking.launch.py namespace:=amr_01
 ros2 launch amr_docking docking.launch.py namespace:=amr_01 cmd_vel_topic:=cmd_vel   # Nav2·구역·안전 체인 없이
+ros2 launch amr_docking docking.launch.py namespace:=amr_01 aruco_localizer:=true    # ArUco 위치 노드도
 # 도킹 한 번
 ros2 action send_goal /amr_01/docking/dock amr_msgs/action/Dock "{station_id: rack_a4}" --feedback
 ```
@@ -97,4 +125,5 @@ colcon test --packages-select amr_docking
 - `test_geometry`: 마커 중심 → 도킹 오차 (위치·방향을 정확히 되찾는지)
 - `test_controller`: 차동 구동 운동학 + 측정 노이즈로 닫힌 고리. 여러 시작 자세에서 실제 오차 1 cm·0.5° 안, 무작위 40회, 못 찾음·잃음·시간 초과, 회전 관성 보정, 지나쳐서 안 보일 때 뒤로 빠져 찾기, 움직이는 동안 옆 오차가 흔들려도 되풀이 안 함
 - `test_detector`: 합성 카메라 영상(Gazebo와 같은 칸 배치)으로 인식 → 오차. 랙·충전소·도크 거리에서 목표 근처 8 mm·0.3° 안
+- `test_localize`: 판 → 로봇 자세 역산 (도킹 자세에서 판이 정면 standoff, 무작위 20자세, 도킹 오차와 같은 규칙), σ가 거리에 따라 커지고 큰 판이 작다
 - `test_markers`: 스테이션 목록, 마커 id 겹침 없음, LiDAR 높이 회피, 판 위치(랙·충전기·플랫폼 면), `stations.yaml`과 같은 좌표, SDF

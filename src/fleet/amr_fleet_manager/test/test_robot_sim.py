@@ -2,7 +2,7 @@
 
 import pytest
 
-from amr_fleet_manager.robot_sim import DUPLICATE, NEW, STALE, AssignmentFilter, TaskRun, assignment_source
+from amr_fleet_manager.robot_sim import DUPLICATE, NEW, STALE, AssignmentFilter, LinkWatch, TaskRun, assignment_source
 
 
 # 경매로 로봇 k가 수락한 명령 번호 (amr_fleet_decentralized #211: 1,000,000 + k × 100,000 + 순번)
@@ -99,3 +99,33 @@ def test_zero_dwell_skips_wait():
 def test_invalid_speed():
     with pytest.raises(ValueError):
         TaskRun((0.0, 0.0), None, (1.0, 0.0), speed=0.0, dwell_s=0.0)
+
+
+def test_link_watch_pauses_after_heartbeat_gap():
+    """끊기면 멈춤 정책: heartbeat가 pause_after_s 동안 안 오면 끊김. 처음 heartbeat 전에는 끊긴 것으로 보지 않는다."""
+    w = LinkWatch(2.0)
+    assert not w.lost(100.0)
+    w.on_heartbeat(10.0)
+    assert not w.lost(11.9)
+    assert w.lost(12.0)
+    w.on_heartbeat(20.0)
+    assert not w.lost(20.1)
+    assert not LinkWatch(0.0).lost(1e9)      # 0이면 끄기 (끊겨도 계속)
+
+
+def test_hold_at_boundary_finishes_current_leg_only():
+    """허가 지점 대기: 이미 시작한 구간은 마저 가고, 다음 구간은 시작하지 않는다."""
+    run = TaskRun((0.0, 0.0), pickup=(3.0, 0.0), dropoff=(6.0, 0.0), speed=1.0, dwell_s=1.0)
+    run.step(1.0)                                   # 선반으로 가는 중 (1 m)
+    assert run.step(5.0, hold_at_boundary=True)     # 남은 2 m는 마저 가고 싣기 앞에서 멈춤
+    assert run.phase == 'loading' and run.xy == pytest.approx((3.0, 0.0))
+    assert not run.step(5.0, hold_at_boundary=True)  # 싣기를 시작하지 않는다
+    assert run.phase == 'loading'
+    run.step(1.0)                                   # 연결이 돌아오면 이어서
+    assert run.phase == 'move_to_dropoff'
+
+
+def test_hold_at_boundary_before_start_does_not_move():
+    run = TaskRun((0.0, 0.0), pickup=(3.0, 0.0), dropoff=(6.0, 0.0), speed=1.0, dwell_s=1.0)
+    assert not run.step(2.0, hold_at_boundary=True)
+    assert run.xy == (0.0, 0.0)

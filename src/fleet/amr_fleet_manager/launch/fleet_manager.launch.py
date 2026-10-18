@@ -57,6 +57,10 @@ def _server(context):
                 # 구역 lease는 로봇과 같은 시계로 잰다. Gazebo와 같이 돌리면 true (amr_bringup system.launch.py)
                 # arg()는 이미 문자열이라 ParameterValue(value_type=bool)로 넘기면 타입 검사에서 실패한다
                 'use_sim_time': arg('use_sim_time').lower() == 'true',
+                # 할당 명령 재전송 한도 (연구 1 재전송 비교). 정수 파라미터라 문자열 묶음(SERVER_ARGS)과 따로 넘긴다
+                'resend.max_resends': int(arg('max_resends')),
+                # 재전송 간격 (연구 1 재시도 간격 비교). 실수 파라미터라 따로 넘긴다
+                'resend.interval_s': float(arg('resend_interval_s')),
             }],
             output='screen',
         )
@@ -103,6 +107,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_sim_time', default_value='false',
             description='시뮬레이션 시간을 쓸지. 구역 lease를 로봇과 같은 시계로 재야 하므로 Gazebo와 같이 돌리면 true'),
+        DeclareLaunchArgument(
+            'resend_interval_s', default_value='1.0',
+            description='Ack가 없을 때 할당 명령을 다시 보내는 간격 (s, config 기본 1.0)'),
+        DeclareLaunchArgument(
+            'max_resends', default_value='5',
+            description='Ack가 없을 때 할당 명령 재전송 한도. 넘으면 작업을 큐로 되돌려 다른 로봇에 맡긴다 (config 기본 5)'),
         DeclareLaunchArgument(
             'kill_at_s', default_value='-1',
             description='launch 시작 후 이 시각(실제 시간, s)에 서버를 SIGKILL. 음수면 죽이지 않는다'),

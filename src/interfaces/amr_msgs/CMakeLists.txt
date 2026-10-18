@@ -34,6 +34,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   # fleet: 분산 경매
   "msg/TaskAuction.msg"
   "msg/TaskBid.msg"
+  "msg/RobotFleetMode.msg"
   # task
   "action/Dock.action"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs

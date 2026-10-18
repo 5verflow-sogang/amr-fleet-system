@@ -74,6 +74,25 @@ class AssignmentFilter:
         self.last_reply = reply
 
 
+class LinkWatch:
+    """서버 heartbeat로 서버와의 링크가 끊겼는지 본다 (끊기면 멈춤 정책, 연구 1 끊김 정책 비교).
+
+    상용 AMR은 관제와 연결이 끊기면 안전하게 멈추고 기다리는 경우가 많다. pause_after_s 동안 heartbeat가 안 오면
+    끊긴 것으로 본다. 0 이하면 끈다(하던 작업은 끊겨도 계속 - 서버가 작업 전체를 미리 넘긴 경우).
+    heartbeat를 한 번도 못 봤으면 끊긴 것으로 보지 않는다 (기동 직후). 시각은 호출 쪽의 한 시계(실제 시간)다.
+    """
+
+    def __init__(self, pause_after_s: float = 0.0):
+        self.pause_after_s = pause_after_s
+        self._last: Optional[float] = None
+
+    def on_heartbeat(self, now: float) -> None:
+        self._last = now
+
+    def lost(self, now: float) -> bool:
+        return self.pause_after_s > 0 and self._last is not None and now - self._last >= self.pause_after_s
+
+
 @dataclass
 class _Leg:
     phase: str
@@ -100,6 +119,8 @@ class TaskRun:
         self._legs = legs
         self._index = 0
         self._waited = 0.0
+        # 지금 구간을 시작했는지(조금이라도 움직이거나 기다렸는지). 허가 지점 대기에 쓴다
+        self._progress = False
         self._speed = speed
         self.xy: Point = xy
         self.velocity: Point = (0.0, 0.0)
@@ -113,12 +134,19 @@ class TaskRun:
     def phase(self) -> str:
         return '' if self.done else self._legs[self._index].phase
 
-    def step(self, dt: float) -> bool:
-        """dt초만큼 진행한다. 단계가 바뀌었으면 True."""
+    def step(self, dt: float, hold_at_boundary: bool = False) -> bool:
+        """dt초만큼 진행한다. 단계가 바뀌었으면 True.
+
+        hold_at_boundary면 이미 시작한 구간은 마저 가고, 새 구간은 시작하지 않는다 (서버와 끊긴 동안 다음 허가
+        지점 앞에서 기다리는 정책, VDA 5050의 확정 구간처럼).
+        """
         start = self._index
         remaining = dt
         self.velocity = (0.0, 0.0)
         while remaining > 0 and not self.done:
+            if hold_at_boundary and not self._progress:
+                break
+            self._progress = True
             leg = self._legs[self._index]
             if leg.target is None:
                 need = leg.duration - self._waited
@@ -143,7 +171,7 @@ class TaskRun:
                 remaining -= dist / self._speed
                 self._next()
         # dwell이 0이면 dt가 0이어도 대기 단계를 넘긴다
-        while not self.done and self._legs[self._index].target is None \
+        while not hold_at_boundary and not self.done and self._legs[self._index].target is None \
                 and self._legs[self._index].duration <= self._waited:
             self._next()
         return self._index != start
@@ -151,3 +179,4 @@ class TaskRun:
     def _next(self) -> None:
         self._index += 1
         self._waited = 0.0
+        self._progress = False
