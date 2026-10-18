@@ -65,6 +65,9 @@ def test_resend_and_link_loss_policy_reach_processes():
     assert 'speed_mps:=1.0' in _fleet_fake_procs()['fake_robots']['cmd']
     assert 'pause_mode:=stop' in _fleet_fake_procs()['fake_robots']['cmd']
     assert 'pause_mode:=leg' in _fleet_fake_procs(pause_mode='leg')['fake_robots']['cmd']
+    up = _fleet_fake_procs(relay_uplink='true')
+    assert 'relay_uplink:=true' in up['fault_injector']['cmd'] and 'uplink_relayed:=true' in up['fake_robots']['cmd']
+    assert 'uplink_relayed:=false' in _fleet_fake_procs()['fake_robots']['cmd']
 
 
 def test_fleet_mode_processes():

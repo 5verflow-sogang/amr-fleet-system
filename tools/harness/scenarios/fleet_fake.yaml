@@ -46,6 +46,8 @@ params:
   pause_on_link_loss_s: 0
   # 끊긴 동안 기다리는 방식: stop(그 자리에서 멈춤) / leg(지금 구간은 마저 가고 다음 구간 앞에서 대기, 허가 지점 대기)
   pause_mode: stop
+  # 양방향 끊김: 로봇 → 서버(상태 보고·작업 상태·확인)도 장애 주입기를 거쳐 같은 끊김 일정으로 (지연·손실은 없음)
+  relay_uplink: 'false'
   # 가짜 로봇 이동 속도 (m/s). 3이면 작업 수행 약 60초 → 약 21초 (짧은 작업, experiments/research1/predictions.md)
   robot_speed_mps: 1.0
   # 연구 1 비교군 (central | decentral | hybrid). 아래 param_sets가 서버·경매 노드·중계·작업 생성기 대기 대상을 채운다
@@ -76,14 +78,14 @@ processes:
       ros2 launch amr_fault_injector fault_injector.launch.py delay_ms:={delay_ms} loss_pct:={loss_pct} seed:={seed}
       num_robots:={num_robots} relay_auction:={relay_auction} allow_out_of_spec:={allow_out_of_spec}
       blackout_s:={blackout_s} blackout_at_s:={blackout_at_s} blackout_period_s:={blackout_period_s}
-      blackout_robot:={blackout_robot} blackout_mode:={blackout_mode}
+      blackout_robot:={blackout_robot} blackout_mode:={blackout_mode} relay_uplink:={relay_uplink}
     settle_s: 2
   - name: fake_robots
     cmd: >-
       ros2 launch amr_fleet_manager fake_robots.launch.py count:={num_robots} relayed:=true
       kill_robot:={kill_robot} kill_robot_at_s:={kill_robot_at_s} restart_robot_after_s:={restart_robot_after_s}
       fault_events_file:={run_dir}/fault_events.csv pause_on_link_loss_s:={pause_on_link_loss_s}
-      speed_mps:={robot_speed_mps} pause_mode:={pause_mode}
+      speed_mps:={robot_speed_mps} pause_mode:={pause_mode} uplink_relayed:={relay_uplink}
     settle_s: 3
   # 분산 경매 노드 (fleet_mode가 decentral·hybrid일 때만)
   - name: task_auctions
