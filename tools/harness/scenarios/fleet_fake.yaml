@@ -41,6 +41,8 @@ params:
   # pause_on_link_loss_s: 가짜 로봇이 서버 heartbeat가 이 시간 동안 끊기면 하던 작업을 멈춤(0이면 계속, 기본)
   #   예: --set max_resends=0 --set loss_pct=50 / --set pause_on_link_loss_s=2 --set blackout_s=30 ...
   max_resends: 5
+  # 재전송 간격 (s, 서버 기본 1.0). 연구 1 재시도 간격 비교: --set resend_interval_s=3
+  resend_interval_s: 1.0
   pause_on_link_loss_s: 0
   # 끊긴 동안 기다리는 방식: stop(그 자리에서 멈춤) / leg(지금 구간은 마저 가고 다음 구간 앞에서 대기, 허가 지점 대기)
   pause_mode: stop
@@ -65,7 +67,7 @@ processes:
       ros2 launch amr_fleet_manager fleet_manager.launch.py algorithm:={algorithm}
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
       kill_at_s:={kill_at_s} restart_after_s:={restart_after_s} fault_events_file:={run_dir}/fault_events.csv
-      max_resends:={max_resends}
+      max_resends:={max_resends} resend_interval_s:={resend_interval_s}
     ready_topic: /fleet/heartbeat
     # 분산(decentral)에서는 서버를 띄우지 않는다. 떠 있으면 서버도 할당해 경매와 겹친다 (#208 하연 리뷰)
     enabled: "{server}"
