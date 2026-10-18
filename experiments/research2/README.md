@@ -598,6 +598,15 @@ uv run python scripts/judge_v3_main.py raw/v3_main       # 판정표 → raw/v3_
 - **원자료**: `gs://amr-fleet-results/research2/main_v3/` (평가 CSV·판정표·반응 곡선·로그 zip, 학습 폴더 60개 zip, `README_DATA.md`). 튜닝은 `research2/tuning_v3/` (축소·벌점 곡선·확인·정보 실험 결과 zip, 확인 실험 모델 zip. 축소·벌점 곡선 모델은 연우 Mac에만 있다)
 - **탐색 분석** (결과를 본 뒤, 판정 아님): ① 정보 효과는 0 kg에서 시간 단축, 25 kg에서 충돌 감소로 옮겨 간다(튜닝·본 실험 모두) ② 제안 exact의 0 kg 속도는 R2와 거의 같고(0.844 vs 0.836 m/s) 25 kg에서만 느리다(0.800 vs 0.841) — 정보를 더 조심하는 쪽으로만 쓴다
   ③ "설 수 있었는데 부딪힘"(반응 실패) 비율이 튜닝 30% → 본 실험 60% ④ 튜닝 설정과 본 실험 설정은 충돌·시간 초과 벌점과 돌발 확률이 함께 달라 원인을 하나로 특정할 수 없다
+- **DWA 비교 (목록 20~39, 계획 변경은 `v3_plan.md` 7절)**: 민지가 목록 20~39로 평가한 DWA(`e3ecf7a`, #228·#234)와 짝짓도록 본 실험 정책 60개를 목록 20~39로 추가 평가했다(재학습 없음, 시드 s → 목록 s − 20).
+  25 kg 충돌 B1 50.1%, B2 13.7%, R2 5.4%, 제안 4.7% (제안 − B2 −9.0%p). 대신 0 kg 도착 시간은 B2 13.2 s, 제안 18.0 s (+4.8 s). B2는 질량과 관계없이 같은 속도로 달린다
+
+```bash
+# 연우 Mac, 10/18 22:52~22:56, 커밋 ff7886e. DWA 원자료(민지)는 v2_dwa/ (research2_dwa_lists20-39_results.zip)
+awk '{print $2, $3, $4}' raw/v3_main/runs.txt | xargs -P 6 -n 3 bash -c 'k=$(($1-20)); uv run python scripts/evaluate.py "$2" \
+  --config config/env_v0.toml --eval-list $k --masses 0 2 10 25 --episodes 100 --mass-obs exact unknown \
+  --out-dir raw/v3_main_lists20-39/eval_$0_s$1_list$k'
+```
 
 
 ## 원자료 (버킷)
