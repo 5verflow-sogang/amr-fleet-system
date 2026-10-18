@@ -768,10 +768,13 @@ struct PathRunResult
   double max_v = 0.0;
   double stop_x = 0.0;              // kGoalReached 뒤 acc_v로 감속해 서는 x
   double slowdown_distance = 0.0;   // 최고 속도보다 0.05 m/s 넘게 줄어든 시점의 경로 끝까지 거리
+  int steps = 0;                    // kGoalReached까지 걸린 제어 주기 수
 };
 
 // 빈 지도에서 직선 경로를 따라가는 닫힌 루프(명령을 그대로 따른다고 보고 적분).
-PathRunResult followStraightPath(const DwaConfig & config, double v0, double goal_x)
+// start_y·start_yaw: 경로(y=2.0) 기준 옆 오차·방향 오차로 출발한다(연구 2 환경처럼 경로 위에 딱 있지 않음).
+PathRunResult followStraightPath(
+  const DwaConfig & config, double v0, double goal_x, double start_y = 2.0, double start_yaw = 0.0)
 {
   TestGrid test_grid(200, 40, 0.1);  // 20m x 4m, 빈 지도라 거칠게(테스트 시간 단축)
   const DwaPlanner planner(config);
@@ -779,7 +782,8 @@ PathRunResult followStraightPath(const DwaConfig & config, double v0, double goa
 
   RobotState state;
   state.x = 1.0;
-  state.y = 2.0;
+  state.y = start_y;
+  state.yaw = start_yaw;
   state.v = v0;
 
   PathRunResult result;
@@ -790,6 +794,7 @@ PathRunResult followStraightPath(const DwaConfig & config, double v0, double goa
     if (command.status == DwaStatus::kGoalReached) {
       result.reached = true;
       result.stop_x = state.x + state.v * state.v / (2.0 * config.acc_v);
+      result.steps = step;
       break;
     }
     if (command.status != DwaStatus::kOk) {
@@ -829,9 +834,11 @@ TEST(DwaPlannerTest, AdaptiveLookaheadReachesNearMaxSpeedOnStraightPath)
   EXPECT_LE(fixed.max_v, config.lookahead_distance / config.sim_time + 0.1);
 }
 
-TEST(DwaPlannerTest, AdaptiveLookaheadUsesFixedTargetAtLowSpeed)
+TEST(DwaPlannerTest, AdaptiveLookaheadUsesFixedTargetWhenStopped)
 {
-  // |v|*sim_time <= lookahead_distance면 기준점이 고정 lookahead 점과 같다.
+  // 기준점은 궤적 끝보다 lookahead_distance 앞(궤적 길이 + lookahead_distance)이라, 정지(v=0)에서는
+  // 고정 lookahead 점과 같다. (#216 전에는 |v|*sim_time <= lookahead_distance인 느린 속도 전체에서
+  // 같았다 - 그 규칙이 궤적 끝과 기준점을 붙여 놓아 속도가 떨어지는 원인이었다.)
   const std::vector<Point2D> path = {
     {1.0, 2.0}, {1.2, 2.0}, {1.4, 2.0}, {1.4, 2.2}, {1.4, 2.4}, {1.4, 2.6}, {1.4, 2.8}};
   EXPECT_EQ(pathPointAhead(path, 1.0, 2.0, 0.5).point.x, 1.4);
@@ -842,9 +849,10 @@ TEST(DwaPlannerTest, AdaptiveLookaheadUsesFixedTargetAtLowSpeed)
   TestGrid test_grid(80, 80, 0.05);
   test_grid.setRegion(1.7, 1.9, 1.6, 2.4, 254);
   DwaConfig on = makeFastConfig();
+  on.acc_v = 1e-6;  // 동적 윈도우가 사실상 v=0 하나 - 궤적 길이 0
   DwaConfig off = on;
   off.adaptive_lookahead = false;
-  for (const double v0 : {0.0, 0.05, 0.1}) {  // 윈도우 최고 속도 <= 0.2 -> 궤적 길이 <= 0.4m
+  for (const double v0 : {0.0}) {
     RobotState state;
     state.x = 1.0;
     state.y = 2.0;
@@ -902,6 +910,84 @@ TEST(DwaPlannerTest, AdaptiveLookaheadLetsGoalSlowdownTakeEffect)
   EXPECT_GT(weak_result.slowdown_distance, strong_result.slowdown_distance);
   EXPECT_LE(strong_result.stop_x, 15.0 + strong.goal_tolerance);
   EXPECT_LE(weak_result.stop_x, 15.0 + weak.goal_tolerance);
+}
+
+TEST(DwaPlannerTest, AdaptiveLookaheadKeepsSpeedWhenSlightlyOffPath)
+{
+  // #216 증상 1(연구 2 S2 0 kg): 경로에서 몇 cm 옆·몇 도 틀어진 채 달리면 1.5 m/s에서 0.15 m/s로 떨어져
+  // 기어갔다. heading 기준점을 궤적 길이(|v|*sim_time)만큼 앞의 경로 점으로 잡아, 궤적 끝과 기준점이 거의
+  // 같은 곳이라 끝 -> 기준점 방향이 경로 점 간격(0.05 m)·옆 오차 몇 mm에 따라 크게 튀었다 - 빠른 샘플의
+  // heading 비용만 들쭉날쭉 커져 속도 비용(0.1)으로는 못 이겼다.
+  DwaConfig config = makeFastConfig();
+  config.v_samples = 11;
+  config.acc_v = 2.07;  // 연구 2 0 kg
+  const PathRunResult result = followStraightPath(config, 1.5, 15.0, 2.0 - 0.02, 0.02);
+  ASSERT_TRUE(result.reached);
+  EXPECT_GE(result.max_v, 0.95 * config.max_v);
+  // 14 m를 최고 속도 근처로 가면 10초 안쪽이다(기어가면 수십 초)
+  EXPECT_LT(result.steps * config.dt, 12.0) << "steps=" << result.steps;
+  EXPECT_LE(result.stop_x, 15.0 + config.goal_tolerance);
+}
+
+TEST(DwaPlannerTest, DynamicObstacleAlreadyWithinMarginAllowsTrajectoriesMovingAway)
+{
+  // #216 증상 2(연구 2 S1 가로지름): 장애물이 이미 안전 여유(0.2 m) 안에 있으면 궤적 첫 점부터 여유
+  // 안이라, 멀어지는 궤적까지 모두 버려져 장애물이 비킬 때까지 거의 멈춰 있었다.
+  TestGrid test_grid(160, 80, 0.05);
+  const DwaPlanner planner(makeFastConfig());
+
+  RobotState state;
+  state.x = 2.0;
+  state.y = 2.0;
+  state.v = 0.5;
+  const Point2D goal{6.0, 2.0};
+
+  // 왼쪽 옆에 0.1 m 떨어져 서 있는 장애물(로봇 중심보다 조금 뒤) - 앞으로 가면 멀어진다
+  DynamicObstacle beside;
+  beside.radius = 0.25;
+  beside.x = 2.0 - 0.1;
+  beside.y = 2.0 + 0.2 + 0.1 + beside.radius;
+  const DwaCommand away =
+    planner.computeVelocityCommand(state, goal, test_grid.grid(), {beside});
+  ASSERT_EQ(away.status, DwaStatus::kOk);
+  EXPECT_GT(away.v, 0.5);
+  // 고른 궤적은 지금(0.1 m)보다 장애물에 가까워지지 않는다
+  for (const TrajectoryPoint & point : planner.simulateTrajectory(state, away.v, away.w)) {
+    const double dx = beside.x - point.x;
+    const double dy = beside.y - point.y;
+    const double lx = std::abs(dx * std::cos(point.yaw) + dy * std::sin(point.yaw)) - 0.3;
+    const double ly = std::abs(-dx * std::sin(point.yaw) + dy * std::cos(point.yaw)) - 0.2;
+    EXPECT_GE(std::hypot(std::max(0.0, lx), std::max(0.0, ly)) - beside.radius, 0.1 - 1e-3);
+  }
+
+  // 정면 0.1 m 앞에 있는 장애물은 앞으로 가면 가까워지므로 여전히 막는다
+  DynamicObstacle ahead;
+  ahead.radius = 0.25;
+  ahead.x = 2.0 + 0.3 + 0.1 + ahead.radius;
+  ahead.y = 2.0;
+  RobotState stopped = state;
+  stopped.v = 0.0;
+  const DwaCommand blocked =
+    planner.computeVelocityCommand(stopped, goal, test_grid.grid(), {ahead});
+  if (blocked.status == DwaStatus::kOk) {
+    EXPECT_LE(blocked.v, 1e-9);
+  }
+}
+
+TEST(DwaPlannerTest, GoalSlowdownStopsBeforeGoalAccountingForControlPeriod)
+{
+  // #216: 상한을 sqrt(2*acc_v*d)(연속 시간)로 두면 매 주기 그 속도로 dt만큼 더 가는 만큼 상한보다 늦게
+  // 줄어, 최대로 감속해도 목표를 지나쳤다(연구 2 S2 25 kg, 고친 heading으로 빨리 도착하자 드러남).
+  // 상한이 |v|*dt + v^2/(2*acc_v) <= d이면 도착 판정 때 그 자리에서 acc_v로 서도 목표를 안 넘는다.
+  DwaConfig config = makeFastConfig();
+  config.v_samples = 21;
+  config.acc_v = 1.113;  // 연구 2 25 kg
+  const PathRunResult result = followStraightPath(config, 2.0, 12.0);
+  ASSERT_TRUE(result.reached);
+  EXPECT_LE(result.stop_x, 12.0 + 1e-6);
+  EXPECT_NEAR(DwaPlanner(config).goalStoppingVelocity(0.0), 0.0, 1e-12);
+  const double v = DwaPlanner(config).goalStoppingVelocity(2.0);
+  EXPECT_NEAR(v * config.dt + v * v / (2.0 * config.acc_v), 2.0, 1e-9);
 }
 
 }  // namespace amr_planning_core

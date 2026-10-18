@@ -132,7 +132,9 @@ struct DwaConfig
   bool predict_dynamic_obstacles = true;
 
   // 장애물 반경에 더하는 안전 여유(m). 풋프린트 표면이 이 여유 안으로 들어오면
-  // 충돌로 본다(정적 장애물의 lethal_cost_threshold와 같은 역할).
+  // 충돌로 본다(정적 장애물의 lethal_cost_threshold와 같은 역할). 지금 자세에서 이미 이 여유
+  // 안에 있는 장애물은 지금보다 가까워지거나 닿는 궤적만 충돌로 본다 - 아니면 멀어지는 궤적까지
+  // 첫 점부터 모두 버려져 장애물이 비킬 때까지 거의 멈춰 있게 된다(#216).
   double dynamic_obstacle_safety_margin = 0.2;
 
   // 장애물 표면에서 이 거리(m)보다 멀어지면 거리비용에 영향이 없다(소프트 코스트의
@@ -157,9 +159,10 @@ struct DwaConfig
   // --- 목표 앞 감속 ---
 
   // true면 최종 목표(computeVelocityCommand의 final_goal, 지역 waypoint가 아님)까지 직선
-  // 거리 d_goal에서 샘플 선속도를 |v| <= sqrt(2*acc_v*d_goal)로 제한한다 - acc_v로 감속해
-  // 목표에 서는 속도. 동적 윈도우의 최저 속도가 이보다 높으면(그만큼 빨리 못 줄이면) 최저
-  // 속도 하나만 샘플링한다. final_goal을 안 넘기거나 false면 기존 동작과 결과가 같다.
+  // 거리 d_goal에서 샘플 선속도를 |v|*dt + v^2/(2*acc_v) <= d_goal인 속도로 제한한다 - 이번 제어
+  // 주기(dt) 동안 그 속도로 간 뒤 acc_v로 감속해 목표에 서는 속도(goalStoppingVelocity). 동적
+  // 윈도우의 최저 속도가 이보다 높으면(그만큼 빨리 못 줄이면) 최저 속도 하나만 샘플링한다.
+  // final_goal을 안 넘기거나 false면 기존 동작과 결과가 같다.
   bool use_goal_slowdown = true;
 
   // --- 경로 추종 heading 기준점 (경로를 받는 computeVelocityCommand에서만 쓴다) ---
@@ -168,12 +171,16 @@ struct DwaConfig
   // nav2_params.yaml DWA.lookahead_distance(0.5)와 같다.
   double lookahead_distance = 0.5;
 
-  // true면 heading 기준점을 궤적마다 max(lookahead_distance, |v|*sim_time) 앞의 경로 점으로
-  // 잡는다(경로 끝을 넘으면 마지막 점). 기준점이 고정이면 궤적 끝이 그 점을 넘는 순간 heading
-  // 비용이 최대가 되어 v <= lookahead_distance/sim_time(0.25 m/s)으로 묶인다. 경로 끝에서는
-  // 궤적이 끝점을 지나치면 그 앞(goal_tolerance만큼 짧게)에서 heading을 본다 - 끝점을 지나친
-  // 궤적 끝에서 보면 방향이 뒤집혀 목표 앞 감속(use_goal_slowdown) 대신 그쪽이 속도를 정한다.
-  // lookahead_distance가 최솟값이라 느릴 때(|v|*sim_time <= lookahead_distance)는 false와 같다.
+  // true면 heading 기준점을 궤적마다 |v|*sim_time + lookahead_distance 앞의 경로 점으로 잡는다
+  // (경로 끝을 넘으면 마지막 점) - 모든 샘플에서 기준점이 궤적 끝보다 lookahead_distance 앞이다.
+  // 기준점이 고정이면 궤적 끝이 그 점을 넘는 순간 heading 비용이 최대가 되어
+  // v <= lookahead_distance/sim_time(0.25 m/s)으로 묶인다. 기준점을 궤적 길이(|v|*sim_time)만큼만
+  // 앞에 두면 궤적 끝과 기준점이 거의 같은 곳이라, 끝 -> 기준점 방향이 경로 점 간격·옆 오차 몇 mm에
+  // 따라 크게 튀어 빠른 샘플의 heading 비용만 들쭉날쭉 커진다 - 달리다 0.15 m/s로 떨어져 기어갔다(#216).
+  // 기준점이 경로 끝점으로 잘리면 끝점보다 lookahead_distance 앞인 궤적 점에서 heading을 본다 - 끝점을
+  // 지나친 궤적 끝에서 보면 방향이 뒤집혀 목표 앞 감속(use_goal_slowdown) 대신 그쪽이 속도를 정하고,
+  // 끝점에 붙은 궤적 끝에서 보면 위와 같이 방향이 튄다.
+  // 정지(v=0)에서는 false와 같은 기준점(lookahead_distance 앞)이다.
   bool adaptive_lookahead = true;
 };
 
@@ -248,6 +255,11 @@ public:
   // 샘플은 후보에서 빠진다.
   double admissibleVelocity(double obstacle_distance) const;
 
+  // 목표 앞 감속 상한: |v|*dt + v^2/(2*acc_v) <= goal_distance인 최대 속도
+  // -acc_v*dt + sqrt((acc_v*dt)^2 + 2*acc_v*goal_distance). sqrt(2*acc_v*d)(연속 시간)를 그대로 쓰면
+  // 매 주기 그 속도로 dt만큼 더 가는 만큼 상한보다 늦게 줄어, 최대로 감속해도 목표를 지나친다(#216).
+  double goalStoppingVelocity(double goal_distance) const;
+
   const DwaConfig & config() const noexcept {return config_;}
 
 private:
@@ -258,9 +270,11 @@ private:
 
   // dynamicObstacleCollides의 내부 버전. 충돌 여부와 함께(비충돌 시) 가장 가까운
   // 장애물의 표면까지 거리(음수 없음, 장애물이 없으면 +inf)를 돌려준다.
+  // start_distances(장애물마다 지금 자세에서 표면까지 거리)를 주면, 이미 안전 여유 안에 있는
+  // 장애물은 그 거리보다 가까워지거나 닿을 때만 충돌로 본다(멀어지는 궤적은 허용).
   bool evaluateDynamicObstacles(
     const std::vector<DynamicObstacle> & obstacles, double t, double x, double y, double yaw,
-    double * min_surface_distance) const;
+    double * min_surface_distance, const std::vector<double> * start_distances = nullptr) const;
 
   // 동적 장애물 거리비용 [0,1]. 표면까지 거리가 안전 여유(safety_margin)에 가까울수록
   // 1.0, dynamic_obstacle_influence_radius보다 멀면(장애물이 없을 때 포함) 0.0.
