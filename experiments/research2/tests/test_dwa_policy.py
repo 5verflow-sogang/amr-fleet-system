@@ -140,4 +140,12 @@ def test_point_call_is_kept_for_comparison():
     for follow in (True, False):
         policy = DwaPolicy('b2', replace(DwaPolicy().params, follow_path=follow))
         v, _ = policy.command(env)
-        assert 0.0 <= v <= policy.params.max_v
+        # 처음 속도(1.5)가 max_v보다 빠르면 동적 창 하한(한 주기 최대 감속)까지만 줄인다
+        assert 0.0 <= v <= max(policy.params.max_v, env.state.v)
+
+
+def test_max_v_is_empty_robot_safe_cruise_speed():
+    # B1·B2 최고 속도는 규칙 정책과 같은 빈 차 안전 순항 속도 (10/18). 로봇 스펙 2.0이 아니다
+    from payload_nav.rule_policy import safe_cruise_speed
+    p = DwaPolicy().params
+    assert p.max_v == pytest.approx(safe_cruise_speed(0.0)) == pytest.approx(1.248, abs=1e-3)
