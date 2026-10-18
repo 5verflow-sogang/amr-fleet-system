@@ -43,6 +43,10 @@ params:
   max_resends: 5
   # 재전송 간격 (s, 서버 기본 1.0). 연구 1 재시도 간격 비교: --set resend_interval_s=3
   resend_interval_s: 1.0
+  # 서버가 RobotState가 이 시간(s) 끊긴 로봇의 작업을 회수 (서버 기본 5.0). 연구 1 회수 기준 비교: --set reclaim_timeout_s=40
+  reclaim_timeout_s: 5.0
+  # 하이브리드 전환 기준: heartbeat가 이 시간(s) 안 오면 분산 (기본 2.0). --set fallback_timeout_s=6
+  fallback_timeout_s: 2.0
   pause_on_link_loss_s: 0
   # 끊긴 동안 기다리는 방식: stop(그 자리에서 멈춤) / leg(지금 구간은 마저 가고 다음 구간 앞에서 대기, 허가 지점 대기)
   pause_mode: stop
@@ -69,7 +73,7 @@ processes:
       ros2 launch amr_fleet_manager fleet_manager.launch.py algorithm:={algorithm}
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
       kill_at_s:={kill_at_s} restart_after_s:={restart_after_s} fault_events_file:={run_dir}/fault_events.csv
-      max_resends:={max_resends} resend_interval_s:={resend_interval_s}
+      max_resends:={max_resends} resend_interval_s:={resend_interval_s} reclaim_timeout_s:={reclaim_timeout_s}
     ready_topic: /fleet/heartbeat
     # 분산(decentral)에서는 서버를 띄우지 않는다. 떠 있으면 서버도 할당해 경매와 겹친다 (#208 하연 리뷰)
     enabled: "{server}"
@@ -91,7 +95,7 @@ processes:
   - name: task_auctions
     cmd: >-
       ros2 launch amr_fleet_decentralized task_auctions.launch.py count:={num_robots} relayed:=true
-      fleet_mode:={fleet_mode}
+      fleet_mode:={fleet_mode} fallback_timeout_s:={fallback_timeout_s}
     enabled: "{auction}"
     settle_s: 2
   # 녹화를 작업 생성기보다 먼저 시작한다 (작업 생성기는 서버 구독을 확인한 뒤 일정을 시작한다.
