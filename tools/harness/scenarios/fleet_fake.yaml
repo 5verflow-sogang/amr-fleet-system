@@ -42,6 +42,8 @@ params:
   #   예: --set max_resends=0 --set loss_pct=50 / --set pause_on_link_loss_s=2 --set blackout_s=30 ...
   max_resends: 5
   pause_on_link_loss_s: 0
+  # 끊긴 동안 기다리는 방식: stop(그 자리에서 멈춤) / leg(지금 구간은 마저 가고 다음 구간 앞에서 대기, 허가 지점 대기)
+  pause_mode: stop
   # 가짜 로봇 이동 속도 (m/s). 3이면 작업 수행 약 60초 → 약 21초 (짧은 작업, experiments/research1/predictions.md)
   robot_speed_mps: 1.0
   # 연구 1 비교군 (central | decentral | hybrid). 아래 param_sets가 서버·경매 노드·중계·작업 생성기 대기 대상을 채운다
@@ -79,7 +81,7 @@ processes:
       ros2 launch amr_fleet_manager fake_robots.launch.py count:={num_robots} relayed:=true
       kill_robot:={kill_robot} kill_robot_at_s:={kill_robot_at_s} restart_robot_after_s:={restart_robot_after_s}
       fault_events_file:={run_dir}/fault_events.csv pause_on_link_loss_s:={pause_on_link_loss_s}
-      speed_mps:={robot_speed_mps}
+      speed_mps:={robot_speed_mps} pause_mode:={pause_mode}
     settle_s: 3
   # 분산 경매 노드 (fleet_mode가 decentral·hybrid일 때만)
   - name: task_auctions

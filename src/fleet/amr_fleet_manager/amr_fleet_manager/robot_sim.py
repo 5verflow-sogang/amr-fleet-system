@@ -119,6 +119,8 @@ class TaskRun:
         self._legs = legs
         self._index = 0
         self._waited = 0.0
+        # 지금 구간을 시작했는지(조금이라도 움직이거나 기다렸는지). 허가 지점 대기에 쓴다
+        self._progress = False
         self._speed = speed
         self.xy: Point = xy
         self.velocity: Point = (0.0, 0.0)
@@ -132,12 +134,19 @@ class TaskRun:
     def phase(self) -> str:
         return '' if self.done else self._legs[self._index].phase
 
-    def step(self, dt: float) -> bool:
-        """dt초만큼 진행한다. 단계가 바뀌었으면 True."""
+    def step(self, dt: float, hold_at_boundary: bool = False) -> bool:
+        """dt초만큼 진행한다. 단계가 바뀌었으면 True.
+
+        hold_at_boundary면 이미 시작한 구간은 마저 가고, 새 구간은 시작하지 않는다 (서버와 끊긴 동안 다음 허가
+        지점 앞에서 기다리는 정책, VDA 5050의 확정 구간처럼).
+        """
         start = self._index
         remaining = dt
         self.velocity = (0.0, 0.0)
         while remaining > 0 and not self.done:
+            if hold_at_boundary and not self._progress:
+                break
+            self._progress = True
             leg = self._legs[self._index]
             if leg.target is None:
                 need = leg.duration - self._waited
@@ -162,7 +171,7 @@ class TaskRun:
                 remaining -= dist / self._speed
                 self._next()
         # dwell이 0이면 dt가 0이어도 대기 단계를 넘긴다
-        while not self.done and self._legs[self._index].target is None \
+        while not hold_at_boundary and not self.done and self._legs[self._index].target is None \
                 and self._legs[self._index].duration <= self._waited:
             self._next()
         return self._index != start
@@ -170,3 +179,4 @@ class TaskRun:
     def _next(self) -> None:
         self._index += 1
         self._waited = 0.0
+        self._progress = False
