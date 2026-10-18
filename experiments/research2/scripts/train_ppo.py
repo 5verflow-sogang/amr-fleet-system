@@ -12,6 +12,11 @@ best_model.zip, best_vecnormalize.pkl, final_model.zip, final_vecnormalize.pkl, 
 --val-config를 주면 검증(eval/*: 체크포인트 선택, eval_common/*)의 시나리오 분포([env.scenario])를 그 파일
 것으로 쓴다. 학습 시나리오만 바꾼 후보가 기준선과 같은 시나리오로 체크포인트를 고르게 하려는 것이다.
 안 주면 학습 시나리오 그대로다. 평가(evaluate.py)는 늘 --config의 시나리오를 쓴다.
+
+설정 파일에 [constraint]가 있으면(v3, config/env_v3.toml) PPO-Lagrangian으로 학습하고(payload_nav/lagrangian.py),
+체크포인트는 "검증 충돌률 ≤ cost_limit + checkpoint_margin"인 것 중 검증 보상 합이 가장 큰 것을 고른다.
+제약을 지킨 체크포인트가 없으면 검증 충돌률이 가장 낮은 것을 고르고 best_info.json에 feasible: false로 남긴다.
+v3는 검증 충돌률을 1% 단위로 가려야 하므로 --eval-episodes 400 --eval-every 200000 정도로 돌린다.
 """
 
 import argparse
@@ -39,14 +44,22 @@ from payload_nav.training import make_model  # noqa: E402
 
 
 class SuccessEvalCallback(BaseCallback):
-    """학습 질량만으로 구성한 검증 환경의 성공률로 체크포인트를 고른다 (학습 보상 아님)."""
+    """학습 질량만으로 구성한 검증 환경으로 체크포인트를 고른다 (학습 보상 아님).
 
-    def __init__(self, env_config, vecnorm, run_dir, every_steps, episodes, seed_base=VAL_SEED_BASE):
+    constraint가 없으면(v1·v2) 검증 성공률이 가장 높은 것. 있으면(v3) 검증 충돌률 ≤ cost_limit + checkpoint_margin인
+    것 중 검증 보상 합(환경 보상, 할인 없음)이 가장 큰 것. 제약을 지킨 것이 아직 없으면 검증 충돌률이 가장 낮은 것
+    (같으면 보상 합이 큰 것)을 임시로 두고, 제약을 지킨 것이 나오면 그것으로 바꾼다. 고른 것은 best_info.json에 남긴다.
+    """
+
+    def __init__(self, env_config, vecnorm, run_dir, every_steps, episodes, seed_base=VAL_SEED_BASE, constraint=None):
         super().__init__()
         self.env = PayloadNavEnv(env_config)
         self.vecnorm, self.run_dir = vecnorm, run_dir
         self.every_steps, self.episodes, self.seed_base = every_steps, episodes, seed_base
+        self.constraint = constraint
         self.last_eval, self.best = 0, -1.0
+        self.best_key = None     # v3: (제약을 지킴, 지키면 보상 합 / 아니면 −충돌률, 보상 합)
+        self.best_info: dict = {}
 
     def _on_step(self) -> bool:
         if self.num_timesteps - self.last_eval < self.every_steps:
@@ -59,11 +72,28 @@ class SuccessEvalCallback(BaseCallback):
         self.logger.record('eval/collision_rate', float(np.mean([r['collision'] for r in results])))
         self.logger.record('eval/mean_time_s', float(np.mean([r['time_s'] for r in results])))
         self.logger.record('eval/timeout_rate', float(np.mean([r['outcome'] == 'timeout' for r in results])))
-        if success > self.best:
-            self.best = success
-            self.model.save(self.run_dir / 'best_model.zip')
-            self.vecnorm.save(str(self.run_dir / 'best_vecnormalize.pkl'))
+        if self.constraint is None:
+            if success > self.best:
+                self.best = success
+                self._save_best()
+            return True
+        collision = float(np.mean([r['collision'] for r in results]))
+        ret = float(np.mean([r['return'] for r in results]))
+        self.logger.record('eval/return', ret)
+        feasible = collision <= self.constraint.cost_limit + self.constraint.checkpoint_margin
+        key = (feasible, ret if feasible else -collision, ret)
+        if self.best_key is None or key > self.best_key:
+            self.best_key, self.best = key, success
+            self.best_info = {'step': int(self.num_timesteps), 'feasible': feasible, 'success_rate': success,
+                              'collision_rate': collision, 'return': ret, 'episodes': self.episodes,
+                              'threshold': self.constraint.cost_limit + self.constraint.checkpoint_margin}
+            (self.run_dir / 'best_info.json').write_text(json.dumps(self.best_info, indent=2))
+            self._save_best()
         return True
+
+    def _save_best(self):
+        self.model.save(self.run_dir / 'best_model.zip')
+        self.vecnorm.save(str(self.run_dir / 'best_vecnormalize.pkl'))
 
 
 class CommonEvalCallback(BaseCallback):
@@ -92,12 +122,11 @@ class CommonEvalCallback(BaseCallback):
                'collision_rate': float(np.mean([r['collision'] for r in results])),
                'timeout_rate': float(np.mean([r['outcome'] == 'timeout' for r in results])),
                'mean_time_s': float(np.mean([r['time_s'] for r in results]))}
-        heaviest = max(self.masses)
         for m in self.masses:
             rs = [r for r in results if r['payload_kg'] == m]
             out[f'speed_{m:g}kg'] = float(np.mean([r['mean_speed'] for r in rs]))
-        out[f'collision_{heaviest:g}kg'] = float(np.mean([r['collision'] for r in results
-                                                         if r['payload_kg'] == heaviest]))
+            # 질량별 충돌률 (v3: 평균 제약이 무거운 질량에 몰리는지 본다. 예전엔 가장 무거운 질량만 남겼다)
+            out[f'collision_{m:g}kg'] = float(np.mean([r['collision'] for r in rs]))
         return out
 
     def _on_step(self) -> bool:
@@ -184,7 +213,7 @@ def main():
     shutil.copyfile(args.config, run_dir / 'config.toml')
     # 학습 환경 시드는 학습 시드끼리 겹치지 않게 따로 둔다 (seeds.py, training.py)
     model, venv, env_seed = make_model(env_config, n_envs, args.seed, ppo, net_arch,
-                                       tensorboard_log=str(run_dir / 'tb'))
+                                       tensorboard_log=str(run_dir / 'tb'), constraint=experiment.constraint)
     if args.init_from:
         # 신경망 구조는 설정 파일(net_arch)이 같아야 한다. 행동 표준편차(log_std)도 가중치라 같이 온다
         model.policy.load_state_dict(PPO.load(args.init_from / 'best_model.zip', device='cpu').policy.state_dict())
@@ -197,15 +226,22 @@ def main():
                   'init_from': str(args.init_from) if args.init_from else None},
          'n_envs': n_envs, 'env_seed_base': env_seed, 'ppo': {**ppo, 'net_arch': net_arch},
          'env': asdict(env_config), 'val_scenario': asdict(val_config.scenario),
+         'constraint': asdict(experiment.constraint) if experiment.constraint else None,
          'torch': torch.__version__}, indent=2, ensure_ascii=False))
-    callback = SuccessEvalCallback(val_config, venv, run_dir, args.eval_every, args.eval_episodes)
+    callback = SuccessEvalCallback(val_config, venv, run_dir, args.eval_every, args.eval_episodes,
+                                   constraint=experiment.constraint)
     callbacks = [callback, OutcomeLogCallback()]
     if args.common_eval_episodes > 0:
         callbacks.append(CommonEvalCallback(val_config, venv, args.eval_every, args.common_eval_episodes))
     model.learn(args.steps, callback=callbacks)
     model.save(run_dir / 'final_model.zip')
     venv.save(str(run_dir / 'final_vecnormalize.pkl'))
-    print(f'저장: {run_dir} (검증 최고 성공률 {callback.best:.2f})')
+    extra = ''
+    if experiment.constraint is not None:
+        b = callback.best_info
+        extra = (f', 고른 체크포인트 {b.get("step")} 스텝 제약 {"지킴" if b.get("feasible") else "못 지킴"} '
+                 f'충돌 {b.get("collision_rate", float("nan")):.3f} λ {model.lagrangian.value:.2f}')
+    print(f'저장: {run_dir} (검증 최고 성공률 {callback.best:.2f}{extra})')
 
 
 if __name__ == '__main__':
