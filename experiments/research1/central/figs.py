@@ -239,6 +239,58 @@ ax.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], frameon=False, fon
 save(fig, 'figB_throughput')
 
 
+
+# 한 단 점 그림: 조건마다 한 줄, 예측(◇)과 실측(● + 95% CI)을 나란히. 대각선 그림보다 읽기 쉽다
+DOT_LABEL = {'central_loss30': '손실 30%', 'central_loss50': '손실 50%', 'central_loss70': '손실 70%',
+             'central_loss50_k1': '손실 50%, 재전송 1회', 'central_loss50_k0': '손실 50%, 재전송 0회',
+             'short_loss50': '25초 작업, 손실 50%', 'short_loss70': '25초 작업, 손실 70%'}
+DOT_ORDER = ['central_loss30', 'central_loss50', 'central_loss70',
+             'central_loss50_k1', 'central_loss50_k0', 'short_loss50', 'short_loss70']
+
+
+def dot_panel(ax, kind):
+    by = {c: (W, gap, pred, thr) for _, _, _, _, W, gap, pred, thr, c in pts}
+    ys = np.arange(len(DOT_ORDER))[::-1]
+    for y, c in zip(ys, DOT_ORDER):
+        W, gap, pred, thr = by[c]
+        if kind == 'wait':
+            pv, m, lo, hi = W, gap[0], gap[1], gap[2]
+        else:   # 처리량 감소 (%): 부호를 바꿔 양수로
+            pv, m, lo, hi = -pred, -thr[0], -thr[2], -thr[1]
+        ax.plot([pv, m], [y, y], color='0.8', lw=1.2, zorder=1)
+        ax.errorbar(m, y, xerr=[[m - lo], [hi - m]], fmt='o', ms=3.4, color='black', elinewidth=0.7, capsize=1.5,
+                    zorder=3)
+        ax.plot(pv, y, 'D', ms=4.2, mfc='white', mec='black', mew=0.8, zorder=4)
+    # 사후 적합(위 3줄)과 사전 예측(아래 4줄) 사이 구분선과 이름
+    yb = ys[2] - 0.5
+    ax.axhline(yb, color='0.75', lw=0.6, ls='--')
+    ax.text(0.995, yb + 0.06, '↑ 사후 적합', transform=ax.get_yaxis_transform(), ha='right', va='bottom',
+            fontsize=5.4, color='0.4')
+    ax.text(0.995, yb - 0.06, '↓ 사전 예측', transform=ax.get_yaxis_transform(), ha='right', va='top',
+            fontsize=5.4, color='0.4')
+    ax.set_yticks(ys)
+    ax.set_yticklabels([DOT_LABEL[c] for c in DOT_ORDER], fontsize=6.2)
+    ax.set_ylim(ys[-1] - 0.6, ys[0] + 0.6)
+    ax.set_xlim(left=0)
+    ax.spines[['top', 'right']].set_visible(False)
+    ax.grid(axis='x', color='0.92', lw=0.5)
+    ax.set_axisbelow(True)
+    from matplotlib.lines import Line2D
+    ax.legend(handles=[Line2D([], [], marker='D', ls='', mfc='white', mec='black', ms=4.2, label='예측 (식)'),
+                       Line2D([], [], marker='o', ls='', color='black', ms=3.4, label='실측 (95% CI)')],
+              loc='lower center', bbox_to_anchor=(0.5, 1.0), ncol=2, frameon=False, fontsize=5.8,
+              handletextpad=0.2, columnspacing=1.5, borderaxespad=0.1)
+
+
+fig, ax = plt.subplots(figsize=(88 * MM, 62 * MM))
+dot_panel(ax, 'wait')
+ax.set_xlabel('명령을 받기까지 추가 대기 (초)')
+save(fig, 'figB_wait_dot')
+fig, ax = plt.subplots(figsize=(88 * MM, 62 * MM))
+dot_panel(ax, 'thr')
+ax.set_xlabel('처리량 감소 (%)')
+save(fig, 'figB_throughput_dot')
+
 # ---------- 그림 C: 단절 로봇 정책 ----------
 # 원고 3장 번호·이름과 같게: ① 정지 ② 허가 지점 대기 ③ 할당 작업 완수 ④ 자율 재할당(분산 경매, 상한).
 # 결과가 아직 없는 정책(data/<라벨>이 없음)은 빼고 그린다
