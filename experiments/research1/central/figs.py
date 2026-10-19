@@ -167,19 +167,23 @@ DODGE = {'central_loss50': 0.0, 'central_loss70': 0.0, 'central_loss30': 0.0,
 LEGEND_B = []
 
 
-def panel_wait(ax, legend=True):
+def _wait_points(ax, step, collect):
+    seen = set()
+    for name, marker, face, p, W, gap, _, _, c in pts:
+        x = W + DODGE[c] * step   # 같은 예측값의 점을 조금만 띄운다 (값이 틀려 보이지 않을 만큼)
+        h = ax.errorbar(x, gap[0], yerr=[[gap[0] - gap[1]], [gap[2] - gap[0]]], fmt=marker, ms=3.0, mfc=face,
+                        mec='black', ecolor='black', elinewidth=0.6, capsize=1.5,
+                        label=None if name in seen else name, zorder=3 if face == 'white' else 2)
+        if collect and name not in seen and len(LEGEND_B) < 3:
+            LEGEND_B.append((h, name))
+        seen.add(name)
+
+
+def panel_wait(ax, legend=True, inset=False):
     lim = 2.7
     ax.plot([0, lim], [0, lim], color='0.6', lw=0.6, ls='--', zorder=0)
     ax.text(1.72, 1.52, '예측 = 실측', color='0.45', fontsize=5.6, rotation=35, ha='center', va='top')
-    seen = set()
-    for name, marker, face, p, W, gap, _, _, c in pts:
-        x = W + DODGE[c] * 0.045
-        h = ax.errorbar(x, gap[0], yerr=[[gap[0] - gap[1]], [gap[2] - gap[0]]], fmt=marker, ms=3.4, mfc=face,
-                        mec='black', ecolor='black', elinewidth=0.6, capsize=1.5,
-                        label=None if name in seen else name, zorder=3 if face == 'white' else 2)
-        if name not in seen and len(LEGEND_B) < 3:
-            LEGEND_B.append((h, name))
-        seen.add(name)
+    _wait_points(ax, 0.03 if inset else 0.045, collect=True)
     # 손실률 이름은 점 묶음 아래 오른쪽에 (오차 막대·대각선과 안 겹치게)
     for p, dx, dy in ((0.3, 6, -10), (0.5, 8, -16), (0.7, -10, 10)):
         ax.annotate(f'손실 {p:.0%}', (p / (1 - p), p / (1 - p)), xytext=(dx, dy), textcoords='offset points',
@@ -188,8 +192,31 @@ def panel_wait(ax, legend=True):
     ax.set_ylim(0, lim)
     ax.set_xlabel('예측 추가 대기 W = r·p/(1-p) (초, r = 1초)')
     ax.set_ylabel('실측 추가 대기 (초)')
+    if inset:
+        # 손실 50%는 네 조건의 예측이 모두 1.0초라 점이 겹친다. 확대 창에서는 조건을 가로로 나란히 놓고
+        # 예측 1.0초를 가로 점선으로 그려, 옆으로 띄워도 값이 틀려 보이지 않게 한다
+        ins = ax.inset_axes([0.08, 0.6, 0.44, 0.34])
+        order = [('central_loss50', '60초'), ('central_loss50_k1', '재전송\n1회'),
+                 ('central_loss50_k0', '재전송\n0회'), ('short_loss50', '25초')]
+        by = {c: (marker, face, gap) for _, marker, face, _, _, gap, _, _, c in pts}
+        for i, (c, _) in enumerate(order):
+            marker, face, gap = by[c]
+            ins.errorbar(i, gap[0], yerr=[[gap[0] - gap[1]], [gap[2] - gap[0]]], fmt=marker, ms=3.0, mfc=face,
+                         mec='black', ecolor='black', elinewidth=0.6, capsize=1.5)
+        ins.axhline(1.0, color='0.6', lw=0.6, ls='--', zorder=0)
+        ins.text(4.35, 1.012, '예측 1.0초', fontsize=5, color='0.45', va='bottom', ha='right')
+        ins.set_xticks(range(len(order)))
+        ins.set_xticklabels([n for _, n in order], fontsize=5)
+        ins.set_xlim(-0.5, 4.4)
+        ins.set_ylim(0.74, 1.26)
+        ins.tick_params(labelsize=5, length=2, pad=1)
+        ins.set_title('손실 50% (예측이 같은 네 조건)', fontsize=5.3, pad=2, color='0.3')
+        ins.spines[['top', 'right']].set_visible(False)
+        # 본 그림의 해당 부분에 상자를 그려 어디를 늘린 것인지 표시
+        from matplotlib.patches import Rectangle
+        ax.add_patch(Rectangle((0.9, 0.74), 0.24, 0.52, fill=False, ec='0.55', lw=0.5, zorder=1))
     if legend:
-        ax.legend(frameon=False, fontsize=5.5, loc='upper left', handletextpad=0.3)
+        ax.legend(frameon=False, fontsize=5.5, loc='lower right' if inset else 'upper left', handletextpad=0.3)
 
 
 # (b) 점 이름: (x 오프셋, y 오프셋, 정렬). 오차 막대 옆 빈 곳으로
@@ -203,8 +230,8 @@ def panel_thr(ax):
     lim = 11
     ax.plot([0, lim], [0, lim], color='0.6', lw=0.6, ls='--', zorder=0)
     for name, marker, face, p, W, gap, pred, thr, c in pts:
-        x = -pred + (DODGE[c] * 0.25 if '_k' in c else 0)   # (b)는 예측이 같은 재전송 0·1번만 띄운다
-        ax.errorbar(x, -thr[0], yerr=[[thr[2] - thr[0]], [thr[0] - thr[1]]], fmt=marker, ms=3.4, mfc=face,
+        x = -pred + (DODGE[c] * 0.15 if '_k' in c else 0)   # (b)는 예측이 같은 재전송 0·1번만 띄운다
+        ax.errorbar(x, -thr[0], yerr=[[thr[2] - thr[0]], [thr[0] - thr[1]]], fmt=marker, ms=3.0, mfc=face,
                     mec='black', ecolor='black', elinewidth=0.6, capsize=1.5, zorder=3 if face == 'white' else 2)
         if c in LABEL_THR:
             text, (tx, ty) = LABEL_THR[c]
@@ -229,10 +256,10 @@ for ext in ('pdf', 'png'):
     fig.savefig(OUT / f'figB_prediction_wide.{ext}', dpi=300)
 plt.close(fig)
 # 한 단 판: (a)·(b)를 따로 한 장씩 (원고에서 그림 2·3으로 나눠 넣는다)
-fig, ax = plt.subplots(figsize=(88 * MM, 66 * MM))
-panel_wait(ax)
+fig, ax = plt.subplots(figsize=(88 * MM, 72 * MM))
+panel_wait(ax, inset=True)
 save(fig, 'figB_wait')
-fig, ax = plt.subplots(figsize=(88 * MM, 66 * MM))
+fig, ax = plt.subplots(figsize=(88 * MM, 72 * MM))
 panel_thr(ax)
 ax.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], frameon=False, fontsize=5.5, loc='upper left',
           handletextpad=0.3)
