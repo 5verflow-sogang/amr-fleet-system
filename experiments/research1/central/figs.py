@@ -101,7 +101,7 @@ def save(fig, name, **layout):
 conds = [('지연 100 ms', 'central_d100'), ('지연 200 ms', 'central_d200'), ('지연 500 ms', 'central_d500'),
          ('손실 30%', 'central_loss30'), ('손실 50%', 'central_loss50'), ('손실 70%', 'central_loss70'),
          ('단절 3초', 'central_bo3_r3'), ('단절 10초', 'central_bo10_r3'), ('단절 30초', 'central_bo30_r3'),
-         ('25초 작업\n+ 손실 70%', 'short_loss70'), ('단절 30초\n+ 멈춤 정책', 'central_bo30_r3_pause')]
+         ('25초 작업\n+ 손실 70%', 'short_loss70'), ('단절 30초\n+ 정지 정책', 'central_bo30_r3_pause')]
 # 무리(그룹) 경계와 이름: 같은 무리끼리 가는 선으로 나누고 오른쪽 끝에 이름을 단다
 GROUPS_A = [('지연', 0, 2), ('손실', 3, 5), ('단절\n(1대)', 6, 8), ('취약\n조건', 9, 10)]
 fig, ax = plt.subplots(figsize=(88 * MM, 74 * MM))
@@ -240,12 +240,12 @@ save(fig, 'figB_throughput')
 
 
 # ---------- 그림 C: 단절 로봇 정책 ----------
-# 원고 3장 번호와 같게: ① 멈춤 ② 허가 지점 대기 ③ 받은 일 계속 ④ 새 일도 스스로(분산 경매, 상한).
+# 원고 3장 번호·이름과 같게: ① 정지 ② 허가 지점 대기 ③ 할당 작업 완수 ④ 자율 재할당(분산 경매, 상한).
 # 결과가 아직 없는 정책(data/<라벨>이 없음)은 빼고 그린다
-policies = [p for p in [('① 멈춤', 'central_bo30_r3_pause', '0.3', ''),
+policies = [p for p in [('① 정지', 'central_bo30_r3_pause', '0.3', ''),
                         ('② 허가 지점\n대기', 'central_bo30_r3_leg', '0.5', ''),
-                        ('③ 받은 일\n계속', 'central_bo30_r3', '0.7', ''),
-                        ('④ 새 일도\n스스로 (상한)', 'hybrid_bo30_r3', '0.92', '////')] if (D / p[1]).exists()]
+                        ('③ 할당 작업\n완수', 'central_bo30_r3', '0.7', ''),
+                        ('④ 자율 재할당\n(상한)', 'hybrid_bo30_r3', '0.92', '////')] if (D / p[1]).exists()]
 
 
 def panel_a3(ax):
