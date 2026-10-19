@@ -291,6 +291,52 @@ dot_panel(ax, 'thr')
 ax.set_xlabel('처리량 감소 (%)')
 save(fig, 'figB_throughput_dot')
 
+
+# 한 단 막대판: 조건마다 예측(흰 막대)과 실측(회색 막대 + 95% CI)을 나란히
+def bar_panel(ax, kind):
+    by = {c: (W, gap, pred, thr) for _, _, _, _, W, gap, pred, thr, c in pts}
+    ys = np.arange(len(DOT_ORDER))[::-1] * 1.0
+    h = 0.36
+    xr = 0
+    for y, c in zip(ys, DOT_ORDER):
+        W, gap, pred, thr = by[c]
+        if kind == 'wait':
+            pv, m, lo, hi = W, gap[0], gap[1], gap[2]
+        else:
+            pv, m, lo, hi = -pred, -thr[0], -thr[2], -thr[1]
+        xr = max(xr, pv, hi)
+        ax.barh(y + h / 2, pv, height=h, color='white', edgecolor='black', lw=0.6)
+        ax.barh(y - h / 2, m, height=h, color='0.6', edgecolor='black', lw=0.6,
+                xerr=[[m - lo], [hi - m]], error_kw={'elinewidth': 0.6, 'capsize': 1.5})
+    yb = ys[2] - 0.5
+    ax.axhline(yb, color='0.75', lw=0.6, ls='--')
+    ax.text(0.995, yb + 0.06, '↑ 사후 적합', transform=ax.get_yaxis_transform(), ha='right', va='bottom',
+            fontsize=5.4, color='0.4')
+    ax.text(0.995, yb - 0.06, '↓ 사전 예측', transform=ax.get_yaxis_transform(), ha='right', va='top',
+            fontsize=5.4, color='0.4')
+    ax.set_yticks(ys)
+    ax.set_yticklabels([DOT_LABEL[c] for c in DOT_ORDER], fontsize=6.2)
+    ax.set_ylim(ys[-1] - 0.6, ys[0] + 0.6)
+    ax.set_xlim(0, xr * 1.22)   # 오른쪽 끝에 '사후 적합/사전 예측' 글씨 자리
+    ax.spines[['top', 'right']].set_visible(False)
+    ax.grid(axis='x', color='0.92', lw=0.5)
+    ax.set_axisbelow(True)
+    from matplotlib.patches import Patch
+    ax.legend(handles=[Patch(facecolor='white', edgecolor='black', lw=0.6, label='예측 (식)'),
+                       Patch(facecolor='0.6', edgecolor='black', lw=0.6, label='실측 (95% CI)')],
+              loc='lower center', bbox_to_anchor=(0.5, 1.0), ncol=2, frameon=False, fontsize=5.8,
+              handletextpad=0.3, columnspacing=1.5, borderaxespad=0.1)
+
+
+fig, ax = plt.subplots(figsize=(88 * MM, 70 * MM))
+bar_panel(ax, 'wait')
+ax.set_xlabel('명령을 받기까지 추가 대기 (초)')
+save(fig, 'figB_wait_bar')
+fig, ax = plt.subplots(figsize=(88 * MM, 70 * MM))
+bar_panel(ax, 'thr')
+ax.set_xlabel('처리량 감소 (%)')
+save(fig, 'figB_throughput_bar')
+
 # ---------- 그림 C: 단절 로봇 정책 ----------
 # 원고 3장 번호·이름과 같게: ① 정지 ② 허가 지점 대기 ③ 할당 작업 완수 ④ 자율 재할당(분산 경매, 상한).
 # 결과가 아직 없는 정책(data/<라벨>이 없음)은 빼고 그린다
