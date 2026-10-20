@@ -280,12 +280,12 @@ b2.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], loc='upper left', 
 fig.set_size_inches(88 * MM, 122 * MM)
 save(fig, 'figB_stacked', h_pad=1.4)
 
-# 한 단 압축 합본: (a) 위·(b) 아래, 확대 창 없이 84 mm. 두 장(72 mm씩)을 한 장으로 합쳐 한 단에서 약 60 mm를 줄인다.
+# 한 단 압축 합본: (a) 위·(b) 아래, 확대 창 없이 98 mm. 두 장(72 mm씩)을 한 장으로 합쳐 한 단에서 약 46 mm를 줄인다.
 # 손실 50%의 겹친 점은 본문에서 설명하므로 확대 창은 뺀다 (확대 창이 필요하면 figB_stacked)
 _old_label = dict(LABEL_THR)
 LABEL_THR.update({'central_loss30': ('60초, 손실 30%', (2.6, 0.6)), 'central_loss50': ('60초, 손실 50%', (2.6, 1.75))})
 LEGEND_B.clear()
-fig, (b1, b2) = plt.subplots(2, 1, figsize=(88 * MM, 84 * MM))
+fig, (b1, b2) = plt.subplots(2, 1, figsize=(88 * MM, 98 * MM))
 panel_wait(b1, legend=False)
 panel_thr(b2)
 b1.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], frameon=False, fontsize=5.2, loc='upper left',
