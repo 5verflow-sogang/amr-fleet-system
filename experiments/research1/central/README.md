@@ -23,6 +23,8 @@ python3 figs.py data figures     # 그림 A·B·C (NanumGothic 글꼴 필요, ma
 
 `_wide`는 두 단 폭(180 mm), 나머지는 한 단 폭(88 mm)이다. 그림 B의 한 단 판은 (a) `figB_wait`, (b) `figB_throughput` 두 장으로 나눈다.
 
+`figures/figB_compact`는 (a)·(b)를 확대 창 없이 한 단 폭 84 mm 한 장에 위아래로 합친 판이다. 두 장(72 mm씩)보다 한 단에서 약 60 mm, `figB_stacked`(122 mm)보다 약 38 mm 짧다. 3쪽 제한 때문에 원고(그림 2)에 쓴다. 손실 50%에서 예측이 같아 겹친 점은 본문에서 설명한다.
+
 ## 결과 요약
 
 | 조건 (기준 대비) | 완료 시간 변화 [95% CI] | 비고 |
