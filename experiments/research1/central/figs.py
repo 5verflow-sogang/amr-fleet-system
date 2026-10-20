@@ -193,7 +193,7 @@ def panel_wait(ax, legend=True):
 
 
 # (b) 점 이름: (x 오프셋, y 오프셋, 정렬). 오차 막대 옆 빈 곳으로
-LABEL_THR = {'central_loss30': ('60초, 손실 30%', (2.6, 0.6)), 'central_loss50': ('60초, 손실 50%', (2.6, 1.75)),
+LABEL_THR = {'central_loss30': ('60초, 손실 30%', (2.6, 0.2)), 'central_loss50': ('60초, 손실 50%', (2.6, 0.95)),
              'central_loss70': ('60초, 손실 70%', (4.6, 2.3)), 'short_loss50': ('25초, 손실 50%', (5.2, 3.9)),
              'short_loss70': ('25초, 손실 70%', (6.0, 9.4)), 'central_loss50_k0': ('재전송 0·1번', (0.2, 3.4)),
              'central_loss50_k1': ('재전송 0·1번', (0.2, 3.4))}
@@ -227,23 +227,6 @@ fig.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], loc='upper center
 fig.tight_layout(pad=0.3, rect=(0, 0, 1, 0.92))
 for ext in ('pdf', 'png'):
     fig.savefig(OUT / f'figB_prediction_wide.{ext}', dpi=300)
-plt.close(fig)
-# 한 단 폭 세로 배치: (a) 위, (b) 아래를 한 장에 (원고에서 그림 2 하나로 넣는다). 두 단 폭 판과 달리 한 단만 차지한다
-fig, (b1, b2) = plt.subplots(2, 1, figsize=(88 * MM, 84 * MM))
-panel_wait(b1, legend=False)
-panel_thr(b2)
-b1.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], frameon=False, fontsize=5.2, loc='upper left',
-          handletextpad=0.3, labelspacing=0.25, borderaxespad=0.2)
-b1.set_ylabel('실측 추가 대기 (초)', fontsize=6.5)
-b2.set_ylabel('실측 감소 (%)', fontsize=6.5)
-b1.set_title('(a) 명령을 받기까지 추가 대기', fontsize=6.5, pad=3)
-b2.set_title('(b) 처리량 감소 (완료 작업 수)', fontsize=6.5, pad=3)
-for t in b1.texts:                      # '손실 70%'는 위쪽 제목과 겹치지 않게 점 왼쪽 아래로
-    if t.get_text() == '손실 70%':
-        t.set_position((-14, -4))
-fig.tight_layout(pad=0.3, h_pad=1.2)
-for ext in ('pdf', 'png'):
-    fig.savefig(OUT / f'figB_prediction.{ext}', dpi=300)
 plt.close(fig)
 # 한 단 판: (a)·(b)를 따로 한 장씩 (원고에서 그림 2·3으로 나눠 넣는다)
 fig, ax = plt.subplots(figsize=(88 * MM, 66 * MM))
