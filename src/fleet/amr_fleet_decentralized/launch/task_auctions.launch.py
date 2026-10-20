@@ -23,12 +23,13 @@ def _auctions(context):
         raise RuntimeError(f'count는 1~{MAX_ROBOTS}: {count}')
     relayed = LaunchConfiguration('relayed').perform(context)
     fleet_mode = LaunchConfiguration('fleet_mode').perform(context)
+    fallback_timeout_s = LaunchConfiguration('fallback_timeout_s').perform(context)
     single = PathJoinSubstitution([FindPackageShare('amr_fleet_decentralized'), 'launch', 'task_auction.launch.py'])
     return [
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(single),
             launch_arguments={'namespace': robot_id, 'robot_id': robot_id, 'relayed': relayed,
-                              'fleet_mode': fleet_mode}.items())
+                              'fleet_mode': fleet_mode, 'fallback_timeout_s': fallback_timeout_s}.items())
         for robot_id in (f'amr_{i:02d}' for i in range(1, count + 1))
     ]
 
@@ -42,5 +43,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'fleet_mode', default_value='decentral',
             description='decentral(늘 분산) 또는 hybrid(평시 중앙, 서버 heartbeat가 끊기면 분산). task_auction.launch.py로 넘긴다'),
+        DeclareLaunchArgument(
+            'fallback_timeout_s', default_value='2.0',
+            description='하이브리드: heartbeat가 이 시간(s) 동안 안 오면 분산으로 전환. task_auction.launch.py로 넘긴다'),
         OpaqueFunction(function=_auctions),
     ])

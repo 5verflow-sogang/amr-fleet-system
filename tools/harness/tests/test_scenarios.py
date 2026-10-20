@@ -70,6 +70,16 @@ def test_resend_and_link_loss_policy_reach_processes():
     assert 'uplink_relayed:=false' in _fleet_fake_procs()['fake_robots']['cmd']
 
 
+def test_reclaim_and_fallback_timeouts_reach_processes():
+    # 연구 1 회수 기준·하이브리드 전환 기준 비교. 기본은 지금 동작(회수 5초, 전환 2초)
+    base = _fleet_fake_procs(fleet_mode='hybrid')
+    assert 'reclaim_timeout_s:=5.0' in base['fleet_manager']['cmd']
+    assert 'fallback_timeout_s:=2.0' in base['task_auctions']['cmd']
+    sets = _fleet_fake_procs(fleet_mode='hybrid', reclaim_timeout_s='40', fallback_timeout_s='6')
+    assert 'reclaim_timeout_s:=40' in sets['fleet_manager']['cmd']
+    assert 'fallback_timeout_s:=6' in sets['task_auctions']['cmd']
+
+
 def test_fleet_mode_processes():
     central = _fleet_fake_procs()
     assert 'task_auctions' not in central and 'fleet_manager' in central
