@@ -222,8 +222,8 @@ def panel_wait(ax, legend=True, inset=False):
 # (b) 점 이름: (x 오프셋, y 오프셋, 정렬). 오차 막대 옆 빈 곳으로
 LABEL_THR = {'central_loss30': ('60초, 손실 30%', (2.6, 0.2)), 'central_loss50': ('60초, 손실 50%', (2.6, 0.95)),
              'central_loss70': ('60초, 손실 70%', (4.6, 2.3)), 'short_loss50': ('25초, 손실 50%', (5.2, 3.9)),
-             'short_loss70': ('25초, 손실 70%', (6.0, 9.4)), 'central_loss50_k0': ('재전송 0·1번', (0.2, 3.4)),
-             'central_loss50_k1': ('재전송 0·1번', (0.2, 3.4))}
+             'short_loss70': ('25초, 손실 70%', (6.0, 9.4)), 'central_loss50_k0': ('재전송 0·1번', (0.2, 3.0)),
+             'central_loss50_k1': ('재전송 0·1번', (0.2, 3.0))}
 
 
 def panel_thr(ax):
@@ -266,6 +266,19 @@ ax.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], frameon=False, fon
 save(fig, 'figB_throughput')
 
 
+
+# 한 단 위아래 합본: (a) 추가 대기(확대 창 포함) + (b) 처리량 감소, 범례는 맨 위에 하나
+fig, (b1, b2) = plt.subplots(2, 1, figsize=(88 * MM, 128 * MM))
+LEGEND_B.clear()
+panel_wait(b1, legend=False, inset=True)
+panel_thr(b2)
+b1.set_title('(a) 명령을 받기까지 추가 대기', fontsize=7)
+b2.set_title('(b) 처리량 감소', fontsize=7)
+# 범례는 (b) 왼쪽 위 빈 곳에 하나 (두 패널이 같은 기호)
+b2.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], loc='upper left', frameon=False, fontsize=5.6,
+          handletextpad=0.3)
+fig.set_size_inches(88 * MM, 122 * MM)
+save(fig, 'figB_stacked', h_pad=1.4)
 
 # 한 단 점 그림: 조건마다 한 줄, 예측(◇)과 실측(● + 95% CI)을 나란히. 대각선 그림보다 읽기 쉽다
 DOT_LABEL = {'central_loss30': '손실 30%', 'central_loss50': '손실 50%', 'central_loss70': '손실 70%',
