@@ -11,6 +11,12 @@
       회전 중에는 스캔과 자세의 시각 차이로 일치율이 낮게 나와, 맞게 수렴해도 판정을 놓친다 (10/12 진단)
     시도가 max_attempts를 넘으면 FAILED (사람·상위 BT가 처리). FAILED에서도 계속 지켜보다가
     수렴 조건을 다시 만족하면(사람이 위치를 다시 잡아 준 경우 등) TRACKING으로 돌아온다
+    마커판 자세(aruco_pose)가 들어오면 SETTLING·ROTATING 중 어디서든 그 자세로 다시 뿌리고(MARKER_REINIT)
+      멈춰서 marker_settle_s 동안 판정한다 → 미수렴이면 다음 시도. 판 ID가 다 달라 통로·앞뒤를 헷갈리지 않아
+      스캔만으로 못 찾는 다른 통로 이동을 푼다 (4-7절). 시도를 일찍 끝낼 뿐 늘리지 않아 복구 시간 상한은 그대로다.
+      마커를 한 번이라도 받았으면 다음 시도도 전역 대신 마지막 마커 자세 주변으로 뿌리고(전역은 맞는 통로 후보를
+      지운다), 제자리 갱신을 marker_nomotion_max번까지 부른다 (좁게 뿌려 한 점에 몰려도 맞는 곳이다.
+      far 10회(10/25) seed 10: 4번 갱신에 3.8 → 1.1 m로 줄다가 갱신이 끊겨 멈췄다)
 
 수렴: 멈춘 상태(SETTLING)에서 일치율 ≥ ok_ratio이고 AMCL 위치 표준편차 ≤ ok_std_m가 ok_checks번 연속.
 회전 중에는 판정하지 않는다 (스캔·자세 시각 차이로 일치율이 흔들린다).
@@ -31,6 +37,7 @@ TRACKING, SETTLING, ROTATING, FAILED = 'tracking', 'settling', 'rotating', 'fail
 # 노드가 수행할 동작
 REINIT = 'reinit'          # AMCL reinitialize_global_localization (지도 전체)
 LOCAL_REINIT = 'local_reinit'  # 마지막으로 확실했던 자세 주변에 initialpose (넓은 공분산)
+MARKER_REINIT = 'marker_reinit'  # 마커판으로 잰 자세에 initialpose (마커 공분산)
 NOMOTION = 'nomotion'      # AMCL request_nomotion_update
 ROTATE = 'rotate'          # 제자리 회전 명령
 STOP = 'stop'              # 회전 멈춤
@@ -50,6 +57,10 @@ class RecoveryConfig:
     rotate_s: float = 15.0
     max_attempts: int = 3
     local_first: bool = True
+    # 마커 재초기화 뒤 판정 시간. 이 동안은 다음 마커 자세를 받지 않는다. 한 번 잃은 동안 marker_max번까지
+    marker_settle_s: float = 10.0
+    marker_max: int = 3
+    marker_nomotion_max: int = 12
 
 
 @dataclass
@@ -70,6 +81,8 @@ class KidnapRecovery:
     _since: float = 0.0
     _nomotion: int = 0
     _confirming: bool = False
+    _marker: bool = False
+    _markers: int = 0
     lost_at: Optional[float] = None
 
     def _converged(self, ratio: float, std_m: float) -> bool:
@@ -84,7 +97,10 @@ class KidnapRecovery:
             self.events.append(Event(now, 'failed', f'{self.config.max_attempts}번 시도'))
             return [STOP]
         self.state, self._since, self._ok = SETTLING, now, 0
-        self._nomotion, self._confirming = 1, False
+        self._nomotion, self._confirming, self._marker = 1, False, False
+        if self._markers:
+            self.events.append(Event(now, 'marker_retry', f'{self.attempts}번째'))
+            return [STOP, MARKER_REINIT, NOMOTION]
         local = self.config.local_first and self.attempts == 1
         self.events.append(Event(now, 'local_reinit' if local else 'reinit', f'{self.attempts}번째'))
         return [STOP, LOCAL_REINIT if local else REINIT, NOMOTION]
@@ -95,7 +111,7 @@ class KidnapRecovery:
         if self.state == TRACKING:
             self._low = self._low + 1 if (not math.isnan(ratio) and ratio < c.lost_ratio) else 0
             if self._low >= c.lost_checks:
-                self._low, self.attempts, self.lost_at = 0, 0, now
+                self._low, self.attempts, self._markers, self.lost_at = 0, 0, 0, now
                 self.events.append(Event(now, 'lost', f'일치율 {ratio:.2f}'))
                 return self._start_attempt(now)
             return []
@@ -106,8 +122,9 @@ class KidnapRecovery:
                 return [STOP]
             elapsed = now - self._since
             if self.state == SETTLING:
-                if elapsed < (c.confirm_s if self._confirming else c.settle_s):
-                    if self._nomotion < c.nomotion_max:
+                window = c.marker_settle_s if self._marker else c.confirm_s if self._confirming else c.settle_s
+                if elapsed < window:
+                    if self._nomotion < (c.marker_nomotion_max if self._markers else c.nomotion_max):
                         self._nomotion += 1
                         return [NOMOTION]
                     return []
@@ -131,3 +148,35 @@ class KidnapRecovery:
             self.state, self.attempts = TRACKING, 0
             self.events.append(Event(now, 'restored', f'일치율 {ratio:.2f}'))
         return []
+
+    def marker_hint(self, now: float) -> list[str]:
+        """마커판으로 잰 로봇 자세가 들어왔다. 복구 중이면 그 자세로 다시 뿌리고 멈춰서 판정한다.
+
+        지금 시도의 남은 단계를 마커 판정(marker_settle_s, 정지 확인과 같이 미수렴이면 다음 시도)으로 바꾼다.
+        tracking이면 필요 없고, failed는 포기한 상태라 사람·BT에 맡긴다 (그래도 수렴하면 restored로 돌아온다)
+        """
+        c = self.config
+        if self.state not in (SETTLING, ROTATING) or self._markers >= c.marker_max:
+            return []
+        if self._marker and now - self._since < c.marker_settle_s:
+            return []
+        self._markers += 1
+        self.state, self._since, self._ok = SETTLING, now, 0
+        self._nomotion, self._confirming, self._marker = 1, True, True
+        self.events.append(Event(now, 'marker_reinit', f'{self._markers}번째'))
+        return [STOP, MARKER_REINIT, NOMOTION]
+
+
+def carry_forward(pose, odom_then, odom_now):
+    """그때(odom_then) 자세 pose(x, y, yaw)에 그 뒤 odom으로 움직인 만큼(odom_then → odom_now)을 더한다.
+
+    마커 자세는 영상 시각 기준이라, 회전 중에 본 판이면 처리하는 동안 돈 각도만큼 틀린다 (0.5 rad/s × 0.2 s = 6°)
+    """
+    x0, y0, a0 = odom_then
+    x1, y1, a1 = odom_now
+    dx, dy = x1 - x0, y1 - y0
+    fx, fy = math.cos(a0) * dx + math.sin(a0) * dy, -math.sin(a0) * dx + math.cos(a0) * dy   # 그때 로봇 기준
+    x, y, a = pose
+    yaw = a + a1 - a0
+    return (x + math.cos(a) * fx - math.sin(a) * fy, y + math.sin(a) * fx + math.cos(a) * fy,
+            math.atan2(math.sin(yaw), math.cos(yaw)))

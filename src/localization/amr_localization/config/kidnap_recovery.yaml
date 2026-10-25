@@ -27,4 +27,16 @@
     normal_particles: 2000
     restore_std_m: 0.1
     restore_std_yaw: 0.05
+    # 마커판 자세 (amr_docking aruco_localizer, map 기준). 복구 중에 들어오면 그 자세·공분산으로 initialpose를 내고
+    # 멈춰서 marker_settle_s 동안 판정, 미수렴이면 다음 시도. 한 번 잃은 동안 marker_max번까지 (4-7절)
+    marker_topic: aruco_pose
+    marker_settle_s: 10.0
+    marker_max: 3
+    # 마커를 받은 뒤(다음 시도도 마커 주변) 제자리 갱신 상한. 좁게 뿌려 몰려도 맞는 곳이라 nomotion_max보다 크게
+    marker_nomotion_max: 12
+    # 이보다 오래된 영상·큰 σ는 버린다. σ 하한은 판 하나의 방향 오차를 스캔으로 고칠 여지를 남긴다
+    marker_max_age_s: 1.0
+    marker_max_std_m: 2.0
+    marker_min_std_m: 0.1
+    marker_min_std_yaw: 0.05
     explore_forward: false

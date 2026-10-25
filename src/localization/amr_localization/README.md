@@ -98,7 +98,7 @@ ros2 run amr_localization eval_offline <결과 폴더> --robot amr_01   # 구간
 
 ## Kidnapped 감지·복구 노드 (`kidnap_recovery`)
 
-> 상태: 착수. 감지 동작, 가까운 이동(약 2 m)은 국소 재초기화로 복구, 먼 이동(다른 통로)은 아직 못 찾는다. 설계·실험·판정 기준은 [localization.md 4절](../../../docs/algorithms/localization.md#4-kidnapped-robot-복구).
+> 상태: 같은 통로 10/10. 다른 통로는 카메라·마커판을 켜고 ArUco 단서(`aruco_pose`)를 받으면 10/10, 끄면 0/10 (seed 1~10, 10/25). 설계·실험·판정 기준은 [localization.md 4절](../../../docs/algorithms/localization.md#4-kidnapped-robot-복구).
 
 ```bash
 ros2 run amr_localization kidnap_recovery --ros-args -r __ns:=/amr_01 -p use_sim_time:=true \
@@ -112,6 +112,10 @@ ros2 run amr_localization kidnap_recovery --ros-args -r __ns:=/amr_01 -p use_sim
 | `local_first`, `local_std_m`, `local_std_yaw` | true, 2.5, 0.8 | 1차 시도는 마지막 확실한 자세 주변 국소 재초기화 |
 | `explore_forward`, `explore_speed`, `front_clearance` | false, 0.2, 1.0 | 탐색 단계에서 앞 ±20°가 비어 있으면 회전 대신 전진 (시제품, 기본 끔) |
 | `settle_s`, `allow_rotate`, `rotate_s`, `max_attempts` | 10, true, 15, 3 | 시도마다 정지 갱신 → 제자리 회전 |
+| `marker_topic` | `aruco_pose` | 마커판 자세 (amr_docking `aruco_localizer`, map 기준). 복구 중 들어오면 그 자세로 다시 뿌린다. 비우면 끔 |
+| `marker_settle_s`, `marker_max`, `marker_nomotion_max` | 10, 3, 12 | 마커로 뿌린 뒤 판정 시간, 한 번 잃은 동안 횟수, 제자리 갱신 상한. 미수렴이면 다음 시도도 마커 주변 |
+| `marker_max_age_s`, `marker_max_std_m` | 1.0, 2.0 | 이보다 오래된 영상·큰 σ의 마커 자세는 버린다 |
+| `marker_min_std_m`, `marker_min_std_yaw` | 0.1, 0.05 | AMCL에 넣는 σ 하한 |
 | `events_file` | `''` | 감지·재초기화·복구 시각 CSV |
 
 - 탐색(회전·전진) 중에만 `cmd_vel_recovery`(`cmd_vel_topic` 파라미터)를 낸다. twist_mux에서 내비(`cmd_vel_nav`)보다 우선하게 넣고, 그 뒤로 구역 허가(`amr_zone_client`)·안전(`amr_safety`)을 거쳐 최종 `cmd_vel`이 된다(#79 이진). 복구 중 내비 목표 중지는 BT가 한다(지수와 합의 예정).
