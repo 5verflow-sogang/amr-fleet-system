@@ -77,6 +77,8 @@
 
 - 보이는 판마다 도킹과 같은 판 PnP(`detector.board_from_corners`)로 왼쪽·오른쪽 마커 중심을 로봇 기준으로 구하고, 판의 world 자세(`dock_stations.yaml`)에서 로봇 world 자세를 역산한다 (`localize.robot_from_board`). world → map은 TF(system.launch.py 정렬 원점)
 - 판이 여럿 보이면 가장 가까운 판 하나로 낸다
+- 같은 판을 2초 안에 2번 연달아 0.4 m 안 자리로 읽었을 때만 낸다 (`localize.Agreement`). 멀리서 비스듬히 본 판은 PnP가 판 법선 둘레로 뒤집힌 해(판 기준 거울 쪽으로 수 m)를 가끔 낸다 (Kidnapped far 10회, 10/25)
+- 복구 노드와 붙여 다른 통로 Kidnapped 0/10 → 10/10 (seed 1~10, [localization.md 4-7절](../../../docs/algorithms/localization.md#4-7-aruco-단서로-다른-통로-이동-복구-1025))
 - 카메라 처리가 무거워 기본은 `kidnap_recovery/state`가 tracking이 아닐 때만 인식한다. 상태가 5 s 넘게 안 오면 tracking으로 본다 (복구 노드가 없으면 인식하지 않는다)
 - 판 하나로는 판이 로봇 쪽으로 얼마나 돌아 있는지(방향)가 가장 약하고, 그 오차가 판까지 거리만큼 위치 오차로 번진다. 공분산은 이걸 담는다 (`localize.SigmaModel`):
   - σ_yaw = 1° + 2°/m · d · (0.32 m / 마커 간격), σ_xy = 2 cm + 0.005·d² + d·σ_yaw
@@ -94,6 +96,7 @@
 | `sigma_xy0` / `sigma_xy2` | `0.02` / `0.005` | 위 σ 식 |
 | `sigma_yaw0_deg` / `sigma_yaw1_deg` | `1.0` / `2.0` | 위 σ 식 (랙 판 간격 기준) |
 | `map_frame` / `world_frame` | `map` / `world` | 판 좌표(world) → map |
+| `confirm_n` / `confirm_tol_m` / `confirm_window_s` | `2` / `0.4` / `2.0` | 같은 판을 이 시간 안에 n번 연달아 이 거리 안으로 읽어야 낸다. `confirm_n` 1이면 거르지 않음 |
 
 ## 실행
 
