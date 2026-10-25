@@ -4,6 +4,7 @@
 #
 #   tools/harness/docker_run.sh kidnap -n 20 --label near
 #   tools/harness/docker_run.sh kidnap -n 20 --label far --set mode=far
+#   tools/harness/docker_run.sh kidnap -n 10 --label far_aruco --set mode=far --set aruco=true
 #
 # 같은 seed면 같은 곳으로 옮긴다(kidnap/trial.py pick_target). 요약의 kidnap.success 평균이 성공률이다.
 name: kidnap
@@ -11,9 +12,13 @@ num_robots: 1
 use_sim_time: true
 seed_base: 1
 timeout_s: 400
+packages: amr_gazebo amr_odometry amr_localization amr_docking
 params:
   # near: 같은 통로 안 1~2.5 m·±0.6 rad / far: 다른 통로(B–C) 무작위 위치·방향
   mode: near
+  # true면 카메라·마커판·ArUco 위치 노드(amr_docking aruco_localizer)를 켠다. 복구 노드가 aruco_pose를 단서로 쓴다
+  # (localization.md 4-7절). 카메라 렌더링으로 sim이 느려진다
+  aruco: "false"
   map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1_0025.yaml
   # 지도↔월드 정합값(#98, v1 0.025 m). 옆 방향 기준(0.1 m)이 작아 지도 밀림(약 6 cm)을 빼고 잰다.
   # 0.05 m로 재려면 map=…/warehouse_v1.yaml map_origin=[-0.0571,1.5167,0.00013] initial_x=0.0571 initial_y=-0.0167
@@ -24,9 +29,21 @@ params:
 processes:
   - name: sim
     cmd: >-
-      ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false publish_odom_tf:=false enable_camera:=false
+      ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false publish_odom_tf:=false enable_camera:={aruco}
       dynamic_obstacles:=false
     ready_topic: /amr_01/scan_raw
+  # 스폰하고 바로 끝나는 명령이라, 하네스가 "바로 끝남"으로 보지 않게 끝난 뒤 기다린다 (정리 때 같이 죽는다)
+  - name: aruco_markers
+    enabled: "{aruco}"
+    cmd: ros2 launch amr_docking aruco_markers.launch.py && exec sleep infinity
+    settle_s: 5
+  # aruco_localizer가 판 위치(world)를 map으로 바꿀 때 쓴다. system.launch.py의 world_to_map과 같은 값(map_origin)
+  - name: world_to_map
+    enabled: "{aruco}"
+    cmd: >-
+      set -- $(echo "{map_origin}" | tr -d '[],');
+      exec ros2 run tf2_ros static_transform_publisher --x $1 --y $2 --z 0.0 --yaw $3
+      --frame-id world --child-frame-id map
   - name: odometry
     cmd: ros2 launch amr_odometry odometry.launch.py encoder_seed:={seed}
   - name: sensor_filters
@@ -47,6 +64,12 @@ processes:
       ros2 run amr_localization kidnap_recovery --ros-args -r __ns:=/amr_01 -p use_sim_time:=true
       -p cmd_vel_topic:=/amr_01/cmd_vel -p events_file:={run_dir}/kidnap/events.csv
     ready_topic: /amr_01/kidnap_recovery/state
+  # 복구 노드 상태가 tracking이 아닐 때만 인식한다 (only_when_lost)
+  - name: aruco_localizer
+    enabled: "{aruco}"
+    cmd: >-
+      ros2 run amr_docking aruco_localizer --ros-args -r __ns:=/amr_01
+      --params-file $(ros2 pkg prefix amr_docking)/share/amr_docking/config/aruco_localizer.yaml -p use_sim_time:=true
   - name: kidnap_trial
     cmd: >-
       ros2 run amr_localization kidnap_trial --ros-args -r __ns:=/amr_01 -p use_sim_time:=true
