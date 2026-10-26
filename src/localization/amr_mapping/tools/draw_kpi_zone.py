@@ -4,7 +4,7 @@
     python3 draw_kpi_zone.py maps/warehouse_v1.pgm maps/warehouse_v1_kpi_zone.png
 
 구역과 칸 값은 #183 Nav KPI 50쌍 투어(로컬, seed 1001)에서 민지가 정한 것을 그대로 옮겼다 (10/16 팀 합의).
-좌표는 map 기준이다 (world = map + (0, 1.5)). 그림을 그릴 때만 PIL·numpy가 필요하다 - ZONE 등 상수는
+좌표는 map 기준이다 (world = map + (0, 1.5)). 그림을 그릴 때만 PIL이 필요하다 - ZONE 등 상수는
 다른 스크립트(예: experiments/nav_kpi/recompute_zone_cte.py)가 이 파일을 임포트해서 그대로 쓴다.
 """
 import sys
@@ -31,7 +31,6 @@ MARKS = {'start': (0.0, 0.0), 'dock_1': (-27.0, 14.5), 'dock_2': (-27.0, 9.5)}
 
 
 def main():
-    import numpy as np  # noqa: F401 (그림 생성에서만 쓴다)
     from PIL import Image, ImageDraw, ImageFont
 
     pgm, out = sys.argv[1], sys.argv[2]

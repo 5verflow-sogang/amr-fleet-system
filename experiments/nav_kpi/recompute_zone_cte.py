@@ -86,7 +86,7 @@ def main() -> None:
                 zone_pairs.add(pair)
 
     print(f'zone (map): x [{zone[0]}, {zone[2]}] m, y [{zone[1]}, {zone[3]}] m')
-    print(f'unmatched pairs (gt_track에 없음): {unmatched}')
+    print(f'unmatched rows (같은 pair가 gt_track에 없음): {unmatched}')
     print(f'구역에 걸치는 쌍 수: {len(zone_pairs)}')
     print()
     print(f'{"segment":10s} {"all_mean_cm":>12s} {"all_n":>8s} {"zone_mean_cm":>13s} {"zone_n":>8s}')
