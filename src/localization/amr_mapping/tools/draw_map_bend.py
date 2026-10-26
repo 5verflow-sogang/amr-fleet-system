@@ -4,8 +4,10 @@
     python3 draw_map_bend.py maps/warehouse_v1_0025.yaml maps/warehouse_gt.yaml \\
         ../../simulation/amr_gazebo/worlds/warehouse.sdf maps/warehouse_v1_bend.png
     # 일부만 2배로: --crop X0 X1 Y0 Y1 (map 좌표) --scale 2
+    # 다른 SLAM 지도: --label 'map v2' --map-origin-in-world X Y YAW (그 지도의 정렬 원점)
 
-- 파랑: 정답 지도 물체, 빨강: 지도 v1 점유 칸. 두 지도는 같은 칸(0.025 m, 원점 [−30.2, −21.8])이라 칸끼리 겹친다
+- 파랑: 정답 지도 물체, 빨강: 지도 v1 점유 칸. 두 지도는 같은 칸(0.025 m, 원점 [−30.2, −21.8])이라 칸끼리 겹친다.
+  칸이 다른 지도(예: v2)면 정답 지도를 그 지도 칸과 정렬 원점에 맞춰 SDF에서 다시 그린다 (gt_map.rasterize)
 - 물체마다 v1이 정답에서 밀린 방향·크기를 화살표(20배)와 cm로 적는다. map_quality 구조 정확도와 같은
   "물체별 밀림"인데, 지도 전체 정렬을 다시 구하지 않고 launch 정렬 원점(map_origin_in_world) 그대로 잰다 -
   내비·Fleet 실험에서 로봇이 실제로 겪는 어긋남이다
@@ -23,7 +25,7 @@ import yaml
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-from amr_mapping.gt_map import MAP_ORIGIN_IN_WORLD  # noqa: E402
+from amr_mapping.gt_map import MAP_ORIGIN_IN_WORLD, rasterize  # noqa: E402
 from amr_mapping.map_quality import (  # noqa: E402
     GHOST_DISTANCE, associate, load_objects, occupied_world_points, read_pgm,
 )
@@ -81,16 +83,17 @@ def main(argv=None):
     ap.add_argument('--map-origin-in-world', nargs=3, type=float, default=list(MAP_ORIGIN_IN_WORLD))
     ap.add_argument('--crop', nargs=4, type=float, metavar=('X0', 'X1', 'Y0', 'Y1'), help='map 좌표 구역만')
     ap.add_argument('--scale', type=int, default=1)
+    ap.add_argument('--label', default='map v1', help='SLAM 지도 이름 (범례)')
     a = ap.parse_args(argv)
 
     v1, m1 = load_map(a.v1_yaml)
     gt, mg = load_map(a.gt_yaml)
-    if v1.shape != gt.shape or m1['resolution'] != mg['resolution'] or m1['origin'][:2] != mg['origin'][:2]:
-        sys.exit('두 지도의 칸(크기·해상도·원점)이 같아야 한다')
     res, (ox, oy) = m1['resolution'], m1['origin'][:2]
     h, w = v1.shape
     origin = tuple(a.map_origin_in_world)
     objs = load_objects(a.sdf)
+    if v1.shape != gt.shape or res != mg['resolution'] or (ox, oy) != tuple(mg['origin'][:2]):
+        gt = rasterize(objs, (w, h), res, (ox, oy), origin)
     shifts = shift_vectors(v1, m1, objs, origin)
 
     rgb = np.full((h, w, 3), 255, np.uint8)
@@ -158,15 +161,15 @@ def main(argv=None):
     leg = Image.new('RGB', (img.width, lh), (255, 255, 255))
     g = ImageDraw.Draw(leg)
     x = 12
-    items = [((150, 185, 245), 'ground truth (world SDF)'), ((215, 30, 30), 'map v1 (SLAM) occupied'),
+    items = [((150, 185, 245), 'ground truth (world SDF)'), ((215, 30, 30), f'{a.label} (SLAM) occupied'),
              (color(3), '<= 5 cm'), (color(8), '5-10 cm'), (color(15), '> 10 cm')]
     for c, label in items:
         g.rectangle([x, lh // 2 - fsize // 2, x + fsize, lh // 2 + fsize // 2], fill=c)
         g.text((x + fsize + 6, lh // 2), label, fill=(0, 0, 0), font=f, anchor='lm')
         x += int(g.textlength(label, font=f)) + fsize + 30
     o = ', '.join(np.format_float_positional(v) for v in origin)
-    g.text((x, lh // 2), f'arrow = v1 object shift x{ARROW_GAIN:.0f}, label cm (map_origin_in_world [{o}])',
-           fill=(0, 0, 0), font=f, anchor='lm')
+    note = f'arrow = {a.label.split()[-1]} object shift x{ARROW_GAIN:.0f}, label cm (map_origin_in_world [{o}])'
+    g.text((x, lh // 2), note, fill=(0, 0, 0), font=f, anchor='lm')
     full = Image.new('RGB', (img.width, img.height + lh), (255, 255, 255))
     full.paste(img, (0, 0))
     full.paste(leg, (0, img.height))
