@@ -61,6 +61,47 @@ ros2 run amr_mapping map_quality ~/maps/warehouse.yaml \
 - **지도를 인계할 때 매핑 시작 자세(world 기준 x, y, yaw)를 같이 기록한다** (amr_gazebo README "GT 사용 시 주의"). slam_toolbox는 시작 자세를 `map` 원점으로 잡는다.
 - `slam_toolbox`·`nav2_map_server`를 새 의존성으로 넣었다. 이미지를 다시 빌드해야 한다: `docker compose build`
 
+## 정답 지도 (`maps/warehouse_gt.*`, 5주차, #183 후속)
+
+월드 SDF의 물체를 LiDAR 스캔 높이에서 잘라 그린 지도다 (SLAM 아님). 지도 v1의 휨(서쪽·북쪽 끝 14~22 cm, #183) 없이 내비·Fleet 실험을 하려고 만들었다. **위치추정 KPI(맵 품질·위치 오차)는 지도 v1로 그대로 잰다.** v1은 바꾸지 않았다.
+
+```bash
+ros2 run amr_mapping gt_map $(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/worlds/warehouse.sdf maps/warehouse_gt.yaml --png maps/warehouse_gt.png
+# 쓰기: 지도만 바꿔 끼운다 (map_origin_in_world는 기본값 그대로)
+ros2 launch amr_bringup system.launch.py map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_gt.yaml
+```
+
+- **좌표**: map 기준이다. 물체를 launch 기본 `map_origin_in_world` [−0.0562, 1.5317, 0.00009](world → map TF)로 옮겨 그렸다. 그래서 구역 파일(TF로 바꿔 씀)과 측정 구역(map x −10~15, y −15~5)이 그대로 맞는다. 이 지도에서는 map 좌표 = world 좌표 − 정렬 원점이 창고 전체에서 정확히 성립한다 (v1은 먼 끝에서 최대 16 cm 어긋난다)
+- **형식**: v1 0.025 m와 같다. trinary pgm + yaml, 해상도 0.025 m, 원점 [−30.2, −21.8], 2417×1616칸
+- **그리는 방법**
+  - 칸 중심이 물체 안이면 점유다. 그래서 경계가 칸 중간에 걸려도 폭이 칸 수로 그대로 남는다
+  - 외벽 안 바닥은 빈 칸, 외벽 밖은 미관측이다. 물체 속도 점유로 채운다 (SLAM 지도는 속이 미관측)
+  - 그리는 것: 랙 22·기둥 6·도크 플랫폼 4·충전기 본체 3·외벽 4. 뺀 것: 표지판(아랫면 0.7 m 이상, 충돌 없음), 바닥 표시, ArUco 마커판(면에서 5 mm, 칸보다 얇다)
+  - v1과 같은 칸 범위라 동쪽·북쪽 외벽 바깥쪽이 3 cm·7 cm 잘린다 (벽 두께 20 cm 중). 안쪽 면은 들어 있다
+- **좁은 통로 폭** (navigation.md 1-1-1, 설계 0.6 m). 통로를 0.1 m 간격으로 가로질러 빈 칸이 몇 개 이어지는지 셌다 (`gt_map`이 실행할 때마다 출력)
+
+| 통로 | 정답 지도 | 지도 v1 0.025 m (참고) |
+| --- | --- | --- |
+| ① `rack_b3`–`rack_b4` (11곳) | **24칸 = 0.600 m, 모든 곳** | 18~23칸 (0.45~0.58 m) |
+| ② `rack_lane_divider`–`rack_b4` (49곳) | **24칸 = 0.600 m, 모든 곳** | 10~23칸 (0.25~0.58 m) |
+
+- **검증**: 정답 지도의 테두리 칸을 `map_quality` 방식으로 SDF와 비교했다. 정렬 dx +0.3, dy −0.9 cm, 물체별 밀림 중앙값 0.9 / 최대 2.0 cm, 유령 칸 0, 빠진 물체 0이다. 모두 칸 하나(2.5 cm) 안이고, 테두리 칸 중심이 물체 안쪽 반 칸에 있어 생기는 양자화 값이다. `map_quality`를 이 지도에 바로 돌리면 속을 채운 칸을 유령 벽으로 세어 불합격이 나온다. 그 도구는 테두리만 있는 SLAM 지도용이다
+
+**v1이 어디가 얼마나 휘었나** (`tools/draw_map_bend.py`, 파랑 정답·빨강 v1, 화살표 = v1 물체가 밀린 방향 20배, 숫자 cm). 지도 전체를 다시 정렬하지 않고 launch 정렬 원점 그대로 쟀다. 내비·Fleet 실험에서 로봇이 실제로 겪는 어긋남이다.
+
+![지도 v1 휨](maps/warehouse_v1_bend.png)
+
+| 물체 | 밀림 | 방향 |
+| --- | --- | --- |
+| `dock_1` / `dock_2` (서쪽 입고 도크) | 16.0 / 14.1 cm | 서쪽 |
+| `rack_c7` (남동쪽 끝) | 12.9 cm | 남쪽 |
+| `charger_c1`~`c3`·`rack_c1` (남서쪽) | 9.4~12.2 cm | 북쪽 |
+| 측정 구역 안 물체 | 0.4~5.4 cm (`rack_c6` 8.8 cm는 구역 경계) | — |
+
+서쪽 도크 확대 (`--crop -30.2 -14 4 18.6 --scale 2`):
+
+![지도 v1 휨 서쪽](maps/warehouse_v1_bend_west.png)
+
 ## 지도 v1 (`maps/warehouse_v1.*`, 3주차 작업 2 인계)
 
 **0.05 m(`warehouse_v1`)와 0.025 m(`warehouse_v1_0025`) 두 장을 같은 주행으로 만들어 넘긴다.** 위치 오차 KPI는 아래 정렬 보정값을 원점으로 쓰고(B안, 10/12 회의), 위치추정 기본 지도는 0.025 m로 정했다 (10/13, #157).
@@ -176,3 +217,5 @@ colcon test --packages-select amr_mapping
 ```
 
 `test_map_quality.py`: 테두리 거리(회전 사각형 포함), 완벽한 지도 합격, 시작 자세 변환·유령 칸, 20 cm 어긋난 지도 불합격, 띠 두께와 위치 어긋남 분리, 빈 바닥 미관측 비율, SDF 읽기, pgm·png.
+
+`test_gt_map.py`: 경계가 칸 중간에 걸려도 0.6 m 통로 24칸(정렬 원점 3가지), 랙이 한 칸 오면 23칸, 외벽 안·밖·물체 속, map 원점 방향, v1과 같은 yaml 형식, 실제 월드에서 v1과 같은 칸 수·좁은 통로 둘 다 0.6 m.
