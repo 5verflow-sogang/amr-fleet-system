@@ -280,6 +280,10 @@ controller_server:
       # heading 기준점을 궤적마다 max(lookahead_distance, |v|*sim_time) 앞의 경로 점으로 잡는다.
       # false면 lookahead_distance 고정 - 그러면 v <= lookahead_distance/sim_time(0.25 m/s)으로 묶인다.
       adaptive_lookahead: True
+      # 제자리 회전: 기준점(lookahead_distance 앞)까지 방향 오차가 min_angle(rad)보다 크면 제자리 회전 모드에
+      # 들어가고 exit_angle 이하가 되면 나온다(히스테리시스). 0 이하면 끈다 (navigation.md 4-9절)
+      rotate_in_place_min_angle: 0.785
+      rotate_in_place_exit_angle: 0.524
 
 # --- TEB (DWA 비교 대상, #110 underlay·(10) 작업) ---
 # 원 명세 "DWA 직접구현 vs TEB" 비교. teb_local_planner는 apt에 없어 /opt/teb_ws에 소스로

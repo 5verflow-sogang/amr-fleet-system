@@ -141,6 +141,7 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
 | `use_admissible_velocity` | true | 4-7절. false면 이전 동작(호라이즌 안 충돌 궤적 전부 제외)과 같다 |
 | `use_goal_slowdown` | true | 4-7절. 최종 목표까지 직선 거리로 `v <= sqrt(2·acc_v·d_goal)` |
 | `lookahead_distance` / `adaptive_lookahead` | 0.5 m / true | 4-8절. 경로 버전의 heading 기준점 |
+| `rotate_in_place_min_angle` / `rotate_in_place_exit_angle` | 0.785 / 0.524 rad (45° / 30°) | 4-9절. 제자리 회전 모드 들어가기·나오기(경로 버전) |
 
 ### 4-3. 비용 함수 가중치 근거와 "제자리 정지" 함정
 
@@ -272,6 +273,36 @@ heading을 끝점 앞에서 재므로 이 가림이 없어진다(4-8절).
 `lookahead_distance` 앞인 궤적 점에서 heading을 잰다(전에는 끝점을 지나치는 궤적만 `goal_tolerance`
 앞에서 쟀다) - 같은 이유로 목표 앞 몇 m에서 다시 기어가던 것을 막는다. 정지(v=0)에서는 기준점이 전과
 같이 `lookahead_distance` 앞이다. 로봇에 가장 가까운 경로 점 찾기는 경로 전체를 보므로 원인이 아니었다.
+
+### 4-9. 제자리 회전 (`rotate_in_place_min_angle`·`rotate_in_place_exit_angle`)
+
+**원인 (10/14 하연 정리):** v≈0 샘플은 정지 함정(4-3절) 때문에 heading 비용을 1.0으로 고정했다. 그래서
+제자리 회전(v=0, w≠0)은 어느 쪽으로 돌든 0.8(heading)+0.1(속도) = 0.9라, 안 닿는 전진 샘플이 하나라도
+있으면 졌다. 목표가 뒤(180°)면 v=0.1, w=0.32 호(2초 뒤 0.64 rad 돎)가 0.8·(π−0.64)/π + 0.095 ≈ 0.73으로
+이겨, 제자리에서 돌지 않고 목표 반대쪽으로 크게 돌며 나갔다. 전진이 전부 막힌 좁은 통로에서만 회전을
+골랐고, 그때는 회전 샘플끼리 heading이 같아 도는 방향이 샘플 순서·clearance로 정해졌다.
+
+**바꾼 것:** 경로를 받는 `computeVelocityCommand`에서, 지금 자세에서 heading 기준점(`lookahead_distance`
+앞)까지 방향 오차가 `rotate_in_place_min_angle`(기본 45°, Nav2 RPP `rotate_to_heading_min_angle`과 같음)보다
+크면 **제자리 회전 모드**에 들어가고 `rotate_in_place_exit_angle`(기본 30°) 이하가 되면 나온다 - 경계
+근처에서 회전/전진이 매 주기 바뀌며 떨지 않게 하는 히스테리시스다(`RotateInPlaceModeHasHysteresis`). 모드
+상태는 플래너가 주기 사이에 들고 있다(`rotatingInPlace()`).
+
+- 모드에서는 v≈0 샘플도 **회전한 뒤 방향**(궤적 끝 yaw)으로 heading 비용을 매긴다. 정지(w=0)는 지금 오차
+  그대로라 유리하지 않다. 모드 밖(오차 ≤ 문턱)에서는 지금처럼 1.0이라 정지 함정 방지는 그대로다.
+- 먼저 최대 감속 속도(`window.min_v`, 서 있으면 0)만 샘플링해 돈다. 그 속도로 **실제로 도는**(|w|>0) 안
+  닿는 샘플이 없으면(좁은 통로 안처럼) 전체 윈도우로 다시 고른다 - 못 도는데 서 버리지 않게.
+- v≈0 샘플이 궤적 중간에 닿으면 버린다. 사각 풋프린트는 v=0이어도 매 스텝 yaw가 바뀐 자세로 검사하지만,
+  허용 속도 조건(4-7절)은 v=0이면 늘 "설 수 있음"이라 회전 감속(`acc_w`)을 안 보고 닿는 회전을 [1] 후보로
+  남겼다. 대각선 0.72 m > 좁은 통로 0.6 m라 통로 안에서 크게 돌면 벽에 닿는다
+  (`RotationSamplesInsideNarrowCorridorAreFiltered`).
+- 점 하나로 부르는 버전(먼 목표)에는 안 쓴다 - 장애물을 돌아가는 동안 그 점까지 오차가 커져 회전이 회피와
+  싸웠다(`ClosedLoopReachesGoalWithOneObstacle`). 경로의 기준점은 전역 경로가 이미 장애물을 돌아간다.
+- 최종 접근(목표 도착 뒤 방향 맞추기)은 바뀌지 않았다. 플러그인이 `xy_goal_tolerance` 안이면 DWA 대신
+  `rotateToGoalYaw`로 돈다 - 도착 뒤 90° 돌아야 하는 목표에서 제자리로 돌아 허용오차 안에 서는 것을 테스트로
+  확인했다(`FinalApproachRotatesToGoalYawAfterArriving`).
+- 연구 2(`experiments/research2`)는 출발 방향 오차가 ±5°라 모드에 안 들어가 결과가 같다(B2 30회 표 동일).
+  C API(`dwa_c_api.cpp`)는 호출마다 플래너를 새로 만들어 히스테리시스 상태가 안 이어진다(문턱 45°만 적용).
 
 ## 5. Pure Pursuit · Stanley · PID
 

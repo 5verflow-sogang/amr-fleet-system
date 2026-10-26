@@ -990,4 +990,279 @@ TEST(DwaPlannerTest, GoalSlowdownStopsBeforeGoalAccountingForControlPeriod)
   EXPECT_NEAR(v * config.dt + v * v / (2.0 * config.acc_v), 2.0, 1e-9);
 }
 
+namespace
+{
+
+constexpr double kTestPi = 3.14159265358979323846;
+
+double wrapAngle(double a)
+{
+  while (a > kTestPi) {a -= 2.0 * kTestPi;}
+  while (a < -kTestPi) {a += 2.0 * kTestPi;}
+  return a;
+}
+
+// (x0, y0) -> (x1, y1) 직선을 0.05 m 간격으로 path 뒤에 잇는다
+void appendLine(std::vector<Point2D> & path, double x0, double y0, double x1, double y1)
+{
+  const double length = std::hypot(x1 - x0, y1 - y0);
+  const int n = std::max(1, static_cast<int>(std::ceil(length / 0.05)));
+  for (int i = path.empty() ? 0 : 1; i <= n; ++i) {
+    const double r = static_cast<double>(i) / n;
+    path.push_back(Point2D{x0 + (x1 - x0) * r, y0 + (y1 - y0) * r});
+  }
+}
+
+// 창고 스택 기준 설정(max_v 0.5 m/s, nav2_params.yaml)으로 촘촘하게 - 좁은 통로·회전 테스트용
+DwaConfig makeStackConfig()
+{
+  DwaConfig config;
+  config.max_v = 0.5;
+  config.v_samples = 6;
+  config.w_samples = 21;
+  return config;
+}
+
+struct LoopResult
+{
+  bool reached = false;
+  bool collided = false;
+  int steps = 0;
+  int rotate_steps = 0;              // rotatingInPlace()였던 주기 수
+  double rotate_displacement = 0.0;  // 회전 모드 동안 출발점에서 가장 멀어진 거리
+  double first_v = 0.0;
+  double first_w = 0.0;
+  RobotState final_state;
+};
+
+// 경로를 따라가는 닫힌 루프(명령 그대로 추종). 매 주기 풋프린트 충돌을 검사한다.
+LoopResult runPath(
+  const DwaConfig & config, const Grid & grid, const std::vector<Point2D> & path, RobotState state,
+  int max_steps)
+{
+  const DwaPlanner planner(config);
+  LoopResult result;
+  const double x0 = state.x;
+  const double y0 = state.y;
+  for (int step = 0; step < max_steps; ++step) {
+    const DwaCommand command = planner.computeVelocityCommand(state, path, grid);
+    if (step == 0) {
+      result.first_v = command.v;
+      result.first_w = command.w;
+    }
+    if (command.status == DwaStatus::kGoalReached) {
+      result.reached = true;
+      break;
+    }
+    if (command.status != DwaStatus::kOk) {
+      break;
+    }
+    if (planner.rotatingInPlace()) {
+      ++result.rotate_steps;
+      result.rotate_displacement =
+        std::max(result.rotate_displacement, std::hypot(state.x - x0, state.y - y0));
+    }
+    state.x += command.v * std::cos(state.yaw) * config.dt;
+    state.y += command.v * std::sin(state.yaw) * config.dt;
+    state.yaw = wrapAngle(state.yaw + command.w * config.dt);
+    state.v = command.v;
+    state.w = command.w;
+    result.steps = step + 1;
+    if (planner.footprintCollides(grid, state.x, state.y, state.yaw)) {
+      result.collided = true;
+      break;
+    }
+  }
+  result.final_state = state;
+  return result;
+}
+
+}  // namespace
+
+TEST(DwaPlannerTest, RotatesInPlaceWhenStartingFarOffHeading)
+{
+  // 10/14 하연 정리: v≈0이면 heading 비용이 1.0으로 고정돼 제자리 회전이 점수에서 이득이 없어, 목표가
+  // 뒤나 옆이면 크게 도는 전진 호를 골랐다. 회전 모드에서는 제자리에서 목표 쪽으로 돈 뒤 출발한다.
+  TestGrid test_grid(200, 80, 0.05);  // 10m x 4m, 빈 지도
+  std::vector<Point2D> path;
+  appendLine(path, 1.0, 2.0, 8.0, 2.0);
+  for (const double yaw : {kTestPi / 2.0, kTestPi}) {
+    RobotState state;
+    state.x = 1.0;
+    state.y = 2.0;
+    state.yaw = yaw;
+    const LoopResult result = runPath(makeStackConfig(), test_grid.grid(), path, state, 800);
+    EXPECT_TRUE(result.reached) << "yaw=" << yaw;
+    EXPECT_FALSE(result.collided) << "yaw=" << yaw;
+    EXPECT_GT(result.rotate_steps, 0) << "yaw=" << yaw;
+    // 회전 모드 동안 제자리(출발점 근처)에 있다
+    EXPECT_LT(result.rotate_displacement, 0.05) << "yaw=" << yaw;
+    EXPECT_NEAR(result.first_v, 0.0, 1e-9) << "yaw=" << yaw;
+    if (yaw < kTestPi - 1e-6) {
+      EXPECT_LT(result.first_w, 0.0);  // 목표(+x)는 오른쪽 - 시계 방향으로 돈다
+    } else {
+      EXPECT_NE(result.first_w, 0.0);
+    }
+  }
+
+  // 끄면(rotate_in_place_min_angle 0) 예전처럼 v≈0 샘플은 heading 1.0이라 전진 호로 돈다
+  DwaConfig off = makeStackConfig();
+  off.rotate_in_place_min_angle = 0.0;
+  RobotState state;
+  state.x = 1.0;
+  state.y = 2.0;
+  state.yaw = kTestPi / 2.0;
+  const DwaCommand arc = DwaPlanner(off).computeVelocityCommand(state, path, test_grid.grid());
+  ASSERT_EQ(arc.status, DwaStatus::kOk);
+  EXPECT_GT(arc.v, 0.0);
+}
+
+TEST(DwaPlannerTest, RotateInPlaceModeHasHysteresis)
+{
+  // 들어갈 때 45°, 나올 때 30° - 그 사이(40°)에서는 지금 모드를 그대로 둔다(회전/전진이 매 주기 떨지 않게)
+  TestGrid test_grid(200, 80, 0.05);
+  std::vector<Point2D> path;
+  appendLine(path, 1.0, 2.0, 8.0, 2.0);
+  const DwaPlanner planner(makeStackConfig());
+  auto at = [&](double yaw_deg) {
+      RobotState state;
+      state.x = 1.0;
+      state.y = 2.0;
+      state.yaw = -yaw_deg * kTestPi / 180.0;  // 목표(+x)에서 오른쪽으로 yaw_deg만큼 틀어짐
+      return planner.computeVelocityCommand(state, path, test_grid.grid());
+    };
+
+  const DwaCommand at40_forward = at(40.0);
+  EXPECT_FALSE(planner.rotatingInPlace());  // 아직 45°를 안 넘었다
+  EXPECT_GT(at40_forward.v, 0.0);
+  at(50.0);
+  EXPECT_TRUE(planner.rotatingInPlace());   // 45° 넘음 - 들어감
+  const DwaCommand at40_rotate = at(40.0);
+  EXPECT_TRUE(planner.rotatingInPlace());   // 30°보다 크다 - 그대로 회전
+  EXPECT_NEAR(at40_rotate.v, 0.0, 1e-9);
+  EXPECT_GT(at40_rotate.w, 0.0);            // 왼쪽(목표 쪽)으로 돈다
+  at(35.0);
+  EXPECT_TRUE(planner.rotatingInPlace());
+  at(25.0);
+  EXPECT_FALSE(planner.rotatingInPlace());  // 30° 이하 - 나옴
+  at(40.0);
+  EXPECT_FALSE(planner.rotatingInPlace());  // 다시 45°를 넘기 전까지는 전진
+}
+
+TEST(DwaPlannerTest, RotationSamplesInsideNarrowCorridorAreFiltered)
+{
+  // 풋프린트 대각선 0.72 m > 좁은 통로 폭 0.6 m - 통로 안에서 제자리로 크게 돌면 벽에 닿는다. v≈0 샘플도
+  // 사각 풋프린트로 매 스텝(yaw가 바뀐 자세) 검사해 걸러야 한다.
+  TestGrid test_grid(200, 80, 0.05);
+  test_grid.setRegion(0.0, 9.99, 0.0, 1.69, 254);   // 통로 아래 벽(y < 1.70)
+  test_grid.setRegion(0.0, 9.99, 2.31, 3.99, 254);  // 통로 위 벽(y >= 2.30)
+  const DwaPlanner planner(makeStackConfig());
+
+  RobotState state;
+  state.x = 4.0;
+  state.y = 2.0;
+  state.yaw = 0.0;
+  // 크게 도는 제자리 회전은 궤적 중간에 벽에 닿는다(v=0이어도 충돌 검사가 된다)
+  bool wide_rotation_hits = false;
+  for (const TrajectoryPoint & point : planner.simulateTrajectory(state, 0.0, 1.0)) {
+    wide_rotation_hits = wide_rotation_hits ||
+      planner.footprintCollides(test_grid.grid(), point.x, point.y, point.yaw);
+  }
+  EXPECT_TRUE(wide_rotation_hits);
+
+  // 목표가 뒤(-x)라 회전 모드에 들어가지만, 고른 명령은 통로 안에서 벽에 닿지 않는다
+  std::vector<Point2D> path;
+  appendLine(path, 4.0, 2.0, 1.0, 2.0);
+  for (int step = 0; step < 50; ++step) {
+    const DwaCommand command = planner.computeVelocityCommand(state, path, test_grid.grid());
+    if (command.status != DwaStatus::kOk) {
+      break;
+    }
+    for (const TrajectoryPoint & point : planner.simulateTrajectory(state, command.v, command.w)) {
+      ASSERT_FALSE(planner.footprintCollides(test_grid.grid(), point.x, point.y, point.yaw))
+        << "step=" << step << " v=" << command.v << " w=" << command.w;
+    }
+    state.x += command.v * std::cos(state.yaw) * planner.config().dt;
+    state.y += command.v * std::sin(state.yaw) * planner.config().dt;
+    state.yaw = wrapAngle(state.yaw + command.w * planner.config().dt);
+    state.v = command.v;
+    state.w = command.w;
+    ASSERT_FALSE(planner.footprintCollides(test_grid.grid(), state.x, state.y, state.yaw));
+  }
+}
+
+TEST(DwaPlannerTest, TurnsNinetyDegreesIntoNarrowCorridor)
+{
+  // 좁은 통로 ①처럼 넓은 통로(폭 2 m)에서 90° 꺾어 폭 0.6 m 통로로 들어간다 - 꺾는 곳에서 제자리로 돌고
+  // 들어가야 한다(통로 안에서는 못 돈다).
+  TestGrid test_grid(120, 120, 0.05, 254);        // 6m x 6m, 전부 벽
+  test_grid.setRegion(0.0, 5.99, 0.0, 1.99, 0);   // 넓은 통로 y < 2.0
+  test_grid.setRegion(2.70, 3.29, 2.0, 5.99, 0);  // 좁은 통로 x ∈ [2.70, 3.30)
+  std::vector<Point2D> path;
+  appendLine(path, 0.6, 1.0, 3.0, 1.0);
+  appendLine(path, 3.0, 1.0, 3.0, 5.0);
+  RobotState state;
+  state.x = 0.6;
+  state.y = 1.0;
+  const LoopResult result = runPath(makeStackConfig(), test_grid.grid(), path, state, 1500);
+  EXPECT_FALSE(result.collided);
+  ASSERT_TRUE(result.reached) << "steps=" << result.steps << " x=" << result.final_state.x
+                              << " y=" << result.final_state.y << " yaw=" << result.final_state.yaw;
+  EXPECT_GT(result.rotate_steps, 0);
+  EXPECT_NEAR(result.final_state.x, 3.0, 0.1);
+  EXPECT_GT(result.final_state.y, 4.5);
+}
+
+TEST(DwaPlannerTest, FinalApproachRotatesToGoalYawAfterArriving)
+{
+  // 플러그인(dwa_controller.cpp)처럼: 경로 끝과 xy_goal_tolerance(0.25 m) 안이면 rotateToGoalYaw로 목표
+  // 방향까지 제자리 회전한다. 도착 뒤 90° 돌아야 하는 목표에서 제자리로 돌아 허용오차 안에 선다.
+  TestGrid test_grid(200, 80, 0.05);
+  std::vector<Point2D> path;
+  appendLine(path, 1.0, 2.0, 5.0, 2.0);
+  const DwaConfig config = makeStackConfig();
+  const DwaPlanner planner(config);
+  constexpr double kXyTolerance = 0.25;
+  constexpr double kYawTolerance = 0.25;
+  const double goal_yaw = kTestPi / 2.0;
+
+  RobotState state;
+  state.x = 1.0;
+  state.y = 2.0;
+  bool done = false;
+  bool arrived = false;
+  double arrive_x = 0.0;
+  double arrive_y = 0.0;
+  for (int step = 0; step < 600 && !done; ++step) {
+    DwaCommand command;
+    if (std::hypot(5.0 - state.x, 2.0 - state.y) <= kXyTolerance) {
+      if (!arrived) {
+        arrived = true;
+        arrive_x = state.x;
+        arrive_y = state.y;
+      }
+      command = planner.rotateToGoalYaw(state, goal_yaw, kYawTolerance);
+      command.v = 0.0;
+      done = command.status == DwaStatus::kGoalReached;
+    } else {
+      command = planner.computeVelocityCommand(state, path, test_grid.grid());
+      if (command.status == DwaStatus::kGoalReached) {
+        command.v = 0.0;
+        command.w = 0.0;
+      }
+    }
+    state.x += command.v * std::cos(state.yaw) * config.dt;
+    state.y += command.v * std::sin(state.yaw) * config.dt;
+    state.yaw = wrapAngle(state.yaw + command.w * config.dt);
+    state.v = command.v;
+    state.w = command.w;
+  }
+  ASSERT_TRUE(arrived);
+  ASSERT_TRUE(done);
+  EXPECT_LE(std::abs(wrapAngle(goal_yaw - state.yaw)), kYawTolerance);
+  // 최종 접근 회전은 제자리(도착한 자리에서 안 움직임)
+  EXPECT_NEAR(state.x, arrive_x, 1e-9);
+  EXPECT_NEAR(state.y, arrive_y, 1e-9);
+}
+
 }  // namespace amr_planning_core

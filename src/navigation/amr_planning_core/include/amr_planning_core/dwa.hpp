@@ -182,6 +182,17 @@ struct DwaConfig
   // 끝점에 붙은 궤적 끝에서 보면 위와 같이 방향이 튄다.
   // 정지(v=0)에서는 false와 같은 기준점(lookahead_distance 앞)이다.
   bool adaptive_lookahead = true;
+
+  // --- 제자리 회전 ---
+
+  // 지금 자세에서 heading 기준점(lookahead_distance 앞)까지 방향 오차가 이 값(rad)보다 크면 제자리 회전
+  // 모드에 들어가고, rotate_in_place_exit_angle 이하가 되면 나온다(히스테리시스 - 경계에서 회전/전진이 매
+  // 주기 바뀌며 떨지 않게). 모드에서는 v≈0 샘플도 회전한 뒤 방향으로 heading 비용을 매겨(평소에는 정지
+  // 함정 때문에 1.0, 4-3절) 출발 때 크게 틀어진 방향·좁은 통로 90° 진입에서 크게 도는 전진 호 대신
+  // 제자리에서 돈다. 경로를 받는 computeVelocityCommand에서만 쓴다(점 하나 버전은 그대로). 0 이하면 끈다.
+  // 기본값은 Nav2 RPP rotate_to_heading_min_angle(0.785)과 같다.
+  double rotate_in_place_min_angle = 0.785;  // 45°
+  double rotate_in_place_exit_angle = 0.524;  // 30°
 };
 
 // 경로 위에서 로봇에 가장 가까운 점부터 누적 거리가 distance 이상이 되는 첫 점
@@ -262,6 +273,9 @@ public:
 
   const DwaConfig & config() const noexcept {return config_;}
 
+  // 마지막 computeVelocityCommand가 제자리 회전 모드였는지(히스테리시스 상태).
+  bool rotatingInPlace() const noexcept {return rotating_in_place_;}
+
 private:
   // footprintCollides의 내부 버전. 충돌 여부와 함께 샘플링한 셀 중 가장 높은
   // 비용값(충돌 시 닿은 셀의 비용)을 clearance 비용 계산에 쓰도록 돌려준다.
@@ -285,9 +299,10 @@ private:
   // "목표를 바라보며 제자리에 멈추기"가 실제로 전진하는 선택보다 싸 보이는 국소
   // 최소에 빠진다(정지 궤적은 trajectory_end가 시작점과 같아서 heading이 0이 되기
   // 쉽다). dwa.cpp의 evaluateCost 구현 주석 참고.
+  // score_stationary_heading이면(제자리 회전 모드) v≈0도 회전한 뒤 방향으로 heading을 매긴다.
   double evaluateCost(
     const TrajectoryPoint & trajectory_end, const Point2D & goal, double v,
-    double max_cell_cost) const;
+    double max_cell_cost, bool score_stationary_heading = false) const;
 
   double headingCost(const TrajectoryPoint & trajectory_end, const Point2D & goal) const;
 
@@ -299,6 +314,9 @@ private:
     const std::optional<Point2D> & final_goal) const;
 
   DwaConfig config_;
+  // 제자리 회전 모드 히스테리시스 상태 - 주기 사이에 이어진다. computeVelocityCommand가 const라
+  // mutable로 둔다(플러그인은 컨트롤러 하나에 DwaPlanner 하나, 한 스레드에서 부른다).
+  mutable bool rotating_in_place_ = false;
 };
 
 }  // namespace amr_planning_core
