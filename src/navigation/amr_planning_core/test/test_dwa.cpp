@@ -1265,4 +1265,83 @@ TEST(DwaPlannerTest, FinalApproachRotatesToGoalYawAfterArriving)
   EXPECT_NEAR(state.y, arrive_y, 1e-9);
 }
 
+TEST(DwaPlannerTest, LethalCellBesideFootprintKeepsStopAndForwardSamples)
+{
+  // 센서 노이즈로 발밑 바로 옆(풋프린트 모서리 밖)에 치명 셀이 찍혀도, 도는 동안 모서리가 그 셀을 쓸고
+  // 지나는 회전 샘플만 빠지고 정지(v=0, w=0)·전진 샘플은 남는다 - kNoValidTrajectory가 되지 않는다.
+  TestGrid test_grid(200, 80, 0.05);
+  // 왼쪽 앞 모서리(4.3, 2.2) 안쪽 대각선 셀 [4.25, 4.30) x [2.25, 2.30) - 풋프린트 밖이지만 중심에서 0.354 m로
+  // 모서리 회전 반경(0.36 m) 안이라, 왼쪽(반시계)으로 약 11° 돌면 모서리가 닿는다
+  test_grid.setRegion(4.25, 4.25, 2.25, 2.25, 254);
+  std::vector<Point2D> path;
+  appendLine(path, 4.0, 2.0, 8.0, 2.0);
+  const DwaPlanner planner(makeStackConfig());
+  RobotState state;
+  state.x = 4.0;
+  state.y = 2.0;
+  ASSERT_FALSE(planner.footprintCollides(test_grid.grid(), state.x, state.y, state.yaw));
+
+  bool rotation_hits = false;
+  for (const TrajectoryPoint & point : planner.simulateTrajectory(state, 0.0, 0.3)) {
+    rotation_hits = rotation_hits ||
+      planner.footprintCollides(test_grid.grid(), point.x, point.y, point.yaw);
+  }
+  EXPECT_TRUE(rotation_hits);  // 왼쪽으로 제자리 회전하면 모서리가 그 셀에 닿는다
+
+  const DwaCommand command = planner.computeVelocityCommand(state, path, test_grid.grid());
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  EXPECT_GT(command.v, 0.0);
+
+  // 목표가 뒤(회전 모드)여도 정지·반대 방향 회전이 남아 kNoValidTrajectory가 아니다
+  std::vector<Point2D> behind;
+  appendLine(behind, 4.0, 2.0, 1.0, 2.0);
+  const DwaCommand turn = planner.computeVelocityCommand(state, behind, test_grid.grid());
+  ASSERT_EQ(turn.status, DwaStatus::kOk);
+  for (const TrajectoryPoint & point : planner.simulateTrajectory(state, turn.v, turn.w)) {
+    EXPECT_FALSE(planner.footprintCollides(test_grid.grid(), point.x, point.y, point.yaw));
+  }
+}
+
+TEST(DwaPlannerTest, LethalCellUnderFootprintIsNoValidAsBefore)
+{
+  // 지금 발밑(풋프린트 안)이 이미 치명 셀이면 모든 궤적이 첫 점부터 닿아 kNoValidTrajectory다. 이건 v≈0 회전
+  // 규칙(4-9절) 전부터 허용 속도의 "첫 점부터 닿으면 뺀다" 규칙(#188)으로 같았다 - 정지 샘플은 움직이지 않아
+  // 첫 점에서 닿거나 끝까지 안 닿으므로 v≈0 회전 규칙(궤적 중간에 닿으면 뺀다)이 정지 샘플을 바꾸지 않는다.
+  TestGrid test_grid(200, 80, 0.05);
+  test_grid.setRegion(4.10, 4.11, 2.10, 2.11, 254);  // 풋프린트 안 한 셀
+  std::vector<Point2D> path;
+  appendLine(path, 4.0, 2.0, 8.0, 2.0);
+  RobotState state;
+  state.x = 4.0;
+  state.y = 2.0;
+  DwaConfig config = makeStackConfig();
+  EXPECT_EQ(DwaPlanner(config).computeVelocityCommand(state, path, test_grid.grid()).status,
+    DwaStatus::kNoValidTrajectory);
+  config.rotate_in_place_min_angle = 0.0;
+  EXPECT_EQ(DwaPlanner(config).computeVelocityCommand(state, path, test_grid.grid()).status,
+    DwaStatus::kNoValidTrajectory);
+}
+
+TEST(DwaPlannerTest, StoppedBesideDynamicObstacleWithinMarginStillMovesAway)
+{
+  // #228(d09d947) 상황을 서 있는 로봇(v=0)으로: 왼쪽 옆 0.1 m(안전 여유 0.2 m 안)에 장애물이 있어도 앞으로
+  // 멀어지는 궤적이 남는다. v≈0 샘플 가운데 장애물 쪽으로 도는 회전만 "지금보다 가까워짐"으로 빠진다.
+  TestGrid test_grid(160, 80, 0.05);
+  std::vector<Point2D> path;
+  appendLine(path, 2.0, 2.0, 6.0, 2.0);
+  const DwaPlanner planner(makeStackConfig());
+  RobotState state;
+  state.x = 2.0;
+  state.y = 2.0;
+  DynamicObstacle beside;
+  beside.radius = 0.25;
+  beside.x = 2.0 - 0.1;
+  beside.y = 2.0 + 0.2 + 0.1 + beside.radius;
+  const DwaCommand command =
+    planner.computeVelocityCommand(state, path, test_grid.grid(), {beside});
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  EXPECT_GT(command.v, 0.0);
+  EXPECT_LE(command.w, 1e-9);  // 장애물(왼쪽) 쪽으로 돌지 않는다
+}
+
 }  // namespace amr_planning_core
