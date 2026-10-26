@@ -38,3 +38,11 @@ class AuctionParams:
     # 기다리는 동안 경매인이 먼저 재경매해 버려, 다 기다리고 수락하려 할 때는 그 경매가 이미
     # 무효일 수 있다. 1 s 여유를 두고 3.0으로 둔다.
     award_wait_s: float = 3.0
+    # 10/26 처리 순서 틈 (#224 후속): 공고를 본 작업은 그 경매가 마감돼 _bid_candidates에서
+    # 지워진 뒤에도 이 시간(실제 시간, s) 동안 "기억"해, 그보다 순서가 앞선 기억 중인 작업이
+    # 있으면(입찰 자격이 있을 때만) 지금 열린 더 늦은 작업에 입찰하지 않고 재공고를 기다린다.
+    # 정상 재공고 주기(bid_window_s + no_bid_retry_s, 기본 2.0 + 1.0 = 3.0 s)에 지터 여유
+    # 1 s를 더한 값이 기본이다. award_wait_s(보류 중인 AWARD를 포기하기까지)와는 다른 대기다 -
+    # 이건 아직 입찰도 안 한 "더 이른 공고"를 기다리는 것이고, award_wait_s는 이미 받은
+    # AWARD의 수락을 미루는 것이다(task_auction_node.py 모듈 docstring 참고).
+    announce_memory_s: float = 4.0

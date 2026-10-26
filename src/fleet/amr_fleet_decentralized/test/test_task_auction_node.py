@@ -548,6 +548,162 @@ def test_pending_award_accepted_immediately_when_higher_priority_task_is_claimed
         rclpy.shutdown()
 
 
+# --- 처리 순서 틈 (#224 후속): 재공고 틈에 기억한 더 이른 공고를 기다린다 ---
+
+
+def test_idle_robot_waits_for_remembered_earlier_announce_in_reannounce_gap():
+    """경매인마다 재공고 주기가 따로 돌아 더 이른 작업(task_early)의 공고가 닫히고 다음 재공고가
+    나가기 전 틈이 있다. 그 틈에 로봇이 (다른 작업을 막 끝내고) 풀려나면, task_early는 지금
+    안 열려 있어 입찰은 못 해도 열린 task_late에는 입찰한다(#227 리뷰 1). task_late가 먼저
+    낙찰돼도, task_early를 기억(_remembered)하고 있으면 수락을 보류하고 기다린다. task_early가
+    재공고돼 낙찰되면 그제서야 그걸 수락하고 task_late는 WITHDRAW한다(#224: task_s1001_0012가
+    task_s1001_0007보다 먼저 할당된 사례 - #227 리뷰 2에 맞춰 "입찰 보류"가 아니라 "수락 보류"로
+    다시 통합했다)."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        amr_01 = nodes['amr_01']
+        # 다른 작업을 이미 맡고 있어 지금은 입찰하지 않는다(#224 사례도 다른 작업을 막
+        # 끝내고 풀려난 순간이 하필 공고 틈이었다)
+        amr_01._active_task = (('amr_99', 1), 'other_task')
+
+        bus.publish(_make_auction('amr_10', 1, 'task_early', bid_window_s=2.0, created=0.0))
+        nodes['amr_10']._auctions[('amr_10', 1)].from_request = True  # 재공고 대상으로 만든다
+        assert bus.bids(TaskBid.TYPE_BID) == []  # 맡은 작업이 있어 아직 입찰하지 않는다
+
+        # task_early 마감(bid_window_s=2.0) - 아무도 입찰하지 않았다. 재공고(no_bid_retry_s)는
+        # 아직 안 나갔다 - 그 틈에 늦은 작업(task_late)이 따로 열려 있다
+        clock[0] += 2.1
+        nodes['amr_10']._on_timer()
+        bus.pump()
+        bus.publish(_make_auction('amr_11', 1, 'task_late', bid_window_s=1.0, created=10.0))
+
+        # amr_01이 맡은 작업을 끝내고 풀려난다 - task_early는 지금 안 열려 있어 입찰 후보가
+        # 아니지만, 열린 task_late에는 입찰한다(#227 리뷰 1)
+        amr_01._release_active_task('test')
+        bus.pump()
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_BID)] == ['task_late']
+
+        # task_late가 마감돼 amr_01에게 낙찰된다 - 기억(_remembered) 중인 task_early가 더
+        # 급하고(created 이름) 아직 자격도 있어(IDLE) 받은 AWARD를 바로 수락하지 않는다
+        clock[0] += 1.1
+        nodes['amr_11']._on_timer()
+        bus.pump()
+        assert amr_01._active_task is None
+        assert set(amr_01._pending_awards) == {('amr_11', 1)}
+        assert 'task_early' in amr_01._remembered
+
+        # task_early가 재공고된다(no_bid_retry_s 뒤, 이미 지남) - 입찰한다
+        nodes['amr_10']._on_timer()
+        bus.pump()
+        assert ('amr_10', 2) in amr_01._bid_resends
+
+        # task_early가 마감돼 낙찰된다 - 보류 중이던 task_late보다 급하니 바로 ACCEPT하고,
+        # task_late는 WITHDRAW한다
+        clock[0] += 2.1
+        nodes['amr_10']._on_timer()
+        bus.pump()
+        assert amr_01._active_task == (('amr_10', 2), 'task_early')
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_WITHDRAW)] == ['task_late']
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_idle_robot_bids_on_later_task_after_remembered_announce_expires():
+    """기억 중인 이른 작업(task_early)이 announce_memory_s 동안 다시 공고되지 않으면(다른 로봇이
+    맡았거나 끝났다고 본다) 더는 기다리지 않고 보류 중이던 늦은 작업(task_late)의 AWARD를
+    수락한다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        amr_01 = nodes['amr_01']
+        amr_01._active_task = (('amr_99', 1), 'other_task')
+
+        bus.publish(_make_auction('amr_10', 1, 'task_early', bid_window_s=2.0, created=0.0))
+        bus.publish(_make_auction('amr_11', 1, 'task_late', bid_window_s=3.0, created=10.0))
+
+        # task_early 마감(입찰 자격 없음) 뒤 풀려난다 - task_late에만 입찰한다
+        clock[0] += 2.1
+        amr_01._release_active_task('test')
+        bus.pump()
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_BID)] == ['task_late']
+
+        # task_late가 마감돼 낙찰된다 - task_early를 아직 기억하고 있어(announce_memory_s 전)
+        # 바로 수락하지 않는다
+        clock[0] += 1.0
+        nodes['amr_11']._on_timer()
+        bus.pump()
+        assert amr_01._active_task is None
+        assert set(amr_01._pending_awards) == {('amr_11', 1)}
+
+        # announce_memory_s가 지나도 task_early는 재공고되지 않는다 - 기억이 만료돼 더는
+        # 기다리지 않고 task_late를 수락한다
+        clock[0] = 100.0 + amr_01._params.announce_memory_s + 0.1
+        amr_01._on_timer()
+        bus.pump()
+        assert amr_01._active_task == (('amr_11', 1), 'task_late')
+        assert 'task_early' not in amr_01._remembered
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_idle_robot_bids_on_later_task_when_remembered_earlier_task_is_ineligible():
+    """기억 중인 이른 작업(task_early)에 지금 입찰 자격이 없으면(여기선 마감을 못 맞춤) 보류 중인
+    늦은 작업(task_late)의 AWARD를 기다리지 않고 곧바로 수락한다 - 자격 없는 작업은 아무도
+    입찰하지 않아 계속 재공고되며 기억이 매번 갱신될 수 있어, 자격 체크 없이 기다리면 못 맡을
+    작업을 기다리며 영영 수락을 못 하게 된다(#224 후속)."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        amr_01 = nodes['amr_01']
+        amr_01._active_task = (('amr_99', 1), 'other_task')
+
+        # task_early가 더 이르지만(created=0) 마감(1.0s)을 이미 한참 넘겨 입찰 자격이 없다
+        bus.publish(_make_auction('amr_10', 1, 'task_early', bid_window_s=2.0, created=0.0, deadline=1.0))
+        bus.publish(_make_auction('amr_11', 1, 'task_late', bid_window_s=3.0, created=10.0))
+
+        clock[0] += 2.1  # task_early 마감 - 재공고는 아직 안 나갔다
+        amr_01._release_active_task('test')
+        bus.pump()
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_BID)] == ['task_late']
+
+        # task_late가 마감돼 낙찰된다 - task_early를 기억(announce_memory_s 전)은 하지만 자격이
+        # 없어 기다리지 않고 바로 수락한다
+        clock[0] += 1.0
+        nodes['amr_11']._on_timer()
+        bus.pump()
+        assert amr_01._active_task == (('amr_11', 1), 'task_late')
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
 # --- 맡은 작업 해제 안전장치 ---
 
 

@@ -283,7 +283,11 @@ class TestTaskAuctionLive(unittest.TestCase):
                     and self.node.count_publishers('/fleet/task_bids') >= 2)
         self.assertTrue(self.spin_until(discovery_ready, 15.0))
 
-        auction = self.make_auction('amr_01', auction_id=100, task_id='task_reclaim', bid_window_s=2)
+        # bid_window를 넉넉히(6초) 둔다 - 앞선 테스트(test_bid_deferred_until_robot_state_arrives)의
+        # 'deferred_task'(한 번도 완료·실패 보고 없이 끝남)를 모든 로봇이 여전히 기억하고 있을 수
+        # 있다(announce_memory_s, 기본 4초) - task_id 사전순으로 'task_reclaim'보다 앞서(#224 후속)
+        # 그 기억이 만료될 때까지 amr_02가 입찰을 미룰 여유를 준다(task_1과 같은 이유로 넉넉히 둔다).
+        auction = self.make_auction('amr_01', auction_id=100, task_id='task_reclaim', bid_window_s=6)
         auction.header.stamp = self.node.get_clock().now().to_msg()  # 처음 publish 바로 전에 찍는다
 
         def accepted_by_amr_02():
