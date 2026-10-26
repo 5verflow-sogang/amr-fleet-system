@@ -118,6 +118,17 @@ class TestTaskAuctionLive(unittest.TestCase):
         auction.bid_window.sec = bid_window_s
         return auction
 
+    def finish_task(self, task_id: str, robot_id: str, state: int = TaskStatus.STATE_COMPLETED):
+        """끝낸 적 없는 작업을 테스트 끝에 정리한다 - 안 그러면 모든 노드가 announce_memory_s
+        (#224 후속) 동안 이 task_id를 "곧 재공고될 것"으로 기억해, 같은 launch(프로세스)를
+        공유하는 다음 테스트 메서드가 사전순으로 더 앞선 이 task_id를 기다리다 자기 작업에
+        입찰을 미룰 수 있다(테스트 사이 상태가 샘)."""
+        status_pub = self.node.create_publisher(TaskStatus, '/fleet/task_status', 10)
+        msg = TaskStatus(task_id=task_id, robot_id=robot_id, state=state)
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        status_pub.publish(msg)
+        rclpy.spin_once(self.node, timeout_sec=0.1)
+
     def test_auction_bid_award_accept_default_absolute_topics(self):
         # amr_01·amr_02는 파라미터를 안 바꿨다 - 기본값(절대 경로 원본)을 직접
         # 구독·발행하는지 이 전체 흐름이 통과하는 것 자체로 확인한다.
@@ -283,11 +294,7 @@ class TestTaskAuctionLive(unittest.TestCase):
                     and self.node.count_publishers('/fleet/task_bids') >= 2)
         self.assertTrue(self.spin_until(discovery_ready, 15.0))
 
-        # bid_window를 넉넉히(6초) 둔다 - 앞선 테스트(test_bid_deferred_until_robot_state_arrives)의
-        # 'deferred_task'(한 번도 완료·실패 보고 없이 끝남)를 모든 로봇이 여전히 기억하고 있을 수
-        # 있다(announce_memory_s, 기본 4초) - task_id 사전순으로 'task_reclaim'보다 앞서(#224 후속)
-        # 그 기억이 만료될 때까지 amr_02가 입찰을 미룰 여유를 준다(task_1과 같은 이유로 넉넉히 둔다).
-        auction = self.make_auction('amr_01', auction_id=100, task_id='task_reclaim', bid_window_s=6)
+        auction = self.make_auction('amr_01', auction_id=100, task_id='task_reclaim', bid_window_s=2)
         auction.header.stamp = self.node.get_clock().now().to_msg()  # 처음 publish 바로 전에 찍는다
 
         def accepted_by_amr_02():
@@ -362,6 +369,10 @@ class TestTaskAuctionLive(unittest.TestCase):
             self.spin_until(got_relayed_bid, 5.0),
             '상대 이름(중계본) 공고에 amr_03이 반응하지 않음')
 
+        # 끝낸 적 없는 이 작업들을 다음 테스트 메서드를 위해 정리한다(테스트 사이 상태 격리)
+        self.finish_task('absolute_probe', 'amr_relay_probe')
+        self.finish_task('relay_task', 'amr_03')
+
     def test_bid_deferred_until_robot_state_arrives(self):
         # amr_04는 이 테스트 전용 - 공고가 내 RobotState보다 먼저 와도(기동 직후 등)
         # 입찰 결정을 미뤄 뒀다가, 상태를 처음 받으면 마감 전인 것만 다시 판단해야
@@ -400,6 +411,9 @@ class TestTaskAuctionLive(unittest.TestCase):
         self.assertTrue(
             self.spin_until(got_deferred_bid, 5.0),
             'RobotState를 처음 받은 뒤에도 미뤄 둔 공고에 입찰하지 않음')
+
+        # 끝낸 적 없는 이 작업을 다음 테스트 메서드를 위해 정리한다(테스트 사이 상태 격리)
+        self.finish_task('deferred_task', 'amr_04')
 
 
 @launch_testing.post_shutdown_test()
