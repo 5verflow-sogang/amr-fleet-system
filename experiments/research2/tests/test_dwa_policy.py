@@ -85,6 +85,15 @@ def test_sample_counts_are_fixed_paper_values():
     assert (cfg.v_samples, cfg.w_samples) == (20, 30)
 
 
+def test_rotate_in_place_is_off_paper_value():
+    # 논문 값: 제자리 회전 끔 - 창고 스택(nav2_params.yaml)이 45°로 켜도 따라가지 않는다. C++ 기본값(45°)이
+    # 아니라 이 값이 C API로 넘어가야 한다
+    p = DwaPolicy().params
+    assert p.rotate_in_place_min_angle <= 0.0
+    cfg = DwaPolicy().config(1.0)
+    assert cfg.rotate_in_place_min_angle <= 0.0
+
+
 def test_names():
     assert DwaPolicy('b1').name == 'dwa_b1'
     with pytest.raises(ValueError):

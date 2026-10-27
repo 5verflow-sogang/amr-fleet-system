@@ -70,6 +70,11 @@ class DwaParams:
     use_admissible_velocity: bool = True
     use_goal_slowdown: bool = True
     adaptive_lookahead: bool = True
+    # 제자리 회전(#244)은 논문 값으로 끈다(0 이하). 창고 스택(nav2_params.yaml)은 45°로 켠다 - 켜면 B1 25 kg이
+    # 목표를 0.3 m 지나친 뒤 돌아와 성공해, 고정 한계의 위험(S1 지나침 49%, S2 성공 0%)이 결과에서 사라진다.
+    # C++ DwaConfig 기본값(45°)도 안 쓴다(dwa_c_api.cpp가 이 값을 그대로 넘긴다)
+    rotate_in_place_min_angle: float = 0.0
+    rotate_in_place_exit_angle: float = 0.0
     follow_path: bool = True          # 플러그인처럼 전역 경로를 넘긴다 (#195). False면 예전 지점 호출
     path_resolution: float = 0.05
     # 플러그인
@@ -97,7 +102,8 @@ class _CConfig(ctypes.Structure):
         ('dynamic_obstacle_safety_margin', ctypes.c_double), ('dynamic_obstacle_influence_radius', ctypes.c_double),
         ('dynamic_weight', ctypes.c_double),
         ('use_admissible_velocity', ctypes.c_int), ('use_goal_slowdown', ctypes.c_int),
-        ('lookahead_distance', ctypes.c_double), ('adaptive_lookahead', ctypes.c_int)]
+        ('lookahead_distance', ctypes.c_double), ('adaptive_lookahead', ctypes.c_int),
+        ('rotate_in_place_min_angle', ctypes.c_double), ('rotate_in_place_exit_angle', ctypes.c_double)]
 
 
 _lib = None
@@ -181,7 +187,7 @@ class DwaPolicy:
                         int(p.predict_dynamic_obstacles), p.dynamic_obstacle_safety_margin,
                         p.dynamic_obstacle_influence_radius, p.dynamic_weight,
                         int(p.use_admissible_velocity), int(p.use_goal_slowdown), p.lookahead_distance,
-                        int(p.adaptive_lookahead))
+                        int(p.adaptive_lookahead), p.rotate_in_place_min_angle, p.rotate_in_place_exit_angle)
 
     # ------------------------------------------------------------ ROS 노드가 하던 일
     @staticmethod

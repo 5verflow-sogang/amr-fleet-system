@@ -30,6 +30,7 @@ struct DwaCConfig
   int use_admissible_velocity, use_goal_slowdown;
   double lookahead_distance;
   int adaptive_lookahead;
+  double rotate_in_place_min_angle, rotate_in_place_exit_angle;
 };
 
 static DwaConfig toConfig(const DwaCConfig * c)
@@ -59,6 +60,8 @@ static DwaConfig toConfig(const DwaCConfig * c)
   cfg.use_goal_slowdown = c->use_goal_slowdown != 0;
   cfg.lookahead_distance = c->lookahead_distance;
   cfg.adaptive_lookahead = c->adaptive_lookahead != 0;
+  cfg.rotate_in_place_min_angle = c->rotate_in_place_min_angle;
+  cfg.rotate_in_place_exit_angle = c->rotate_in_place_exit_angle;
   return cfg;
 }
 
