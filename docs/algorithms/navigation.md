@@ -132,8 +132,8 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
 | `acc_w` | 3.2 rad/s² | `FollowPath.acc_lim_theta`와 동일 |
 | `dt` | 0.1 s | 제어 주기 |
 | `sim_time` | 2.0 s | 궤적 예측 길이. 짧게 잡으면 장애물을 더 가까이 와서야 "미래 충돌"로 감지해서 막판에야 급히 피하려다, 동적 윈도우(한 스텝에 꺾을 수 있는 각속도, `acc_w*dt`뿐)가 모자라 못 피하는 상황이 생긴다 — 테스트 중 실제로 발견해서 `sim_time`은 줄이지 않기로 했다(계산량은 샘플 개수로 조절) |
-| `v_samples` | 20 | `nav2_params.yaml` `FollowPath.vx_samples`와 동일 |
-| `w_samples` | 30 | `FollowPath.vtheta_samples`(20)보다 많다 — 회전 각속도 해상도가 좁은 통로 회피 성공률에 더 민감하다고 보고 촘촘히 샘플링했다. TODO(3주차): 실측 KPI로 `nav2_params.yaml`과 맞출지 재검토 |
+| `v_samples` | 20 (스택 10) | `DwaConfig` 기본은 `FollowPath.vx_samples`와 같은 20. 창고 스택(`nav2_params.yaml`)은 10 — 아래 "샘플 수" |
+| `w_samples` | 30 (스택 15) | `DwaConfig` 기본 30. 창고 스택은 15 — 아래 "샘플 수". 연구 2는 20 x 30 그대로 |
 | `footprint_half_length` / `half_width` | 0.3 / 0.2 m | 로봇 스펙(600×400mm)과 동일. **외접원이 아니라 사각형으로 충돌 검사**한다 — 외접원 지름(0.72m)으로 하면 0.6m 좁은 통로(1-1절)를 항상 "막힘"으로 오판한다 |
 | `lethal_cost_threshold` | 253 | `AStarConfig`와 동일한 nav2 costmap 관례 |
 | `heading_weight` / `clearance_weight` / `velocity_weight` | 0.8 / 0.1 / 0.1 | 4-3절 |
@@ -142,6 +142,23 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
 | `use_goal_slowdown` | true | 4-7절. 최종 목표까지 직선 거리로 `v <= sqrt(2·acc_v·d_goal)` |
 | `lookahead_distance` / `adaptive_lookahead` | 0.5 m / true | 4-8절. 경로 버전의 heading 기준점 |
 | `rotate_in_place_min_angle` / `rotate_in_place_exit_angle` | 0.785 / 0.524 rad (45° / 30°) | 4-9절. 제자리 회전 모드 들어가기·나오기(경로 버전) |
+
+**샘플 수 (10/27, 창고 스택 `nav2_params.yaml` 10 x 15):** `computeVelocityCommand` 한 번 계산 시간을 재고
+(x86 8코어, 다른 부하 없음, 3 x 3 m local costmap + 통로 벽·inflation, 90° 꺾이는 경로, max_v 0.5, 300회 중앙값),
+Gazebo에서 통로 ①(목표 yaw +90°)을 설정마다 3번씩 돌렸다(실행 전마다 `fastdds shm clean`).
+
+| v x w | 순항, 지금 빌드(최적화 없음) | 순항, `-O2` | 동적 장애물 2개 (없음 / `-O2`) | 제자리 회전 (없음 / `-O2`) | 통로 ① 3회 (시간, 복구) |
+| --- | --- | --- | --- | --- | --- |
+| 20 x 30 = 600 | 66 ms (p95 87) | 25 ms (p95 42) | 67 / 25 ms | 3.4 / 1.3 ms | 3/3 성공, 111·109·131 s, 복구 3·3·6 |
+| 15 x 20 = 300 | 32 ms (p95 37) | 12 ms (p95 14) | 39 / 12 ms | 2.3 / 0.9 ms | — |
+| 10 x 15 = 150 | 17 ms (p95 22) | 6 ms (p95 6.5) | 17 / 6 ms | 1.7 / 0.7 ms | 3/3 성공, 97·106·89 s, 복구 1·3·0 |
+
+- 계산 시간은 샘플 수에 거의 비례한다. 지금 빌드(`CMAKE_BUILD_TYPE` 없음, 최적화 없음)에서 20 x 30은 20 Hz 제어 주기
+  (50 ms)를 넘어 Gazebo에서 "Control loop missed its desired rate" 경고가 실행마다 1,000번 넘게 났다.
+- 10 x 15는 통로 ①에서 20 x 30보다 나쁘지 않았다(평균 97 s / 117 s, 복구 1.3 / 4회). 직선 5 m·출발 방향 180°도 둘 다
+  모두 성공했다. 실물(라즈베리파이)에서도 돌아야 해 작은 쪽으로 정했다.
+- `w_samples`가 홀수면 [min_w, max_w]를 고르게 나눌 때 가운데(지금 각속도, 흔히 0)가 샘플에 들어간다.
+- Release 빌드(`-O2`)면 2.6배 빨라진다 - 팀 빌드 설정이라 이번에는 바꾸지 않았다(위 표에 결과만 남긴다).
 
 ### 4-3. 비용 함수 가중치 근거와 "제자리 정지" 함정
 

@@ -245,8 +245,12 @@ controller_server:
       # 궤적 시뮬레이션
       dt: 0.1
       sim_time: 2.0
-      v_samples: 20
-      w_samples: 30
+      # 샘플 수 10 x 15 (DwaConfig 기본 20 x 30의 1/4). 20 x 30은 지금 빌드(최적화 없음)에서 한 번에 약 66 ms라
+      # 20 Hz 제어 주기(50 ms)를 넘는다. 10 x 15는 약 17 ms, Gazebo 통로 ① 3회 품질이 20 x 30과 같거나 낫다
+      # (navigation.md 4-2절). 실물(라즈베리파이)에서도 돌아야 한다. w_samples는 홀수라 지금 각속도가 샘플에 들어간다.
+      # 연구 2(experiments/research2)는 이 값을 따르지 않고 20 x 30을 쓴다
+      v_samples: 10
+      w_samples: 15
       # 로봇 풋프린트 반폭(사각형, 600x400mm) - global/local costmap의 footprint와 동일
       footprint_half_length: 0.3
       footprint_half_width: 0.2
