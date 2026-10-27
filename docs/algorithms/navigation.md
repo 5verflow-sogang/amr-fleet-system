@@ -187,6 +187,12 @@ odom/map 프레임 ↔ 이 좌표계 변환은 core가 아니라 3주차 `amr_na
 기본값) 2주차 정적 장애물 전용 결과와 완전히 같다 — `predict_dynamic_obstacles:
 false`면 장애물이 관측 위치에 멈춰 있다고 본다(순간 스냅샷).
 
+지금 자세에서 이미 안전 여유 안에 있는 장애물은 **지금보다 가까워지거나 닿는 궤적만** 충돌로 본다(#216).
+전에는 궤적 첫 점부터 여유 안이라 멀어지는 궤적까지 모두 버려져, 가로지르는 장애물 앞에 0.2 m 안으로
+선 로봇이 장애물이 비킬 때까지 0~0.01 m/s로 서 있었다(연구 2 S1 진단 로그: 한 주기 600개 샘플 중
+236개가 첫 점 동적 충돌, 나머지는 그 장애물의 costmap 치명 셀). 정면 장애물처럼 앞으로 가면 가까워지는
+경우는 그대로 막는다.
+
 `amr_nav2_plugins::DwaController`가 이 장애물 목록을 만들어 넘기고, 전역 경로에서
 로봇 앞 `lookahead_distance`만큼의 지점을 "다음 목표"로 골라 DWA에 준다. Gazebo
 월드 v0 + Nav2 bringup으로 실제 주행을 확인했다(`amr_bringup/launch/
@@ -225,7 +231,7 @@ heading 비중(0.8)이 압도적이라 벽으로 곧장 가다 막판에 못 꺾
 **목표 앞 감속** (`use_goal_slowdown`, 기본 true): 최종 목표(전역 경로 끝, 지역 waypoint가 아님)까지
 직선 거리 `d_goal`에서 샘플 선속도를 `v <= sqrt(2·acc_v·d_goal)`로 제한한다(`computeVelocityCommand`의
 `final_goal` 인자. 경로를 받는 버전은 경로 마지막 점을 쓴다). 동적 윈도우 최저 속도가 이보다
-높으면 최저 속도 하나만 샘플링한다. 감속은 `acc_v` 그대로 쓰고, `xy_goal_tolerance` 안에서는 지금처럼
+높으면 최저 속도 하나만 샘플링한다. #216부터 상한은 연속 시간 `sqrt(2·acc_v·d_goal)`이 아니라 이번 제어 주기를 넣은 `|v|·dt + v²/(2·acc_v) <= d_goal`의 최대 속도(`goalStoppingVelocity`)다 - 연속 시간 식은 매 주기 그 속도로 `dt`만큼 더 가는 만큼 상한보다 늦게 줄어, 최대로 감속해도 목표를 지나쳤다(연구 2 S2 25 kg 30/30 지나침, `GoalSlowdownStopsBeforeGoalAccountingForControlPeriod`). 감속은 `acc_v` 그대로 쓰고, `xy_goal_tolerance` 안에서는 지금처럼
 플러그인이 v=0으로 끊고 `rotateToGoalYaw`로 돈다.
 
 다만 이것도 기존 heading 항에 가려지는 경우가 많다. 궤적 끝이 목표를 넘으면 heading 비용이 최대(1.0)라
@@ -254,6 +260,18 @@ heading을 끝점 앞에서 재므로 이 가림이 없어진다(4-8절).
 판정(`kGoalReached`)은 기존처럼 `lookahead_distance` 앞 점 기준이다. 점 하나만 넘기는 기존 버전은
 그대로다(경로가 없으면 그 점 기준). `adaptive_lookahead: false`면 경로 버전도 기존 플러그인 흐름과
 결과가 같다(`AdaptiveLookaheadDisabledMatchesFixedWaypointCall`).
+
+**#216에서 고친 것(연구 2에서 1.5 m/s로 달리다 0.15 m/s로 떨어져 기어가 시간 초과):** 위 규칙은 기준점을
+궤적 길이(`|v|·sim_time`)만큼 앞에 두어, 빠른 샘플일수록 궤적 끝과 기준점이 거의 같은 곳(수 cm 차)에
+있었다. 궤적 끝에서 기준점을 향하는 방향이 경로 점 간격(0.05 m)과 옆 오차 몇 mm에 따라 크게 튀어, 빠른
+샘플의 heading 비용만 들쭉날쭉 커지고(0.2~0.3) 속도 비용(최대 0.1)으로는 못 이겨 속도가
+`lookahead_distance/sim_time` 근처로 떨어졌다 - 그보다 느리면 기준점이 고정 lookahead 점이라 다시
+앞에 있게 된다. 진단 로그(샘플별 기준점·궤적 끝·비용 항)로 확인했다. 그래서 기준점을 **궤적 끝보다
+`lookahead_distance` 앞**(`|v|·sim_time + lookahead_distance`)에 둔다 - 모든 샘플에서 끝 → 기준점
+거리가 같아 heading 비용을 같은 조건으로 비교한다. 기준점이 경로 끝점으로 잘리면 끝점보다
+`lookahead_distance` 앞인 궤적 점에서 heading을 잰다(전에는 끝점을 지나치는 궤적만 `goal_tolerance`
+앞에서 쟀다) - 같은 이유로 목표 앞 몇 m에서 다시 기어가던 것을 막는다. 정지(v=0)에서는 기준점이 전과
+같이 `lookahead_distance` 앞이다. 로봇에 가장 가까운 경로 점 찾기는 경로 전체를 보므로 원인이 아니었다.
 
 ## 5. Pure Pursuit · Stanley · PID
 

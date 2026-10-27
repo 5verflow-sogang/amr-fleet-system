@@ -232,8 +232,12 @@ controller_server:
 
     DWA:
       plugin: "amr_nav2_plugins::DwaController"
-      # 로봇 속도·가속 한계 (FollowPath.max_vel_x/max_vel_theta/acc_lim_x/acc_lim_theta와 동일)
-      max_v: 2.0
+      # 로봇 속도·가속 한계 (max_w·acc_v·acc_w는 FollowPath.max_vel_theta/acc_lim_x/acc_lim_theta와 동일).
+      # max_v는 로봇 스펙(2.0 m/s)이 아니라 창고 통합 스택의 순항 속도 0.5 m/s로 둔다 - Nav KPI(nav_kpi 시나리오
+      # config_patch)·통합 스택이 이 속도를 기준으로 잰다. #216에서 heading 기준점을 고친 뒤로 DWA가 실제로
+      # max_v까지 달려(전에는 약 0.25~0.4 m/s에 묶였다) 2.0이면 통로·구역 진입 속도가 기준과 달라진다.
+      # 연구 2(experiments/research2)는 이 파일이 아니라 DwaParams(max_v 2.0)를 쓴다.
+      max_v: 0.5
       min_v: 0.0
       max_w: 1.5
       acc_v: 1.0
