@@ -967,11 +967,61 @@ TEST(DwaPlannerTest, DynamicObstacleAlreadyWithinMarginAllowsTrajectoriesMovingA
   ahead.y = 2.0;
   RobotState stopped = state;
   stopped.v = 0.0;
+  // 서 있는 로봇에서 앞으로 가는 샘플은 첫 점부터 가까워지고, 제자리 회전은 앞 모서리가 다가가 궤적 중간에
+  // 가까워진다(v≈0 회전 충돌은 버린다) - 지금 거리를 지키는 건 그대로 서 있기(v=0, w=0) 하나다
   const DwaCommand blocked =
     planner.computeVelocityCommand(stopped, goal, test_grid.grid(), {ahead});
-  if (blocked.status == DwaStatus::kOk) {
-    EXPECT_LE(blocked.v, 1e-9);
-  }
+  ASSERT_EQ(blocked.status, DwaStatus::kOk);
+  EXPECT_EQ(blocked.v, 0.0);
+  EXPECT_EQ(blocked.w, 0.0);
+}
+
+TEST(DwaPlannerTest, PredictedObstacleApproachingWithinMarginLeavesNoValidTrajectory)
+{
+  // 예측(predict_dynamic_obstacles) 켬, 이미 여유 안(왼쪽 0.1 m)에서 0.5 m/s로 다가오는 장애물: 서 있어도 첫
+  // 점(0.1 s 뒤)에 장애물이 0.05 m 더 다가오고, 로봇은 한 주기에 그만큼 못 비킨다 - 멀어지는 궤적이 없어
+  // kNoValidTrajectory(정지)다. "지금보다 가까워지지 않으면 허용"이 다가오는 장애물까지 허용하면 안 된다.
+  TestGrid test_grid(160, 80, 0.05);
+  const DwaPlanner planner(makeFastConfig());
+  ASSERT_TRUE(planner.config().predict_dynamic_obstacles);
+  RobotState state;
+  state.x = 2.0;
+  state.y = 2.0;
+  DynamicObstacle approaching;
+  approaching.radius = 0.25;
+  approaching.x = 2.0;
+  approaching.y = 2.0 + 0.2 + 0.1 + approaching.radius;
+  approaching.vy = -0.5;
+  const DwaCommand command =
+    planner.computeVelocityCommand(state, Point2D{6.0, 2.0}, test_grid.grid(), {approaching});
+  EXPECT_EQ(command.status, DwaStatus::kNoValidTrajectory);
+}
+
+TEST(DwaPlannerTest, WithinMarginObstaclePrefersTrajectoriesMovingAway)
+{
+  // #228 연우 리뷰: 이미 여유 안인 장애물은 궤적을 따라 잰 최소 거리가 늘 여유 안이라 거리비용이 모든 궤적에서
+  // 1.0이었다 - 나란히 가는 궤적과 멀어지는 궤적을 가르지 못했다. 궤적 끝 거리로 매기면 멀어질수록 싸다.
+  // 다른 비용 항을 끄고 동적 거리비용만 남겨 본다(전에는 모든 후보가 같아 첫 후보, 직진을 골랐다).
+  TestGrid test_grid(160, 80, 0.05);
+  DwaConfig config = makeFastConfig();
+  config.heading_weight = 0.0;
+  config.clearance_weight = 0.0;
+  config.velocity_weight = 0.0;
+  const DwaPlanner planner(config);
+  RobotState state;
+  state.x = 2.0;
+  state.y = 2.0;
+  state.v = 0.5;
+  // 오른쪽 0.1 m(여유 안)에서 로봇과 같은 속도로 나란히 가는 장애물
+  DynamicObstacle alongside;
+  alongside.radius = 0.25;
+  alongside.x = 2.0;
+  alongside.y = 2.0 - 0.2 - 0.1 - alongside.radius;
+  alongside.vx = 0.5;
+  const DwaCommand command =
+    planner.computeVelocityCommand(state, Point2D{6.0, 2.0}, test_grid.grid(), {alongside});
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  EXPECT_GT(command.w, 0.0);  // 왼쪽(장애물 반대쪽)으로 꺾어 멀어진다
 }
 
 TEST(DwaPlannerTest, GoalSlowdownStopsBeforeGoalAccountingForControlPeriod)
@@ -1342,6 +1392,33 @@ TEST(DwaPlannerTest, StoppedBesideDynamicObstacleWithinMarginStillMovesAway)
   ASSERT_EQ(command.status, DwaStatus::kOk);
   EXPECT_GT(command.v, 0.0);
   EXPECT_LE(command.w, 1e-9);  // 장애물(왼쪽) 쪽으로 돌지 않는다
+}
+
+TEST(DwaPlannerTest, DynamicWindowDoesNotInvertAboveMaxSpeed)
+{
+  // 지금 속도가 max_v보다 한 주기 감속 이상 빠르면(v > max_v + acc_v*dt) min_v > max_v로 창이 뒤집혀, 샘플이
+  // 한 주기 최대 감속보다 더 줄인 속도(max_v)까지 나왔다. 최대 감속 속도 하나만 남는다(#228 연우 리뷰).
+  DwaConfig config = makeFastConfig();
+  config.max_v = 0.5;
+  const DwaPlanner planner(config);
+  RobotState fast;
+  fast.v = 1.5;
+  fast.w = 2.5;  // max_w(1.5) + acc_w*dt(0.32)보다 빠른 각속도도 같이
+  const DynamicWindow window = planner.computeDynamicWindow(fast);
+  EXPECT_NEAR(window.min_v, fast.v - config.acc_v * config.dt, 1e-12);
+  EXPECT_NEAR(window.max_v, window.min_v, 1e-12);
+  EXPECT_GE(window.max_w, window.min_w);
+  EXPECT_NEAR(window.max_w, fast.w - config.acc_w * config.dt, 1e-12);
+
+  TestGrid test_grid(200, 80, 0.05);
+  RobotState state;
+  state.x = 1.0;
+  state.y = 2.0;
+  state.v = 1.5;
+  const DwaCommand command =
+    planner.computeVelocityCommand(state, Point2D{8.0, 2.0}, test_grid.grid());
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  EXPECT_NEAR(command.v, state.v - config.acc_v * config.dt, 1e-12);
 }
 
 }  // namespace amr_planning_core

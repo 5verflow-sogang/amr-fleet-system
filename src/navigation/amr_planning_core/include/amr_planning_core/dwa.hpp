@@ -290,6 +290,12 @@ private:
     const std::vector<DynamicObstacle> & obstacles, double t, double x, double y, double yaw,
     double * min_surface_distance, const std::vector<double> * start_distances = nullptr) const;
 
+  // 이미 안전 여유 안인 장애물(start_distances <= margin)의 거리비용 [0,1]: 궤적 끝(t, point)에서
+  // 표면까지 거리를 닿음(0)부터 margin + influence_radius까지 1 -> 0으로. 멀어지는 궤적일수록 작다.
+  double withinMarginObstacleCost(
+    const std::vector<DynamicObstacle> & obstacles, const std::vector<double> & start_distances,
+    double t, const TrajectoryPoint & point) const;
+
   // 동적 장애물 거리비용 [0,1]. 표면까지 거리가 안전 여유(safety_margin)에 가까울수록
   // 1.0, dynamic_obstacle_influence_radius보다 멀면(장애물이 없을 때 포함) 0.0.
   double dynamicObstacleCost(double min_surface_distance) const;

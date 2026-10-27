@@ -110,6 +110,11 @@ DynamicWindow DwaPlanner::computeDynamicWindow(const RobotState & state) const
   window.max_v = std::min(config_.max_v, state.v + config_.acc_v * config_.dt);
   window.min_w = std::max(-config_.max_w, state.w - config_.acc_w * config_.dt);
   window.max_w = std::min(config_.max_w, state.w + config_.acc_w * config_.dt);
+  // 지금 속도가 한계보다 한 주기 감속 이상 빠르면(v > max_v + acc_v*dt, 예: 처음 속도가 max_v보다 높음)
+  // min > max로 창이 뒤집혀, 샘플이 한 주기 최대 감속(acc*dt)보다 더 줄인 속도까지 나온다. 그때는 최대
+  // 감속 속도 하나만 남긴다(각속도도 같다).
+  window.max_v = std::max(window.max_v, window.min_v);
+  window.max_w = std::max(window.max_w, window.min_w);
   return window;
 }
 
@@ -230,10 +235,41 @@ bool DwaPlanner::evaluateDynamicObstacles(
       *min_surface_distance = std::max(0.0, surface_distance);
       return true;
     }
+    if (start_distances != nullptr &&
+      (*start_distances)[j] <= config_.dynamic_obstacle_safety_margin)
+    {
+      // 이미 여유 안인 장애물은 궤적을 따라 잰 최소 거리에 넣지 않는다 - 늘 여유 안이라 거리비용이
+      // 모든 궤적에서 1.0이 돼 멀어지는 궤적을 고르지 못한다. 대신 궤적 끝 거리로 따로 매긴다
+      // (withinMarginObstacleCost).
+      continue;
+    }
     *min_surface_distance = std::min(*min_surface_distance, surface_distance);
   }
 
   return false;
+}
+
+double DwaPlanner::withinMarginObstacleCost(
+  const std::vector<DynamicObstacle> & obstacles, const std::vector<double> & start_distances,
+  double t, const TrajectoryPoint & point) const
+{
+  // 이미 안전 여유 안인 장애물: 궤적 끝(t, point)에서 표면까지 거리를 닿음(0)부터 재서
+  // [0, margin + influence_radius]를 1 -> 0으로 매긴다. 나란히 가면(거리 그대로) 1.0에 가깝고 멀어질수록 작다.
+  const double range = std::max(
+    config_.dynamic_obstacle_safety_margin + config_.dynamic_obstacle_influence_radius, 1e-6);
+  const double predict_t = config_.predict_dynamic_obstacles ? t : 0.0;
+  double cost = 0.0;
+  for (std::size_t j = 0; j < obstacles.size(); ++j) {
+    if (start_distances[j] > config_.dynamic_obstacle_safety_margin) {
+      continue;
+    }
+    const DynamicObstacle & obstacle = obstacles[j];
+    const double surface_distance = rectangleSurfaceDistance(
+      point.x, point.y, point.yaw, config_.footprint_half_length, config_.footprint_half_width,
+      obstacle.x + obstacle.vx * predict_t, obstacle.y + obstacle.vy * predict_t) - obstacle.radius;
+    cost = std::max(cost, std::clamp(1.0 - surface_distance / range, 0.0, 1.0));
+  }
+  return cost;
 }
 
 bool DwaPlanner::dynamicObstacleCollides(
@@ -362,6 +398,10 @@ DwaCommand DwaPlanner::selectCommand(
     start_distances.push_back(rectangleSurfaceDistance(
         state.x, state.y, state.yaw, config_.footprint_half_length, config_.footprint_half_width,
         obstacle.x, obstacle.y) - obstacle.radius);
+  }
+  bool any_within_margin = false;
+  for (const double d : start_distances) {
+    any_within_margin = any_within_margin || d <= config_.dynamic_obstacle_safety_margin;
   }
 
   const double dx = goal.x - state.x;
@@ -496,9 +536,17 @@ DwaCommand DwaPlanner::selectCommand(
         // 닿는 궤적은 설 수 있는 마지막 점(닿기 직전)에서 heading을 본다.
         const TrajectoryPoint & trajectory_end =
           trajectory[std::min(free_steps, heading_steps) - 1];
+        // 동적 거리비용: 여유 밖 장애물은 궤적을 따라 잰 최소 거리, 이미 여유 안인 장애물은 설 수 있는
+        // 마지막 점(궤적 끝)에서의 거리 - 둘 중 큰 쪽(#228 연우 리뷰)
+        double dynamic_cost = dynamicObstacleCost(min_dynamic_surface_distance);
+        if (any_within_margin) {
+          dynamic_cost = std::max(dynamic_cost, withinMarginObstacleCost(
+              dynamic_obstacles, start_distances, static_cast<double>(free_steps) * config_.dt,
+              trajectory[free_steps - 1]));
+        }
         const double cost =
           evaluateCost(trajectory_end, heading_target, v, max_cell_cost, rotate_mode) +
-          config_.dynamic_weight * dynamicObstacleCost(min_dynamic_surface_distance);
+          config_.dynamic_weight * dynamic_cost;
         const int tier = collides ? 1 : 0;
         if (cost < best.cost[tier]) {
           best.cost[tier] = cost;
