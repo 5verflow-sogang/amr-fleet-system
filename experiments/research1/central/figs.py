@@ -280,6 +280,27 @@ b2.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], loc='upper left', 
 fig.set_size_inches(88 * MM, 122 * MM)
 save(fig, 'figB_stacked', h_pad=1.4)
 
+# 한 단 압축 합본: (a) 위·(b) 아래, 확대 창 없이 98 mm. 두 장(72 mm씩)을 한 장으로 합쳐 한 단에서 약 46 mm를 줄인다.
+# 손실 50%의 겹친 점은 본문에서 설명하므로 확대 창은 뺀다 (확대 창이 필요하면 figB_stacked)
+_old_label = dict(LABEL_THR)
+LABEL_THR.update({'central_loss30': ('60초, 손실 30%', (2.6, 0.6)), 'central_loss50': ('60초, 손실 50%', (2.6, 1.75))})
+LEGEND_B.clear()
+fig, (b1, b2) = plt.subplots(2, 1, figsize=(88 * MM, 98 * MM))
+panel_wait(b1, legend=False)
+panel_thr(b2)
+b1.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], frameon=False, fontsize=5.2, loc='upper left',
+          handletextpad=0.3, labelspacing=0.25, borderaxespad=0.2)
+b1.set_ylabel('실측 추가 대기 (초)', fontsize=6.5)
+b2.set_ylabel('실측 감소 (%)', fontsize=6.5)
+b1.set_title('(a) 명령을 받기까지 추가 대기', fontsize=6.5, pad=3)
+b2.set_title('(b) 처리량 감소 (완료 작업 수)', fontsize=6.5, pad=3)
+for t in b1.texts:   # '손실 70%'는 위쪽 제목과 겹치지 않게 점 왼쪽 아래로
+    if t.get_text() == '손실 70%':
+        t.set_position((-14, -4))
+save(fig, 'figB_compact', h_pad=1.2)
+LABEL_THR.clear()
+LABEL_THR.update(_old_label)
+
 # 한 단 점 그림: 조건마다 한 줄, 예측(◇)과 실측(● + 95% CI)을 나란히. 대각선 그림보다 읽기 쉽다
 DOT_LABEL = {'central_loss30': '손실 30%', 'central_loss50': '손실 50%', 'central_loss70': '손실 70%',
              'central_loss50_k1': '손실 50%, 재전송 1회', 'central_loss50_k0': '손실 50%, 재전송 0회',
