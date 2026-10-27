@@ -1,0 +1,30 @@
+# 매핑용 EKF (지도 v2): odom → base_footprint를 DiffDrive 대신 낸다. run_slam_offline.sh EKF=1에서 쓴다.
+# 직진 속도는 DiffDrive odom, 회전 속도는 IMU만 쓴다. 지도 v1 bag 285 m에서 DiffDrive 방향 오차는 최대 8.7°,
+# IMU 각속도 적분은 0.6° 안이었다 (README "지도 v2").
+# 위치추정용 ekf_local(amr_localization)과 따로 둔다: 그쪽은 엔코더 노이즈를 넣은 휠 odom을 쓰고 회전도 섞는다.
+ekf_mapping:
+  ros__parameters:
+    use_sim_time: true
+    frequency: 50.0
+    sensor_timeout: 0.1
+    two_d_mode: true
+    publish_tf: true
+    map_frame: map
+    odom_frame: amr_01/odom
+    base_link_frame: amr_01/base_footprint
+    world_frame: amr_01/odom
+    odom0: /amr_01/diff_drive/odom
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  false,
+                   false, false, false,
+                   false, false, false]
+    odom0_queue_size: 10
+    imu0: /amr_01/imu/data
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_queue_size: 20
+    imu0_remove_gravitational_acceleration: true
