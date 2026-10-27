@@ -51,6 +51,9 @@ class DwaParams:
     acc_w: float = 3.2
     dt: float = 0.1
     sim_time: float = 2.0
+    # 샘플 수는 nav2_params.yaml을 따라가지 않고 논문(연구 2 비교군) 값 20 x 30으로 고정한다. 창고 스택은 계산량
+    # 때문에 10 x 15로 줄인다(navigation.md 4-2) - 그걸 따라 바꾸면 B1·B2 결과가 달라진다. C++ DwaConfig 기본값도
+    # 안 쓴다(dwa_c_api.cpp가 이 값을 그대로 넘긴다)
     v_samples: int = 20
     w_samples: int = 30
     footprint_half_length: float = 0.3

@@ -77,6 +77,14 @@ def test_b2_without_mass_info_equals_b1():
     assert DwaPolicy('b2').acc_v(env) == pytest.approx(DwaPolicy('b1').acc_v(env))
 
 
+def test_sample_counts_are_fixed_paper_values():
+    # 논문 비교군 값 20 x 30 고정 - 창고 스택(nav2_params.yaml)이 샘플 수를 줄여도 따라가지 않는다
+    p = DwaPolicy().params
+    assert (p.v_samples, p.w_samples) == (20, 30)
+    cfg = DwaPolicy().config(1.0)
+    assert (cfg.v_samples, cfg.w_samples) == (20, 30)
+
+
 def test_names():
     assert DwaPolicy('b1').name == 'dwa_b1'
     with pytest.raises(ValueError):
