@@ -17,7 +17,7 @@ params:
   controller: nav2
   cruise_mps: "0.5"
   curve_kappa: "0.2"
-  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1_0025.yaml
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v2_0025.yaml
   # 녹화는 기본 끔: 50쌍(46분)이면 GT·plan만으로 수백 MB다. 실패한 쌍을 Foxglove로 볼 때 --set record=true
   record: "false"
 processes:
