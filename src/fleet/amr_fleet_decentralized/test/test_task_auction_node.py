@@ -17,13 +17,18 @@ from amr_fleet_decentralized.auction import assignment_topic, robot_index
 from amr_fleet_decentralized.task_auction_node import TaskAuctionNode
 
 
-def _make_auction(auctioneer_id: str, auction_id: int, task_id: str, bid_window_s: float = 2.0):
+def _make_auction(auctioneer_id: str, auction_id: int, task_id: str, bid_window_s: float = 2.0,
+                   priority: int = 0, created: float = 0.0, deadline: float = None):
     msg = TaskAuction()
     msg.auctioneer_id = auctioneer_id
     msg.auction_id = auction_id
     msg.task.task_id = task_id
     msg.task.dropoff_pose.position.x = 3.0
     msg.task.dropoff_pose.position.y = 4.0
+    msg.task.priority = priority
+    msg.task.created_time.sec = int(created)
+    if deadline is not None:
+        msg.task.deadline.sec = int(deadline)
     msg.bid_window.sec = int(bid_window_s)
     msg.bid_window.nanosec = int(round((bid_window_s - msg.bid_window.sec) * 1e9))
     return msg
@@ -161,26 +166,20 @@ def _pose(x, y):
     return pose
 
 
-def _run_concurrent_auctions(robots):
-    """경매인 amr_10·amr_11(BUSY, 입찰 안 함)이 작업 2개를 동시에 공고하고 마감까지 진행한다.
-    robots: [(robot_id, xy)]. 두 작업 모두 amr_01(3,0)이 가장 가깝다(거리 4), amr_02(0,0)는 5."""
+def _run_single_auction(robots):
+    """경매인 amr_10(BUSY, 입찰 안 함)이 작업 1개를 공고하고 마감까지 진행한다 - "맡은 작업이
+    있는 로봇"이 필요한 테스트의 공통 준비. robots: [(robot_id, xy)]. amr_01(3,0)이 가장
+    가깝다(거리 4)."""
     bus = _Bus()
     clock = [100.0]
-    nodes = {
-        'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
-        'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
-    }
+    nodes = {'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY)}
     for robot_id, xy in robots:
         nodes[robot_id] = _make_node(robot_id, bus, clock, xy, RobotState.MODE_IDLE)
 
     auction_a = _make_auction('amr_10', 1, 'task_a')
     auction_a.task.dropoff_pose.position.x, auction_a.task.dropoff_pose.position.y = 3.0, 4.0
-    auction_b = _make_auction('amr_11', 1, 'task_b')
-    auction_b.task.dropoff_pose.position.x, auction_b.task.dropoff_pose.position.y = 3.0, -4.0
     bus.publish(auction_a)
-    bus.publish(auction_b)
 
-    # 두 경매의 마감이 거의 같이 지나 AWARD 두 개가 연달아 나간다
     clock[0] += 2.1
     for node in nodes.values():
         node._on_timer()
@@ -196,90 +195,353 @@ def _accepted_robots_by_task(bus):
     return by_task
 
 
-def test_concurrent_awards_same_robot_accepts_one_and_second_goes_to_runner_up():
+# --- 처리 순서(#223 연구 1 처리 순서 수정, #227 민지 리뷰 1·2): 열린 경매 전부에 입찰하고,
+# 그중 가장 앞선 AWARD만 ACCEPT ---
+
+
+def test_idle_robot_bids_on_all_open_auctions_and_accepts_the_higher_priority_award():
+    """#227 리뷰 1·2: 입찰 가능한 열린 경매 전부에 입찰하고(낮은 쪽을 WITHDRAW하지 않는다),
+    둘 다 낙찰되면 더 급한(우선순위 높은) 쪽만 ACCEPT, 낮은 쪽은 WITHDRAW한다."""
     rclpy.init()
     nodes = {}
     try:
-        bus, _, nodes = _run_concurrent_auctions([('amr_01', (3.0, 0.0)), ('amr_02', (0.0, 0.0))])
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        low = _make_auction('amr_10', 1, 'task_low', priority=0)
+        bus.publish(low)
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_BID)] == ['task_low']
 
-        # amr_01이 두 경매 모두 최저가로 낙찰됐다
-        awards_to_01 = {m.task_id for m in bus.bids(TaskBid.TYPE_AWARD) if m.winner_id == 'amr_01'}
-        assert awards_to_01 == {'task_a', 'task_b'}
+        # 더 급한 경매(우선순위 높음)가 나타나도 task_low를 거두지 않고 둘 다 입찰한다(#227 리뷰 1)
+        high = _make_auction('amr_11', 1, 'task_high', priority=5)
+        bus.publish(high)
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_BID)] == ['task_low', 'task_high']
+        assert bus.bids(TaskBid.TYPE_WITHDRAW) == []
 
-        # 하나(먼저 받은 task_a)만 수락하고 다른 하나는 포기, 경매인은 2순위 amr_02에게 줬다
-        assert [(m.task_id, m.robot_id) for m in bus.bids(TaskBid.TYPE_WITHDRAW)] == [
-            ('task_b', 'amr_01')]
-        state_a = nodes['amr_10']._auctions[('amr_10', 1)]
-        state_b = nodes['amr_11']._auctions[('amr_11', 1)]
-        assert (state_a.phase, state_a.winner_id) == ('done', 'amr_01')
-        assert (state_b.phase, state_b.winner_id) == ('done', 'amr_02')
-        assert nodes['amr_01']._active_task == (('amr_10', 1), 'task_a')
-        assert nodes['amr_02']._active_task == (('amr_11', 1), 'task_b')
-        # 재경매(새 auction_id)는 없었다
-        assert [m for m in bus.log if isinstance(m, TaskAuction) and m.auction_id > 1] == []
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+
+        # 둘 다 낙찰됐지만 더 급한 task_high만 ACCEPT, task_low는 WITHDRAW해 재경매로 넘어간다
+        assert _accepted_robots_by_task(bus) == {'task_high': {'amr_01'}}
+        assert nodes['amr_01']._active_task == (('amr_11', 1), 'task_high')
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_WITHDRAW)] == ['task_low']
+        reannounces = [m for m in bus.log if isinstance(m, TaskAuction) and m.auctioneer_id == 'amr_10'
+                       and m.auction_id > 1]
+        assert [m.task.task_id for m in reannounces] == ['task_low']
     finally:
         for node in nodes.values():
             node.destroy_node()
         rclpy.shutdown()
 
 
-def test_concurrent_awards_single_bidder_reauctions():
+def test_stale_award_for_declined_lower_priority_task_is_withdrawn_again():
+    """#227 리뷰 2: 더 급한 작업을 ACCEPT해 WITHDRAW한 경매에 (네트워크 경쟁으로) AWARD가
+    늦게 와도 다시 WITHDRAW한다 - 같은 작업을 두 로봇이 맡지 않는다."""
     rclpy.init()
     nodes = {}
     try:
-        bus, clock, nodes = _run_concurrent_auctions([('amr_01', (3.0, 0.0))])
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+            'amr_02': _make_node('amr_02', bus, clock, (0.0, 0.0), RobotState.MODE_IDLE),
+        }
+        bus.publish(_make_auction('amr_10', 1, 'task_low', priority=0))
+        bus.publish(_make_auction('amr_11', 1, 'task_high', priority=5))
+        # amr_01·amr_02 둘 다 두 작업 모두에 입찰한다(#227 리뷰 1) - amr_01이 더 가까워 둘 다 처음
+        # amr_01에게 낙찰된다
+        assert {m.task_id for m in bus.bids(TaskBid.TYPE_BID)} == {'task_low', 'task_high'}
 
-        # task_b는 입찰자가 amr_01 하나뿐 - 포기하자 새 auction_id(2)로 재경매한다
-        reauctions = [m for m in bus.log if isinstance(m, TaskAuction) and m.auction_id > 1]
-        assert [(m.auctioneer_id, m.auction_id, m.task.task_id) for m in reauctions] == [
-            ('amr_11', 2, 'task_b')]
-        assert ('amr_11', 1) not in nodes['amr_11']._auctions
-        assert nodes['amr_11']._auctions[('amr_11', 2)].phase == 'collecting'
-        # task_a를 맡은 amr_01은 재경매에 입찰하지 않는다(IDLE 로봇만 입찰)
-        assert [m for m in bus.bids(TaskBid.TYPE_BID) if m.auction_id == 2] == []
-
-        # 작업을 끝내면(내 TaskStatus COMPLETED) 다시 입찰할 수 있다
-        status = TaskStatus(task_id='task_a', robot_id='amr_01', state=TaskStatus.STATE_COMPLETED)
-        nodes['amr_01']._on_task_status(status)
-        assert nodes['amr_01']._active_task is None
-        later = _make_auction('amr_11', 3, 'task_c')
-        bus.publish(later)
-        assert [m.robot_id for m in bus.bids(TaskBid.TYPE_BID) if m.auction_id == 3] == ['amr_01']
-    finally:
+        clock[0] += 2.1
         for node in nodes.values():
-            node.destroy_node()
-        rclpy.shutdown()
+            node._on_timer()
+        bus.pump()
+        # 더 급한 task_high만 ACCEPT하고 task_low는 WITHDRAW한다(#227 리뷰 2) - 다음 순위
+        # amr_02에게 넘어가지만, amr_02도 task_high 입찰 결과를 아직 몰라 바로 수락하지 않는다
+        assert nodes['amr_01']._active_task == (('amr_11', 1), 'task_high')
+        assert [m.robot_id for m in bus.bids(TaskBid.TYPE_WITHDRAW) if m.task_id == 'task_low'] == ['amr_01']
+        assert _accepted_robots_by_task(bus) == {'task_high': {'amr_01'}}
 
+        # amr_01이 task_high를 시작했다고 보고한다(amr_bt 흉내) - amr_02는 그제서야 task_high
+        # 입찰 결과를 알아(#227 리뷰 2, _taken_by_other), 보류 중인 task_low를 바로 수락한다
+        bus.publish(TaskStatus(task_id='task_high', robot_id='amr_01', state=TaskStatus.STATE_PENDING))
+        assert _accepted_robots_by_task(bus) == {'task_high': {'amr_01'}, 'task_low': {'amr_02'}}
 
-def test_concurrent_awards_no_duplicate_assignment():
-    rclpy.init()
-    nodes = {}
-    try:
-        bus, clock, nodes = _run_concurrent_auctions([('amr_01', (3.0, 0.0)), ('amr_02', (0.0, 0.0))])
-
-        # 경매인이 포기 전에 보낸 task_b AWARD가 늦게 다시 도착해도 amr_01은 다시 포기한다 -
-        # task_a를 끝낸 뒤라도(맡은 작업이 없어도) 이미 2순위에게 넘어간 작업을 수락하지 않는다.
-        nodes['amr_01']._on_task_status(
-            TaskStatus(task_id='task_a', robot_id='amr_01', state=TaskStatus.STATE_COMPLETED))
+        # task_low 경매인이 WITHDRAW를 처리하기 전에 이미 보낸 AWARD가 amr_01에 늦게 다시 도착한다
         stale = TaskBid(
-            auctioneer_id='amr_11', auction_id=1, task_id='task_b', robot_id='amr_11',
+            auctioneer_id='amr_10', auction_id=1, task_id='task_low', robot_id='amr_01',
             type=TaskBid.TYPE_AWARD, winner_id='amr_01')
         bus.publish(stale)
-        # AWARD 재전송 주기를 여러 번 넘겨도 확정된 경매는 다시 안 보낸다
-        for _ in range(6):
-            clock[0] += 1.0
-            for node in nodes.values():
-                node._on_timer()
-            bus.pump()
+
+        # 이미 WITHDRAW한 경매라 amr_01은 다시 WITHDRAW - task_low는 amr_02가 그대로 맡는다(중복 배정 없음)
+        assert _accepted_robots_by_task(bus) == {'task_high': {'amr_01'}, 'task_low': {'amr_02'}}
+        withdraws_low = [m.robot_id for m in bus.bids(TaskBid.TYPE_WITHDRAW) if m.task_id == 'task_low']
+        assert withdraws_low.count('amr_01') == 2
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_n_simultaneous_auctions_and_n_idle_robots_all_assigned_in_one_round():
+    """#227 민지 리뷰 1: 동시에 열린 N건 + 한가한 N대가(비용이 전부 같아 로봇마다 N건 모두에서
+    경합) 재공고 없이 N건 모두 배정된다 - 낙찰이 겹치면 더 급한 것만 ACCEPT하고 나머지는
+    WITHDRAW해 같은 경매의 다음 순위에게 넘어간다(10/16 동시 낙찰 경합과 같은 장치). 아직 결과를
+    모르는 더 급한 입찰이 있으면(#227 리뷰 2) 수락을 미루므로, ACCEPT한 로봇이 작업을 시작했다고
+    보고할 때마다(amr_bt 흉내) 그걸 기다리던 보류가 풀린다 - 재공고(입찰 창을 다시 여는 것) 없이도
+    끝난다는 게 핵심이라, 그 보고를 흉내 내는 것까지는 테스트에 포함한다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY)}
+        n = 4
+        robot_ids = [f'amr_0{i + 1}' for i in range(n)]
+        for robot_id in robot_ids:
+            # 전부 같은 위치 - N건 모두에서 비용이 같아(동점은 robot_id 순) 가장 심한 경합이 된다
+            nodes[robot_id] = _make_node(robot_id, bus, clock, (0.0, 0.0), RobotState.MODE_IDLE)
+        for i in range(n):
+            bus.publish(_make_auction('amr_10', i + 1, f'task_{i}', priority=0, created=float(i)))
+        assert len(bus.bids(TaskBid.TYPE_BID)) == n * n
+
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+
+        # ACCEPT한 로봇마다 작업을 시작했다고 보고한다 - 그걸 기다리던 다음 순위의 보류가 풀려
+        # 다음 로봇이 수락하고, 그 보고가 또 다음을 풀고... 하는 식으로 한 번에 다 풀리지 않을
+        # 수 있어 N번까지 반복한다(재공고는 전혀 없어야 한다).
+        reported = set()
+        for _ in range(n):
+            by_task = _accepted_robots_by_task(bus)
+            if len(by_task) == n:
+                break
+            for task_id, robots in by_task.items():
+                if task_id in reported:
+                    continue
+                reported.add(task_id)
+                bus.publish(TaskStatus(
+                    task_id=task_id, robot_id=next(iter(robots)), state=TaskStatus.STATE_PENDING))
 
         by_task = _accepted_robots_by_task(bus)
-        assert by_task == {'task_a': {'amr_01'}, 'task_b': {'amr_02'}}
-        # 로봇별로도 맡은 작업은 하나씩
-        winners = [
-            state.winner_id for node in nodes.values() for state in node._auctions.values()
-            if state.phase == 'done']
-        assert sorted(winners) == ['amr_01', 'amr_02']
-        assert nodes['amr_11']._auctions[('amr_11', 1)].winner_id == 'amr_02'
+        assert len(by_task) == n, f'N건 모두 배정돼야 함: {by_task}'
+        assigned = [next(iter(robots)) for robots in by_task.values()]
+        assert len(set(assigned)) == n, f'중복 배정: {by_task}'
+        assert set(assigned) == set(robot_ids)
+        reannounces = [m for m in bus.log if isinstance(m, TaskAuction) and m.auction_id > n]
+        assert reannounces == [], f'재공고 없이 끝나야 하는데 재공고됨: {reannounces}'
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_order_preserved_when_higher_priority_award_is_lost_and_resent():
+    """#227 민지 리뷰 2: 더 급한 작업(T1)의 첫 AWARD가 유실돼 재전송 간격만큼 늦게 와도, 그사이
+    받은 덜 급한 작업(T2)의 AWARD를 먼저 수락하지 않고 T1을 기다려 ACCEPT한다 - 손실 조건에서도
+    순서가 뒤집히지 않는다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        dropped = {'done': False}
+
+        def drop(msg):
+            if (isinstance(msg, TaskBid) and msg.type == TaskBid.TYPE_AWARD
+                    and msg.auctioneer_id == 'amr_10' and not dropped['done']):
+                dropped['done'] = True
+                return True
+            return False
+        bus.drop = drop
+
+        bus.publish(_make_auction('amr_10', 1, 'task_t1', priority=5))   # 더 급함
+        bus.publish(_make_auction('amr_11', 1, 'task_t2', priority=0))   # 덜 급함
+
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+        # T1의 첫 AWARD는 유실됐다 - T2의 AWARD만 왔지만 아직 수락하지 않고 보류한다
+        assert nodes['amr_01']._active_task is None
+        assert set(nodes['amr_01']._pending_awards) == {('amr_11', 1)}
+        assert dropped['done'] is True
+
+        # award_resend_interval_s(1초) 뒤 T1 AWARD 재전송이 이번엔 도착한다
+        clock[0] += 1.0
+        nodes['amr_10']._on_timer()
+        bus.pump()
+
+        assert _accepted_robots_by_task(bus) == {'task_t1': {'amr_01'}}
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_WITHDRAW)] == ['task_t2']
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_pending_award_accepted_after_higher_priority_bid_times_out():
+    """#227 민지 리뷰 2: 더 급한 작업(T1)에 입찰했지만 떨어져(다른 로봇이 낙찰) AWARD가 영영
+    안 오면, award_wait_s 전에는 보류하고 지나면 "졌다"로 보고 보류 중인 덜 급한 작업(T2)을
+    수락한다 - 얼마나 기다렸는지도 로그로 남긴다(_accept_award)."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (10.0, 0.0), RobotState.MODE_IDLE),
+            'amr_02': _make_node('amr_02', bus, clock, (0.0, 0.0), RobotState.MODE_IDLE),
+        }
+        t1 = _make_auction('amr_10', 1, 'task_t1', priority=5)      # 더 급함 - amr_02가 더 가깝다
+        t1.task.dropoff_pose.position.x, t1.task.dropoff_pose.position.y = 0.0, 0.0
+        t2 = _make_auction('amr_11', 1, 'task_t2', priority=0)      # 덜 급함 - amr_01이 더 가깝다
+        t2.task.dropoff_pose.position.x, t2.task.dropoff_pose.position.y = 10.0, 0.0
+        bus.publish(t1)
+        bus.publish(t2)
+
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+
+        robot = nodes['amr_01']
+        # amr_02가 task_t1을 가져갔다(amr_01은 멀어서 짐) - amr_01은 task_t2에만 낙찰됐지만
+        # 더 급한 task_t1 입찰 결과를 아직 모른다(떨어졌지만 AWARD가 안 오므로 늦는 건지 구분
+        # 안 됨) - 그래서 아직 수락하지 않는다.
+        assert _accepted_robots_by_task(bus) == {'task_t1': {'amr_02'}}
+        assert robot._active_task is None
+        assert set(robot._pending_awards) == {('amr_11', 1)}
+        assert set(robot._awaiting_award) == {('amr_10', 1)}
+
+        # award_wait_s 전에는 그대로 보류
+        clock[0] += robot._params.award_wait_s - 0.5
+        robot._on_timer()
+        assert robot._active_task is None
+
+        # award_wait_s가 지나면 "졌다"로 보고 보류 중인 task_t2를 수락한다
+        clock[0] += 1.0
+        robot._on_timer()
+        bus.pump()
+        assert robot._active_task == (('amr_11', 1), 'task_t2')
+        assert ('amr_10', 1) not in robot._awaiting_award
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_award_accepted_within_award_wait_s_of_receipt_even_if_blocker_bid_window_still_open():
+    """award_wait_s는 "AWARD를 받은 시점"부터 센다 - 더 급한 입찰의 마감 시점부터 재면 안 된다.
+    더 급한 입찰의 입찰 창이 한참 남아 있어도(_bid_resends에 그대로 있다, _awaiting_award로도
+    안 넘어가 있다) 보류한 지 award_wait_s가 지나면 포기하고 보류 중인 AWARD를 수락한다 -
+    AWARD를 받고 나서 ACCEPT까지 걸리는 시간은 경매인이 ACCEPT 없이 재경매하기까지 걸리는
+    시간(award_resend_interval_s x (award_max_attempts - 1))보다 항상 짧아야 한다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        # task_high의 입찰 창을 아주 길게 둔다(10초) - task_low가 낙찰될 때 아직 마감이 한참
+        # 남아 _bid_resends에 그대로 있다(_awaiting_award로 안 넘어간다. 그쪽 타임아웃은
+        # 여기서 안 쓰인다는 걸 보이려는 것).
+        bus.publish(_make_auction('amr_11', 1, 'task_high', priority=5, bid_window_s=10.0))
+        bus.publish(_make_auction('amr_10', 1, 'task_low', priority=0))   # 보통 창(2초)
+        assert {m.task_id for m in bus.bids(TaskBid.TYPE_BID)} == {'task_high', 'task_low'}
+
+        # task_low만 마감돼 amr_01이 그 AWARD를 받는다 - task_high는 아직 입찰 창이 한참 남았다
+        clock[0] += 2.1
+        nodes['amr_10']._on_timer()
+        bus.pump()
+        robot = nodes['amr_01']
+        award_received_at = clock[0]
+        assert robot._active_task is None
+        assert set(robot._pending_awards) == {('amr_10', 1)}
+        assert ('amr_11', 1) in robot._bid_resends   # task_high는 여전히 입찰 창 안(마감 전)
+
+        award_timeout_s = robot._params.award_resend_interval_s * (robot._params.award_max_attempts - 1)
+        assert robot._params.award_wait_s < award_timeout_s   # 설계 전제(params.py 주석과 같음)
+
+        # award_wait_s 전에는 그대로 보류(task_high 마감은 아직도 한참 남았다)
+        clock[0] += robot._params.award_wait_s - 0.5
+        robot._on_timer()
+        assert robot._active_task is None
+        assert ('amr_11', 1) in robot._bid_resends   # 여전히 _bid_resends - 마감 전이다
+
+        # award_wait_s가 지나면(task_high 마감 전이어도) 기다림을 그만두고 task_low를 수락한다
+        clock[0] += 0.6
+        robot._on_timer()
+        bus.pump()
+        held_s = clock[0] - award_received_at
+        assert robot._active_task == (('amr_10', 1), 'task_low')
+        assert held_s < award_timeout_s, (
+            f'AWARD를 받고 ACCEPT까지 {held_s}s - 경매인 재경매 시간({award_timeout_s}s)보다 짧아야 함')
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_pending_award_accepted_immediately_when_higher_priority_task_is_claimed():
+    """#227 민지 리뷰 2: 더 급한 작업(T1)을 다른 로봇이 맡은 걸 알면(TaskStatus), award_wait_s를
+    다 기다리지 않고 바로 보류 중인 작업(T2)을 수락한다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (10.0, 0.0), RobotState.MODE_IDLE),
+            'amr_02': _make_node('amr_02', bus, clock, (0.0, 0.0), RobotState.MODE_IDLE),
+        }
+        t1 = _make_auction('amr_10', 1, 'task_t1', priority=5)
+        t1.task.dropoff_pose.position.x, t1.task.dropoff_pose.position.y = 0.0, 0.0
+        t2 = _make_auction('amr_11', 1, 'task_t2', priority=0)
+        t2.task.dropoff_pose.position.x, t2.task.dropoff_pose.position.y = 10.0, 0.0
+        bus.publish(t1)
+        bus.publish(t2)
+
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+
+        robot = nodes['amr_01']
+        assert robot._active_task is None
+        assert set(robot._awaiting_award) == {('amr_10', 1)}
+
+        held_before = clock[0]
+        # amr_02가 task_t1을 수행 중이라고 보고한다 - amr_01은 그제서야 자기가 졌다는 걸 안다
+        robot._on_task_status(
+            TaskStatus(task_id='task_t1', robot_id='amr_02', state=TaskStatus.STATE_PENDING))
+        assert robot._active_task == (('amr_11', 1), 'task_t2')
+        assert ('amr_10', 1) not in robot._awaiting_award
+        # award_wait_s(3초)를 기다리지 않고 바로(시간이 전혀 안 지나도) 풀렸다
+        assert clock[0] == held_before
     finally:
         for node in nodes.values():
             node.destroy_node()
@@ -297,7 +559,7 @@ def test_active_task_released_when_robot_state_goes_busy_then_idle():
     rclpy.init()
     nodes = {}
     try:
-        _, _, nodes = _run_concurrent_auctions([('amr_01', (3.0, 0.0))])
+        _, _, nodes = _run_single_auction([('amr_01', (3.0, 0.0))])
         robot = nodes['amr_01']
         assert robot._active_task == (('amr_10', 1), 'task_a')
 
@@ -323,7 +585,7 @@ def test_active_task_released_after_commit_timeout_without_busy():
     rclpy.init()
     nodes = {}
     try:
-        _, _, nodes = _run_concurrent_auctions([('amr_01', (3.0, 0.0))])
+        _, _, nodes = _run_single_auction([('amr_01', (3.0, 0.0))])
         robot = nodes['amr_01']
         timeout = robot._params.commit_timeout_s
         assert timeout == 30.0
@@ -346,7 +608,7 @@ def test_commit_timeout_does_not_release_started_task():
     rclpy.init()
     nodes = {}
     try:
-        _, _, nodes = _run_concurrent_auctions([('amr_01', (3.0, 0.0))])
+        _, _, nodes = _run_single_auction([('amr_01', (3.0, 0.0))])
         robot = nodes['amr_01']
         robot._on_robot_state(_state('amr_01', RobotState.MODE_BUSY))
         # 작업이 시작됐으면(BUSY) 오래 걸려도 시간으로는 안 푼다 - 끝(BUSY -> IDLE·TaskStatus)을 기다린다
@@ -571,7 +833,7 @@ def test_auction_seen_while_holding_task_gets_bid_after_release():
     rclpy.init()
     nodes = {}
     try:
-        bus, clock, nodes = _run_concurrent_auctions([('amr_01', (3.0, 0.0))])
+        bus, clock, nodes = _run_single_auction([('amr_01', (3.0, 0.0))])
         robot = nodes['amr_01']
         assert robot._active_task == (('amr_10', 1), 'task_a')
         auction = _make_auction('amr_10', 5, 'task_next')
@@ -711,8 +973,11 @@ def test_hybrid_fallback_takes_backlog_and_returns():
         for node in nodes.values():
             node._on_timer()
         bus.pump()
-        # 입찰은 amr_03뿐 - 세 경매 모두 낙찰되지만 먼저 온 AWARD(t_back) 하나만 수락하고 나머지는 포기·재경매
+        # 입찰은 amr_03뿐이지만 열린 경매 전부에 입찰한다(#227 리뷰 1) - 셋 다 낙찰되지만
+        # 작업 순서가 가장 앞선 것(우선순위·created 같음 -> task_id 사전순 t_back)만 ACCEPT하고
+        # 나머지는 WITHDRAW해 입찰 없이 재경매된다(#227 리뷰 2).
         assert {m.robot_id for m in bus.bids(TaskBid.TYPE_BID)} == {'amr_03'}
+        assert {m.task_id for m in bus.bids(TaskBid.TYPE_BID)} == {'t_back', 't_mine', 't_new'}
         assignments = [m for m in bus.log if isinstance(m, TaskAssignment)]
         assert [(m.robot_id, m.task.task_id) for m in assignments] == [('amr_03', 't_back')]
 
@@ -833,6 +1098,212 @@ def test_hybrid_takes_over_requests_after_last_task_table():
         bus.pump()
         assert _announces(bus) == [('amr_03', 't_gap')]
         assert robot._central_requests == {}
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+# --- 처리 순서(#223): 중앙과 같은 순서로 입찰 - priority 내림차순 -> deadline 오름차순 ->
+# created 오름차순 -> task_id (amr_fleet_core.assignment.common.sort_by_priority) ---
+
+
+def test_idle_robot_bids_on_older_task_when_both_open_at_once():
+    """(a) 오래된 작업과 새 작업이 동시에 열려 있으면 둘 다 입찰하고, 둘 다 낙찰되면 오래된
+    작업(created가 이른 쪽)을 ACCEPT한다 - 수정 전에는 어느 쪽이든(마감이 먼저 오는 경매를)
+    그냥 수락했다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        new = _make_auction('amr_10', 2, 'task_new', created=20.0)
+        old = _make_auction('amr_10', 1, 'task_old', created=10.0)
+        bus.publish(new)  # 새 작업이 먼저 도착해도
+        bus.publish(old)  # 둘 다 입찰한다(#227 리뷰 1) - 거두지 않는다
+        assert {m.task_id for m in bus.bids(TaskBid.TYPE_BID)} == {'task_new', 'task_old'}
+        assert bus.bids(TaskBid.TYPE_WITHDRAW) == []
+
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+        # 오래된 쪽만 ACCEPT - 새 작업은 WITHDRAW(#227 리뷰 2)
+        assert _accepted_robots_by_task(bus) == {'task_old': {'amr_01'}}
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_WITHDRAW)] == ['task_new']
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_reauctioned_task_still_accepted_before_genuinely_newer_task():
+    """(b) 재경매된 작업(원래 created 그대로)이 그 뒤에 들어온 진짜 새 작업보다 먼저 ACCEPT된다 -
+    재경매로 auction_id가 바뀌어도 공고 시각(header.stamp)이 아니라 Task.created_time으로
+    순서를 매기므로, 재경매됐다고 새 작업으로 보이지 않는다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = _fleet(['amr_01'], bus, clock)
+        robot = nodes['amr_01']
+        robot._on_robot_state(_state('amr_01', RobotState.MODE_BUSY))  # 아직 작업 중 - 입찰 안 함
+
+        old_task = _task('task_old')
+        old_task.created_time.sec = 10
+        robot._on_task_request(old_task)
+        bus.pump()
+        clock[0] += 2.1
+        robot._on_timer()  # 입찰 없음(BUSY) - no_bid_retry_s 뒤 재공고 예약
+        clock[0] += robot._no_bid_retry_s
+        robot._on_timer()  # 재경매(auction_id=2)
+        bus.pump()
+        reauctions = [m for m in bus.log if isinstance(m, TaskAuction) and m.auction_id > 1]
+        assert [m.task.task_id for m in reauctions] == ['task_old']
+        assert reauctions[0].task.created_time.sec == 10  # 재경매해도 created는 원래 값 그대로
+
+        # 이제 로봇이 쉬고, created가 훨씬 늦은 진짜 새 작업도 들어온다
+        robot._on_robot_state(_state('amr_01', RobotState.MODE_IDLE))
+        new_task = _task('task_new')
+        new_task.created_time.sec = 9999
+        robot._on_task_request(new_task)
+        bus.pump()
+        # 재경매된 task_old의 입찰 창이 아직 안 끝났으니 둘 다 입찰한다(#227 리뷰 1)
+        assert {m.task_id for m in bus.bids(TaskBid.TYPE_BID)} == {'task_old', 'task_new'}
+
+        clock[0] += 2.1
+        robot._on_timer()
+        bus.pump()
+        # 둘 다 낙찰돼도 created가 이른 task_old만 ACCEPT한다(#227 리뷰 2)
+        assert _accepted_robots_by_task(bus) == {'task_old': {'amr_01'}}
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_WITHDRAW)] == ['task_new']
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_priority_outranks_created_time():
+    """(c) 우선순위가 created_time보다 앞선다 - 둘 다 입찰하지만, 늦게 생성됐어도 우선순위가
+    높은 작업을 ACCEPT한다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        old_low = _make_auction('amr_10', 1, 'task_old_low', created=10.0, priority=0)
+        new_high = _make_auction('amr_10', 2, 'task_new_high', created=20.0, priority=5)
+        bus.publish(old_low)
+        bus.publish(new_high)
+        assert {m.task_id for m in bus.bids(TaskBid.TYPE_BID)} == {'task_old_low', 'task_new_high'}
+        assert bus.bids(TaskBid.TYPE_WITHDRAW) == []
+
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+        assert _accepted_robots_by_task(bus) == {'task_new_high': {'amr_01'}}
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_WITHDRAW)] == ['task_old_low']
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_deadline_outranks_created_time_at_same_priority():
+    """(c) 같은 우선순위에서는 마감(deadline)이 created_time보다 앞선다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        old_no_deadline = _make_auction('amr_10', 1, 'task_old', created=10.0)
+        # 로봇이 못 맞출 정도로 빡빡하지 않게(비용 4, robot_speed_mps 1.0 기본 - 넉넉히 1000s 뒤)
+        new_with_deadline = _make_auction('amr_10', 2, 'task_new', created=20.0, deadline=1000.0)
+        bus.publish(old_no_deadline)
+        bus.publish(new_with_deadline)
+        assert {m.task_id for m in bus.bids(TaskBid.TYPE_BID)} == {'task_old', 'task_new'}
+        assert bus.bids(TaskBid.TYPE_WITHDRAW) == []
+
+        clock[0] += 2.1
+        for node in nodes.values():
+            node._on_timer()
+        bus.pump()
+        assert _accepted_robots_by_task(bus) == {'task_new': {'amr_01'}}
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_WITHDRAW)] == ['task_old']
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_saturated_tasks_complete_in_created_order_without_excessive_reannounce():
+    """(d) 포화 통합: 작업(6개)이 로봇(2대)보다 많을 때 완료 순서가 created_time 순서와 같고,
+    같은 작업이 수십 번씩 재공고되지 않는다(수정 전: 마감이 먼저 오는 경매를 그냥 수락해 오래된
+    작업이 새 작업에 밀려 35~40번 재공고되고도 아무도 안 맡는 문제였다, 하연·민지 실행)."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = _fleet(['amr_01', 'amr_02'], bus, clock)
+        n_tasks = 6
+        tasks = []
+        for i in range(n_tasks):
+            t = _task(f'task_{i:02d}', x=5.0 + i, y=0.0)
+            t.created_time.sec = 1000 + i  # 생성 순서대로 created를 매긴다
+            tasks.append(t)
+        for t in tasks:
+            # 조금씩 시차를 둔다(실제로도 같은 나노초에 도착하지 않는다) - 안 그러면 6개 경매
+            # 마감이 전부 같은 순간이라, 두 로봇이 작업을 하나 끝내고 다음을 고르려는 바로 그
+            # 순간에 나머지 경매도 전부 같이 마감돼(아직 아무도 안 입찰) 한 틱 늦게 재공고되는
+            # 식으로 줄줄이 밀리는 인위적인 상황이 된다(created 순서 자체는 안 바뀐다).
+            _deliver_task_request(nodes, t)
+            bus.pump()
+            clock[0] += 0.2
+
+        completed_order = []
+        seen_assignments = set()
+        # 틱은 실제 기본값(update_rate_hz 10 Hz = 0.1 s)과 맞춘다 - 틱이 굵으면(예: 0.5 s)
+        # 로봇이 막 쉬게 된 바로 그 틱에 다른 경매들의 마감도 겹쳐서, 뒤 틱 부동소수 오차로
+        # 마감을 정말로 살짝 넘겨 버리는 인위적인 경우가 생긴다(순서 자체가 틀린 게 아니라
+        # 테스트 틱 간격 때문).
+        for _ in range(2000):
+            clock[0] += 0.1
+            for node in nodes.values():
+                node._on_timer()
+            bus.pump()
+            for m in list(bus.log):
+                if isinstance(m, TaskAssignment) and m.assignment_id not in seen_assignments:
+                    seen_assignments.add(m.assignment_id)
+                    # amr_bt가 없으니 작업 실행을 흉내 낸다 - 즉시 완료 보고
+                    bus.publish(TaskStatus(
+                        task_id=m.task.task_id, robot_id=m.robot_id,
+                        state=TaskStatus.STATE_COMPLETED))
+                    completed_order.append(m.task.task_id)
+            if len(completed_order) >= n_tasks:
+                break
+
+        assert completed_order == [t.task_id for t in tasks], (
+            f'완료 순서가 생성 순서와 다름: {completed_order}')
+        announce_counts = {}
+        for m in bus.log:
+            if isinstance(m, TaskAuction):
+                announce_counts[m.task.task_id] = announce_counts.get(m.task.task_id, 0) + 1
+        assert all(c <= 5 for c in announce_counts.values()), f'재공고 과다: {announce_counts}'
     finally:
         for node in nodes.values():
             node.destroy_node()
