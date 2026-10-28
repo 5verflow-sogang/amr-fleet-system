@@ -816,8 +816,16 @@ class TaskAuctionNode(Node):
         """보류 중인 AWARD(_pending_awards) 중 가장 앞선(sort_by_priority) 것만 ACCEPT하고
         나머지는 WITHDRAW한다(#227 민지 리뷰 2). 아직 결과를 모르는(마감 전이거나 마감은
         지났지만 AWARD를 못 받은, _bid_resends·_awaiting_award) 더 급한 입찰이 있으면
-        기다린다 - 다른 로봇이 그 작업을 맡은 걸 알면(_taken_by_other) 바로, 아니면
-        award_wait_s 뒤에 "졌다"로 보고 기다림을 그만둔다.
+        기다린다 - 다른 로봇이 그 작업을 맡은 걸 알면(_taken_by_other) 바로 끝난다.
+
+        시간으로 끝나는 기준은 "AWARD를 받은 시점"부터 award_wait_s다(_pending_since) -
+        더 급한 입찰의 마감 시점(_awaiting_award 진입 시각)부터 재면, 그 입찰의 마감이 멀거나
+        (입찰 창이 길거나 아직 안 닫혔으면 _bid_resends에 그대로 있다) 이미 한참 지나 있으면
+        AWARD를 받고도 award_wait_s보다 훨씬 오래 보류할 수 있어, 그사이 이 AWARD의 경매인이
+        ACCEPT 없이 먼저 재경매해 버릴 수 있다(그러면 award_wait_s를 경매인의 재경매
+        타임아웃보다 짧게 둔 의미가 없어진다). 그래서 보류 중인 것 중 가장 앞선 것이 award_wait_s
+        보다 오래 기다렸으면, 더 급한 입찰 결과를 몰라도 포기하고 그걸 수락한다 - 포기한 입찰은
+        나중에 AWARD가 와도 이미 다른 작업을 ACCEPT한 뒤라 거절된다(holding_other_task).
 
         AWARD가 올 때(_on_awarded)뿐 아니라 매 틱(_on_timer)·TaskStatus를 받을 때
         (_on_task_status, 다른 로봇이 그 작업을 맡았다고 보고하는 경우)도 불러, 시간이
@@ -835,12 +843,13 @@ class TaskAuctionNode(Node):
         best_pending_task = sort_by_priority(list(pending.values()))[0]
         best_key = next(k for k, t in pending.items() if t is best_pending_task)
 
-        unresolved = [
-            self._tasks_seen[key] for key in self._bid_resends
-            if not self._taken_by_other(self._tasks_seen[key].task_id)]
-        unresolved += [task for task, _ in self._awaiting_award.values()]
-        if any(sort_by_priority([task, best_pending_task])[0] is task for task in unresolved):
-            return  # 더 급한 입찰 결과를 아직 모른다 - 기다린다
+        if now - self._pending_since[best_key] <= self._params.award_wait_s:
+            unresolved = [
+                self._tasks_seen[key] for key in self._bid_resends
+                if not self._taken_by_other(self._tasks_seen[key].task_id)]
+            unresolved += [task for task, _ in self._awaiting_award.values()]
+            if any(sort_by_priority([task, best_pending_task])[0] is task for task in unresolved):
+                return  # 더 급한 입찰 결과를 아직 모르고, 기다린 지 award_wait_s도 안 됐다
 
         self._accept_award(best_key, self._pending_awards.pop(best_key))
         for key, msg in list(self._pending_awards.items()):

@@ -448,6 +448,62 @@ def test_pending_award_accepted_after_higher_priority_bid_times_out():
         rclpy.shutdown()
 
 
+def test_award_accepted_within_award_wait_s_of_receipt_even_if_blocker_bid_window_still_open():
+    """award_wait_s는 "AWARD를 받은 시점"부터 센다 - 더 급한 입찰의 마감 시점부터 재면 안 된다.
+    더 급한 입찰의 입찰 창이 한참 남아 있어도(_bid_resends에 그대로 있다, _awaiting_award로도
+    안 넘어가 있다) 보류한 지 award_wait_s가 지나면 포기하고 보류 중인 AWARD를 수락한다 -
+    AWARD를 받고 나서 ACCEPT까지 걸리는 시간은 경매인이 ACCEPT 없이 재경매하기까지 걸리는
+    시간(award_resend_interval_s x (award_max_attempts - 1))보다 항상 짧아야 한다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        # task_high의 입찰 창을 아주 길게 둔다(10초) - task_low가 낙찰될 때 아직 마감이 한참
+        # 남아 _bid_resends에 그대로 있다(_awaiting_award로 안 넘어간다. 그쪽 타임아웃은
+        # 여기서 안 쓰인다는 걸 보이려는 것).
+        bus.publish(_make_auction('amr_11', 1, 'task_high', priority=5, bid_window_s=10.0))
+        bus.publish(_make_auction('amr_10', 1, 'task_low', priority=0))   # 보통 창(2초)
+        assert {m.task_id for m in bus.bids(TaskBid.TYPE_BID)} == {'task_high', 'task_low'}
+
+        # task_low만 마감돼 amr_01이 그 AWARD를 받는다 - task_high는 아직 입찰 창이 한참 남았다
+        clock[0] += 2.1
+        nodes['amr_10']._on_timer()
+        bus.pump()
+        robot = nodes['amr_01']
+        award_received_at = clock[0]
+        assert robot._active_task is None
+        assert set(robot._pending_awards) == {('amr_10', 1)}
+        assert ('amr_11', 1) in robot._bid_resends   # task_high는 여전히 입찰 창 안(마감 전)
+
+        award_timeout_s = robot._params.award_resend_interval_s * (robot._params.award_max_attempts - 1)
+        assert robot._params.award_wait_s < award_timeout_s   # 설계 전제(params.py 주석과 같음)
+
+        # award_wait_s 전에는 그대로 보류(task_high 마감은 아직도 한참 남았다)
+        clock[0] += robot._params.award_wait_s - 0.5
+        robot._on_timer()
+        assert robot._active_task is None
+        assert ('amr_11', 1) in robot._bid_resends   # 여전히 _bid_resends - 마감 전이다
+
+        # award_wait_s가 지나면(task_high 마감 전이어도) 기다림을 그만두고 task_low를 수락한다
+        clock[0] += 0.6
+        robot._on_timer()
+        bus.pump()
+        held_s = clock[0] - award_received_at
+        assert robot._active_task == (('amr_10', 1), 'task_low')
+        assert held_s < award_timeout_s, (
+            f'AWARD를 받고 ACCEPT까지 {held_s}s - 경매인 재경매 시간({award_timeout_s}s)보다 짧아야 함')
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
 def test_pending_award_accepted_immediately_when_higher_priority_task_is_claimed():
     """#227 민지 리뷰 2: 더 급한 작업(T1)을 다른 로봇이 맡은 걸 알면(TaskStatus), award_wait_s를
     다 기다리지 않고 바로 보류 중인 작업(T2)을 수락한다."""
