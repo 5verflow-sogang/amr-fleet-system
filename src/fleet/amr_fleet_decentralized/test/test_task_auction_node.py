@@ -13,7 +13,7 @@ import rclpy
 from amr_msgs.msg import (ErrorInfo, FleetTaskTable, RobotFleetMode, RobotState, Task, TaskAssignment,
                           TaskAssignmentAck, TaskAuction, TaskBid, TaskRecord, TaskStatus)
 
-from amr_fleet_decentralized.auction import assignment_topic, robot_index
+from amr_fleet_decentralized.auction import TaskInfo, assignment_topic, robot_index
 from amr_fleet_decentralized.task_auction_node import TaskAuctionNode
 
 
@@ -698,6 +698,63 @@ def test_idle_robot_bids_on_later_task_when_remembered_earlier_task_is_ineligibl
         nodes['amr_11']._on_timer()
         bus.pump()
         assert amr_01._active_task == (('amr_11', 1), 'task_late')
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_announce_memory_and_award_wait_do_not_compound():
+    """announce_memory_s(기본 4s)와 award_wait_s(기본 3s)가 같이 걸려도 보류 시간이 늘어나지
+    않는다 - 기억(_remembered) 중인 더 급한 작업이 announce_memory_s 안(아직 안 지남)이어도,
+    보류 중인 AWARD를 받은 지 award_wait_s가 지나면 그대로 수락한다. _resolve_pending_awards가
+    두 시간을 모두 _pending_since 하나로 묶어 확인하므로(더 짧은 award_wait_s가 항상 이긴다),
+    기억이 오래갈수록 보류가 같이 길어지지는 않는다 - award_wait_s가 경매인 재경매 시간(4s)보다
+    짧아야 한다는 보장(#227 리뷰 2)이 #224 후속(기억) 때문에 깨지지 않는다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        robot = nodes['amr_01']
+        assert robot._params.award_wait_s < robot._params.announce_memory_s   # 설계 전제
+
+        # task_early를 기억한다(AWARD를 받기 전에 - 받은 뒤에 기억해 두면 보류가 시작도
+        # 안 한다) - 더 급하고(priority 5) 아직 자격도 있다(IDLE).
+        early_task = TaskInfo(task_id='task_early', dropoff_xy=(3.0, 4.0), pickup_xy=None,
+                               priority=5, created=0.0, deadline=None)
+        robot._remembered['task_early'] = (early_task, clock[0])
+
+        bus.publish(_make_auction('amr_11', 1, 'task_late', priority=0, bid_window_s=1.0))
+        clock[0] += 1.1
+        nodes['amr_11']._on_timer()
+        bus.pump()
+        award_received_at = clock[0]
+        # 기억이 막 본 것으로(clock[0]=100.0) 치므로 announce_memory_s(4s) 안에서는
+        # award_wait_s(3s)보다 오래 유효하다 - 그런데도 받자마자 보류돼야 한다.
+        assert robot._active_task is None
+        assert set(robot._pending_awards) == {('amr_11', 1)}
+
+        # award_wait_s 전에는 기억 때문에 그대로 보류
+        clock[0] = award_received_at + robot._params.award_wait_s - 0.5
+        robot._on_timer()
+        assert robot._active_task is None
+
+        # award_wait_s가 지나면(기억은 announce_memory_s 안이라 아직 안 지났어도) 포기하고
+        # 보류 중인 task_late를 수락한다
+        clock[0] = award_received_at + robot._params.award_wait_s + 0.1
+        robot._on_timer()
+        bus.pump()
+        held_s = clock[0] - award_received_at
+        assert robot._active_task == (('amr_11', 1), 'task_late')
+        assert held_s < robot._params.announce_memory_s
+        award_timeout_s = robot._params.award_resend_interval_s * (robot._params.award_max_attempts - 1)
+        assert held_s < award_timeout_s, (
+            f'AWARD를 받고 ACCEPT까지 {held_s}s - 경매인 재경매 시간({award_timeout_s}s)보다 짧아야 함')
     finally:
         for node in nodes.values():
             node.destroy_node()
