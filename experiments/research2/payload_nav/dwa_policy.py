@@ -12,10 +12,12 @@
 - 플러그인(amr_nav2_plugins dwa_controller.cpp): 전역 경로(통로 중심선 전체)를 코어에 넘긴다(#195). heading
   기준점(lookahead_distance, adaptive_lookahead)과 목표 앞 감속의 최종 목표(경로 끝)는 코어가 고른다. 목표
   xy_goal_tolerance 안이면 제자리 회전. no_valid·goal_reached면 정지
-- xy_goal_tolerance만 Gazebo(0.25 m)와 다르게 환경 도착 기준(0.2 m)으로 둔다. 플러그인 주석대로 goal_checker와
+- xy_goal_tolerance는 Gazebo(0.25 m)와 다르게 환경 도착 기준(0.2 m)으로 둔다. 플러그인 주석대로 goal_checker와
   같아야 하고, 0.25 m면 도착 반경 밖에서 서 버린다
+- 샘플 수(v_samples·w_samples)와 제자리 회전(rotate_in_place_*)은 nav2_params를 따라가지 않고 논문 값으로 고정한다
+  (20 x 30, 회전 끔). 창고 스택은 10 x 15·회전 45°다 (#244, DwaParams 주석)
 
-질량은 가감속 한계 acc_v로 들어간다 (나머지 파라미터는 nav2_params.yaml DWA 블록 그대로):
+질량은 가감속 한계 acc_v로 들어간다 (나머지 파라미터는 위 예외 말고 nav2_params.yaml DWA 블록 그대로):
 - B1 ('b1'): 빈 차 기준 a_max(0 kg) 고정
 - B2 ('b2'): 관측 질량 기준 a_max(m_obs). 질량을 모르면 B1과 같다 (실험 설계 3절)
 """
@@ -44,7 +46,10 @@ _LIB = _RESEARCH2 / 'dwa_cpp' / 'build' / 'libamr_dwa.so'
 
 @dataclass(frozen=True)
 class DwaParams:
-    """nav2_params.yaml controller_server.DWA (DwaConfig 필드 이름 그대로, acc_v 제외) + 플러그인 + local costmap."""
+    """nav2_params.yaml controller_server.DWA (DwaConfig 필드 이름 그대로, acc_v 제외) + 플러그인 + local costmap.
+
+    샘플 수·제자리 회전·xy_goal_tolerance는 nav2_params와 다른 논문 값이다 (모듈 docstring).
+    """
     max_v: float = 2.0
     min_v: float = 0.0
     max_w: float = 1.5

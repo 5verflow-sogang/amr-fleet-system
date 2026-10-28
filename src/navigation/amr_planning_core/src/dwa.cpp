@@ -440,9 +440,6 @@ DwaCommand DwaPlanner::selectCommand(
   }
   const bool rotate_mode = rotating_in_place_;
 
-  // [0]: 장애물에 안 닿는 궤적, [1]: 닿지만 허용 속도 조건으로 그 앞에 설 수 있는 궤적.
-  // [0]이 하나라도 있으면 [1]은 보지 않는다 - 닿는 궤적까지 비용으로 겨루게 하면 heading이
-  // 압도적이라 벽으로 곧장 가다 막판에 못 꺾는다(기존 폐루프 테스트가 실패했다).
   struct Best
   {
     bool found[2] = {false, false};

@@ -18,6 +18,8 @@ using amr_planning_core::RobotState;
 extern "C" {
 
 // DwaConfig 필드 (dwa.hpp 순서). Python 쪽 _Config와 같아야 한다.
+// 함수마다 DwaPlanner를 새로 만들므로 호출 사이에 남는 상태가 없다. 제자리 회전을 켜면(rotate_in_place_min_angle > 0)
+// 히스테리시스(rotating_in_place_)가 이어지지 않아 매번 들어가는 각도(min_angle)로만 판단한다. 지금은 끈다.
 struct DwaCConfig
 {
   double max_v, min_v, max_w, acc_v, acc_w, dt, sim_time;
