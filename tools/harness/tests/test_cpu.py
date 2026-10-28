@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harness.cpu import (CSV_HEADER, Sampler, classify, parse_cgroup_usage_us, parse_cpu_max,  # noqa: E402
-                         parse_pid_ticks, parse_proc_stat, proc_label)
+                         parse_pid_ticks, parse_proc_stat, proc_label, role)
 from harness.summary import cpu_metrics, kpi_verdict  # noqa: E402
 
 
@@ -128,3 +128,54 @@ def test_cpu_metrics_and_kpi(tmp_path):
 
 def test_no_cpu_csv_gives_no_metrics(tmp_path):
     assert cpu_metrics(tmp_path) == {}
+
+
+@pytest.mark.parametrize('cmdline, expected', [
+    ('ruby /usr/bin/ign gazebo -s warehouse.sdf', 'sim'),
+    ('/ws/install/amr_fleet_manager/lib/amr_fleet_manager/fleet_manager --ros-args -r __node:=fleet_manager', 'server'),
+    ('/usr/bin/python3 /opt/ros/humble/bin/ros2 launch amr_fleet_manager fleet_manager.launch.py', 'other'),
+    ('/usr/bin/python3 /opt/ros/humble/bin/ros2 bag record -o run -e /fleet/.*', 'tool'),
+    ('/ws/install/amr_fault_injector/lib/amr_fault_injector/fault_injector --ros-args', 'tool'),
+    ('controller_server --ros-args -r __node:=controller_server -r __ns:=/amr_03', 'amr_03'),
+    ('zone_client --ros-args -r __node:=zone_client -r __ns:=/amr_12', 'amr_12'),
+    ('robot_state_publisher --ros-args', 'other'),
+])
+def test_role(cmdline, expected):
+    assert role(cmdline) == expected
+
+
+def test_sampler_roles(tmp_path):
+    # 서버 0.5코어, amr_01 1.5코어(두 노드 합), amr_02 1코어, 도구 0.5코어 → 로봇 최대 1.5, 평균 1.25
+    sampler = Sampler(root=tmp_path, cpu_count=16)
+    sampler.clk_tck = 100
+    procs = {1: 'fleet_manager --ros-args -r __node:=fleet_manager',
+             2: 'planner_server --ros-args -r __node:=planner_server -r __ns:=/amr_01',
+             3: 'amcl --ros-args -r __node:=amcl -r __ns:=/amr_01',
+             4: 'amcl --ros-args -r __node:=amcl -r __ns:=/amr_02',
+             5: 'python3 fault_injector --ros-args'}
+    _write_fs(tmp_path, 0, (0, 0), {pid: (cmd, 0) for pid, cmd in procs.items()})
+    sampler.sample(0.0)
+    used = {1: 100, 2: 200, 3: 100, 4: 200, 5: 100}  # 2초 동안의 tick (100 tick = 1 s)
+    _write_fs(tmp_path, 1_000_000, (0, 0), {pid: (cmd, used[pid]) for pid, cmd in procs.items()})
+    row = sampler.sample(2.0)
+    assert row['cores_server'] == pytest.approx(0.5)
+    assert row['cores_tool'] == pytest.approx(0.5)
+    assert row['cores_robot_max'] == pytest.approx(1.5)
+    assert row['cores_robot_mean'] == pytest.approx(1.25)
+
+
+def test_cpu_metrics_role_percentages(tmp_path):
+    # 16코어 VM, 서버 0.2코어, 가장 바쁜 로봇 1.6코어 → VM 대비 1.25 %·10 %, 4코어 기준 5 %·40 %
+    rows = [{'time': 0, 'cores': 8.0, 'allowed_cores': 16.0, 'cpu_pct': 50.0, 'host_cpu_pct': '', 'cores_nav2': 4.0,
+             'cores_server': 0.2, 'cores_tool': 0.5, 'cores_robot_max': 1.6, 'cores_robot_mean': 1.2}] * 3
+    with (tmp_path / 'cpu.csv').open('w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=CSV_HEADER)
+        w.writeheader()
+        w.writerows(rows)
+    m = cpu_metrics(tmp_path)
+    assert m['sys.cpu_pct.nav2.mean'] == pytest.approx(25.0)
+    assert m['sys.cpu_pct.server.mean'] == pytest.approx(1.25)
+    assert m['sys.cpu_pct.robot_max.mean'] == pytest.approx(10.0)
+    assert m['sys.cpu_ref_pct.server.mean'] == pytest.approx(5.0)
+    assert m['sys.cpu_ref_pct.robot_max.mean'] == pytest.approx(40.0)
+    assert 'sys.cpu_ref_pct.tool.mean' not in m

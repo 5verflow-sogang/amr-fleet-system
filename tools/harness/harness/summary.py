@@ -186,6 +186,10 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
     return out
 
 
+# 서버·로봇 1대의 기준 컴퓨터 코어 수. 원 명세에 기준 기기가 없어 팀이 정한 가정 (10/28 제안, 로봇 탑재 컴퓨터 4코어)
+REF_CORES = 4.0
+
+
 def cpu_metrics(run_dir: Path) -> dict[str, float]:
     """cpu.csv(cpu_monitor.py) → sys.* 지표. 사용 코어 수는 기기와 덜 상관있어 기준 기기를 바꿔 판정할 때 쓴다."""
     rows = _read_csv(run_dir / 'cpu.csv')
@@ -215,6 +219,19 @@ def cpu_metrics(run_dir: Path) -> dict[str, float]:
         values = _floats(rows, f'cores_{group}')
         if values:
             out[f'sys.cpu_cores.{group}.mean'] = sum(values) / len(values)
+            # 실행한 컴퓨터(컨테이너가 쓸 수 있는 코어) 대비 비율
+            out[f'sys.cpu_pct.{group}.mean'] = 100.0 * out[f'sys.cpu_cores.{group}.mean'] / allowed[-1]
+    # 역할별 (harness/cpu.py role): 서버, 로봇 1대(구간마다 가장 많이 쓴 로봇), 실험 도구
+    for key in ('server', 'tool', 'robot_max', 'robot_mean'):
+        values = sorted(_floats(rows, f'cores_{key}'))
+        if values:
+            out[f'sys.cpu_cores.{key}.mean'] = sum(values) / len(values)
+            out[f'sys.cpu_cores.{key}.p95'] = percentile(values, 0.95)
+            out[f'sys.cpu_pct.{key}.mean'] = 100.0 * out[f'sys.cpu_cores.{key}.mean'] / allowed[-1]
+            if key in ('server', 'robot_max'):
+                # 판정 기준: 서버·로봇 1대를 각각 REF_CORES 코어 컴퓨터로 본 사용률 (명세에 기준 기기가 없어 팀 가정)
+                out[f'sys.cpu_ref_pct.{key}.mean'] = 100.0 * out[f'sys.cpu_cores.{key}.mean'] / REF_CORES
+                out[f'sys.cpu_ref_pct.{key}.p95'] = 100.0 * out[f'sys.cpu_cores.{key}.p95'] / REF_CORES
     out['sys.cpu_samples'] = len(cores)
     return out
 
