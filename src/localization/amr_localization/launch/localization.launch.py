@@ -49,6 +49,7 @@ def _localization(context):
         'odom_frame': prefix + 'odom',
         'base_link_frame': prefix + 'base_footprint',
     }
+    initial = [float(LaunchConfiguration(k).perform(context)) for k in ('initial_x', 'initial_y', 'initial_yaw')]
     inputs = {'odom0': odom_topic}
     if _is_true(context, 'use_imu'):
         inputs['imu0'] = imu_topic
@@ -88,9 +89,9 @@ def _localization(context):
                 'odom_frame_id': prefix + 'odom',
                 # 초기 위치는 map 기준. 기본값은 기본 스폰 위치 world (0, 1.5, 0)을 지도 v1 0.025 m의
                 # 정렬 원점 map_origin_in_world [-0.0562, 1.5317, 0.00009]로 바꾼 값이다 (10/12 회의 B안, #98)
-                'initial_pose.x': float(LaunchConfiguration('initial_x').perform(context)),
-                'initial_pose.y': float(LaunchConfiguration('initial_y').perform(context)),
-                'initial_pose.yaw': float(LaunchConfiguration('initial_yaw').perform(context)),
+                'initial_pose.x': initial[0],
+                'initial_pose.y': initial[1],
+                'initial_pose.yaw': initial[2],
             }],
             output='screen',
         ),
@@ -124,6 +125,10 @@ def _localization(context):
                 'use_sim_time': use_sim_time,
                 'world_frame': frames['map_frame'],
                 'pose0': 'amcl_pose',
+                # AMCL 초기 위치에서 시작한다. 안 주면 (0, 0)에서 시작해 첫 amcl_pose와 반반 섞이고, AMCL은
+                # update_min_d(0.1 m)만큼 움직이기 전엔 다시 안 보내서 원점에서 먼 로봇이 절반 위치로 튄다
+                # (fleet_stack: 초기 (21.05, -20.52) → 첫 주행 (10.6, -10.4))
+                'initial_state': [initial[0], initial[1], 0.0, 0.0, 0.0, initial[2]] + [0.0] * 9,
             }],
             output='screen',
         ),
