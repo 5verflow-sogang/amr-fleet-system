@@ -54,7 +54,8 @@ def metrics(run):
     return {
         'a3_wait': np.mean(waits) if waits else 0.0,
         'seed': meta['seed'], 'completed': len(done), 'task_time': done,
-        'dup': sum(len((t.get('runners') or '').split()) > 1 for t in tasks),
+        # runners 열이 생기기 전 실행(central_d0·d100·d200·d500)은 중복을 셀 수 없어 nan으로 둔다 (0이 아님)
+        'dup': sum(len((t.get('runners') or '').split()) > 1 for t in tasks) if tasks and 'runners' in tasks[0] else np.nan,
         'a3_done': by.get('amr_03', 0),
         'a3_busy': busy['amr_03'][0] / max(busy['amr_03'][1], 1),
         'others_busy': np.mean([v[0] / v[1] for k, v in busy.items() if k != 'amr_03']),
