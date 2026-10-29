@@ -251,6 +251,25 @@ def test_censored_and_carried_episodes_excluded_from_latency():
     assert summary['latency']['from_seen']['n'] == 0
 
 
+def test_object_appearing_after_recording_start_is_not_censored():
+    """하네스는 장애물을 추적보다 늦게 띄운다: 트랙 프레임은 0 s부터, GT는 5 s에 10 m 앞에 나타나 다가온다."""
+    ev = TrackingEvaluator(EvalConfig(), gt_ids=['w'])
+    gt_line(ev, 'w', 5.0, 10.0, (10.0, 0.0), (-1.0, 0.0))
+    for k in range(101):
+        t = k * DT
+        x = 10.0 - (t - 5.0)
+        tracks = [TrackObs(1, x, 0.0, -1.0, 0.0, t >= 6.45)] if t >= 5.25 else []
+        ev.add_frame(t, tracks, robot_xy=(0.0, 0.0))
+    _, episodes, summary = ev.evaluate()
+    assert len(episodes) == 1
+    ep = episodes[0]
+    assert not ep['censored'] and not ep['carried']
+    assert ep['t_start'] == pytest.approx(5.0)
+    assert ep['latency_from_seen'] == pytest.approx(1.2)
+    assert ep['dynamic_dist'] == pytest.approx(8.5)
+    assert summary['latency']['classified'] == 1
+
+
 def test_not_classified_episode_counted():
     ev = TrackingEvaluator(EvalConfig(), gt_ids=['w'])
     gt_line(ev, 'w', 0.0, 1.0, (0.0, 0.0), (0.0, 0.0))

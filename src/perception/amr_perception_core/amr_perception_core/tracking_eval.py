@@ -368,23 +368,23 @@ class TrackingEvaluator:
                         push(gid, f'hold_{h:g}', e_hold)
                 rows.append(row)
 
-        episodes = self._episodes(history)
+        episodes = self._episodes(history, frames[0].t if frames else None)
         summary = self._summarize(frames, gids, acc, history, episodes,
                                   per_frame_false, per_frame_dup, per_frame_tracks, per_frame_dyn)
         return rows, episodes, summary
 
-    def _episodes(self, history: Dict[str, List[tuple]]) -> List[dict]:
+    def _episodes(self, history: Dict[str, List[tuple]], first_t: Optional[float]) -> List[dict]:
         """GT 물체가 '움직이며 센서 범위 안'인 구간마다 동적 판정 지연을 잰다.
 
         t_start: 구간 시작 (움직이기 시작했거나 범위에 들어온 시각)
         t_seen: 구간 안에서 처음 트랙과 짝지어진 시각 (가려짐으로 늦어질 수 있다)
         t_dynamic: 짝지어진 트랙이 처음 동적으로 판정된 시각
-        censored: 기록 첫 프레임부터 이미 구간 안이었다 (시작 시각을 모름) → 지연 통계에서 뺀다
+        censored: 기록 첫 프레임(첫 트랙 프레임)부터 이미 구간 안이었다 (시작 시각을 모름) → 지연 통계에서 뺀다.
+                  기록 도중에 GT가 처음 나타난 물체(하네스가 장애물을 추적보다 늦게 띄움)는 나타난 때가 시작이다
         carried: 처음 짝지어진 트랙이 구간 전부터 이 물체를 추적해 이미 동적이었다 → 지연 통계에서 뺀다
         """
         cfg = self.config
         out = []
-        first_t = min((h[0][0] for h in history.values() if h), default=None)
         for gid, hist in history.items():
             segments: List[List[tuple]] = []
             last_active_t = None
