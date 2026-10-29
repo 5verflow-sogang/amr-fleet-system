@@ -1,7 +1,7 @@
 # 추적 정확도 KPI 장면 E: 로봇 주행. 메인 통로 (−10, 10.5)에서 제자리 한 바퀴 → 동쪽 직진 15 m → 반 바퀴 → 돌아온다
 # (0.5 m/s·0.5 rad/s, 스택 최고 속도). 시점이 바뀔 때의 추적 오차와 가짜 동적 트랙을 본다 (perception.md 1-7).
 # 안전 노드 없이 cmd_vel을 직접 보낸다. 길에 구조물 없음(정답 지도에서 3.35 m 이상), worker_1(y 13)과는 2.5 m 떨어진 평행선
-#   tools/harness/docker_run.sh tracking_kpi_e -n 2
+#   tools/harness/docker_run.sh tracking_kpi_e -n 10
 name: tracking_kpi_e
 extends: tracking_kpi
 packages: amr_gazebo amr_odometry amr_tracking

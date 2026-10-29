@@ -1,5 +1,5 @@
 # 추적 정확도 KPI 장면 B: B–C 통로, 로봇 (−3, −4) 정지, forklift_1(0.8~1.5 m/s)이 2.5 m 옆을 왕복 (perception.md 1-7)
-#   tools/harness/docker_run.sh tracking_kpi_b -n 3
+#   tools/harness/docker_run.sh tracking_kpi_b -n 10
 name: tracking_kpi_b
 extends: tracking_kpi
 packages: amr_gazebo amr_odometry amr_tracking

@@ -1,6 +1,6 @@
 # 추적 정확도 KPI 공통 틀 (연우). 원 명세 평가 항목 "칼만 필터 추적 예측 정확도", 7장 속도·방향 추정·1.0 m/s 인식.
 # 판정 기준·장면은 docs/algorithms/perception.md 1-7절. 직접 돌리지 않고 장면 파일(tracking_kpi_<장면>)로 돌린다:
-#   tools/harness/docker_run.sh tracking_kpi_a -n 3        # GCP: fleet-test 워크플로 scenario=tracking_kpi_a
+#   tools/harness/docker_run.sh tracking_kpi_a -n 10       # GCP: fleet-test 워크플로 scenario=tracking_kpi_a
 # 로봇 1대(위치 추정 없음, odom = DiffDrive) + LiDAR 필터 + 추적 + tracking_eval. 화면·카메라는 끈다(추적은 LiDAR만 쓴다).
 # 장애물은 추적·평가가 준비된 뒤 맨 마지막에 띄운다. 기록 전부터 움직이던 구간은 판정 지연에서 빠지므로(censored)
 # 첫 지나감부터 재려면 장애물이 기록 도중에 나타나야 한다.
