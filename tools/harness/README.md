@@ -67,6 +67,7 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 | `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분. `kill_robot`으로 로봇 장애 | `fleet_latency.csv`, `response_time.csv`(Ack), `task_outcomes.csv`, `recovery.csv`(로봇 장애 시), `tasks.json`, `assignments.csv`, `fault_events.csv`, `robot_states.csv`, `plots/` |
 | `nav_compare` | 로봇 1대, 지도 v1, Nav2 데모 + 목표 1곳. `--set controller=dwa\|teb --set scenario=clear\|obstacle`. 약 1분. `HARNESS_PACKAGES="amr_bringup amr_nav2_plugins"` 필요 | `nav_result.json`(성공·도착 시간·최소 장애물 거리·경로 길이·CTE, GT), `nav_series.csv` ([experiments/teb_compare](../../experiments/teb_compare/README.md)) |
 | `nav_avoidance` (**초안, 미실행**) | 로봇 1대 DWA 데모 + 1.0 m/s로 경로를 가로지르는 작업자 1명 + 추적 노드. 약 1분. test-plan I17 | `avoidance/`의 `avoidance.csv`·`avoidance_summary.json`·GT 원자료 ([amr_safety README](../../src/perception/amr_safety/README.md#회피-평가-i17)) |
+| `tracking_kpi_a·b·c05·c10·c15·d·e` | 추적 정확도 KPI. 로봇 1대(화면·카메라 끔) + LiDAR 필터 + 추적 + `tracking_eval`, 장애물은 맨 마지막에 띄운다. A·B·D 로봇 정지 300 s, C 정면 접근 0.5·1.0·1.5 m/s 40 s, E 로봇 주행. 공통 틀 `tracking_kpi`는 직접 돌리지 않는다 ([perception.md](../../docs/algorithms/perception.md) 1-7) | `tracking/`의 `frames.csv`·`episodes.csv`·`summary.json`, `rosbag/`. 요약 `track.*`(아래 "추적 지표") |
 
 `fleet_fake`는 Fleet 계층(지연·손실·Ack)만 잰다. 가짜 로봇은 `odom`을 내지 않아 응답 시간 KPI(200 ms)는 비어 있으므로, 그 Before 데이터는 실제 로봇 스택 시나리오가 따로 필요하다. 서버 강제종료 `kill_at_s`는 서버 launch 시작 기준이라 작업 시작보다 약 10초 빠르다.
 
@@ -96,6 +97,14 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도 위치 오차 RMSE가 최대 2 cm 달랐다(10/6, AMCL 파티클 필터·Gazebo 센서 노이즈·메시지 도착 순서 등). 그래서 같은 seed가 "같은 조건"은 보장하지만 "같은 결과"는 보장하지 않고, 판정은 N회 반복의 신뢰구간으로 한다.
 
 **회피 지표** (`nav_avoidance`, test-plan I17): `avoid.<로봇>.collisions`·`min_clearance`·`max_deviation`·`max_return_s`·`pass`(`avoidance_summary.json`). 원 명세 KPI는 "30회 모두 충돌 0건·이탈 1 m·복귀 5초"라 평균·CI가 아니라 최악값으로 판정해야 하므로 요약의 KPI 열은 비워 두고, 판정은 `ros2 run amr_safety avoidance_report <실행 폴더들>`로 한다.
+
+**추적 지표** (`tracking_kpi_*`, 판정 기준은 [perception.md](../../docs/algorithms/perception.md) 1-7): `track.*`(`tracking/summary.json`, `amr_tracking` `tracking_eval`). 판정하는 지표는 셋이다.
+
+- `track.pred_gain_1s` = 정지 가정 RMSE − 등속 예측 RMSE(+1 s, 움직이는 GT). P1: CI 하한이 0보다 크면 PASS. 0과 같아도 FAIL이다(추정 속도가 0이면 두 값이 같다)
+- `track.vel.rmse` = 속도 벡터 RMSE. P2: CI 상한 ≤ 0.2 m/s
+- P1·P2는 장면 A·B·D·E(`tracking_kpi_a·b·d·e`)에서만 판정한다. 장면 C는 정면 접근 하나라 판정 열을 비운다
+- `track.d1_ttc_s` = 접근 판정 TTC(GT 물체가 하나인 기록의 첫 판정, 판정 없이 최근접까지 오면 0). D1은 안전 기준이라 평균·CI가 아니라 **최악값**으로 `tracking_kpi_c10·c15`에서 판정한다. 가장 나쁜 실행이 3 s 미만이면 FAIL, 아니면 하네스 실패 실행이나 값이 없는 실행이 있거나 10회 미만이면 보류(이유를 KPI 열에), 그 외 PASS. Discord 알림에는 평균 대신 최솟값이 나간다
+- 나머지(`match_rate`, `pos.rmse`, `radial.mean` 센서 방향 편향, `speed.mean`, `heading.mean`, +1·+2 s 예측·정지 가정 RMSE, NEES, `id_switches`, 판정 지연, 가짜·중복 동적, `d1_dist_m`·`d1_latency_s`)는 참고 지표다. P1·P2 표본 수는 `track.pred_1s.n`·`track.vel.n`
 
 **작업·로봇 장애 지표** (`fleet_fake`): `fleet.tasks_requested`·`tasks_completed`·`task_completion_rate`(`task_outcomes.csv`), 완료한 작업의 `fleet.task_time_s.mean`(요청~완료)·`distance_m.total`·`distance_m.mean`, `fleet.throughput_per_min`(완료 작업 수 / 첫 요청~마지막 완료 분), `fleet.duplicate_tasks`(같은 작업을 둘 이상의 로봇이 움직이며 한 수, `runners` 열. 하이브리드 중복 실행), 하이브리드 실행이면 `fleet.fallbacks`(분산 전환 횟수)·`fleet.decentral_s`(분산 모드 시간 합, `fleet_modes.csv`), 로봇 장애 실행이면 `fleet.reclaimed_tasks`·`recovery_s.mean`·`recovery_s.max`·`reclaimed_completed_rate`(`recovery.csv`). 실행 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로 완료율은 같은 seed(같은 작업 일정)의 장애 있음·없음끼리 비교한다.
 

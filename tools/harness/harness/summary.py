@@ -13,7 +13,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable, Optional
 
-from .stats import percentile, summarize_runs
+from .stats import Interval, percentile, summarize_runs
 
 # 원 명세서 위치 오차 KPI [m] (amr_localization/eval/metrics.py KPI_THRESHOLDS와 같은 값)
 LOCALIZATION_KPI = {'stationary': 0.03, 'straight': 0.05, 'rotation': 0.08}
@@ -39,6 +39,15 @@ FAILURE_CAUSES = {'localization': {'203'}, 'nav': {'201', '202'}, 'traffic': {'3
 NAV_KPI = {'navkpi.plan_success_rate': (0.98, 'min'), 'navkpi.replan_p95_ms': (500.0, 'max'),
            'navkpi.pred_err_mean': (0.15, 'max'), 'navkpi.cte_straight_mean_m': (0.05, 'max'),
            'navkpi.cte_curve_mean_m': (0.10, 'max')}
+# 추적 정확도 KPI (docs/algorithms/perception.md 1-7): (기준, 방향). gt = 기준보다 커야 함 (CI 하한으로 판정).
+# P1은 0과 같아도 불합격이다 (추정 속도가 0이면 예측과 정지 가정이 같아진다). 장면 A·B·D·E에서만 판정한다
+TRACK_KPI = {'track.pred_gain_1s': (0.0, 'gt'), 'track.vel.rmse': (0.2, 'max')}
+TRACK_KPI_SCENARIOS = {'tracking_kpi_a', 'tracking_kpi_b', 'tracking_kpi_d', 'tracking_kpi_e'}
+# 최악값으로 판정하는 KPI: 지표 → (기준 하한, 최소 실행 수, 판정할 시나리오). 안전 기준이라 평균·CI가 아니라
+# 모든 실행이 기준 이상이어야 한다 (D1, perception.md 1-7)
+WORST_KPI = {'track.d1_ttc_s': (3.0, 10, {'tracking_kpi_c10', 'tracking_kpi_c15'})}
+# tracking_eval 판정 지연 속력 구간 → 지표 이름
+TRACK_SPEED_BINS = {'<0.6': 'lt0_6', '0.6-1.0': '0_6to1_0', '>=1.0': 'ge1_0'}
 
 
 def load_meta(run_dir: Path) -> dict:
@@ -316,11 +325,65 @@ def avoidance_metrics(run_dir: Path) -> dict[str, float]:
     return out
 
 
+def tracking_metrics(run_dir: Path) -> dict[str, float]:
+    """tracking/summary.json(amr_tracking tracking_eval, perception.md 1-7) → track.* 지표.
+
+    판정하는 지표 (TRACK_KPI, WORST_KPI):
+      track.pred_gain_1s  정지 가정 RMSE − 등속 예측 RMSE (+1 s, 움직이는 GT). P1
+      track.vel.rmse      속도 벡터 오차 RMSE. P2
+      track.d1_ttc_s      접근 판정 TTC (GT 물체가 하나인 기록만, approach.ttc_s). D1. 판정 없이 최근접까지 오면 0이고,
+                          잴 수 없는 실행(None)은 넣지 않는다. 그 실행이 빠진 것은 최악값 판정이 보류로 드러낸다
+    나머지는 참고 지표다. 표본이 없어 비어 있는 값은 넣지 않고, P1·P2의 표본 수(.n)는 늘 넣는다.
+    """
+    out = {}
+    for path in sorted(run_dir.glob('**/tracking/summary.json')):
+        s = json.loads(path.read_text(encoding='utf-8'))
+        o = s['overall']
+
+        def put(name, value):
+            if isinstance(value, (int, float)) and not math.isnan(value):
+                out[f'track.{name}'] = float(value)
+
+        if o['pred_1']['rmse'] is not None and o['hold_1']['rmse'] is not None:
+            out['track.pred_gain_1s'] = o['hold_1']['rmse'] - o['pred_1']['rmse']
+        out['track.pred_1s.n'] = o['pred_1']['n']
+        put('vel.rmse', o['vel']['rmse'])
+        out['track.vel.n'] = o['vel']['n']
+        put('match_rate', o['match_rate_in_range'])
+        put('pos.rmse', o['pos']['rmse'])
+        put('radial.mean', o['radial']['mean'])          # 센서 방향 편향 (음수 = 센서 쪽)
+        put('speed.mean', o['speed']['mean'])            # 속력 편향
+        put('heading.mean', o['heading']['mean'])        # [°]
+        for h in ('1', '2'):
+            put(f'pred_{h}s.rmse', (o.get(f'pred_{h}') or {}).get('rmse'))
+            put(f'hold_{h}s.rmse', (o.get(f'hold_{h}') or {}).get('rmse'))
+        for k in ('nees_pos', 'nees_vel'):
+            put(f'{k}.mean', o[k]['mean'])
+            put(f'{k}.within95', o[k]['within_chi2_95'])
+        put('id_switches', o['id_switches'])
+        lat = s['latency']
+        put('latency.from_seen.mean', lat['from_seen']['mean'])
+        put('latency.from_seen.max', lat['from_seen']['max'])
+        put('latency.not_classified', lat['not_classified'])
+        for b, name in TRACK_SPEED_BINS.items():
+            put(f'latency.{name}.mean', lat['by_speed'][b]['from_seen']['mean'])
+        put('false_dynamic_per_frame', s['false_dynamic_per_frame'])
+        put('duplicate_dynamic_per_frame', s['duplicate_dynamic_per_frame'])
+        ap = s.get('approach')
+        if ap:
+            put('d1_ttc_s', ap['ttc_s'])
+            if ap['ttc_s'] is not None and ap['judged_before_closest']:
+                # 판정 거리·지연은 인정된 판정만 (최근접 뒤 판정·잴 수 없는 실행이 섞이지 않게)
+                put('d1_dist_m', ap['dynamic_dist'])
+                put('d1_latency_s', ap['latency_from_seen'])
+    return out
+
+
 def run_metrics(run_dir: Path) -> dict[str, float]:
     meta = load_meta(run_dir)
     out = {**localization_metrics(run_dir), **fleet_metrics(run_dir), **nav_metrics(run_dir),
            **kidnap_metrics(run_dir), **nav_kpi_metrics(run_dir), **cpu_metrics(run_dir),
-           **avoidance_metrics(run_dir)}
+           **avoidance_metrics(run_dir), **tracking_metrics(run_dir)}
     rtf = meta.get('real_time_factor')
     if isinstance(rtf, (int, float)):
         out['run.real_time_factor'] = float(rtf)
@@ -338,7 +401,7 @@ def kpi_verdict(metric: str, mean: float, ci_high: Optional[float], ci_low: Opti
     """KPI가 있는 지표만 판정한다. CI 상한까지 기준 안이면 PASS, 평균만 안이면 MARGINAL, 아니면 FAIL.
 
     클수록 좋은 지표(성공률)는 거꾸로 CI 하한까지 기준 이상이면 PASS다. 시나리오가 일부러 만드는 상황의
-    지표(NO_VERDICT)는 판정하지 않는다.
+    지표(NO_VERDICT)는 판정하지 않는다. 추적 KPI(TRACK_KPI)는 판정 장면(TRACK_KPI_SCENARIOS)에서만 판정한다.
     """
     if metric in NO_VERDICT.get(scenario, ()):
         return None
@@ -358,11 +421,41 @@ def kpi_verdict(metric: str, mean: float, ci_high: Optional[float], ci_low: Opti
             if ci_low is not None and ci_low >= threshold:
                 return 'PASS'
             return 'MARGINAL' if mean >= threshold else 'FAIL'
+    elif metric in TRACK_KPI and scenario in TRACK_KPI_SCENARIOS:
+        threshold, kind = TRACK_KPI[metric]
+        if kind == 'gt':
+            # P1: CI 하한이 기준보다 커야 PASS (같아도 안 된다). P2(max)는 아래 공통 판정
+            if ci_low is not None and ci_low > threshold:
+                return 'PASS'
+            return 'MARGINAL' if mean > threshold else 'FAIL'
     if threshold is None:
         return None
     if ci_high is not None and ci_high <= threshold:
         return 'PASS'
     return 'MARGINAL' if mean <= threshold else 'FAIL'
+
+
+def worst_kpi_verdict(metric: str, iv: Interval, scenario: str, runs: int,
+                      failed: int) -> tuple[Optional[str], Optional[str]]:
+    """최악값 KPI(WORST_KPI) 판정 → (판정, 보류 사유). 판정하지 않는 지표·시나리오면 (None, None).
+
+    가장 나쁜 실행이 기준 밑이면 FAIL. 아니면 하네스 실패 실행이 있거나, 완료했는데 값이 없는 실행이 있거나,
+    실행이 최소 횟수보다 적으면 보류다. 재지 못한 실행을 빼고 PASS를 주면 성공한 실행만 고르는 셈이다
+    (avoidance_report와 같은 원칙). runs = 완료한 실행 수, failed = 하네스 실패 실행 수.
+    """
+    rule = WORST_KPI.get(metric)
+    if rule is None or scenario not in rule[2]:
+        return None, None
+    limit, min_runs, _ = rule
+    if iv.min < limit:
+        return 'FAIL', None
+    if failed:
+        return None, f'보류 (하네스 실패 {failed}회)'
+    if iv.n < runs:
+        return None, f'보류 (값 없는 실행 {runs - iv.n}회)'
+    if iv.n < min_runs:
+        return None, f'보류 (n={iv.n}<{min_runs})'
+    return 'PASS', None
 
 
 def summarize(run_dirs: Iterable[Path]) -> dict:
@@ -397,6 +490,11 @@ def summarize(run_dirs: Iterable[Path]) -> dict:
                 d['kpi_note'] = f'보류 (n={samples}<{RESPONSE_MIN_N})'
             elif verdict:
                 d['kpi'] = verdict
+            worst, note = worst_kpi_verdict(metric, iv, g.get('scenario', ''), len(g['runs']), len(g['failed']))
+            if worst:
+                d['kpi'] = worst
+            elif note:
+                d['kpi_note'] = note
             metrics[metric] = d
         result[name] = {'runs': g['runs'], 'failed': g['failed'], 'metrics': metrics}
     return result
@@ -431,4 +529,8 @@ def to_markdown(summary: dict) -> str:
                          f"{d.get('kpi') or d.get('kpi_note', '')} |")
         lines.append('')
     lines.append('위치 오차(`loc.*`)는 cm. KPI: CI 상한까지 기준 안이면 PASS, 평균만 안이면 MARGINAL.')
+    worst = sorted({m for g in summary.values() for m in g['metrics'] if m in WORST_KPI})
+    if worst:
+        lines.append(f"{', '.join(f'`{m}`' for m in worst)}는 최악값으로 판정한다: "
+                     '모든 실행이 기준 이상이어야 PASS (최소 열).')
     return '\n'.join(lines) + '\n'
