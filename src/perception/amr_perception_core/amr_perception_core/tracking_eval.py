@@ -8,17 +8,27 @@ perception.md 1-5 "동적 판정 지연·정확도 (0.3~1.5 m/s)"를 숫자로 �
 프레임마다: 트랙(확정 트랙 전부)과 GT 물체를 가장 가까운 쌍부터 1:1로 짝짓는다 (게이트 gate [m]).
 짝지어진 쌍에서 위치·속도·방향 오차, 등속 예측 오차, NEES를 계산하고, GT 물체마다 짝지어진 트랙 ID가
 바뀐 횟수(ID 전환)와 동적 판정 지연을 센다. 짝이 없는 동적 트랙은 가짜 동적 트랙이다.
+로봇 자세·속도도 주면 가짜 동적 트랙 때문에 늘어난 감속·정지를 안전 노드 판정 규칙(safety.SafetyMonitor)으로 잰다.
 
 좌표 변환 도우미(se2_*)는 world → odom 변환을 로봇 GT 자세와 odom TF로 구하는 데 쓴다:
 T_world_odom = T_world_base · T_odom_base⁻¹.
 """
 
 from bisect import bisect_left, insort
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import math
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
+
+from amr_perception_core.clustering import transform_points_2d
+from amr_perception_core.collision import footprint_clearance, footprint_time_to_collision
+from amr_perception_core.safety import (
+    LEVEL_CRITICAL,
+    ObstacleInfo,
+    SafetyConfig,
+    SafetyMonitor,
+)
 
 Pose2 = Tuple[float, float, float]   # (x, y, yaw)
 
@@ -61,6 +71,8 @@ class TrackObs:
     # 위치·속도 공분산 2x2 (KF P). 없으면 NEES를 계산하지 않는다
     pos_cov: Optional[np.ndarray] = None
     vel_cov: Optional[np.ndarray] = None
+    # 트랙 반경 [m] (TrackedObstacle.radius). 안전 노드는 차체 거리에서 이 값을 뺀다
+    radius: float = 0.0
 
     def transformed(self, pose: Pose2) -> 'TrackObs':
         """pose(부모 ← 트랙 좌표계)로 옮긴다. 위치는 회전 + 평행이동, 속도는 회전, 공분산은 R C Rᵀ."""
@@ -72,7 +84,7 @@ class TrackObs:
         pc = None if self.pos_cov is None else r @ np.asarray(self.pos_cov, float) @ r.T
         vc = None if self.vel_cov is None else r @ np.asarray(self.vel_cov, float) @ r.T
         return TrackObs(self.track_id, float(x), float(y), float(vx), float(vy),
-                        self.is_dynamic, pc, vc)
+                        self.is_dynamic, pc, vc, self.radius)
 
 
 class TimeSeries:
@@ -151,6 +163,34 @@ def associate_nearest(tracks_xy: np.ndarray, gt_xy: np.ndarray,
     return out
 
 
+# ---------------------------------------------------------------------------- 안전 판정 입력
+def body_risks(tracks: Sequence[TrackObs], robot: Pose2, robot_velocity: Sequence[float],
+               length: float, width: float, horizon: float) -> List[Tuple[float, float]]:
+    """트랙마다 (차체 거리, TTC). 트랙·로봇 자세·로봇 속도는 같은 좌표계.
+
+    안전 노드가 받는 값과 같은 계산이다:
+    - 차체 거리: amr_safety obstacle_infos. 몸체 좌표로 옮겨(transform_points_2d) 차체 사각형까지 거리 − 트랙 반경,
+      0 아래로 내려가지 않는다
+    - TTC: amr_tracking collision_risks. 상대 위치·상대 속도를 몸체 축으로 돌려 footprint_time_to_collision
+    """
+    if not tracks:
+        return []
+    x, y, yaw = robot
+    c, s = math.cos(yaw), math.sin(yaw)
+    base_from_frame = se2_inverse(robot)
+    centers = np.array([(tr.x, tr.y) for tr in tracks])
+    body = transform_points_2d(centers, base_from_frame[2], base_from_frame[:2])
+    distances = footprint_clearance(body, length, width)
+    out = []
+    for tr, d in zip(tracks, distances):
+        rx, ry = tr.vx - robot_velocity[0], tr.vy - robot_velocity[1]
+        ttc = footprint_time_to_collision(
+            (c * (tr.x - x) + s * (tr.y - y), -s * (tr.x - x) + c * (tr.y - y)),
+            (c * rx + s * ry, -s * rx + c * ry), float(tr.radius), length, width, horizon)
+        out.append((max(float(d) - float(tr.radius), 0.0), float(ttc)))
+    return out
+
+
 # ---------------------------------------------------------------------------- 평가
 @dataclass(frozen=True)
 class EvalConfig:
@@ -174,10 +214,17 @@ class EvalConfig:
     ttc_offset: float = 0.55
     # 로봇 거리가 그때까지의 최솟값보다 이만큼 [m] 늘면 첫 최근접을 지난 것으로 본다 (GT 떨림을 거른다)
     closest_rise: float = 0.05
+    # 가짜 동적 트랙 때문에 늘어난 감속·정지 (_false_dynamic_safety). 안전 노드·추적 노드 설정과 같은 값:
+    # 차체 크기 (amr_safety safety.yaml robot_length·robot_width), TTC 범위 (amr_tracking tracking.yaml ttc_horizon),
+    # 판정 규칙 값 (safety.yaml = SafetyConfig 기본값)
+    robot_length: float = 0.6
+    robot_width: float = 0.4
+    ttc_horizon: float = 5.0
+    safety: SafetyConfig = field(default_factory=SafetyConfig)
 
     def __post_init__(self):
         for name in ('gate', 'sensor_range', 'max_gt_gap', 'heading_min_speed', 'nees_chi2_95',
-                     'closest_rise'):
+                     'closest_rise', 'robot_length', 'robot_width', 'ttc_horizon'):
             value = getattr(self, name)
             if not (math.isfinite(value) and value > 0.0):
                 raise ValueError(f'{name}는 양수여야 한다: {value}')
@@ -196,6 +243,8 @@ class _Frame:
     t: float
     tracks: List[TrackObs]
     robot_xy: Optional[Tuple[float, float]]
+    robot_yaw: Optional[float] = None
+    robot_velocity: Optional[Tuple[float, float]] = None
 
 
 def _stats(values: Iterable[float]) -> Dict[str, Optional[float]]:
@@ -234,7 +283,9 @@ class TrackingEvaluator:
     """GT와 트랙 프레임을 모아 두었다가 evaluate()로 지표를 계산한다.
 
     add_gt(물체 id, t, x, y, vx, vy): GT (평가 좌표계, 속도도 같은 좌표계 축)
-    add_frame(t, tracks, robot_xy): 한 추적 주기의 트랙 (같은 좌표계). robot_xy를 주면 센서 범위를 본다
+    add_frame(t, tracks, robot_xy, robot_yaw, robot_velocity): 한 추적 주기의 트랙 (같은 좌표계).
+        robot_xy를 주면 센서 범위를 본다. robot_yaw [rad]와 robot_velocity (vx, vy, 같은 좌표계 축)까지 주면
+        가짜 동적 트랙 때문에 늘어난 감속·정지를 잰다
     """
 
     def __init__(self, config: EvalConfig = EvalConfig(), gt_ids: Sequence[str] = ()):
@@ -257,11 +308,15 @@ class TrackingEvaluator:
         self._gt.setdefault(gid, TimeSeries()).add(t, (x, y, vx, vy))
 
     def add_frame(self, t: float, tracks: Sequence[TrackObs],
-                  robot_xy: Optional[Sequence[float]] = None) -> None:
+                  robot_xy: Optional[Sequence[float]] = None, robot_yaw: Optional[float] = None,
+                  robot_velocity: Optional[Sequence[float]] = None) -> None:
         if not math.isfinite(t):
             return
         robot = None if robot_xy is None else (float(robot_xy[0]), float(robot_xy[1]))
-        self._frames.append(_Frame(float(t), list(tracks), robot))
+        yaw = None if robot_yaw is None else float(robot_yaw)
+        vel = (None if robot_velocity is None
+               else (float(robot_velocity[0]), float(robot_velocity[1])))
+        self._frames.append(_Frame(float(t), list(tracks), robot, yaw, vel))
 
     # ------------------------------------------------------------------ 계산
     def evaluate(self) -> Tuple[List[dict], List[dict], dict]:
@@ -273,6 +328,9 @@ class TrackingEvaluator:
         # GT 물체별 시간순 기록: (t, 움직임, 범위 안, 짝 트랙 id 또는 None, 짝 트랙 동적, GT 속력, 로봇 거리)
         history: Dict[str, List[tuple]] = {gid: [] for gid in gids}
         per_frame_false, per_frame_dup, per_frame_tracks, per_frame_dyn = [], [], [], []
+        # 로봇 자세·속도가 있는 프레임: (t, 동적 트랙 전부의 판정 입력, 가짜를 뺀 판정 입력), 가짜의 (차체 거리, TTC)
+        replay: List[Tuple[float, List[ObstacleInfo], List[ObstacleInfo]]] = []
+        false_risks: List[Tuple[float, float]] = []
         pos_err_all: Dict[str, List[float]] = {gid: [] for gid in gids}
         acc: Dict[str, Dict[str, list]] = {gid: {} for gid in gids}
 
@@ -290,8 +348,18 @@ class TrackingEvaluator:
             matches = associate_nearest(txy, gxy, cfg.gate)
             matched_t = {i for i, _, _ in matches}
             matched_g = {j: (i, d) for i, j, d in matches}
+            # 동적 트랙의 (차체 거리, TTC). 안전 노드는 동적 트랙에만 TTC·근접 규칙을 건다
+            risks: Dict[int, Tuple[float, float]] = {}
+            pose_known = (frame.robot_xy is not None and frame.robot_yaw is not None
+                          and frame.robot_velocity is not None)
+            if pose_known:
+                dyn = [i for i, tr in enumerate(frame.tracks) if tr.is_dynamic]
+                risks = dict(zip(dyn, body_risks(
+                    [frame.tracks[i] for i in dyn], (*frame.robot_xy, frame.robot_yaw),
+                    frame.robot_velocity, cfg.robot_length, cfg.robot_width, cfg.ttc_horizon)))
 
             n_false = n_dup = 0
+            false_idx = set()
             for i, tr in enumerate(frame.tracks):
                 if i in matched_t:
                     continue
@@ -302,9 +370,21 @@ class TrackingEvaluator:
                         n_dup += 1
                     else:
                         n_false += 1
-                rows.append({'t': frame.t, 'kind': 'track_only', 'gt_id': '',
-                             'track_id': tr.track_id, 'is_dynamic': int(tr.is_dynamic),
-                             'near_gt': int(near)})
+                        false_idx.add(i)
+                row = {'t': frame.t, 'kind': 'track_only', 'gt_id': '',
+                       'track_id': tr.track_id, 'is_dynamic': int(tr.is_dynamic),
+                       'near_gt': int(near), 'tr_x': tr.x, 'tr_y': tr.y, 'tr_vx': tr.vx,
+                       'tr_vy': tr.vy, 'tr_speed': float(math.hypot(tr.vx, tr.vy)),
+                       'radius': float(tr.radius)}
+                if i in risks:
+                    row['clearance'], row['ttc'] = risks[i]
+                rows.append(row)
+            if pose_known:
+                infos = {i: ObstacleInfo(frame.tracks[i].track_id, clearance, ttc, True)
+                         for i, (clearance, ttc) in risks.items()}
+                replay.append((frame.t, list(infos.values()),
+                               [info for i, info in infos.items() if i not in false_idx]))
+                false_risks.extend(risks[i] for i in sorted(false_idx))
             per_frame_false.append(n_false)
             per_frame_dup.append(n_dup)
             per_frame_tracks.append(len(frame.tracks))
@@ -378,7 +458,49 @@ class TrackingEvaluator:
         episodes = self._episodes(history, frames[0].t if frames else None)
         summary = self._summarize(frames, gids, acc, history, episodes,
                                   per_frame_false, per_frame_dup, per_frame_tracks, per_frame_dyn)
+        summary['false_dynamic_safety'] = self._false_dynamic_safety(replay, false_risks)
         return rows, episodes, summary
+
+    def _false_dynamic_safety(self, replay, false_risks) -> Optional[dict]:
+        """가짜 동적 트랙 때문에 늘어난 감속·정지. 안전 노드 판정 규칙(SafetyMonitor)을 그대로 돌린다.
+
+        프레임마다 동적 트랙 전부로 한 번, 가짜를 뺀 동적 트랙(짝지어진 트랙, GT 옆 중복)으로 한 번 판정해 비교한다.
+        진짜 장애물 때문에 이미 감속 중이면 가짜가 더한 것이 없기 때문이다. 두 판정 모두 단계를 내릴 때
+        release_hold_s를 기다린다 (한 프레임만 나타난 가짜도 그만큼 감속을 부른다).
+        - limited: 가짜를 넣은 판정이 더 높은 단계 (가짜 때문에 감속 또는 정지)
+        - stop: 가짜를 넣으면 CRITICAL 이상, 빼면 그 아래 (가짜 때문에 정지)
+        트랙만 비교한다 (센서 끊김, LiDAR 점의 근접·진행 경로는 넣지 않는다). 단계는 다음 프레임까지 이어진 것으로 보고,
+        프레임 간격은 tracks_timeout_s까지만 센다 (더 길게 끊기면 안전 노드는 추적 끊김으로 따로 감속한다).
+        로봇 자세·속도가 있는 프레임이 없으면 None.
+        """
+        if not replay:
+            return None
+        s = self.config.safety
+        with_false, without_false = SafetyMonitor(s), SafetyMonitor(s)
+        seconds = {'limited': 0.0, 'stop': 0.0}
+        events = {'limited': 0, 'stop': 0}
+        previous = {'limited': False, 'stop': False}
+        duration = 0.0
+        for k, (t, infos_all, infos_real) in enumerate(replay):
+            a = with_false.update(t, None, infos_all, 0.0, 0.0, 0.0).level
+            b = without_false.update(t, None, infos_real, 0.0, 0.0, 0.0).level
+            current = {'limited': a > b, 'stop': a >= LEVEL_CRITICAL > b}
+            dt = min(replay[k + 1][0] - t, s.tracks_timeout_s) if k + 1 < len(replay) else 0.0
+            duration += dt
+            for key, on in current.items():
+                events[key] += int(on and not previous[key])
+                seconds[key] += dt if on else 0.0
+            previous = current
+        clearances = [c for c, _ in false_risks]
+        ttcs = [ttc for _, ttc in false_risks if math.isfinite(ttc)]
+        out = {'frames': len(replay), 'duration_s': duration}
+        for key in ('limited', 'stop'):
+            out[f'{key}_s'] = seconds[key]
+            out[f'{key}_frac'] = seconds[key] / duration if duration > 0.0 else None
+            out[f'{key}_events'] = events[key]
+        out['false_min_clearance'] = min(clearances) if clearances else None
+        out['false_min_ttc'] = min(ttcs) if ttcs else None
+        return out
 
     def _episodes(self, history: Dict[str, List[tuple]], first_t: Optional[float]) -> List[dict]:
         """GT 물체가 '움직이며 센서 범위 안'인 구간마다 동적 판정 지연을 잰다.
@@ -640,10 +762,18 @@ def format_summary_ko(summary: dict) -> str:
         f'(가짜가 있는 프레임 {100 * summary["frames_with_false_dynamic"]:.0f}%), '
         f'GT 옆 중복 동적 {summary["duplicate_dynamic_per_frame"]:.2f}개',
     ]
+    fs = summary.get('false_dynamic_safety')
+    if fs:
+        lines.append(
+            f'가짜 동적 때문에 늘어난 속도 제한 (안전 노드 규칙, {fs["duration_s"]:.1f} s 중): '
+            f'감속·정지 {_f(fs["limited_frac"], ".1f", 100)}% ({fs["limited_events"]}번), '
+            f'정지만 {_f(fs["stop_frac"], ".1f", 100)}% ({fs["stop_events"]}번), '
+            f'가장 가까운 가짜 {_f(fs["false_min_clearance"])} m, '
+            f'가장 짧은 TTC {_f(fs["false_min_ttc"])} s')
     return '\n'.join(lines)
 
 
 __all__ = [
-    'EvalConfig', 'TimeSeries', 'TrackObs', 'TrackingEvaluator', 'associate_nearest',
+    'EvalConfig', 'TimeSeries', 'TrackObs', 'TrackingEvaluator', 'associate_nearest', 'body_risks',
     'format_summary_ko', 'se2_compose', 'se2_inverse', 'world_from_odom', 'wrap_angle',
 ]
