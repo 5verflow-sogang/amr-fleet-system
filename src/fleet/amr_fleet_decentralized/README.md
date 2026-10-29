@@ -132,11 +132,13 @@
   `_awaiting_award`) 더 급한 입찰이 있으면 계속 보류하고, 그런 게 없으면 보류 중인 것
   중 가장 앞선 것만 ACCEPT하고 나머지는 WITHDRAW한다(`_resolve_pending_awards`).
   "아직 결과를 모른다"는 다른 로봇이 그 작업을 맡은 걸 알면(`_taken_by_other`) 바로 끝나고,
-  아니면 `award_wait_s`(기본 3초) 뒤에 "졌다"로 보고 끝난다 - 그래야 정말로 이겼는데 AWARD가
+  아니면 `award_wait_s`(기본 3.5초) 뒤에 "졌다"로 보고 끝난다 - 그래야 정말로 이겼는데 AWARD가
   늦게 오는 경우와, 져서 AWARD가 영영 안 오는 경우를 유한한 시간 안에 구분할 수 있다.
-  `award_wait_s`는 경매인이 ACCEPT 없이 재경매하기까지 걸리는 최대 시간
-  (`award_resend_interval_s x (award_max_attempts - 1)`, 기본 4초)보다 반드시 짧아야
-  한다 - 그보다 길면 기다리는 동안 경매인이 먼저 재경매해 버린다.
+  `award_wait_s`는 두 경계 사이에 있어야 한다(통신 지연 최대 136 ms 조건, params.py
+  `AuctionParams.award_wait_s` 주석에 계산 근거) - 짧으면 더 급한 작업이 자기 AWARD를 받기
+  전에 포기해 버리고(하한 3.372초), 길면 경매인이 ACCEPT를 못 받고 먼저 재경매해 버린다
+  (상한 3.628초, `award_resend_interval_s x (award_max_attempts - 1)` = 4초에서 AWARD·ACCEPT
+  지연과 틱을 뺀 값). 가운데 값 3.5초로 둔다.
 - **AWARD가 여러 개 와도**(네트워크 경쟁으로 거둔 입찰에 뒤늦게 AWARD가 오는 등) 이렇게
   가장 앞선 것만 수락하고 나머지는 WITHDRAW한다 - 거둔 경매는 `_withdrawn`에 남아, 뒤늦은
   AWARD에도 다시 WITHDRAW한다(10/16 동시 낙찰 경합과 같은 장치를 그대로 쓴다). 한 번
@@ -270,7 +272,7 @@
 | `reclaim_timeout_s` | `5.0` | ACCEPT한 낙찰 로봇의 `RobotState`가 이 시간(실제 시간, s) 동안 끊기면 재경매. 0이면 끄기 (중앙 #132와 같음) |
 | `max_reclaims` | `-1` | 장애 회수 재경매 상한. 음수면 상한 없음 (#132와 같음) |
 | `commit_timeout_s` | `30.0` | ACCEPT 뒤 이 시간(실제 시간, s) 동안 내 `RobotState`가 한 번도 BUSY가 안 되면 맡은 작업을 해제(경고 로그). 0이면 끄기 |
-| `award_wait_s` | `3.0` | AWARD를 받아도 더 급한 입찰 결과를 모르면 이 시간(실제 시간, s) 동안 수락을 미룬다(#227 리뷰 2). `award_resend_interval_s x (award_max_attempts - 1)`보다 짧아야 함 |
+| `award_wait_s` | `3.5` | AWARD를 받아도 더 급한 입찰 결과를 모르면 이 시간(실제 시간, s) 동안 수락을 미룬다(#227 리뷰 2). 재공고 쪽 하한(3.372s)과 경매인 재경매 상한(3.628s, 통신 지연 최대 136ms 조건) 사이 - params.py 참고 |
 | `announce_memory_s` | `4.0` | 공고를 본 작업을 경매 마감 뒤에도 이 시간(실제 시간, s) 동안 기억 - 그보다 순서가 앞서고 입찰 자격이 있는 기억 중인 작업이 있으면 지금 열린 더 늦은 작업에 입찰하지 않고 기다린다 (10/26, #224 후속) |
 | `open_auctions` | `true` | 작업 방송을 보고 내 차례면 경매를 연다(분산 모드 트리거) |
 | `task_requests_topic` | `/fleet/task_requests` | 작업 방송 토픽 |

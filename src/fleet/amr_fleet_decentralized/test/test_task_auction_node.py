@@ -13,7 +13,7 @@ import rclpy
 from amr_msgs.msg import (ErrorInfo, FleetTaskTable, RobotFleetMode, RobotState, Task, TaskAssignment,
                           TaskAssignmentAck, TaskAuction, TaskBid, TaskRecord, TaskStatus)
 
-from amr_fleet_decentralized.auction import TaskInfo, assignment_topic, robot_index
+from amr_fleet_decentralized.auction import AuctionParams, TaskInfo, assignment_topic, robot_index
 from amr_fleet_decentralized.task_auction_node import TaskAuctionNode
 
 
@@ -540,7 +540,7 @@ def test_pending_award_accepted_immediately_when_higher_priority_task_is_claimed
             TaskStatus(task_id='task_t1', robot_id='amr_02', state=TaskStatus.STATE_PENDING))
         assert robot._active_task == (('amr_11', 1), 'task_t2')
         assert ('amr_10', 1) not in robot._awaiting_award
-        # award_wait_s(3초)를 기다리지 않고 바로(시간이 전혀 안 지나도) 풀렸다
+        # award_wait_s를 기다리지 않고 바로(시간이 전혀 안 지나도) 풀렸다
         assert clock[0] == held_before
     finally:
         for node in nodes.values():
@@ -705,7 +705,7 @@ def test_idle_robot_bids_on_later_task_when_remembered_earlier_task_is_ineligibl
 
 
 def test_announce_memory_and_award_wait_do_not_compound():
-    """announce_memory_s(기본 4s)와 award_wait_s(기본 3s)가 같이 걸려도 보류 시간이 늘어나지
+    """announce_memory_s(기본 4s)와 award_wait_s(기본 3.5s)가 같이 걸려도 보류 시간이 늘어나지
     않는다 - 기억(_remembered) 중인 더 급한 작업이 announce_memory_s 안(아직 안 지남)이어도,
     보류 중인 AWARD를 받은 지 award_wait_s가 지나면 그대로 수락한다. _resolve_pending_awards가
     두 시간을 모두 _pending_since 하나로 묶어 확인하므로(더 짧은 award_wait_s가 항상 이긴다),
@@ -724,18 +724,18 @@ def test_announce_memory_and_award_wait_do_not_compound():
         assert robot._params.award_wait_s < robot._params.announce_memory_s   # 설계 전제
 
         # task_early를 기억한다(AWARD를 받기 전에 - 받은 뒤에 기억해 두면 보류가 시작도
-        # 안 한다) - 더 급하고(priority 5) 아직 자격도 있다(IDLE).
+        # 안 한다) - 더 급하고(priority 5) 아직 자격도 있다(IDLE). task_late는 바로 이어서
+        # 거의 같은 시각에 마감되게 둔다(bid_window_s를 짧게) - 그래야 뒤에서 award_wait_s를
+        # 거의 다 쓰고 나서도 이 기억이 announce_memory_s(4s) 안에서 유효하다.
         early_task = TaskInfo(task_id='task_early', dropoff_xy=(3.0, 4.0), pickup_xy=None,
                                priority=5, created=0.0, deadline=None)
         robot._remembered['task_early'] = (early_task, clock[0])
 
-        bus.publish(_make_auction('amr_11', 1, 'task_late', priority=0, bid_window_s=1.0))
-        clock[0] += 1.1
+        bus.publish(_make_auction('amr_11', 1, 'task_late', priority=0, bid_window_s=0.1))
+        clock[0] += 0.15
         nodes['amr_11']._on_timer()
         bus.pump()
         award_received_at = clock[0]
-        # 기억이 막 본 것으로(clock[0]=100.0) 치므로 announce_memory_s(4s) 안에서는
-        # award_wait_s(3s)보다 오래 유효하다 - 그런데도 받자마자 보류돼야 한다.
         assert robot._active_task is None
         assert set(robot._pending_awards) == {('amr_11', 1)}
 
@@ -761,15 +761,14 @@ def test_announce_memory_and_award_wait_do_not_compound():
         rclpy.shutdown()
 
 
-def test_award_wait_s_has_zero_margin_against_remembered_tasks_reannounce_cycle():
-    """알려진 경계(코드는 안 고침) - award_wait_s(3초)는 보류 중인 AWARD를 받은 시점부터 잰다.
-    그런데 그 순간 더 급한 작업이 "재공고 틈"(기억 중, _remembered)에 있으면, 그 작업이 다시
-    열려 AWARD를 받기까지 최소 no_bid_retry_s + bid_window_s(기본 1.0 + 2.0 = 3.0초)가
-    걸린다 - award_wait_s와 정확히 같아 여유가 0이다. 재공고·마감 판정은 틱 단위(update_rate_hz,
-    기본 10 Hz = 0.1초)로만 일어나므로, 한 틱만 늦어져도 더 급한 작업의 AWARD가 오기 전에
-    award_wait_s가 먼저 끝나 보류 중인 더 늦은 작업을 수락해 버린다. award_wait_s를 늘리면
-    #227 리뷰 2가 지키는 다른 보장(경매인이 ACCEPT 없이 재경매하는 4초보다 짧아야 함)이
-    깨지므로 늘릴 수 없다 - 이 틈은 그대로 남는다."""
+def test_award_wait_s_has_margin_against_remembered_tasks_reannounce_cycle_with_comm_delay():
+    """award_wait_s(3.5초, 10/29 재계산 - 통신 지연 최대 136 ms 조건)는 재공고 쪽에 여유가
+    있다. 보류 중인 AWARD를 받은 순간 더 급한 작업이 "재공고 틈"(기억 중, _remembered)에
+    있으면, 그 작업이 다시 열려 AWARD를 받기까지 최소 no_bid_retry_s + bid_window_s + 공고
+    지연 + AWARD 지연 + 틱(1.0 + 2.0 + 2 x 0.136 + 0.1 = 3.372초, params.py 주석과 같음)이
+    걸린다 - award_wait_s(3.5초)보다 짧아 그 안에 도착하면 제대로 수락한다. 이 가짜 버스는
+    전송이 즉시 끝나는(동기) 지연 0 조건이라, 지연·틱만큼 시계를 더 돌려 "그만큼 늦게
+    도착했다"를 흉내 낸다."""
     rclpy.init()
     nodes = {}
     try:
@@ -782,12 +781,14 @@ def test_award_wait_s_has_zero_margin_against_remembered_tasks_reannounce_cycle(
         }
         robot = nodes['amr_01']
         robot._active_task = (('amr_99', 1), 'other_task')
+        delay_s = 0.136  # 통신 지연 최대(KPI 조건)
+        tick_s = 0.1  # update_rate_hz 기본값(10 Hz)의 틱 간격
 
         bus.publish(_make_auction('amr_10', 1, 'task_early', bid_window_s=2.0, created=0.0))
         nodes['amr_10']._auctions[('amr_10', 1)].from_request = True
 
         # task_early 마감 - 아무도 입찰하지 않았다("재공고 틈" 시작). 바로 이 순간 덜 급한
-        # task_late의 AWARD를 받는다(가장 나쁜 경우 - award_wait_s가 이 순간부터 꽉 찬 3초를 쓴다)
+        # task_late의 AWARD를 받는다(가장 나쁜 경우 - award_wait_s가 이 순간부터 꽉 찬 시간을 쓴다)
         clock[0] += 2.0  # now == 마감이면 아직 유효(_consider_bids의 >)라, 살짝 더 지나게 한다
         nodes['amr_10']._on_timer()
         bus.pump()
@@ -802,29 +803,48 @@ def test_award_wait_s_has_zero_margin_against_remembered_tasks_reannounce_cycle(
         assert robot._active_task is None
         assert set(robot._pending_awards) == {('amr_11', 1)}
 
-        # no_bid_retry_s(1.0) 뒤 task_early가 재공고된다 - 바로 입찰한다
-        clock[0] = award_received_at + nodes['amr_10']._no_bid_retry_s
+        # no_bid_retry_s(1.0) 뒤 task_early가 재공고된다 - 공고 지연만큼 늦게 도착한다
+        clock[0] = award_received_at + nodes['amr_10']._no_bid_retry_s + delay_s
         nodes['amr_10']._on_timer()
         bus.pump()
         assert ('amr_10', 2) in robot._bid_resends
 
-        # award_wait_s가 꽉 찬 시점 = task_early의 재공고된 입찰 창(bid_window_s)도 꽉 찬
-        # 시점 - 여기까지는 아직 안전하다(경매인이 아직 처리 전이라 AWARD도 안 왔을 뿐)
-        clock[0] = award_received_at + robot._params.award_wait_s
-        robot._on_timer()
-        assert robot._active_task is None, 'award_wait_s 끝 = task_early 마감 끝: 아직 안전해야 함'
+        # 재공고된 task_early의 입찰 창(bid_window_s)이 끝나고, 틱만큼 늦게 경매인이 결정해
+        # AWARD 지연만큼 늦게 도착한다 - 지금까지 쓴 시간이 바로 재공고 쪽 요구 최소치(3.372초)
+        clock[0] += 2.0 + tick_s + delay_s
+        required_min_s = clock[0] - award_received_at
+        nodes['amr_10']._on_timer()
+        bus.pump()
 
-        # 재공고·마감 판정이 한 틱(update_rate_hz, 기본 0.1초)만 늦어져도 - award_wait_s가
-        # 먼저 끝나 task_early의 AWARD가 오기 전에 task_late를 수락해 버린다
-        clock[0] += 0.1
-        robot._on_timer()
-        assert robot._active_task == (('amr_11', 1), 'task_late'), (
-            'award_wait_s가 재공고 주기(no_bid_retry_s + bid_window_s)와 정확히 같아, 틱 하나 늦어지는 것만으로도 '
-            '더 급한 task_early보다 먼저 수락됨 - 알려진 경계, 코드는 고치지 않음')
+        assert required_min_s < robot._params.award_wait_s, (
+            f'요구 최소 {required_min_s:.3f}s가 award_wait_s {robot._params.award_wait_s}s보다 짧아야(여유가 있어야) 함')
+        assert robot._active_task == (('amr_10', 2), 'task_early'), (
+            '여유가 있어 더 급한 task_early가 실제로 도착하면 그걸 수락해야 함')
+        assert [m.task_id for m in bus.bids(TaskBid.TYPE_WITHDRAW)] == ['task_late']
     finally:
         for node in nodes.values():
             node.destroy_node()
         rclpy.shutdown()
+
+
+def test_award_wait_s_leaves_margin_before_auctioneer_reannounces_with_comm_delay():
+    """award_wait_s(3.5초)는 경매인 쪽에도 여유가 있다. 경매인이 ACCEPT 없이 재경매하기까지
+    걸리는 시간((award_max_attempts - 1) x award_resend_interval_s = 4.0초)은 경매인이
+    "처음 AWARD를 보낸 시각" 기준인데, award_wait_s는 내가 AWARD를 "받은" 시각(_pending_since)
+    기준이라 그 사이 AWARD 지연이 이미 끼어 있다. 거기서 ACCEPT 지연(내 ACCEPT가 경매인에게
+    가는 시간)과 틱(경매인의 재경매 판정 주기)을 더 빼면 3.628초(params.py 주석과 같음)다 -
+    award_wait_s(3.5초)가 이보다 짧은지 확인한다. 이 가짜 버스는 지연 0(동기) 조건이라 실제
+    ACCEPT 지연을 재현하지 않고, 운영 코드(params.py)와 같은 상수로 식만 검증한다."""
+    delay_s = 0.136  # 통신 지연 최대(KPI 조건)
+    tick_s = 0.1  # update_rate_hz 기본값(10 Hz)의 틱 간격
+    auctioneer_timeout_s = AuctionParams.award_resend_interval_s * (AuctionParams.award_max_attempts - 1)
+    assert auctioneer_timeout_s == 4.0
+
+    allowed_max_s = auctioneer_timeout_s - delay_s - delay_s - tick_s
+    assert round(allowed_max_s, 3) == 3.628
+    assert AuctionParams.award_wait_s < allowed_max_s, (
+        f'award_wait_s({AuctionParams.award_wait_s}s)가 경매인 재경매 여유'
+        f'({allowed_max_s:.3f}s)를 넘으면 ACCEPT가 재경매보다 늦게 도착할 수 있다')
 
 
 # --- 맡은 작업 해제 안전장치 ---
