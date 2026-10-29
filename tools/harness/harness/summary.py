@@ -334,6 +334,8 @@ def tracking_metrics(run_dir: Path) -> dict[str, float]:
       track.d1_ttc_s      접근 판정 TTC (GT 물체가 하나인 기록만, approach.ttc_s). D1. 판정 없이 최근접까지 오면 0이고,
                           잴 수 없는 실행(None)은 넣지 않는다. 그 실행이 빠진 것은 최악값 판정이 보류로 드러낸다
     나머지는 참고 지표다. 표본이 없어 비어 있는 값은 넣지 않고, P1·P2의 표본 수(.n)는 늘 넣는다.
+    track.false_limited_frac·false_stop_frac·false_stop_events·false_min_clearance는 가짜 동적 트랙 때문에 늘어난
+    감속·정지다 (false_dynamic_safety, 로봇 자세·속도가 있는 기록만).
     """
     out = {}
     for path in sorted(run_dir.glob('**/tracking/summary.json')):
@@ -369,6 +371,13 @@ def tracking_metrics(run_dir: Path) -> dict[str, float]:
             put(f'latency.{name}.mean', lat['by_speed'][b]['from_seen']['mean'])
         put('false_dynamic_per_frame', s['false_dynamic_per_frame'])
         put('duplicate_dynamic_per_frame', s['duplicate_dynamic_per_frame'])
+        fs = s.get('false_dynamic_safety')
+        if fs:
+            # 가짜 동적 트랙 때문에 늘어난 감속·정지 (안전 노드 규칙). limited는 감속 또는 정지, stop은 정지
+            put('false_limited_frac', fs['limited_frac'])
+            put('false_stop_frac', fs['stop_frac'])
+            put('false_stop_events', fs['stop_events'])
+            put('false_min_clearance', fs['false_min_clearance'])
         ap = s.get('approach')
         if ap:
             put('d1_ttc_s', ap['ttc_s'])

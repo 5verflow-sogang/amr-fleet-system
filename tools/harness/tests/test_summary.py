@@ -332,7 +332,7 @@ def test_avoidance_metrics(tmp_path):
     assert m['avoid.amr_01.collisions'] == 1
 
 
-def track_summary(pred=0.2, hold=0.6, vel=0.1, approach=None):
+def track_summary(pred=0.2, hold=0.6, vel=0.1, approach=None, false_safety=None):
     """tracking_eval summary.json에서 tracking_metrics가 읽는 부분만 (amr_perception_core.tracking_eval 형식)."""
     def st(rmse=None, mean=None, n=100, mx=None):
         return {'n': n if rmse is not None or mean is not None else 0, 'rmse': rmse, 'mean': mean,
@@ -345,7 +345,7 @@ def track_summary(pred=0.2, hold=0.6, vel=0.1, approach=None):
     by_speed = {b: {'seen': 1, 'classified': 1, 'from_seen': st(mean=1.2)} for b in ('<0.6', '0.6-1.0', '>=1.0')}
     return {'overall': overall, 'false_dynamic_per_frame': 0.01, 'duplicate_dynamic_per_frame': 0.0,
             'latency': {'from_seen': st(mean=1.2, mx=2.0), 'not_classified': 0, 'by_speed': by_speed},
-            'approach': approach}
+            'approach': approach, 'false_dynamic_safety': false_safety}
 
 
 def make_track_run(root: Path, name: str, scenario: str, outcome='completed', **kw):
@@ -375,6 +375,20 @@ def test_tracking_metrics(tmp_path):
     assert m['track.radial.mean'] == -0.1 and m['track.nees_pos.within95'] == 0.8
     assert m['track.latency.ge1_0.mean'] == 1.2 and m['track.id_switches'] == 2
     assert not [k for k in m if k.startswith('track.d1_')]          # 물체가 여럿인 기록 (approach 없음)
+    # 로봇 자세·속도가 없던 기록: 가짜 때문에 늘어난 감속·정지는 없다
+    assert m['track.false_dynamic_per_frame'] == 0.01
+    assert not [k for k in m if k.startswith(('track.false_limited', 'track.false_stop', 'track.false_min'))]
+    fs = {'frames': 3000, 'duration_s': 299.9, 'limited_s': 6.0, 'limited_frac': 0.02, 'limited_events': 4,
+          'stop_s': 1.2, 'stop_frac': 0.004, 'stop_events': 2, 'false_min_clearance': 0.35,
+          'false_min_ttc': None}
+    m = tracking_metrics(make_track_run(tmp_path, 'fs', 'tracking_kpi_e', false_safety=fs))
+    assert m['track.false_limited_frac'] == 0.02 and m['track.false_stop_frac'] == 0.004
+    assert m['track.false_stop_events'] == 2 and m['track.false_min_clearance'] == 0.35
+    # 가짜가 없던 기록은 최소 거리가 비어 있어 넣지 않는다 (비율·횟수 0은 넣는다)
+    m = tracking_metrics(make_track_run(tmp_path, 'fs0', 'tracking_kpi_e', false_safety=dict(
+        fs, limited_s=0.0, limited_frac=0.0, limited_events=0, stop_s=0.0, stop_frac=0.0, stop_events=0,
+        false_min_clearance=None)))
+    assert m['track.false_stop_events'] == 0.0 and 'track.false_min_clearance' not in m
     # 움직이는 GT와 짝이 없으면 P1 값은 없고 표본 수 0이 남는다
     run = make_track_run(tmp_path, 'b', 'tracking_kpi_a', pred=None, hold=None)
     m = tracking_metrics(run)
