@@ -761,6 +761,72 @@ def test_announce_memory_and_award_wait_do_not_compound():
         rclpy.shutdown()
 
 
+def test_award_wait_s_has_zero_margin_against_remembered_tasks_reannounce_cycle():
+    """알려진 경계(코드는 안 고침) - award_wait_s(3초)는 보류 중인 AWARD를 받은 시점부터 잰다.
+    그런데 그 순간 더 급한 작업이 "재공고 틈"(기억 중, _remembered)에 있으면, 그 작업이 다시
+    열려 AWARD를 받기까지 최소 no_bid_retry_s + bid_window_s(기본 1.0 + 2.0 = 3.0초)가
+    걸린다 - award_wait_s와 정확히 같아 여유가 0이다. 재공고·마감 판정은 틱 단위(update_rate_hz,
+    기본 10 Hz = 0.1초)로만 일어나므로, 한 틱만 늦어져도 더 급한 작업의 AWARD가 오기 전에
+    award_wait_s가 먼저 끝나 보류 중인 더 늦은 작업을 수락해 버린다. award_wait_s를 늘리면
+    #227 리뷰 2가 지키는 다른 보장(경매인이 ACCEPT 없이 재경매하는 4초보다 짧아야 함)이
+    깨지므로 늘릴 수 없다 - 이 틈은 그대로 남는다."""
+    rclpy.init()
+    nodes = {}
+    try:
+        bus = _Bus()
+        clock = [100.0]
+        nodes = {
+            'amr_10': _make_node('amr_10', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_11': _make_node('amr_11', bus, clock, (20.0, 20.0), RobotState.MODE_BUSY),
+            'amr_01': _make_node('amr_01', bus, clock, (3.0, 0.0), RobotState.MODE_IDLE),
+        }
+        robot = nodes['amr_01']
+        robot._active_task = (('amr_99', 1), 'other_task')
+
+        bus.publish(_make_auction('amr_10', 1, 'task_early', bid_window_s=2.0, created=0.0))
+        nodes['amr_10']._auctions[('amr_10', 1)].from_request = True
+
+        # task_early 마감 - 아무도 입찰하지 않았다("재공고 틈" 시작). 바로 이 순간 덜 급한
+        # task_late의 AWARD를 받는다(가장 나쁜 경우 - award_wait_s가 이 순간부터 꽉 찬 3초를 쓴다)
+        clock[0] += 2.0  # now == 마감이면 아직 유효(_consider_bids의 >)라, 살짝 더 지나게 한다
+        nodes['amr_10']._on_timer()
+        bus.pump()
+        clock[0] += 0.05
+        bus.publish(_make_auction('amr_11', 1, 'task_late', bid_window_s=0.5, created=10.0))
+        robot._release_active_task('test')
+        bus.pump()
+        clock[0] += 0.6
+        nodes['amr_11']._on_timer()
+        bus.pump()
+        award_received_at = clock[0]
+        assert robot._active_task is None
+        assert set(robot._pending_awards) == {('amr_11', 1)}
+
+        # no_bid_retry_s(1.0) 뒤 task_early가 재공고된다 - 바로 입찰한다
+        clock[0] = award_received_at + nodes['amr_10']._no_bid_retry_s
+        nodes['amr_10']._on_timer()
+        bus.pump()
+        assert ('amr_10', 2) in robot._bid_resends
+
+        # award_wait_s가 꽉 찬 시점 = task_early의 재공고된 입찰 창(bid_window_s)도 꽉 찬
+        # 시점 - 여기까지는 아직 안전하다(경매인이 아직 처리 전이라 AWARD도 안 왔을 뿐)
+        clock[0] = award_received_at + robot._params.award_wait_s
+        robot._on_timer()
+        assert robot._active_task is None, 'award_wait_s 끝 = task_early 마감 끝: 아직 안전해야 함'
+
+        # 재공고·마감 판정이 한 틱(update_rate_hz, 기본 0.1초)만 늦어져도 - award_wait_s가
+        # 먼저 끝나 task_early의 AWARD가 오기 전에 task_late를 수락해 버린다
+        clock[0] += 0.1
+        robot._on_timer()
+        assert robot._active_task == (('amr_11', 1), 'task_late'), (
+            'award_wait_s가 재공고 주기(no_bid_retry_s + bid_window_s)와 정확히 같아, 틱 하나 늦어지는 것만으로도 '
+            '더 급한 task_early보다 먼저 수락됨 - 알려진 경계, 코드는 고치지 않음')
+    finally:
+        for node in nodes.values():
+            node.destroy_node()
+        rclpy.shutdown()
+
+
 # --- 맡은 작업 해제 안전장치 ---
 
 
