@@ -1,0 +1,73 @@
+# 추적 정확도 KPI 공통 틀 (연우). 원 명세 평가 항목 "칼만 필터 추적 예측 정확도", 7장 속도·방향 추정·1.0 m/s 인식.
+# 판정 기준·장면은 docs/algorithms/perception.md 1-7절. 직접 돌리지 않고 장면 파일(tracking_kpi_<장면>)로 돌린다:
+#   tools/harness/docker_run.sh tracking_kpi_a -n 3        # GCP: fleet-test 워크플로 scenario=tracking_kpi_a
+# 로봇 1대(위치 추정 없음, odom = DiffDrive) + LiDAR 필터 + 추적 + tracking_eval. 화면·카메라는 끈다(추적은 LiDAR만 쓴다).
+# 장애물은 추적·평가가 준비된 뒤 맨 마지막에 띄운다. 기록 전부터 움직이던 구간은 판정 지연에서 빠지므로(censored)
+# 첫 지나감부터 재려면 장애물이 기록 도중에 나타나야 한다.
+name: tracking_kpi
+# docker_run.sh는 돌리는 시나리오 파일의 이 줄만 읽는다(extends로 물려받지 않는다). 장면 파일에도 같은 줄을 둔다
+packages: amr_gazebo amr_odometry amr_tracking
+num_robots: 1
+use_sim_time: true
+seed_base: 1
+# 주행(기다림) 제한, 실제 시간 [s]. 기다림은 시뮬레이션 시간이라 Mac(RTF < 1)에서도 끊기지 않게 넉넉히 둔다
+timeout_s: 1500
+params:
+  robot_x: "0.0"
+  robot_y: "10.5"
+  robot_yaw: "0.0"
+  # 장애물 설정 (amr_gazebo dynamic_obstacles.launch.py config). 기본은 기본 설정 5개
+  obstacles_config: $(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/config/dynamic_obstacles.yaml
+  # 평가할 장애물 id (쉼표). 비우면 tracking_eval이 amr_gazebo 기본 설정에서 읽는다
+  obstacle_ids: ""
+  # 장애물이 떴는지 볼 토픽 (장애물 설정의 id 하나)
+  obstacle_ready_topic: /dynamic_obstacles/worker_1/ground_truth/odom
+  # 기록 시간 [s, 시뮬레이션]. tracking_eval이 첫 트랙 프레임부터 센다. 0이면 driver가 끝날 때까지.
+  # tracking_eval은 실수형 파라미터라 소수점을 붙인다 (정수면 타입 오류로 노드가 뜨지 않는다)
+  duration_s: "300.0"
+  # driver가 기다리는 시간 [s, 시뮬레이션]. 장애물을 띄우는 동안 기록이 먼저 시작되므로 기록 시간보다 15 s 길게
+  wait_s: "315.0"
+  # 녹화 (rosbag/). 스캔·트랙·마커·TF·로봇과 장애물 GT. Foxglove·Lichtblick으로 열어 본다
+  record: "true"
+processes:
+  - name: sim
+    cmd: >-
+      ros2 launch amr_gazebo sim.launch.py gui:=false rviz:=false enable_camera:=false dynamic_obstacles:=false
+      x:={robot_x} y:={robot_y} yaw:={robot_yaw}
+    ready_topic: /amr_01/ground_truth/odom
+    ready_timeout_s: 300
+  - name: filters
+    cmd: ros2 launch amr_odometry sensor_filters.launch.py namespace:=amr_01 use_sim_time:=true
+    ready_topic: /amr_01/scan
+  # 위치 추정이 없어 odom이 diff_drive/odom이다 (nav_avoidance와 같다)
+  - name: tracking
+    cmd: >-
+      ros2 run amr_tracking tracking_node --ros-args -r __ns:=/amr_01 -r __node:=tracking -r odom:=diff_drive/odom
+      --params-file $(ros2 pkg prefix amr_tracking)/share/amr_tracking/config/tracking.yaml -p use_sim_time:=true
+    ready_topic: /amr_01/perception/obstacles
+  - name: tracking_eval
+    cmd: >-
+      ros2 run amr_tracking tracking_eval --ros-args -r __ns:=/amr_01 -p use_sim_time:=true
+      -p duration_s:={duration_s} -p "obstacle_ids:='{obstacle_ids}'" -p out_dir:={run_dir}/tracking
+    stop_first: true
+    wait_files: ["{run_dir}/tracking/summary.json"]
+    settle_s: 2
+  - name: rosbag
+    cmd: >-
+      if [ "{record}" = true ];
+      then exec ros2 bag record -o {run_dir}/rosbag
+      -e '^/(tf|tf_static|amr_01/(scan|ground_truth/odom|perception/(obstacles|obstacle_markers))|dynamic_obstacles/.*/ground_truth/odom)$';
+      else exec sleep infinity; fi
+    stop_first: true
+  # 맨 마지막: 장애물이 기록 도중에 나타나게 한다
+  - name: obstacles
+    cmd: >-
+      ros2 launch amr_gazebo dynamic_obstacles.launch.py config:={obstacles_config} seed:={seed} use_sim_time:=true
+    ready_topic: "{obstacle_ready_topic}"
+driver:
+  mode: wait
+  use_sim_time: true
+  duration_s: "{wait_s}"
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true

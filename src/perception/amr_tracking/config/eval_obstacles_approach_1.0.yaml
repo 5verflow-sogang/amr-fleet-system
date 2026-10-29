@@ -1,0 +1,16 @@
+# 추적 정확도 KPI 장면 C (tracking_kpi_c10, docs/algorithms/perception.md 1-7 D1). 작업자 1명이 서 있는 로봇
+# (0, 10.5, 동쪽) 정면 10 m에서 1.0 m/s로 다가와 차체 앞에서 돌아간다. 돌아가는 waypoint는 x 1.55(차체 반길이 0.3 + 1.0 +
+# 작업자 반경 0.25)지만 장애물 코드가 목표 0.15 m 앞(REACH_TOLERANCE)에서 다음 목표로 넘어가므로 실제로는 x ≈ 1.70에서
+# 돌아선다 (차체 앞면과 작업자 표면 사이 약 1.15 m). 판정 순간 TTC = (로봇–작업자 중심 거리 − 0.3 − 0.25) / 속력.
+# 길에 구조물 없음 (정답 지도에서 3.35 m 이상).
+# 형식은 amr_gazebo/config/dynamic_obstacles.yaml. straight는 처음에 두 번째 점(로봇 쪽)으로 간다
+obstacles:
+  - id: worker_approach
+    type: worker
+    pattern: straight
+    speed_range_mps: [1.0, 1.0]
+    spawn: {x: 10.0, y: 10.5, yaw: 3.1416}
+    waypoints:
+      - {x: 10.0, y: 10.5}
+      - {x: 1.55, y: 10.5}
+    note: "추적 KPI 장면 C: 로봇 정면 10 m → 1.55 m 왕복, 1.0 m/s 고정"
