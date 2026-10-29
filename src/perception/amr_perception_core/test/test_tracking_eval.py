@@ -283,6 +283,110 @@ def test_not_classified_episode_counted():
     assert lat['by_speed']['<0.6']['seen'] == 1
 
 
+def shuttle(t0, t1, x_far, x_near, speed, dt=0.02):
+    """장면 C 작업자: x_far에서 x_near 쪽으로 출발해 두 점 사이를 같은 속력으로 왕복한다 (y = 0).
+
+    obstacle_motion straight처럼 끝에서 감속 없이 바로 돌아선다. (t, x, vx) 목록.
+    """
+    out, x, vx = [], x_far, -speed
+    for k in range(int(round((t1 - t0) / dt)) + 1):
+        out.append((t0 + k * dt, x, vx))
+        x += vx * dt
+        if x <= x_near:
+            vx = speed
+        elif x >= x_far:
+            vx = -speed
+    return out
+
+
+# 5 s에 10 m 앞에 나타나 1.5 m/s로 다가와 x ≈ 1.7에서 돌아서기를 되풀이한다
+SHUTTLE = shuttle(5.0, 30.0, 10.0, 1.7, 1.5)
+TURNS = [b[0] for a, b in zip(SHUTTLE, SHUTTLE[1:]) if a[2] != b[2]]     # 가까운 끝, 먼 끝, ...
+
+
+def approach_run(t_dynamic, gt=SHUTTLE, seen_from=5.3):
+    """로봇 (0, 0) 정지, 작업자가 gt대로 정면에서 왕복한다. 트랙 프레임은 0 s부터 (장애물을 늦게 띄움).
+
+    트랙은 seen_from부터 보이고(None이면 안 보임) t_dynamic부터 동적이다(None이면 끝까지 정적).
+    """
+    ev = TrackingEvaluator(EvalConfig(), gt_ids=['w'])
+    for t, x, vx in gt:
+        ev.add_gt('w', t, x, 0.0, vx, 0.0)
+    for k in range(int(round(gt[-1][0] / DT)) + 1):
+        t = k * DT
+        tracks = []
+        if seen_from is not None and t >= seen_from:
+            _, x, vx = gt[min(len(gt) - 1, max(0, round((t - gt[0][0]) / 0.02)))]
+            tracks = [TrackObs(1, x, 0.0, vx, 0.0, t_dynamic is not None and t >= t_dynamic)]
+        ev.add_frame(t, tracks, robot_xy=(0.0, 0.0))
+    return ev.evaluate()
+
+
+def test_approach_judged_before_first_closest():
+    _, episodes, summary = approach_run(7.0)        # 다가오다 7 m에서 판정
+    assert len(episodes) == 1                       # 감속 없이 돌아서서 왕복 전체가 한 구간으로 이어진다
+    ap = summary['approach']
+    assert ap['judged_before_closest'] == 1 and ap['note'] == ''
+    assert ap['dynamic_dist'] == pytest.approx(7.0, abs=1e-3)
+    assert ap['dynamic_speed'] == pytest.approx(1.5)
+    assert ap['ttc_s'] == pytest.approx((7.0 - 0.55) / 1.5, abs=1e-3)
+    assert ap['ttc_s'] == episodes[0]['ttc_at_dynamic']
+    # 첫 최근접 = 처음 돌아서는 곳 (10 Hz 프레임이라 0.1 s 안)
+    assert ap['t_closest'] == pytest.approx(TURNS[0], abs=0.1)
+    assert ap['closest_dist'] == pytest.approx(1.7, abs=0.06)
+    assert ap['latency_from_seen'] == pytest.approx(1.7)
+
+
+def test_approach_judged_after_turning_away_is_zero():
+    # 돌아서서 멀어지는 중 6 m에서야 판정: 거리만 보면 TTC 3.7 s로 합격처럼 보인다
+    t_dyn = next(t for t, x, vx in SHUTTLE if vx > 0 and x >= 6.0)
+    _, episodes, summary = approach_run(t_dyn)
+    ap = summary['approach']
+    assert (ap['dynamic_dist'] - 0.55) / ap['dynamic_speed'] > 3.0
+    assert ap['judged_before_closest'] == 0 and ap['ttc_s'] == 0.0 and ap['note'] == '최근접 뒤 판정'
+    assert episodes[0]['ttc_at_dynamic'] is None
+    assert '최근접 뒤 판정' in format_summary_ko(summary)
+
+
+def test_approach_judged_on_second_approach_is_zero():
+    # 다시 다가올 때 7 m에서 판정: 다가오는 중이어도 이미 한 번 판정 없이 1.7 m까지 왔다
+    t_dyn = next(t for t, x, vx in SHUTTLE if t > TURNS[1] and x <= 7.0)
+    _, _, summary = approach_run(t_dyn)
+    ap = summary['approach']
+    assert ap['t_dynamic'] > ap['t_closest']
+    assert ap['ttc_s'] == 0.0 and ap['note'] == '최근접 뒤 판정'
+
+
+def test_approach_never_judged_is_zero():
+    for seen_from in (5.3, None):                   # 보였지만 정적 / 아예 안 보임
+        _, _, summary = approach_run(None, seen_from=seen_from)
+        ap = summary['approach']
+        assert ap['ttc_s'] == 0.0 and ap['note'] == '판정 없음'
+        assert ap['t_seen'] == (None if seen_from is None else pytest.approx(5.3))
+
+
+def test_approach_unmeasurable_or_multiple_objects():
+    # 기록 시작 전부터 움직이던 물체: 첫 판정을 다른 구간으로 대신하지 않고 비운다
+    _, _, summary = approach_run(7.0, gt=shuttle(0.0, 20.0, 10.0, 1.7, 1.5))
+    assert summary['approach']['ttc_s'] is None
+    assert summary['approach']['note'] == '첫 구간이 기록 시작 전부터'
+    # 구간 없음 (GT 없음)
+    ev = TrackingEvaluator(EvalConfig(), gt_ids=['w'])
+    ev.add_frame(0.0, [])
+    ap = ev.evaluate()[2]['approach']
+    assert ap['gt_id'] == 'w' and ap['ttc_s'] is None and ap['note'] == '구간 없음'
+    # 로봇 위치 없음
+    ev = TrackingEvaluator(EvalConfig(), gt_ids=['w'])
+    ev.add_frame(0.0, [])
+    gt_line(ev, 'w', 1.0, 3.0, (5.0, 0.0), (-1.0, 0.0))
+    for k in range(1, 31):
+        ev.add_frame(k * DT, [TrackObs(1, 5.0 - (k * DT - 1.0), 0.0, -1.0, 0.0, True)] if k >= 10 else [])
+    ap = ev.evaluate()[2]['approach']
+    assert ap['ttc_s'] is None and ap['note'] == '로봇 위치 없음'
+    # 물체가 여럿이면 만들지 않는다
+    assert TrackingEvaluator(EvalConfig(), gt_ids=['a', 'b']).evaluate()[2]['approach'] is None
+
+
 def test_missing_data_is_robust_and_summary_formats():
     ev = TrackingEvaluator(EvalConfig(), gt_ids=['a', 'b'])
     rows, episodes, summary = ev.evaluate()                 # 아무것도 없음
@@ -302,3 +406,7 @@ def test_invalid_config_rejected():
         EvalConfig(gate=0.0)
     with pytest.raises(ValueError):
         EvalConfig(horizons=(1.0, -2.0))
+    with pytest.raises(ValueError):
+        EvalConfig(closest_rise=0.0)
+    with pytest.raises(ValueError):
+        EvalConfig(ttc_offset=-0.1)

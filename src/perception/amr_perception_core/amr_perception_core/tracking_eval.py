@@ -170,9 +170,14 @@ class EvalConfig:
     episode_merge_gap: float = 1.0
     # 2자유도 χ² 95% (NEES 일관성 비율)
     nees_chi2_95: float = 5.991
+    # 접근 판정 TTC에서 중심 거리에서 빼는 값 [m]: 차체 반길이 0.3 + 작업자 반경 0.25 (perception.md 1-7 D1)
+    ttc_offset: float = 0.55
+    # 로봇 거리가 그때까지의 최솟값보다 이만큼 [m] 늘면 첫 최근접을 지난 것으로 본다 (GT 떨림을 거른다)
+    closest_rise: float = 0.05
 
     def __post_init__(self):
-        for name in ('gate', 'sensor_range', 'max_gt_gap', 'heading_min_speed', 'nees_chi2_95'):
+        for name in ('gate', 'sensor_range', 'max_gt_gap', 'heading_min_speed', 'nees_chi2_95',
+                     'closest_rise'):
             value = getattr(self, name)
             if not (math.isfinite(value) and value > 0.0):
                 raise ValueError(f'{name}는 양수여야 한다: {value}')
@@ -180,6 +185,8 @@ class EvalConfig:
             raise ValueError(f'moving_speed는 0 이상이어야 한다: {self.moving_speed}')
         if not (math.isfinite(self.episode_merge_gap) and self.episode_merge_gap >= 0.0):
             raise ValueError(f'episode_merge_gap은 0 이상이어야 한다: {self.episode_merge_gap}')
+        if not (math.isfinite(self.ttc_offset) and self.ttc_offset >= 0.0):
+            raise ValueError(f'ttc_offset은 0 이상이어야 한다: {self.ttc_offset}')
         if any(not (math.isfinite(h) and h > 0.0) for h in self.horizons):
             raise ValueError(f'horizons는 양수여야 한다: {self.horizons}')
 
@@ -382,6 +389,9 @@ class TrackingEvaluator:
         censored: 기록 첫 프레임(첫 트랙 프레임)부터 이미 구간 안이었다 (시작 시각을 모름) → 지연 통계에서 뺀다.
                   기록 도중에 GT가 처음 나타난 물체(하네스가 장애물을 추적보다 늦게 띄움)는 나타난 때가 시작이다
         carried: 처음 짝지어진 트랙이 구간 전부터 이 물체를 추적해 이미 동적이었다 → 지연 통계에서 뺀다
+        t_closest·closest_dist: 구간 안 첫 최근접 (_first_closest). 왕복하는 물체는 처음 돌아서는 곳이다
+        ttc_at_dynamic: 첫 최근접 전에 판정했을 때만 (판정 거리 − ttc_offset) / 판정 순간 GT 속력.
+                        최근접 뒤(멀어지거나 다시 다가올 때)의 판정은 거리만 보면 TTC가 커 보여도 충돌 전 판정이 아니다
         """
         cfg = self.config
         out = []
@@ -402,6 +412,8 @@ class TrackingEvaluator:
                 dyn = next((r for r in seg if r[3] is not None and r[4]), None)
                 earlier_ids = {r[3] for r in hist if r[0] < t_start and r[3] is not None}
                 carried = bool(seen is not None and seen[4] and seen[3] in earlier_ids)
+                t_closest, closest_dist = self._first_closest(seg)
+                before = bool(dyn is not None and t_closest is not None and dyn[0] <= t_closest)
                 ep = {
                     'gt_id': gid, 't_start': t_start, 't_end': seg[-1][0],
                     'duration': seg[-1][0] - t_start,
@@ -415,9 +427,64 @@ class TrackingEvaluator:
                                           else dyn[0] - seen[0]),
                     'censored': int(first_t is not None and t_start <= first_t),
                     'carried': int(carried),
+                    'dynamic_speed': None if dyn is None else dyn[5],
+                    't_closest': t_closest,
+                    'closest_dist': closest_dist,
+                    'judged_before_closest': int(before),
+                    'ttc_at_dynamic': ((dyn[6] - cfg.ttc_offset) / dyn[5]
+                                       if before and dyn[5] > 0.0 else None),
                 }
                 ep['speed_bin'] = _speed_bin(ep['mean_speed'])
                 out.append(ep)
+        return out
+
+    def _first_closest(self, seg: List[tuple]) -> Tuple[Optional[float], Optional[float]]:
+        """구간 안 첫 최근접 (시각, 로봇 거리).
+
+        로봇 거리의 최솟값을 따라가다가 거리가 그 최솟값보다 closest_rise 넘게 늘면 그 최솟값이 첫 최근접이다.
+        끝까지 안 늘면 구간 안 최솟값. 로봇 위치를 모르면 (None, None).
+        """
+        best = None
+        for rec in seg:
+            t, rdist = rec[0], rec[6]
+            if rdist is None:
+                continue
+            if best is None or rdist < best[1]:
+                best = (t, rdist)
+            elif rdist > best[1] + self.config.closest_rise:
+                break
+        return (None, None) if best is None else best
+
+    def _approach(self, gids: List[str], episodes: List[dict]) -> Optional[dict]:
+        """접근 판정 (perception.md 1-7 D1): GT 물체가 하나인 기록(장면 C 정면 접근)의 첫 구간.
+
+        물체가 여럿이면 None이다. 첫 구간이 어느 물체냐에 따라 달라지고, 옆으로 지나가는 물체에는
+        (거리 − ttc_offset) / 속력이 충돌까지 남은 시간이 아니다.
+        ttc_s: 첫 최근접 전에 판정했으면 ttc_at_dynamic. 판정이 없거나 최근접 뒤에 판정했으면 0.0
+               (판정 없이 최근접까지 왔다). 구간이 없거나, 첫 구간이 기록 시작 전부터였거나, 로봇 위치를 모르면 None
+               (잴 수 없다. 다른 구간으로 대신하지 않는다)
+        note: ttc_s가 기준 식이 아닌 이유
+        """
+        if len(gids) != 1:
+            return None
+        keys = ('gt_id', 't_start', 'start_dist', 't_seen', 't_dynamic', 'dynamic_dist', 'dynamic_speed',
+                't_closest', 'closest_dist', 'judged_before_closest', 'latency_from_start',
+                'latency_from_seen')
+        out = dict.fromkeys(keys)
+        out['gt_id'] = gids[0]
+        first = min(episodes, key=lambda e: e['t_start'], default=None)
+        if first is not None:
+            out.update({k: first[k] for k in keys})
+        if first is None or first['censored'] or first['t_closest'] is None:
+            out['ttc_s'] = None
+            out['note'] = ('구간 없음' if first is None else
+                           '첫 구간이 기록 시작 전부터' if first['censored'] else '로봇 위치 없음')
+        elif first['judged_before_closest']:
+            out['ttc_s'] = first['ttc_at_dynamic']
+            out['note'] = ''
+        else:
+            out['ttc_s'] = 0.0
+            out['note'] = '판정 없음' if first['t_dynamic'] is None else '최근접 뒤 판정'
         return out
 
     def _summarize(self, frames, gids, acc, history, episodes,
@@ -502,6 +569,7 @@ class TrackingEvaluator:
             'overall': overall,
             'per_object': per_object,
             'latency': lat,
+            'approach': self._approach(gids, episodes),
         }
 
 
@@ -556,6 +624,14 @@ def format_summary_ko(summary: dict) -> str:
     for b, v in lat['by_speed'].items():
         lines.append(f'- 속력 {b} m/s: 판정 {v["classified"]}/{v["seen"]}, '
                      f'지연 평균 {_f(v["from_seen"]["mean"])} s, 최대 {_f(v["from_seen"]["max"])} s')
+    ap = summary.get('approach')
+    if ap:
+        lines += [
+            '',
+            f'접근 판정 (D1, {ap["gt_id"]}): TTC {_f(ap["ttc_s"])} s, 판정 거리 {_f(ap["dynamic_dist"])} m, '
+            f'판정 순간 속력 {_f(ap["dynamic_speed"])} m/s, 첫 최근접 {_f(ap["closest_dist"])} m'
+            + (f' ({ap["note"]})' if ap['note'] else ''),
+        ]
     lines += [
         '',
         f'프레임당 트랙 {summary["tracks_per_frame"]:.2f}개 '
