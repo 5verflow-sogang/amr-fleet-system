@@ -190,9 +190,17 @@ struct DwaConfig
   // 주기 바뀌며 떨지 않게). 모드에서는 v≈0 샘플도 회전한 뒤 방향으로 heading 비용을 매겨(평소에는 정지
   // 함정 때문에 1.0, 4-3절) 출발 때 크게 틀어진 방향·좁은 통로 90° 진입에서 크게 도는 전진 호 대신
   // 제자리에서 돈다. 경로를 받는 computeVelocityCommand에서만 쓴다(점 하나 버전은 그대로). 0 이하면 끈다.
-  // 기본값은 Nav2 RPP rotate_to_heading_min_angle(0.785)과 같다.
+  // 기본값은 Nav2 RPP rotate_to_heading_min_angle(0.785)과 같다. exit_angle이 min_angle보다 크면 매 주기 모드가
+  // 바뀌므로 DwaPlanner가 min_angle로 줄인다. 동적 장애물이 safety_margin + influence_radius 안에 있으면 모드에
+  // 들어가지 않는다(회피 중 경로 쪽으로 서서 도는 것을 막는다).
   double rotate_in_place_min_angle = 0.785;  // 45°
   double rotate_in_place_exit_angle = 0.524;  // 30°
+
+  // v≈0 회전 샘플은 풋프린트 반길이·반폭을 이만큼(m) 키워 정적 장애물 충돌을 검사한다. 안전 노드
+  // (amr_safety config/safety.yaml side_margin, collision.path_hazard)는 제자리 회전 중 모서리가 이 거리 안으로
+  // 가까워지면 정지시킨다 - DWA가 그보다 빠듯한 회전을 고르면 DWA는 계속 돌고 안전 노드는 계속 막아 멈춘다.
+  // 그래서 두 값은 같아야 한다. 0이면 키우지 않는다.
+  double rotate_in_place_clearance = 0.05;
 };
 
 // 경로 위에서 로봇에 가장 가까운 점부터 누적 거리가 distance 이상이 되는 첫 점
@@ -279,8 +287,10 @@ public:
 private:
   // footprintCollides의 내부 버전. 충돌 여부와 함께 샘플링한 셀 중 가장 높은
   // 비용값(충돌 시 닿은 셀의 비용)을 clearance 비용 계산에 쓰도록 돌려준다.
+  // margin(m)만큼 반길이·반폭을 키운 사각형으로 검사한다(v≈0 회전 샘플의 rotate_in_place_clearance).
   bool evaluateFootprint(
-    const Grid & grid, double x, double y, double yaw, double * max_cell_cost) const;
+    const Grid & grid, double x, double y, double yaw, double * max_cell_cost,
+    double margin = 0.0) const;
 
   // dynamicObstacleCollides의 내부 버전. 충돌 여부와 함께(비충돌 시) 가장 가까운
   // 장애물의 표면까지 거리(음수 없음, 장애물이 없으면 +inf)를 돌려준다.

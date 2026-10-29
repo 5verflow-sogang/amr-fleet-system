@@ -92,6 +92,9 @@ def test_rotate_in_place_is_off_paper_value():
     assert p.rotate_in_place_min_angle <= 0.0
     cfg = DwaPolicy().config(1.0)
     assert cfg.rotate_in_place_min_angle <= 0.0
+    # 제자리 회전 샘플의 풋프린트 여유도 논문 값 0 (C++ 기본값 0.05가 아니다)
+    assert p.rotate_in_place_clearance == 0.0
+    assert cfg.rotate_in_place_clearance == 0.0
 
 
 def test_names():

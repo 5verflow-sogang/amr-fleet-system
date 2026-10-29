@@ -1421,4 +1421,155 @@ TEST(DwaPlannerTest, DynamicWindowDoesNotInvertAboveMaxSpeed)
   EXPECT_NEAR(command.v, state.v - config.acc_v * config.dt, 1e-12);
 }
 
+TEST(DwaPlannerTest, DynamicWindowDoesNotInvertBelowNegativeLimits)
+{
+  // 음수 쪽도 같다: w가 -max_w보다 한 주기 변화 이상 낮으면(-2.5 < -1.5 - 0.32) 창이 {-1.5}로 튀어 한 주기에
+  // 1.0 rad/s가 바뀌었다. 한계 쪽으로 최대로 줄인 값(-2.5 + acc_w*dt) 하나만 남는다. 속도도(min_v 0 아래) 같다.
+  DwaConfig config = makeFastConfig();
+  const DwaPlanner planner(config);
+  RobotState state;
+  state.v = -0.5;
+  state.w = -2.5;
+  const DynamicWindow window = planner.computeDynamicWindow(state);
+  EXPECT_NEAR(window.min_w, state.w + config.acc_w * config.dt, 1e-12);
+  EXPECT_NEAR(window.max_w, window.min_w, 1e-12);
+  EXPECT_NEAR(window.min_v, state.v + config.acc_v * config.dt, 1e-12);
+  EXPECT_NEAR(window.max_v, window.min_v, 1e-12);
+}
+
+TEST(DwaPlannerTest, RotateExitAngleIsClampedToMinAngle)
+{
+  // exit_angle > min_angle이면 모드에 들어가자마자 나와 매 주기 바뀐다 - min_angle로 줄인다
+  DwaConfig config = makeStackConfig();
+  config.rotate_in_place_min_angle = 0.5;
+  config.rotate_in_place_exit_angle = 1.0;
+  EXPECT_DOUBLE_EQ(DwaPlanner(config).config().rotate_in_place_exit_angle, 0.5);
+  config.rotate_in_place_exit_angle = 0.3;
+  EXPECT_DOUBLE_EQ(DwaPlanner(config).config().rotate_in_place_exit_angle, 0.3);
+}
+
+TEST(DwaPlannerTest, StationarySampleSurvivesApproachingDynamicObstacle)
+{
+  // 서 있는 로봇 쪽으로 사람이 걸어오면(예측 켬) 정지 궤적도 예측 궤적 중간에 닿는다. 정지(v=0, w=0)는 그래도
+  // 후보로 남아야 한다(허용 속도 조건으로 tier 1) - 제자리 회전만 버린다(#244 연우 리뷰 1). 이번 주기 전진을
+  // 못 하는 창(max_v 0)으로 정지·제자리 회전만 남겨 본다. 예전에는 둘 다 버려 kNoValidTrajectory였다.
+  TestGrid test_grid(160, 80, 0.05);
+  std::vector<Point2D> path;
+  appendLine(path, 2.0, 2.0, 6.0, 2.0);
+  DwaConfig config = makeStackConfig();
+  config.max_v = 0.0;
+  const DwaPlanner planner(config);
+  ASSERT_TRUE(planner.config().predict_dynamic_obstacles);
+  RobotState state;
+  state.x = 2.0;
+  state.y = 2.0;
+  DynamicObstacle walker;  // 왼쪽 1.0 m 밖에서 1.0 m/s로 다가온다 - 약 0.7 s 뒤 안전 여유 안
+  walker.radius = 0.25;
+  walker.x = 2.0;
+  walker.y = 2.0 + 0.2 + 1.0 + walker.radius;
+  walker.vy = -1.0;
+  const DwaCommand command =
+    planner.computeVelocityCommand(state, path, test_grid.grid(), {walker});
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  EXPECT_EQ(command.v, 0.0);
+  EXPECT_EQ(command.w, 0.0);
+}
+
+TEST(DwaPlannerTest, BlockedRotationFallsBackWithoutStationaryHeadingTrap)
+{
+  // #244 연우 리뷰 2·3: 폭 0.46 m 통로(옆 여유 0.03 m)라 제자리 회전이 양쪽 다 거의 막힌다. 기준점이 왼쪽
+  // 뒤(약 120°)라 회전 모드다. 회전이 막혀 전체 창으로 다시 고를 때는 정지를 평소처럼 1.0으로 매겨야
+  // 한다 - 지금 방향 오차로 매기면 "목표 보고 서 있기"가 전진보다 싸져 그 자리에 선다. state.w = 0.01이면
+  // w 샘플에 정확한 0이 없어 거의 안 도는 샘플(w≈0.01)이 "회전"으로 남는데, 그걸 채택해도 그 자리에 선다.
+  TestGrid test_grid(400, 200, 0.01);                // 4m x 2m
+  test_grid.setRegion(0.0, 3.999, 0.0, 0.769, 254);  // 통로 아래 벽(y < 0.77)
+  test_grid.setRegion(0.0, 3.999, 1.23, 1.999, 254); // 통로 위 벽(y >= 1.23)
+  std::vector<Point2D> path;
+  appendLine(path, 2.0, 1.0, 2.0 - 1.0, 1.0 + 1.7);  // 왼쪽 뒤 약 120°
+  const DwaPlanner planner(makeStackConfig());
+  for (const double w0 : {0.0, 0.01}) {
+    RobotState state;
+    state.x = 2.0;
+    state.y = 1.0;
+    state.w = w0;
+    ASSERT_FALSE(planner.footprintCollides(test_grid.grid(), state.x, state.y, state.yaw));
+    const DwaCommand command = planner.computeVelocityCommand(state, path, test_grid.grid());
+    EXPECT_TRUE(planner.rotatingInPlace()) << "w0=" << w0;
+    ASSERT_EQ(command.status, DwaStatus::kOk) << "w0=" << w0;
+    EXPECT_GT(std::abs(command.v), 1e-3) << "w0=" << w0 << " w=" << command.w;  // 서 있지 않는다
+  }
+}
+
+TEST(DwaPlannerTest, NoRotateInPlaceNearDynamicObstacle)
+{
+  // #244 연우 리뷰 4: 사람을 피하느라 경로에서 벗어나 기준점 오차가 45°를 넘어도, 동적 장애물이
+  // safety_margin + influence_radius(1.2 m) 안이면 회전 모드에 들어가지 않는다 - 서서 경로 쪽(사람이 오는 쪽)으로
+  // 돌지 않게. 멀면(1.2 m 밖) 들어간다.
+  TestGrid test_grid(200, 80, 0.05);
+  std::vector<Point2D> path;
+  appendLine(path, 1.0, 2.0, 8.0, 2.0);
+  const DwaPlanner planner(makeStackConfig());
+  RobotState state;
+  state.x = 2.0;
+  state.y = 2.0;
+  state.yaw = kTestPi / 2.0;  // 기준점(+x)이 오른쪽 90°
+  DynamicObstacle person;
+  person.radius = 0.25;
+  person.x = 2.0 + 0.2 + 0.8 + person.radius;  // 오른쪽 옆에서 0.8 m(1.2 m 안)
+  person.y = 2.0;
+  planner.computeVelocityCommand(state, path, test_grid.grid(), {person});
+  EXPECT_FALSE(planner.rotatingInPlace());
+  person.x = 2.0 + 0.2 + 1.5 + person.radius;  // 1.5 m(1.2 m 밖)
+  planner.computeVelocityCommand(state, path, test_grid.grid(), {person});
+  EXPECT_TRUE(planner.rotatingInPlace());
+  planner.computeVelocityCommand(state, path, test_grid.grid());
+  EXPECT_TRUE(planner.rotatingInPlace());
+}
+
+TEST(DwaPlannerTest, RotateInPlaceKeepsClearanceFromStaticObstacle)
+{
+  // #244 연우 리뷰 5: 안전 노드는 제자리 회전 중 모서리가 0.05 m(side_margin) 안으로 가까워지면 막는다. 회전
+  // 모드의 회전 후보는 풋프린트를 rotate_in_place_clearance만큼 키워 검사해, 모서리가 0.05 m 안으로 스치는
+  // 회전을 고르지 않는다. 왼쪽 앞 대각선 0.37~0.40 m(모서리 회전 반경 0.36 m 밖)에 치명 셀 - 키우지 않으면
+  // 왼쪽(반시계) 회전이 모서리 0.01~0.04 m로 스치며 통과한다.
+  TestGrid test_grid(400, 200, 0.02);                // 8m x 4m
+  test_grid.setRegion(4.265, 4.275, 2.265, 2.275, 254);  // 한 셀 [4.26, 4.28) x [2.26, 2.28)
+  std::vector<Point2D> path;
+  appendLine(path, 4.0, 2.0, 4.0 + 3.0 * std::cos(2.6), 2.0 + 3.0 * std::sin(2.6));  // 왼쪽 뒤 약 150°
+  DwaConfig inflated = makeStackConfig();
+  inflated.footprint_half_length += 0.05;
+  inflated.footprint_half_width += 0.05;
+  const DwaPlanner margin_check(inflated);  // 0.05 m 여유를 지키는지 보는 검사용
+  auto keeps_clearance = [&](const DwaPlanner & planner, const DwaCommand & command, RobotState s) {
+      for (const TrajectoryPoint & point : planner.simulateTrajectory(s, command.v, command.w)) {
+        if (margin_check.footprintCollides(test_grid.grid(), point.x, point.y, point.yaw)) {
+          return false;
+        }
+      }
+      return true;
+    };
+  RobotState state;
+  state.x = 4.0;
+  state.y = 2.0;
+  ASSERT_FALSE(margin_check.footprintCollides(test_grid.grid(), state.x, state.y, state.yaw));
+
+  const DwaPlanner planner(makeStackConfig());
+  ASSERT_DOUBLE_EQ(planner.config().rotate_in_place_clearance, 0.05);
+  // 왼쪽 제자리 회전은 0.05 m 여유를 못 지켜 빠지고, 오른쪽은 기준점에서 멀어져 채택되지 않는다 - 전체 창으로
+  // 다시 골라 전진하며 돈다(여유는 제자리 회전 샘플에만 둔다)
+  const DwaCommand command = planner.computeVelocityCommand(state, path, test_grid.grid());
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  EXPECT_TRUE(planner.rotatingInPlace());
+  EXPECT_GT(command.v, 1e-3) << "w=" << command.w;
+
+  // 0이면(예전) 왼쪽으로 돌며 모서리가 0.05 m 안으로 스친다
+  DwaConfig off = makeStackConfig();
+  off.rotate_in_place_clearance = 0.0;
+  const DwaPlanner no_margin(off);
+  const DwaCommand tight = no_margin.computeVelocityCommand(state, path, test_grid.grid());
+  ASSERT_EQ(tight.status, DwaStatus::kOk);
+  EXPECT_GT(tight.w, 0.0);
+  EXPECT_FALSE(keeps_clearance(no_margin, tight, state));
+}
+
 }  // namespace amr_planning_core

@@ -80,6 +80,9 @@ class DwaParams:
     # C++ DwaConfig 기본값(45°)도 안 쓴다(dwa_c_api.cpp가 이 값을 그대로 넘긴다)
     rotate_in_place_min_angle: float = 0.0
     rotate_in_place_exit_angle: float = 0.0
+    # 제자리 회전 샘플의 풋프린트 여유(창고 스택 0.05 m, 안전 노드와 맞춤). 논문 값은 0(키우지 않음) - 회전을 꺼도
+    # v≈0 회전 샘플은 평소 탐색에 있어서, 켜 두면 B1·B2가 바뀐다
+    rotate_in_place_clearance: float = 0.0
     follow_path: bool = True          # 플러그인처럼 전역 경로를 넘긴다 (#195). False면 예전 지점 호출
     path_resolution: float = 0.05
     # 플러그인
@@ -108,7 +111,8 @@ class _CConfig(ctypes.Structure):
         ('dynamic_weight', ctypes.c_double),
         ('use_admissible_velocity', ctypes.c_int), ('use_goal_slowdown', ctypes.c_int),
         ('lookahead_distance', ctypes.c_double), ('adaptive_lookahead', ctypes.c_int),
-        ('rotate_in_place_min_angle', ctypes.c_double), ('rotate_in_place_exit_angle', ctypes.c_double)]
+        ('rotate_in_place_min_angle', ctypes.c_double), ('rotate_in_place_exit_angle', ctypes.c_double),
+        ('rotate_in_place_clearance', ctypes.c_double)]
 
 
 _lib = None
@@ -192,7 +196,8 @@ class DwaPolicy:
                         int(p.predict_dynamic_obstacles), p.dynamic_obstacle_safety_margin,
                         p.dynamic_obstacle_influence_radius, p.dynamic_weight,
                         int(p.use_admissible_velocity), int(p.use_goal_slowdown), p.lookahead_distance,
-                        int(p.adaptive_lookahead), p.rotate_in_place_min_angle, p.rotate_in_place_exit_angle)
+                        int(p.adaptive_lookahead), p.rotate_in_place_min_angle, p.rotate_in_place_exit_angle,
+                        p.rotate_in_place_clearance)
 
     # ------------------------------------------------------------ ROS 노드가 하던 일
     @staticmethod
