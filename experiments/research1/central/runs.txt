@@ -1,6 +1,7 @@
 # 라벨, Actions run id, GCS 결과 경로, git sha, 기종 (index.csv에서 뽑음). 조건마다 10회, seed 1~10
 central_bo10_r3, 38923174154, gs://amr-fleet-results/runs/fleet_fake-central_bo10_r3/20261016_38923174154/, 000b7d9, c2d-standard-8
 central_bo30_r3, 38938028403, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3/20261016_38938028403/, 000b7d9, c2d-standard-8
+central_bo30_r3_leg, 39085225625, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_leg/20261018_39085225625/, f187492, c2d-standard-8
 central_bo30_r3_pause, 39017439092, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_pause/20261017_39017439092/, 9be39a1, c2d-standard-8
 central_bo3_r3, 38923144357, gs://amr-fleet-results/runs/fleet_fake-central_bo3_r3/20261016_38923144357/, 000b7d9, c2d-standard-8
 central_d0, 38879623783, gs://amr-fleet-results/runs/fleet_fake-central_d0/20261016_38879623783/, 5b99e7c, c2d-standard-8
@@ -10,9 +11,11 @@ central_d200, 38894199117, gs://amr-fleet-results/runs/fleet_fake-central_d200/2
 central_d500, 38894225921, gs://amr-fleet-results/runs/fleet_fake-central_d500/20261016_38894225921/, 6a0c917, c2d-standard-8
 central_loss30, 38907451822, gs://amr-fleet-results/runs/fleet_fake-central_loss30/20261016_38907451822/, 000b7d9, c2d-standard-8
 central_loss50, 38907613625, gs://amr-fleet-results/runs/fleet_fake-central_loss50/20261016_38907613625/, 000b7d9, c2d-standard-8
+central_loss50_r3s, 39087762817, gs://amr-fleet-results/runs/fleet_fake-central_loss50_r3s/20261018_39087762817/, efc430a, c2d-standard-8
 central_loss50_k0, 39010836508, gs://amr-fleet-results/runs/fleet_fake-central_loss50_k0/20261017_39010836508/, 9be39a1, c2d-standard-8
 central_loss50_k1, 39010848832, gs://amr-fleet-results/runs/fleet_fake-central_loss50_k1/20261017_39010848832/, 9be39a1, c2d-standard-8
 central_loss70, 38938190278, gs://amr-fleet-results/runs/fleet_fake-central_loss70/20261016_38938190278/, 000b7d9, c2d-standard-8
+central_loss70_r3s, 39087773541, gs://amr-fleet-results/runs/fleet_fake-central_loss70_r3s/20261018_39087773541/, efc430a, c2d-standard-8
 hybrid_bo30_r3, 39008082739, gs://amr-fleet-results/runs/fleet_fake-hybrid_bo30_r3/20261017_39008082739/, 01802b0, c2d-standard-8
 hybrid_loss70, 39008094365, gs://amr-fleet-results/runs/fleet_fake-hybrid_loss70/20261017_39008094365/, 01802b0, c2d-standard-8
 ns_central_bo30_r3, 39008377481, gs://amr-fleet-results/runs/fleet_fake-ns_central_bo30_r3/20261017_39008377481/, 01802b0, c2d-standard-8
@@ -22,3 +25,18 @@ ns_central_loss70, 39015288790, gs://amr-fleet-results/runs/fleet_fake-ns_centra
 short_d0, 39024927114, gs://amr-fleet-results/runs/fleet_fake-short_d0/20261017_39024927114/, 0685d8e, c2d-standard-8
 short_loss50, 39029884456, gs://amr-fleet-results/runs/fleet_fake-short_loss50/20261017_39029884456/, ed8535e, c2d-standard-8
 short_loss70, 39024940418, gs://amr-fleet-results/runs/fleet_fake-short_loss70/20261017_39024940418/, 0685d8e, c2d-standard-8
+central_bo3p6_r3, 39042144866, gs://amr-fleet-results/runs/fleet_fake-central_bo3p6_r3/20261017_39042144866/, f47cea4, c2d-standard-8
+central_bo10p20_r3, 39050282766, gs://amr-fleet-results/runs/fleet_fake-central_bo10p20_r3/20261017_39050282766/, 15fe3f2, c2d-standard-8
+u80_bo30_r3, 39042129785, gs://amr-fleet-results/runs/fleet_fake-u80_bo30_r3/20261017_39042129785/, f47cea4, c2d-standard-8
+u80_d0, 39042099903, gs://amr-fleet-results/runs/fleet_fake-u80_d0/20261017_39042099903/, f47cea4, c2d-standard-8
+u80_loss70, 39042114659, gs://amr-fleet-results/runs/fleet_fake-u80_loss70/20261017_39042114659/, f47cea4, c2d-standard-8
+central_bo30_r3_up, 39097085298, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_up/20261018_39097085298/, e52765f, c2d-standard-8
+central_bo30_r3_up_pause, 39097096065, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_up_pause/20261018_39097096065/, e52765f, c2d-standard-8
+central_bo30_r3_up_rc40, 39127038979, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_up_rc40/20261018_39127038979/, 2fe11b7, c2d-standard-8
+central_bo30_r3_up_pause_rc40, 39127054374, gs://amr-fleet-results/runs/fleet_fake-central_bo30_r3_up_pause_rc40/20261018_39127054374/, 2fe11b7, c2d-standard-8
+hybrid_loss70_t6, 39127068453, gs://amr-fleet-results/runs/fleet_fake-hybrid_loss70_t6/20261018_39127068453/, 2fe11b7, c2d-standard-8
+hybrid_bo30_r3_t6, 39127081538, gs://amr-fleet-results/runs/fleet_fake-hybrid_bo30_r3_t6/20261018_39127081538/, 2fe11b7, c2d-standard-8
+n10_d0, 39135619053, gs://amr-fleet-results/runs/fleet_fake-n10_d0/20261018_39135619053/, 2fe11b7, c2d-standard-8
+n10_loss70, 39135633101, gs://amr-fleet-results/runs/fleet_fake-n10_loss70/20261018_39135633101/, 2fe11b7, c2d-standard-8
+n10_bo30_r3, 39135648291, gs://amr-fleet-results/runs/fleet_fake-n10_bo30_r3/20261018_39135648291/, 2fe11b7, c2d-standard-8
+n10_bo30_r3_pause, 39135665437, gs://amr-fleet-results/runs/fleet_fake-n10_bo30_r3_pause/20261018_39135665437/, 2fe11b7, c2d-standard-8

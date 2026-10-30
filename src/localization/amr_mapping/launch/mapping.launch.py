@@ -8,6 +8,7 @@
      (README "지도 저장" 참고)
 
 odom → base_footprint TF는 다른 노드(지금은 Gazebo DiffDrive, D4 이후 ekf_local)가 발행해야 한다.
+지도 v2는 녹화한 bag을 매핑용 EKF(회전은 IMU)와 함께 재생해 만들었다 (tools/run_slam_offline.sh EKF=1, README).
 """
 
 import os

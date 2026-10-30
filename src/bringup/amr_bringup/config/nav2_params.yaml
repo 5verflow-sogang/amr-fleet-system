@@ -232,8 +232,12 @@ controller_server:
 
     DWA:
       plugin: "amr_nav2_plugins::DwaController"
-      # 로봇 속도·가속 한계 (FollowPath.max_vel_x/max_vel_theta/acc_lim_x/acc_lim_theta와 동일)
-      max_v: 2.0
+      # 로봇 속도·가속 한계 (max_w·acc_v·acc_w는 FollowPath.max_vel_theta/acc_lim_x/acc_lim_theta와 동일).
+      # max_v는 로봇 스펙(2.0 m/s)이 아니라 창고 통합 스택의 순항 속도 0.5 m/s로 둔다 - Nav KPI(nav_kpi 시나리오
+      # config_patch)·통합 스택이 이 속도를 기준으로 잰다. #216에서 heading 기준점을 고친 뒤로 DWA가 실제로
+      # max_v까지 달려(전에는 약 0.25~0.4 m/s에 묶였다) 2.0이면 통로·구역 진입 속도가 기준과 달라진다.
+      # 연구 2(experiments/research2)는 이 파일이 아니라 DwaParams의 자체 값을 쓴다.
+      max_v: 0.5
       min_v: 0.0
       max_w: 1.5
       acc_v: 1.0
@@ -241,8 +245,12 @@ controller_server:
       # 궤적 시뮬레이션
       dt: 0.1
       sim_time: 2.0
-      v_samples: 20
-      w_samples: 30
+      # 샘플 수 10 x 15 (DwaConfig 기본 20 x 30의 1/4). 20 x 30은 지금 빌드(최적화 없음)에서 한 번에 약 66 ms라
+      # 20 Hz 제어 주기(50 ms)를 넘는다. 10 x 15는 약 17 ms, Gazebo 통로 ① 3회 품질이 20 x 30과 같거나 낫다
+      # (navigation.md 4-2절). 실물(라즈베리파이)에서도 돌아야 한다. w_samples는 홀수라 지금 각속도가 샘플에 들어간다.
+      # 연구 2(experiments/research2)는 이 값을 따르지 않고 20 x 30을 쓴다
+      v_samples: 10
+      w_samples: 15
       # 로봇 풋프린트 반폭(사각형, 600x400mm) - global/local costmap의 footprint와 동일
       footprint_half_length: 0.3
       footprint_half_width: 0.2
@@ -276,6 +284,15 @@ controller_server:
       # heading 기준점을 궤적마다 max(lookahead_distance, |v|*sim_time) 앞의 경로 점으로 잡는다.
       # false면 lookahead_distance 고정 - 그러면 v <= lookahead_distance/sim_time(0.25 m/s)으로 묶인다.
       adaptive_lookahead: True
+      # 제자리 회전: 기준점(lookahead_distance 앞)까지 방향 오차가 min_angle(rad)보다 크면 제자리 회전 모드에
+      # 들어가고 exit_angle 이하가 되면 나온다(히스테리시스). 0.0 이하면 끈다 (navigation.md 4-9절). double이라 0이 아니라
+      # 0.0으로 적는다(정수면 타입 오류로 컨트롤러가 안 뜬다). exit_angle은 min_angle 이하여야 한다(크면 min_angle로 줄임)
+      rotate_in_place_min_angle: 0.785
+      rotate_in_place_exit_angle: 0.524
+      # 제자리 회전(v≈0) 샘플은 풋프린트를 이만큼(m) 키워 검사한다. 안전 노드 side_margin(amr_safety
+      # config/safety.yaml, collision.path_hazard)과 같아야 한다 - DWA 회전이 더 빠듯하면 안전 노드가 그 회전을
+      # 계속 막아 progress_checker까지 멈춘다
+      rotate_in_place_clearance: 0.05
 
 # --- TEB (DWA 비교 대상, #110 underlay·(10) 작업) ---
 # 원 명세 "DWA 직접구현 vs TEB" 비교. teb_local_planner는 apt에 없어 /opt/teb_ws에 소스로

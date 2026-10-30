@@ -1,6 +1,5 @@
-"""연구 1 KSC 그림. 사용: python3 figs.py data figures   (data는 fetch.sh로 받은 폴더)
-A: 조건별 처리량 변화 (중앙, 포화)   B: 예측 vs 실측 (추가 대기, 처리량)   C: 단절 로봇 정책
-단 폭 88 mm(한 단), B·C는 두 단 폭 180 mm 판도 같이 만든다."""
+"""연구 1 KSC 제출본 그림 3장 (한 단 폭 88 mm). 사용: python3 figs.py data figures   (data는 fetch.sh로 받은 폴더)
+그림 1 fig1_policy: 단절 로봇 정책별 완료 시간 변화   그림 2 fig2_wait: 추가 대기 예측 vs 실측   그림 3 fig3_conditions: 조건별 변화"""
 import csv
 import json
 import sys
@@ -90,8 +89,8 @@ def time_ratio(a, b):
     return (np.mean([b['task_time'][k] for k in common]) / np.mean([a['task_time'][k] for k in common]) - 1) * 100
 
 
-def save(fig, name):
-    fig.tight_layout(pad=0.3)
+def save(fig, name, **layout):
+    fig.tight_layout(pad=0.3, **layout)
     for ext in ('pdf', 'png'):
         fig.savefig(OUT / f'{name}.{ext}', dpi=300)
     plt.close(fig)
@@ -101,29 +100,41 @@ def save(fig, name):
 conds = [('지연 100 ms', 'central_d100'), ('지연 200 ms', 'central_d200'), ('지연 500 ms', 'central_d500'),
          ('손실 30%', 'central_loss30'), ('손실 50%', 'central_loss50'), ('손실 70%', 'central_loss70'),
          ('단절 3초', 'central_bo3_r3'), ('단절 10초', 'central_bo10_r3'), ('단절 30초', 'central_bo30_r3'),
-         ('25초 작업\n+ 손실 70%', 'short_loss70'), ('단절 30초\n+ 멈춤 정책', 'central_bo30_r3_pause')]
-fig, ax = plt.subplots(figsize=(88 * MM, 66 * MM))
+         ('25초 작업\n+ 손실 70%', 'short_loss70'), ('단절 30초\n+ 정지 정책', 'central_bo30_r3_pause')]
+# 무리(그룹) 경계와 이름: 같은 무리끼리 가는 선으로 나누고 오른쪽 끝에 이름을 단다
+GROUPS_A = [('지연', 0, 2), ('손실', 3, 5), ('단절\n(1대)', 6, 8), ('취약\n조건', 9, 10)]
+fig, ax = plt.subplots(figsize=(88 * MM, 74 * MM))
 ys = np.arange(len(conds))[::-1]
+XMAX = 30
 for y, (label, c) in zip(ys, conds):
     m, lo, hi = paired('short_d0' if c.startswith('short') else 'central_d0', c, time_ratio)
     sig = lo > 0 or hi < 0
     color = 'black' if sig else '0.6'
     marker = 's' if 'pause' in c else ('D' if c.startswith('short') else 'o')
     ax.errorbar(m, y, xerr=[[m - lo], [hi - m]], fmt=marker, ms=3.2, color=color, mfc=color, elinewidth=0.7,
-                capsize=1.5)
-    ax.text(hi + 1.0, y, f'{m:+.1f}%', va='center', fontsize=5.8, color=color,
-            bbox={'fc': 'white', 'ec': 'none', 'pad': 0.4}, zorder=4)
-ax.axvline(0, color='0.3', lw=0.6)
-ax.axvline(10, color='black', lw=0.7, ls='--')
-ax.text(10.4, ys[0] + 0.2, '급락 기준 +10%', fontsize=5.8, va='center')
-for yb in (ys[2] - 0.5, ys[5] - 0.5, ys[8] - 0.5, ys[9] - 0.5):
-    ax.axhline(yb, color='0.85', lw=0.5)
+                capsize=1.5, zorder=3)
+    # 값은 신뢰구간 끝에서 띄워 오차 막대와 겹치지 않게
+    ax.text(hi + 0.9, y, f'{m:+.1f}%', va='center', ha='left', fontsize=5.8, color=color, zorder=4,
+            bbox={'fc': 'white', 'ec': 'none', 'pad': 0.3})
+ax.axvline(0, color='0.3', lw=0.6, zorder=1)
+ax.axvline(10, color='black', lw=0.7, ls='--', zorder=1)
+ax.text(10.4, ys[0] + 0.45, '급락 기준 +10%', fontsize=5.6, va='bottom')
+for name, i0, i1 in GROUPS_A:
+    if i1 < len(conds) - 1:
+        ax.axhline(ys[i1] - 0.5, color='0.85', lw=0.5, zorder=0)
 ax.set_yticks(ys)
 ax.set_yticklabels([c[0] for c in conds], fontsize=6.2)
-ax.set_xlabel('평균 작업 완료 시간 변화 (장애 없음 대비, %)')
-ax.set_xlim(-3, 28)
+ax.set_xlabel('평균 작업 완료 시간 변화 (%)\n장애 없음 대비, 같은 seed 두 실행 모두 끝난 작업끼리')
+ax.set_xlim(-3, XMAX)
+ax.set_ylim(ys[-1] - 0.6, ys[0] + 0.9)
 ax.spines[['top', 'right']].set_visible(False)
-save(fig, 'figA_conditions')
+# 범례: 회색은 차이 없음, 모양은 조건 종류 (색만으로 구분하지 않게)
+from matplotlib.lines import Line2D  # noqa: E402
+handles = [Line2D([], [], marker='o', ls='', color='black', ms=3.2, label='95% CI가 0 밖 (차이 있음)'),
+           Line2D([], [], marker='o', ls='', color='0.6', ms=3.2, label='95% CI가 0 포함 (차이 없음)')]
+ax.legend(handles=handles, loc='upper right', bbox_to_anchor=(1.0, 0.93), frameon=False, fontsize=5.4,
+          handletextpad=0.2, borderaxespad=0.2)
+save(fig, 'fig3_conditions')   # 원고 그림 3
 
 
 # ---------- 그림 B: 예측 vs 실측 ----------
@@ -143,81 +154,88 @@ def model_points():
             W = p / (1 - p)
             gap = paired(base, c, lambda a, x: x['gap'] - a['gap'])
             thr = paired(base, c, comp_change)
-            out.append((name, marker, face, p, W, gap, ((T + g0) / (T + g0 + W) - 1) * 100, thr))
+            out.append((name, marker, face, p, W, gap, ((T + g0) / (T + g0 + W) - 1) * 100, thr, c))
     return out
 
 
 pts = model_points()
+# 같은 예측값에 점이 여럿 겹치면(손실 50%: 사후 적합·재전송 0번·1번·25초 작업) 가로로 조금 띄운다.
+# 띄운 만큼은 값이 아니라 보기용이라 그림 설명에 적는다
+DODGE = {'central_loss50': 0.0, 'central_loss70': 0.0, 'central_loss30': 0.0,
+         'central_loss50_k0': -1, 'central_loss50_k1': 1, 'short_loss50': 2, 'short_loss70': 2}
+LEGEND_B = []
 
 
-def panel_wait(ax):
+def _wait_points(ax, step, collect):
+    seen = set()
+    for name, marker, face, p, W, gap, _, _, c in pts:
+        x = W + DODGE[c] * step   # 같은 예측값의 점을 조금만 띄운다 (값이 틀려 보이지 않을 만큼)
+        h = ax.errorbar(x, gap[0], yerr=[[gap[0] - gap[1]], [gap[2] - gap[0]]], fmt=marker, ms=3.0, mfc=face,
+                        mec='black', ecolor='black', elinewidth=0.6, capsize=1.5,
+                        label=None if name in seen else name, zorder=3 if face == 'white' else 2)
+        if collect and name not in seen and len(LEGEND_B) < 3:
+            LEGEND_B.append((h, name))
+        seen.add(name)
+
+
+def panel_wait(ax, legend=True, inset=False):
     lim = 2.7
     ax.plot([0, lim], [0, lim], color='0.6', lw=0.6, ls='--', zorder=0)
-    ax.text(1.85, 1.62, '예측 = 실측', color='0.45', fontsize=5.8, rotation=35)
-    seen = set()
-    for name, marker, face, p, W, gap, _, _ in pts:
-        ax.errorbar(W, gap[0], yerr=[[gap[0] - gap[1]], [gap[2] - gap[0]]], fmt=marker, ms=3.4, mfc=face,
-                    mec='black', ecolor='black', elinewidth=0.6, capsize=1.5,
-                    label=None if name in seen else name, zorder=3 if face == 'white' else 2)
-        seen.add(name)
-    for p in (0.3, 0.5, 0.7):
-        ax.annotate(f'손실 {p:.0%}', (p / (1 - p), p / (1 - p)), xytext=(-5, 7), textcoords='offset points',
-                    ha='right', fontsize=5.5, color='0.35')
+    ax.text(1.72, 1.52, '예측 = 실측', color='0.45', fontsize=5.6, rotation=35, ha='center', va='top')
+    _wait_points(ax, 0.03 if inset else 0.045, collect=True)
+    # 손실률 이름은 점 묶음 아래 오른쪽에 (오차 막대·대각선과 안 겹치게)
+    for p, dx, dy in ((0.3, 6, -10), (0.5, 8, -16), (0.7, -10, 10)):
+        ax.annotate(f'손실 {p:.0%}', (p / (1 - p), p / (1 - p)), xytext=(dx, dy), textcoords='offset points',
+                    ha='left' if dx > 0 else 'right', fontsize=5.5, color='0.35')
     ax.set_xlim(0, lim)
     ax.set_ylim(0, lim)
-    ax.set_xlabel('예측 추가 대기 W = r·p/(1-p) (초)')
+    ax.set_xlabel('예측 추가 대기 W = r·p/(1-p) (초, r = 1초)')
     ax.set_ylabel('실측 추가 대기 (초)')
-    ax.legend(frameon=False, fontsize=5.5, loc='upper left', handletextpad=0.3)
+    if inset:
+        # 손실 50%는 네 조건의 예측이 모두 1.0초라 점이 겹친다. 확대 창에서는 조건을 가로로 나란히 놓고
+        # 예측 1.0초를 가로 점선으로 그려, 옆으로 띄워도 값이 틀려 보이지 않게 한다
+        ins = ax.inset_axes([0.08, 0.6, 0.44, 0.34])
+        order = [('central_loss50', '60초'), ('central_loss50_k1', '재전송\n1회'),
+                 ('central_loss50_k0', '재전송\n0회'), ('short_loss50', '25초')]
+        by = {c: (marker, face, gap) for _, marker, face, _, _, gap, _, _, c in pts}
+        for i, (c, _) in enumerate(order):
+            marker, face, gap = by[c]
+            ins.errorbar(i, gap[0], yerr=[[gap[0] - gap[1]], [gap[2] - gap[0]]], fmt=marker, ms=3.0, mfc=face,
+                         mec='black', ecolor='black', elinewidth=0.6, capsize=1.5)
+        ins.axhline(1.0, color='0.6', lw=0.6, ls='--', zorder=0)
+        ins.text(4.35, 1.012, '예측 1.0초', fontsize=5, color='0.45', va='bottom', ha='right')
+        ins.set_xticks(range(len(order)))
+        ins.set_xticklabels([n for _, n in order], fontsize=5)
+        ins.set_xlim(-0.5, 4.4)
+        ins.set_ylim(0.74, 1.26)
+        ins.tick_params(labelsize=5, length=2, pad=1)
+        ins.set_title('손실 50% (예측이 같은 네 조건)', fontsize=5.3, pad=2, color='0.3')
+        ins.spines[['top', 'right']].set_visible(False)
+        # 본 그림의 해당 부분에 상자를 그려 어디를 늘린 것인지 표시
+        from matplotlib.patches import Rectangle
+        ax.add_patch(Rectangle((0.9, 0.74), 0.24, 0.52, fill=False, ec='0.55', lw=0.5, zorder=1))
+    if legend:
+        ax.legend(frameon=False, fontsize=5.5, loc='lower right' if inset else 'upper left', handletextpad=0.3)
 
 
-def panel_thr(ax):
-    lim = 11
-    ax.plot([0, lim], [0, lim], color='0.6', lw=0.6, ls='--', zorder=0)
-    for name, marker, face, p, W, gap, pred, thr in pts:
-        ax.errorbar(-pred, -thr[0], yerr=[[thr[2] - thr[0]], [thr[0] - thr[1]]], fmt=marker, ms=3.4, mfc=face,
-                    mec='black', ecolor='black', elinewidth=0.6, capsize=1.5, zorder=3 if face == 'white' else 2)
-        if '재전송' in name:
-            continue
-        short = '25초' in name
-        ax.annotate(f'{"25초" if short else "60초"} 작업, 손실 {p:.0%}', (-pred, -thr[0]),
-                    xytext=(-6, 4) if short else (7, -3), textcoords='offset points',
-                    ha='right' if short else 'left', fontsize=5.3, color='0.35')
-    ax.set_xlim(-0.3, lim)
-    ax.set_ylim(-0.3, lim)
-    ax.set_xlabel('예측 처리량 감소 (%)')
-    ax.set_ylabel('실측 처리량 감소 (%)')
-
-
-fig, (a1, a2) = plt.subplots(1, 2, figsize=(180 * MM, 60 * MM))
-panel_wait(a1)
-panel_thr(a2)
-a1.set_title('(a) 명령을 받기까지 추가 대기', fontsize=7)
-a2.set_title('(b) 처리량 감소 (완료 작업 수)', fontsize=7)
-save(fig, 'figB_prediction_wide')
-fig, ax = plt.subplots(figsize=(88 * MM, 60 * MM))
-panel_wait(ax)
-save(fig, 'figB_prediction')
+# 원고 그림 2: 추가 대기의 예측(식 1)과 실측. 한 단 폭, 확대 창 없음 (손실 50%의 겹친 점은 가로로 조금 띄움)
+fig, ax = plt.subplots(figsize=(88 * MM, 58 * MM))
+panel_wait(ax, legend=False)
+ax.legend([h for h, _ in LEGEND_B], [n for _, n in LEGEND_B], frameon=False, fontsize=5.2, loc='upper left',
+          handletextpad=0.3, labelspacing=0.25, borderaxespad=0.2)
+for t in ax.texts:   # '손실 70%'는 범례·점과 겹치지 않게 점 왼쪽 아래로
+    if t.get_text() == '손실 70%':
+        t.set_position((-14, -4))
+save(fig, 'fig2_wait')
 
 
 # ---------- 그림 C: 단절 로봇 정책 ----------
-policies = [('① 끊기면\n멈춤', 'central_bo30_r3_pause', '0.35', ''), ('② 받은 일\n계속', 'central_bo30_r3', '0.6', ''),
-            ('③ 새 일도\n스스로 (상한)', 'hybrid_bo30_r3', '0.9', '////')]
-
-
-def panel_a3(ax):
-    base = boot([v['a3'] for v in load('central_d0').values()])
-    for i, (label, c, color, hatch) in enumerate(policies):
-        m = boot([v['a3'] for v in load(c).values()])
-        ax.bar(i, m[0], width=0.62, color=color, edgecolor='black', lw=0.6, hatch=hatch,
-               yerr=[[m[0] - m[1]], [m[2] - m[0]]], error_kw={'elinewidth': 0.6, 'capsize': 2})
-        ax.text(i, m[2] + 0.2, f'{m[0]:.1f}', ha='center', va='bottom', fontsize=6)
-    ax.axhline(base[0], color='black', lw=0.6, ls=':')
-    ax.text(-0.42, base[0] + 0.15, f'단절 없음 {base[0]:.1f}', fontsize=5.6, va='bottom')
-    ax.set_xticks(range(len(policies)))
-    ax.set_xticklabels([p[0] for p in policies], fontsize=6)
-    ax.set_ylabel('단절 로봇의 완료 작업 (건)')
-    ax.set_ylim(0, 9.5)
-    ax.spines[['top', 'right']].set_visible(False)
+# 원고 3장 번호·이름과 같게: ① 정지 ② 허가 지점 대기 ③ 할당 작업 완수 ④ 자율 재할당(분산 경매, 상한).
+# 결과가 아직 없는 정책(data/<라벨>이 없음)은 빼고 그린다
+policies = [p for p in [('① 정지', 'central_bo30_r3_pause', '0.3', ''),
+                        ('② 허가 지점\n대기', 'central_bo30_r3_leg', '0.5', ''),
+                        ('③ 할당 작업\n완수', 'central_bo30_r3', '0.7', ''),
+                        ('④ 자율 재할당\n(상한)', 'hybrid_bo30_r3', '0.92', '////')] if (D / p[1]).exists()]
 
 
 def panel_time(ax):
@@ -225,9 +243,11 @@ def panel_time(ax):
         m = paired('central_d0', c, time_ratio)
         ax.bar(i, m[0], width=0.62, color=color, edgecolor='black', lw=0.6, hatch=hatch,
                yerr=[[m[0] - m[1]], [m[2] - m[0]]], error_kw={'elinewidth': 0.6, 'capsize': 2})
-        ax.text(i, max(m[2], 0) + 0.6, f'{m[0]:+.1f}%', ha='center', va='bottom', fontsize=6)
+        # 그림 A와 같게: 95% CI가 0을 포함하면 회색
+        ax.text(i, max(m[2], 0) + 0.6, f'{m[0]:+.1f}%', ha='center', va='bottom', fontsize=6,
+                color='black' if (m[1] > 0 or m[2] < 0) else '0.55')
     ax.axhline(10, color='black', lw=0.7, ls='--')
-    ax.text(2.42, 10.5, '급락 기준 +10%', fontsize=5.6, ha='right')
+    ax.text(len(policies) - 0.58, 10.5, '급락 기준 +10%', fontsize=5.6, ha='right')
     ax.axhline(0, color='0.3', lw=0.6)
     ax.set_xticks(range(len(policies)))
     ax.set_xticklabels([p[0] for p in policies], fontsize=6)
@@ -236,16 +256,7 @@ def panel_time(ax):
     ax.spines[['top', 'right']].set_visible(False)
 
 
-fig, (c1, c2) = plt.subplots(1, 2, figsize=(180 * MM, 58 * MM))
-panel_a3(c1)
-panel_time(c2)
-c1.set_title('(a) 단절 로봇(amr_03)의 처리량', fontsize=7)
-c2.set_title('(b) 함대 전체 완료 시간 (단절 없음 대비)', fontsize=7)
-save(fig, 'figC_policy_wide')
-fig, (c1, c2) = plt.subplots(2, 1, figsize=(88 * MM, 100 * MM))
-panel_a3(c1)
-panel_time(c2)
-c1.set_title('(a) 단절 로봇(amr_03)의 처리량', fontsize=7)
-c2.set_title('(b) 함대 전체 완료 시간 (단절 없음 대비)', fontsize=7)
-save(fig, 'figC_policy')
-print('ok')
+# 원고 그림 1: 단절 로봇 정책별 전체 평균 완료 시간 변화 (단절 30초, 한 방향)
+fig, ax = plt.subplots(figsize=(88 * MM, 60 * MM))
+panel_time(ax)
+save(fig, 'fig1_policy')

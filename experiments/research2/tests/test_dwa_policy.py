@@ -77,6 +77,26 @@ def test_b2_without_mass_info_equals_b1():
     assert DwaPolicy('b2').acc_v(env) == pytest.approx(DwaPolicy('b1').acc_v(env))
 
 
+def test_sample_counts_are_fixed_paper_values():
+    # 논문 비교군 값 20 x 30 고정 - 창고 스택(nav2_params.yaml)이 샘플 수를 줄여도 따라가지 않는다
+    p = DwaPolicy().params
+    assert (p.v_samples, p.w_samples) == (20, 30)
+    cfg = DwaPolicy().config(1.0)
+    assert (cfg.v_samples, cfg.w_samples) == (20, 30)
+
+
+def test_rotate_in_place_is_off_paper_value():
+    # 논문 값: 제자리 회전 끔 - 창고 스택(nav2_params.yaml)이 45°로 켜도 따라가지 않는다. C++ 기본값(45°)이
+    # 아니라 이 값이 C API로 넘어가야 한다
+    p = DwaPolicy().params
+    assert p.rotate_in_place_min_angle <= 0.0
+    cfg = DwaPolicy().config(1.0)
+    assert cfg.rotate_in_place_min_angle <= 0.0
+    # 제자리 회전 샘플의 풋프린트 여유도 논문 값 0 (C++ 기본값 0.05가 아니다)
+    assert p.rotate_in_place_clearance == 0.0
+    assert cfg.rotate_in_place_clearance == 0.0
+
+
 def test_names():
     assert DwaPolicy('b1').name == 'dwa_b1'
     with pytest.raises(ValueError):

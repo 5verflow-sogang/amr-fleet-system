@@ -70,7 +70,7 @@ tools/harness/gcp_run.sh fleet_fake -n 10 --set num_robots=7 --set delay_ms=100 
 - [x] 러너 기종 확정 → `c2d-standard-8` 슬롯 b3·b4 (10/16 하연)
 - [x] GCP 본 실험 14조건 × 10회 (라벨 `scale_a_*`·`scale_b_*`, 10/16 18:38 ~ 10/17 08:08)
 - [x] 분석: 8절, `scale_curve/` (`analyze.py`·`plot.py`·`summary.csv`·그림)
-- [ ] 10/19 회의: 기본 작업 부하가 5대에서 이미 포화(8-3)인 것이 지연 스윕 지표에 주는 영향
+- [x] 기본 작업 부하가 5대에서 포화(8-3)인 것의 영향 → 포화 시나리오를 그대로 주 실험으로 쓰고, 비포화(30초 간격)·가동률 80%(19초 간격) 조건을 따로 돌려 비교했다(10/17~18, [central/README.md](central/README.md))
 
 ## 7. 예비 실행 (10/15, N=10, B안, 지연 0, seed 1001, 로컬)
 

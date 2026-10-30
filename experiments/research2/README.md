@@ -171,7 +171,7 @@ uv run python scripts/evaluate.py raw/r2_s0_* --rule mass_aware --eval-list 0   
 명세서 4-4절의 기존 방법 비교군이다(`payload_nav/dwa_policy.py`). **이진의 DWA C++ 원본(`src/navigation/amr_planning_core`, #41)을 수정 없이 그대로 부른다.** Python으로 옮겨 쓰지 않는다. 옮기면 원본과 달라진 부분(rolling window, 장애물 층, 도착 판정 등)이 결과에 섞이기 때문이다.
 
 - 원본을 공유 라이브러리로 빌드해 ctypes로 부른다(`dwa_cpp/dwa_c_api.cpp`, 처음 쓸 때 g++/clang++로 `dwa_cpp/build/`에 빌드, git 제외). 판단(`DwaPlanner::computeVelocityCommand`, 목표 방향 회전)은 C++ 원본이 한다
-- Python은 ROS 노드가 하던 일만 맡는다: Nav2 local costmap 래스터(로봇 중심 3 × 3 m, 0.05 m 셀, 통로 벽 + LiDAR가 찍는 장애물의 지금 위치 + Nav2 inflation), 추적 결과(환경 장애물의 위치·속도·반경, 나타난 뒤에만 보임), 전역 경로(통로 중심선 전체, 플러그인처럼 경로째 넘긴다). 파라미터는 `amr_bringup/config/nav2_params.yaml`의 DWA 블록 그대로다(`lookahead_distance` 0.5 m, #195의 허용 속도·목표 앞 감속·속도 비례 기준점 켬). `xy_goal_tolerance`만 환경 도착 기준(0.2 m)에 맞춘다
+- Python은 ROS 노드가 하던 일만 맡는다: Nav2 local costmap 래스터(로봇 중심 3 × 3 m, 0.05 m 셀, 통로 벽 + LiDAR가 찍는 장애물의 지금 위치 + Nav2 inflation), 추적 결과(환경 장애물의 위치·속도·반경, 나타난 뒤에만 보임), 전역 경로(통로 중심선 전체, 플러그인처럼 경로째 넘긴다). 파라미터는 `amr_bringup/config/nav2_params.yaml`의 DWA 블록 그대로다(`lookahead_distance` 0.5 m, #195의 허용 속도·목표 앞 감속·속도 비례 기준점 켬). 예외는 세 가지다: `xy_goal_tolerance`는 환경 도착 기준(0.2 m), 샘플 수는 논문 값 20 × 30(창고 스택은 계산량 때문에 10 × 15), 제자리 회전은 끔(창고 스택은 45°, #244). 셋 다 `DwaParams`에 적어 C API로 넘기고 테스트로 고정한다
 - 질량은 가속 한계 `acc_v`로만 들어간다
   - **B1** (`b1`): 빈 차 기준 a_max(0 kg) 고정
   - **B2** (`b2`): 관측 질량 기준 a_max(m_obs). 질량을 모르면 B1과 같다. 정보 조건(정확·±30%·모름)은 B2에만 의미가 있다
