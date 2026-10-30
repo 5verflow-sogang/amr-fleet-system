@@ -100,6 +100,17 @@ common.sort_by_priority). 공고 시각(header.stamp)은 순서에 안 쓴다 - 
 AWARD가 늦게 오는 경우와, 져서 AWARD가 영영 안 오는 경우를 유한한 시간 안에 구분할 수 있다.
 한 번 ACCEPT한 뒤에는(이미 실행 중일 수 있어 WITHDRAW 못 함, 10/7 결정) 그 뒤 온 다른 AWARD는
 무조건 WITHDRAW한다 - 또 그 뒤 온 AWARD가 다시 오면(_withdrawn에 남아 있으면) 다시 WITHDRAW한다.
+
+처리 순서 - 재공고 틈 (#224 후속): 경매인마다 재공고 주기가 따로 돌아서, 더 이른 작업의 공고가
+닫히고 다음 재공고가 나가기 전 틈(최대 bid_window_s + no_bid_retry_s 정도)이 생긴다. #227 전에는
+이 틈에 로봇이 그 작업에 입찰을 못 해 더 늦은(하지만 지금 열려 있는) 작업에 입찰해 버렸다(#224
+사례: 0012가 0007보다 먼저 할당됨). #227로 열린 경매 전부에 입찰하게 되면서 이 틈 자체는 더는
+입찰을 가로막지 않지만(그 작업이 다시 열리면 그때 입찰한다), 그사이 더 늦은 작업의 AWARD를 먼저
+받아 ACCEPT해 버리면 여전히 같은 문제가 난다. 그래서 공고를 본 작업은 경매 키·마감과 무관하게
+announce_memory_s 동안 "기억"해 두고(_remembered), _resolve_pending_awards가 보류 중인 AWARD보다
+기억 중인 작업이 순서가 앞서면(그리고 지금 입찰 자격이 있으면) 재공고를 기다리는 것도 "아직
+결과를 모르는 더 급한 입찰"과 같이 쳐 준다 - award_wait_s와 같은 보류 틀 안에서 처리되므로,
+무한정 기다리지 않는다.
 """
 from __future__ import annotations
 
@@ -263,6 +274,7 @@ class TaskAuctionNode(Node):
             max_reclaims=p('max_reclaims', AuctionParams.max_reclaims).value,
             commit_timeout_s=p('commit_timeout_s', AuctionParams.commit_timeout_s).value,
             award_wait_s=p('award_wait_s', AuctionParams.award_wait_s).value,
+            announce_memory_s=p('announce_memory_s', AuctionParams.announce_memory_s).value,
         )
 
         # 분산 모드 경매 트리거 · ACCEPT 뒤 작업 실행
@@ -306,6 +318,12 @@ class TaskAuctionNode(Node):
         # 처리 순서 수정). 로봇 상태를 아직 몰라도·맡은 작업이 있어도 그냥 쌓인다 - _consider_bids가
         # 그 조건(_robot_info is not None, _active_task is None)을 보고 아무것도 안 할 뿐이다.
         self._bid_candidates: Dict[AuctionKey, TaskInfo] = {}
+        # 공고를 본 작업의 기억 - task_id -> (작업 내용, 마지막으로 본 시각(실제 시간)). _bid_candidates와
+        # 달리 경매 키·마감과 무관하게 announce_memory_s 동안 남는다(#224 후속). #227로 입찰은 열린
+        # 경매 전부에 하므로, 이 기억은 입찰 여부가 아니라 _resolve_pending_awards의 "아직 결과를
+        # 모르는 더 급한 것" 판단에만 쓴다 - 지금 안 열려 있어도(재공고 틈) 곧 돌아올 수 있는
+        # 공고를 보류 중인 낮은 작업보다 먼저 쳐 준다.
+        self._remembered: Dict[str, Tuple[TaskInfo, float]] = {}
         # 입찰 마감(실제 시간) - 공고를 처음 받은 시각 + bid_window_s. #155·#171 BID
         # 재전송이 멈춰야 할 때(마감)를 판단하는 기준이라, 공고를 받을 때(_on_task_auction)
         # 마다 한 번만 찍는다(재전송·중계 에코로 다시 받아도 안 바꾼다).
@@ -435,12 +453,17 @@ class TaskAuctionNode(Node):
             self._drop_duplicate_auction(msg)
 
         self._task_ids_seen.add(msg.task.task_id)
-        self._tasks_seen[key] = _task_from_msg(msg.task)
+        task = _task_from_msg(msg.task)
+        self._tasks_seen[key] = task
         self._task_msgs[key] = msg.task
-        # 입찰 후보로 쌓아 두고 지금 가장 급한 것 하나를 고른다(_consider_bids가 이미 입찰
-        # 중이거나(_accepted)·포기한(_withdrawn) 경매는 거른다) - 로봇 상태를 몰라도·맡은
-        # 작업이 있어도 그냥 쌓인다(10/10 연우 리뷰 #109와 같은 취지, 둘 다 _consider_bids가
-        # 조건으로 거를 뿐 후보 자체는 잃지 않는다).
+        # 경매 키·마감과 무관하게 "이 작업의 공고를 봤다"를 따로 기억한다(#224 후속) - 이
+        # 경매가 마감돼 _bid_candidates에서 지워진 뒤에도 announce_memory_s 동안은
+        # _resolve_pending_awards가 "곧 재공고될 것"으로 보고 더 늦은 작업의 AWARD를 바로
+        # 수락하지 않는다.
+        self._remembered[task.task_id] = (task, self._now())
+        # 입찰 후보로 쌓아 둔다(_consider_bids가 입찰 가능한 것 전부에 입찰한다, #227 리뷰 1) -
+        # 로봇 상태를 몰라도·맡은 작업이 있어도 그냥 쌓인다(10/10 연우 리뷰 #109와 같은 취지,
+        # _consider_bids가 조건으로 거를 뿐 후보 자체는 잃지 않는다).
         self._bid_candidates[key] = self._tasks_seen[key]
         self._consider_bids()
 
@@ -597,7 +620,9 @@ class TaskAuctionNode(Node):
         1순위 작업에만 몰려 동시에 열린 N건이 한 라운드에 1건씩만 배정된다). 여러 경매에 동시에
         낙찰될 수 있지만, 그중 어느 AWARD를 수락할지는 여기서 정하지 않는다 - AWARD가 올 때마다
         _on_awarded·_resolve_pending_awards가 작업 순서(amr_fleet_core.assignment.common.
-        sort_by_priority와 같은 키)로 가장 앞선 것만 고른다.
+        sort_by_priority와 같은 키)로 가장 앞선 것만 고른다. _remembered(#224 후속, 경매인마다
+        재공고 주기가 따로 돌아 생기는 재공고 틈 문제)도 여기서는 안 본다 - 지금 열려 있지 않은
+        공고는 입찰 자체를 못 하므로, 그 대기는 수락 쪽(_resolve_pending_awards)에서 한다.
 
         로봇 상태를 아직 모르거나(_robot_info) 맡은 작업이 있으면(_active_task, 10/7
         결정: IDLE 로봇만 입찰) 아무것도 안 한다 - 후보는 그대로 쌓여 있다가 로봇 상태를
@@ -814,9 +839,16 @@ class TaskAuctionNode(Node):
 
     def _resolve_pending_awards(self, now: Optional[float] = None):
         """보류 중인 AWARD(_pending_awards) 중 가장 앞선(sort_by_priority) 것만 ACCEPT하고
-        나머지는 WITHDRAW한다(#227 민지 리뷰 2). 아직 결과를 모르는(마감 전이거나 마감은
-        지났지만 AWARD를 못 받은, _bid_resends·_awaiting_award) 더 급한 입찰이 있으면
-        기다린다 - 다른 로봇이 그 작업을 맡은 걸 알면(_taken_by_other) 바로 끝난다.
+        나머지는 WITHDRAW한다(#227 민지 리뷰 2). 아직 결과를 모르는 더 급한 입찰이 있으면
+        기다린다 - 다른 로봇이 그 작업을 맡은 걸 알면(_taken_by_other) 바로 끝난다. 아직
+        결과를 모르는 경우는 두 가지다:
+        - 내가 입찰해 둔 경매(마감 전이거나 마감은 지났지만 AWARD를 못 받은,
+          _bid_resends·_awaiting_award)
+        - 지금 열려 있지 않아 입찰도 못 했지만 announce_memory_s 안에 공고를 본 작업
+          (_remembered, #224 후속 - 경매인마다 재공고 주기가 따로 돌아 생기는 재공고 틈)이고
+          지금 내가 입찰할 자격이 있는 것(decide_bid 통과) - 자격 없는 작업은 아무도 입찰 안
+          해 계속 재공고되며 기억이 매번 갱신될 수 있어, 자격 체크 없이 기다리면 영원히
+          기다리게 된다.
 
         시간으로 끝나는 기준은 "AWARD를 받은 시점"부터 award_wait_s다(_pending_since) -
         더 급한 입찰의 마감 시점(_awaiting_award 진입 시각)부터 재면, 그 입찰의 마감이 멀거나
@@ -824,8 +856,9 @@ class TaskAuctionNode(Node):
         AWARD를 받고도 award_wait_s보다 훨씬 오래 보류할 수 있어, 그사이 이 AWARD의 경매인이
         ACCEPT 없이 먼저 재경매해 버릴 수 있다(그러면 award_wait_s를 경매인의 재경매
         타임아웃보다 짧게 둔 의미가 없어진다). 그래서 보류 중인 것 중 가장 앞선 것이 award_wait_s
-        보다 오래 기다렸으면, 더 급한 입찰 결과를 몰라도 포기하고 그걸 수락한다 - 포기한 입찰은
-        나중에 AWARD가 와도 이미 다른 작업을 ACCEPT한 뒤라 거절된다(holding_other_task).
+        보다 오래 기다렸으면, 더 급한 입찰 결과를 몰라도(_remembered 포함) 포기하고 그걸
+        수락한다 - 포기한 입찰은 나중에 AWARD가 와도 이미 다른 작업을 ACCEPT한 뒤라
+        거절된다(holding_other_task).
 
         AWARD가 올 때(_on_awarded)뿐 아니라 매 틱(_on_timer)·TaskStatus를 받을 때
         (_on_task_status, 다른 로봇이 그 작업을 맡았다고 보고하는 경우)도 불러, 시간이
@@ -836,6 +869,11 @@ class TaskAuctionNode(Node):
         for key, (task, deadline_passed_at) in list(self._awaiting_award.items()):
             if self._taken_by_other(task.task_id) or now - deadline_passed_at > self._params.award_wait_s:
                 del self._awaiting_award[key]
+        for task_id in list(self._remembered):
+            # 재공고를 한 번도 더 못 본 지 announce_memory_s가 지나면 "곧 돌아올 것"으로
+            # 더는 안 믿는다 - 그래야 영영 안 돌아오는 작업을 기다리며 멈춰 있지 않는다.
+            if now - self._remembered[task_id][1] > self._params.announce_memory_s:
+                del self._remembered[task_id]
         if not self._pending_awards or self._active_task is not None:
             return
 
@@ -848,6 +886,15 @@ class TaskAuctionNode(Node):
                 self._tasks_seen[key] for key in self._bid_resends
                 if not self._taken_by_other(self._tasks_seen[key].task_id)]
             unresolved += [task for task, _ in self._awaiting_award.values()]
+            unresolved += [
+                task for task_id, (task, _) in self._remembered.items()
+                # _taken_by_other가 아니라 owner(exclude 없이) - 내가 이미 끝냈거나 맡은
+                # 작업을(TaskStatus와 새 공고의 도착 순서가 바뀌어 아직 기억에 남아 있어도)
+                # 또 기다리면 안 된다. 자기 자신은 "다른 로봇"이 아니라 _taken_by_other로는
+                # 안 걸러진다.
+                if task_id != best_pending_task.task_id
+                and self._claims.owner(task_id, time.monotonic()) is None
+                and decide_bid(self._robot_info, task, now, self._params) is not None]
             if any(sort_by_priority([task, best_pending_task])[0] is task for task in unresolved):
                 return  # 더 급한 입찰 결과를 아직 모르고, 기다린 지 award_wait_s도 안 됐다
 
@@ -954,6 +1001,14 @@ class TaskAuctionNode(Node):
     def _on_task_status(self, msg: TaskStatus):
         start = _stamp_to_s(msg.start_time) or _stamp_to_s(msg.header.stamp)
         self._claims.observe(msg.task_id, msg.robot_id, msg.state, start, time.monotonic())
+        if msg.state in (TaskStatus.STATE_FAILED, TaskStatus.STATE_COMPLETED):
+            # 끝났거나 실패했다고 보고된 작업은 더는 "곧 재공고될 것"으로 기다리지 않는다
+            # (#224 후속) - 정말 재경매되면 _on_task_auction이 다시 채운다. 안 지우면, 재시도
+            # 상한을 다 써서 다시는 안 열리는 작업을 다른 로봇들이 announce_memory_s 동안
+            # 계속 기다리며 그사이 더 늦은(하지만 지금 당장 맡을 수 있는) 작업에 입찰하지 않는다.
+            # _resolve_pending_awards(아래)보다 먼저 지워야, 이 작업이 막 끝난 그 호출에서도
+            # 더는 블로커로 안 본다.
+            self._remembered.pop(msg.task_id, None)
         # 다른 로봇이 이 작업을 맡은 걸 지금 알았을 수 있다 - 그 작업을 기다리느라 보류 중인
         # AWARD가 있으면 다음 틱까지 안 기다리고 바로 풀어 준다(#227 민지 리뷰 2).
         self._resolve_pending_awards()

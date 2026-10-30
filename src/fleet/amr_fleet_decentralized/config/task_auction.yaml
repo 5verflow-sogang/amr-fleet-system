@@ -27,10 +27,14 @@
     # BUSY가 안 되면(작업이 시작 안 됨) 맡은 작업을 풀고 경고 로그를 남긴다. 0이면 끈다.
     commit_timeout_s: 30.0
     # #227 민지 리뷰 2(가장 앞선 AWARD만 수락): AWARD를 받아도 더 급한 입찰 결과를 아직 모르면
-    # 이 시간(실제 시간, s) 동안 수락을 미루고 기다린다. award_resend_interval_s x
-    # (award_max_attempts - 1) = 4.0s(경매인이 재경매하기까지 걸리는 최대 시간)보다 반드시
-    # 짧아야 한다 - params.py AuctionParams.award_wait_s 주석 참고.
-    award_wait_s: 3.0
+    # 이 시간(실제 시간, s) 동안 수락을 미루고 기다린다. 통신 지연 최대 136 ms 조건에서 재공고
+    # 쪽 하한 3.372 s와 경매인 쪽 상한 3.628 s 사이(가운데 값) - params.py AuctionParams.award_wait_s
+    # 주석에 계산 근거를 적었다.
+    award_wait_s: 3.5
+    # 10/26 처리 순서 틈 (#224 후속): 공고를 본 작업은 경매가 마감돼 지워진 뒤에도 이 시간(실제 시간, s)
+    # 동안 기억해, 그보다 순서가 앞서고 입찰 자격이 있는 기억 중인 작업이 있으면 지금 열린 더 늦은 작업에
+    # 입찰하지 않고 재공고를 기다린다. 기본은 정상 재공고 주기(bid_window_s + no_bid_retry_s = 3.0s) + 지터 1s.
+    announce_memory_s: 4.0
     # 분산 모드 경매 트리거: 작업 방송을 구독하고, 살아 있는 로봇(RobotState를 최근 alive_timeout_s 안에
     # 받은 로봇, robot_id 순) 중 crc32(task_id) mod 로봇 수 번째 로봇이 경매를 연다. false면 안 연다.
     open_auctions: true
