@@ -12,6 +12,10 @@ namespace
 {
 
 constexpr double kPi = 3.14159265358979323846;
+// 이보다 느리면 제자리(v≈0)로 본다 - heading 비용·회전 샘플 처리 기준.
+constexpr double kMinMovingSpeed = 1e-3;
+// 제자리 회전 모드에서 "실제로 회전하는" 샘플로 보는 최소 각속도(rad/s).
+constexpr double kMinTurnRate = 1e-3;
 
 Cell worldToCell(double x, double y, double resolution)
 {
@@ -97,6 +101,9 @@ PathTarget pathPointAhead(
 DwaPlanner::DwaPlanner(DwaConfig config)
 : config_(config)
 {
+  // 나오는 각도가 들어가는 각도보다 크면 모드에 들어가자마자 나와 매 주기 바뀐다
+  config_.rotate_in_place_exit_angle =
+    std::min(config_.rotate_in_place_exit_angle, config_.rotate_in_place_min_angle);
 }
 
 DynamicWindow DwaPlanner::computeDynamicWindow(const RobotState & state) const
@@ -106,6 +113,20 @@ DynamicWindow DwaPlanner::computeDynamicWindow(const RobotState & state) const
   window.max_v = std::min(config_.max_v, state.v + config_.acc_v * config_.dt);
   window.min_w = std::max(-config_.max_w, state.w - config_.acc_w * config_.dt);
   window.max_w = std::min(config_.max_w, state.w + config_.acc_w * config_.dt);
+  // 지금 속도가 한계 밖으로 한 주기 변화 이상 벗어나 있으면(예: 처음 속도가 max_v보다 높음, w가 -max_w보다
+  // 낮음) min > max로 창이 뒤집혀, 샘플이 한계값까지 한 주기 최대 변화(acc*dt)보다 더 크게 튄다. 그때는 한계
+  // 쪽으로 최대로 줄인 값 하나만 남긴다 - 위로 벗어났으면 min(지금 - acc*dt), 아래로 벗어났으면 max(지금 + acc*dt).
+  auto keep_reachable = [](double current, double & lo, double & hi) {
+      if (lo > hi) {
+        if (current > hi) {
+          hi = lo;
+        } else {
+          lo = hi;
+        }
+      }
+    };
+  keep_reachable(state.v, window.min_v, window.max_v);
+  keep_reachable(state.w, window.min_w, window.max_w);
   return window;
 }
 
@@ -131,7 +152,7 @@ std::vector<TrajectoryPoint> DwaPlanner::simulateTrajectory(
 }
 
 bool DwaPlanner::evaluateFootprint(
-  const Grid & grid, double x, double y, double yaw, double * max_cell_cost) const
+  const Grid & grid, double x, double y, double yaw, double * max_cell_cost, double margin) const
 {
   *max_cell_cost = 0.0;
 
@@ -141,8 +162,8 @@ bool DwaPlanner::evaluateFootprint(
   const double cos_yaw = std::cos(yaw);
   const double sin_yaw = std::sin(yaw);
 
-  const double half_length = config_.footprint_half_length;
-  const double half_width = config_.footprint_half_width;
+  const double half_length = config_.footprint_half_length + margin;
+  const double half_width = config_.footprint_half_width + margin;
 
   for (double lx = -half_length; lx <= half_length + 1e-9; lx += step) {
     for (double ly = -half_width; ly <= half_width + 1e-9; ly += step) {
@@ -226,10 +247,41 @@ bool DwaPlanner::evaluateDynamicObstacles(
       *min_surface_distance = std::max(0.0, surface_distance);
       return true;
     }
+    if (start_distances != nullptr &&
+      (*start_distances)[j] <= config_.dynamic_obstacle_safety_margin)
+    {
+      // 이미 여유 안인 장애물은 궤적을 따라 잰 최소 거리에 넣지 않는다 - 늘 여유 안이라 거리비용이
+      // 모든 궤적에서 1.0이 돼 멀어지는 궤적을 고르지 못한다. 대신 궤적 끝 거리로 따로 매긴다
+      // (withinMarginObstacleCost).
+      continue;
+    }
     *min_surface_distance = std::min(*min_surface_distance, surface_distance);
   }
 
   return false;
+}
+
+double DwaPlanner::withinMarginObstacleCost(
+  const std::vector<DynamicObstacle> & obstacles, const std::vector<double> & start_distances,
+  double t, const TrajectoryPoint & point) const
+{
+  // 이미 안전 여유 안인 장애물: 궤적 끝(t, point)에서 표면까지 거리를 닿음(0)부터 재서
+  // [0, margin + influence_radius]를 1 -> 0으로 매긴다. 나란히 가면(거리 그대로) 1.0에 가깝고 멀어질수록 작다.
+  const double range = std::max(
+    config_.dynamic_obstacle_safety_margin + config_.dynamic_obstacle_influence_radius, 1e-6);
+  const double predict_t = config_.predict_dynamic_obstacles ? t : 0.0;
+  double cost = 0.0;
+  for (std::size_t j = 0; j < obstacles.size(); ++j) {
+    if (start_distances[j] > config_.dynamic_obstacle_safety_margin) {
+      continue;
+    }
+    const DynamicObstacle & obstacle = obstacles[j];
+    const double surface_distance = rectangleSurfaceDistance(
+      point.x, point.y, point.yaw, config_.footprint_half_length, config_.footprint_half_width,
+      obstacle.x + obstacle.vx * predict_t, obstacle.y + obstacle.vy * predict_t) - obstacle.radius;
+    cost = std::max(cost, std::clamp(1.0 - surface_distance / range, 0.0, 1.0));
+  }
+  return cost;
 }
 
 bool DwaPlanner::dynamicObstacleCollides(
@@ -268,7 +320,7 @@ double DwaPlanner::headingCost(const TrajectoryPoint & trajectory_end, const Poi
 
 double DwaPlanner::evaluateCost(
   const TrajectoryPoint & trajectory_end, const Point2D & goal, double v,
-  double max_cell_cost) const
+  double max_cell_cost, bool score_stationary_heading) const
 {
   // v가 0에 가까우면 궤적이 사실상 제자리라 trajectory_end == 시작점이다. 그 상태에서
   // 마침 로봇이 목표 쪽을 보고 있으면 heading 비용이 0이 되어, "목표를 보고 가만히
@@ -276,8 +328,11 @@ double DwaPlanner::evaluateCost(
   // 빠진다 — 장애물 앞에서 멈춘 채 영원히 못 움직이는 현상으로 실제 확인했다.
   // 정지는 목표를 향한 "방향"이라고 볼 근거가 없으므로 heading 비용을 최댓값(1.0)으로
   // 고정해 제자리 멈춤이 절대 유리해지지 않게 한다.
-  constexpr double kMinMovingSpeed = 1e-3;
-  const double heading = (std::abs(v) < kMinMovingSpeed) ? 1.0 : headingCost(trajectory_end, goal);
+  // 단 제자리 회전 모드(목표 방향 오차가 크다, score_stationary_heading)에서는 회전한 뒤 방향
+  // (trajectory_end.yaw)으로 heading을 매긴다 - 그래야 목표 쪽으로 도는 회전이 크게 도는 전진 호보다
+  // 싸다. 정지(w=0)는 지금 오차 그대로라 유리하지 않다.
+  const double heading = (std::abs(v) < kMinMovingSpeed && !score_stationary_heading) ?
+    1.0 : headingCost(trajectory_end, goal);
   const double clearance = max_cell_cost / 255.0;  // [0, 1]
   const double max_v = std::max(config_.max_v, 1e-6);
   const double velocity = (max_v - v) / max_v;  // [0, 1], 0 = 최고 속도
@@ -356,6 +411,13 @@ DwaCommand DwaPlanner::selectCommand(
         state.x, state.y, state.yaw, config_.footprint_half_length, config_.footprint_half_width,
         obstacle.x, obstacle.y) - obstacle.radius);
   }
+  bool any_within_margin = false;
+  bool dynamic_near = false;
+  for (const double d : start_distances) {
+    any_within_margin = any_within_margin || d <= config_.dynamic_obstacle_safety_margin;
+    dynamic_near = dynamic_near ||
+      d <= config_.dynamic_obstacle_safety_margin + config_.dynamic_obstacle_influence_radius;
+  }
 
   const double dx = goal.x - state.x;
   const double dy = goal.y - state.y;
@@ -376,110 +438,192 @@ DwaCommand DwaPlanner::selectCommand(
   // [0]: 장애물에 안 닿는 궤적, [1]: 닿지만 허용 속도 조건으로 그 앞에 설 수 있는 궤적.
   // [0]이 하나라도 있으면 [1]은 보지 않는다 - 닿는 궤적까지 비용으로 겨루게 하면 heading이
   // 압도적이라 벽으로 곧장 가다 막판에 못 꺾는다(기존 폐루프 테스트가 실패했다).
-  bool found[2] = {false, false};
-  double best_cost[2] = {
-    std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
-  double best_v[2] = {0.0, 0.0};
-  double best_w[2] = {0.0, 0.0};
+  // 제자리 회전 모드(히스테리시스): 지금 자세에서 기준점(lookahead_distance 앞)까지 방향 오차가
+  // rotate_in_place_min_angle보다 크면 들어가고 rotate_in_place_exit_angle 이하가 되면 나온다. 이 모드에서는
+  // v≈0 샘플도 회전한 뒤 방향으로 heading 비용을 매기고(평소에는 정지 함정 때문에 1.0 고정), 먼저 최대
+  // 감속 속도(v=window.min_v, 서 있으면 0)만 샘플링한 회전 후보를 전체 윈도우의 최선(정지 1.0 고정, 평소와
+  // 같은 채점)과 비용으로 겨뤄 더 싼 쪽을 고른다 - 회전이 막히거나(좁은 통로 안) 거의 안 도는 샘플뿐이면(w
+  // 샘플은 지금 각속도 둘레라 state.w≠0이면 정확한 0이 없다) 전진 쪽이 이긴다. 동적 장애물이
+  // safety_margin + influence_radius 안이면 모드에 들어가지 않는다 - 피하느라 경로에서 벗어나 오차가 45°를
+  // 넘었을 때 서서 경로 쪽(장애물이 오는 쪽)으로 돌지 않게 한다.
+  // 경로를 받는 버전에서만 쓴다 - 먼 목표 점 하나로 부르면(follow_path false) 장애물을 돌아가는 동안 그 점까지
+  // 오차가 커져, 회전이 회피와 싸운다(ClosedLoopReachesGoalWithOneObstacle). 경로의 기준점은 장애물을 이미 돌아간다.
+  const double heading_error = std::abs(normalizeAngle(
+      std::atan2(goal.y - state.y, goal.x - state.x) - state.yaw));
+  if (follow_path && config_.rotate_in_place_min_angle > 0.0 && !dynamic_near) {
+    rotating_in_place_ = heading_error > (rotating_in_place_ ?
+      config_.rotate_in_place_exit_angle : config_.rotate_in_place_min_angle);
+  } else {
+    rotating_in_place_ = false;
+  }
+  const bool rotate_mode = rotating_in_place_;
 
-  for (int vi = 0; vi < config_.v_samples; ++vi) {
-    const double v = sampleValue(window.min_v, window.max_v, vi, config_.v_samples);
+  // 제자리 회전 후보(회전 모드의 회전 탐색)의 풋프린트 여유(rotate_in_place_clearance). 회전 모드 밖 v≈0 회전과
+  // 전체 윈도우 탐색은 키우지 않는다 - 전진은 여유 없이 장애물 0.05 m 앞까지 다가가므로, 거기서 모든 회전을 키워
+  // 검사하면 정지만 남아 영영 못 돈다. 지금 자세에서 이미 그 여유 안에 장애물이 있으면 이번 주기는 키우지 않는다
+  // (같은 이유, 안전 노드도 지금보다 가까워지는 회전만 막는다).
+  double unused_cost = 0.0;
+  const double turn_clearance = (config_.rotate_in_place_clearance > 0.0 &&
+    !evaluateFootprint(grid, state.x, state.y, state.yaw, &unused_cost,
+    config_.rotate_in_place_clearance)) ? config_.rotate_in_place_clearance : 0.0;
 
-    // heading 기준점: 고정이면 goal, adaptive면 이 속도의 궤적 끝보다 lookahead_distance 앞의 경로 점
-    // (궤적 길이 + lookahead_distance). 궤적 끝과 기준점이 붙어 있으면 끝 -> 기준점 방향이 튄다(#216).
-    // 기준점이 경로 끝점으로 잘리면(궤적 끝 + lookahead_distance가 경로 끝을 넘음) 끝점보다
-    // lookahead_distance 앞인 궤적 점까지만 보고 heading을 잰다 - 같은 이유로, 끝에 가까운 빠른 궤적의
-    // 끝과 경로 끝점이 붙어 방향이 튀지 않게 한다(지나치는 궤적은 끝점을 넘은 쪽에서 보면 뒤집힌다).
-    Point2D heading_target = goal;
-    std::size_t heading_steps = std::numeric_limits<std::size_t>::max();
-    if (adaptive) {
-      const double travel = std::abs(v) * config_.sim_time;
-      const PathTarget target = pathPointAheadFrom(
-        path, path_start, state.x, state.y, travel + config_.lookahead_distance);
-      heading_target = target.point;
-      const double step_length = std::abs(v) * config_.dt;
-      const double before_end = target.distance_from_robot - config_.lookahead_distance;
-      if (target.at_path_end && before_end < travel && step_length > 0.0) {
-        heading_steps =
-          static_cast<std::size_t>(std::max(1.0, std::floor(before_end / step_length)));
-      }
-    }
+  struct Best
+  {
+    bool found[2] = {false, false};
+    double cost[2] = {
+      std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+    double v[2] = {0.0, 0.0};
+    double w[2] = {0.0, 0.0};
+  };
+  // turn_search: 회전 모드의 회전 후보 탐색이면 true - v≈0 샘플을 회전한 뒤 방향으로 채점하고 회전 샘플은
+  // 풋프린트를 turn_clearance만큼 키운다. 전체 윈도우 탐색(false)은 평소처럼 정지를 1.0으로 고정한다 - 아니면
+  // "목표 보고 서 있기" 함정이 다시 열린다.
+  auto search = [&](const DynamicWindow & sample_window, int v_count, bool turn_search) {
+    Best best;
+    for (int vi = 0; vi < v_count; ++vi) {
+      const double v = sampleValue(sample_window.min_v, sample_window.max_v, vi, v_count);
 
-    for (int wi = 0; wi < config_.w_samples; ++wi) {
-      const double w = sampleValue(window.min_w, window.max_w, wi, config_.w_samples);
-
-      const std::vector<TrajectoryPoint> trajectory = simulateTrajectory(state, v, w);
-
-      // 충돌 검사와 함께 장애물에 닿기 전까지 남은 궤적 점 개수(free_steps)를 센다 -
-      // 허용 속도 조건의 dist는 |v|*dt*free_steps다(닿는 점 바로 앞까지, 보수적).
-      bool collides = false;
-      std::size_t free_steps = trajectory.size();
-      double max_cell_cost = 0.0;
-      double min_dynamic_surface_distance = std::numeric_limits<double>::infinity();
-      for (std::size_t i = 0; i < trajectory.size(); ++i) {
-        const TrajectoryPoint & point = trajectory[i];
-        double point_max_cost = 0.0;
-        const bool static_hit =
-          evaluateFootprint(grid, point.x, point.y, point.yaw, &point_max_cost);
-        max_cell_cost = std::max(max_cell_cost, point_max_cost);
-        if (static_hit) {
-          collides = true;
-          free_steps = i;
-          break;
+      // heading 기준점: 고정이면 goal, adaptive면 이 속도의 궤적 끝보다 lookahead_distance 앞의 경로 점
+      // (궤적 길이 + lookahead_distance). 궤적 끝과 기준점이 붙어 있으면 끝 -> 기준점 방향이 튄다(#216).
+      // 기준점이 경로 끝점으로 잘리면(궤적 끝 + lookahead_distance가 경로 끝을 넘음) 끝점보다
+      // lookahead_distance 앞인 궤적 점까지만 보고 heading을 잰다 - 같은 이유로, 끝에 가까운 빠른 궤적의
+      // 끝과 경로 끝점이 붙어 방향이 튀지 않게 한다(지나치는 궤적은 끝점을 넘은 쪽에서 보면 뒤집힌다).
+      Point2D heading_target = goal;
+      std::size_t heading_steps = std::numeric_limits<std::size_t>::max();
+      if (adaptive) {
+        const double travel = std::abs(v) * config_.sim_time;
+        const PathTarget target = pathPointAheadFrom(
+          path, path_start, state.x, state.y, travel + config_.lookahead_distance);
+        heading_target = target.point;
+        const double step_length = std::abs(v) * config_.dt;
+        const double before_end = target.distance_from_robot - config_.lookahead_distance;
+        if (target.at_path_end && before_end < travel && step_length > 0.0) {
+          heading_steps =
+            static_cast<std::size_t>(std::max(1.0, std::floor(before_end / step_length)));
         }
+      }
 
-        if (!dynamic_obstacles.empty()) {
-          const double t = static_cast<double>(i + 1) * config_.dt;
-          double point_min_distance = std::numeric_limits<double>::infinity();
-          const bool dynamic_hit = evaluateDynamicObstacles(
-            dynamic_obstacles, t, point.x, point.y, point.yaw, &point_min_distance,
-            &start_distances);
-          min_dynamic_surface_distance = std::min(min_dynamic_surface_distance, point_min_distance);
-          if (dynamic_hit) {
+      for (int wi = 0; wi < config_.w_samples; ++wi) {
+        const double w = sampleValue(sample_window.min_w, sample_window.max_w, wi, config_.w_samples);
+
+        const std::vector<TrajectoryPoint> trajectory = simulateTrajectory(state, v, w);
+        const bool turning_in_place = std::abs(v) < kMinMovingSpeed && std::abs(w) > kMinTurnRate;
+        const double footprint_margin = (turn_search && turning_in_place) ? turn_clearance : 0.0;
+
+        // 충돌 검사와 함께 장애물에 닿기 전까지 남은 궤적 점 개수(free_steps)를 센다 -
+        // 허용 속도 조건의 dist는 |v|*dt*free_steps다(닿는 점 바로 앞까지, 보수적).
+        bool collides = false;
+        std::size_t free_steps = trajectory.size();
+        double max_cell_cost = 0.0;
+        double min_dynamic_surface_distance = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 0; i < trajectory.size(); ++i) {
+          const TrajectoryPoint & point = trajectory[i];
+          double point_max_cost = 0.0;
+          const bool static_hit = evaluateFootprint(
+            grid, point.x, point.y, point.yaw, &point_max_cost, footprint_margin);
+          max_cell_cost = std::max(max_cell_cost, point_max_cost);
+          if (static_hit) {
             collides = true;
             free_steps = i;
             break;
           }
+
+          if (!dynamic_obstacles.empty()) {
+            const double t = static_cast<double>(i + 1) * config_.dt;
+            double point_min_distance = std::numeric_limits<double>::infinity();
+            const bool dynamic_hit = evaluateDynamicObstacles(
+              dynamic_obstacles, t, point.x, point.y, point.yaw, &point_min_distance,
+              &start_distances);
+            min_dynamic_surface_distance = std::min(min_dynamic_surface_distance, point_min_distance);
+            if (dynamic_hit) {
+              collides = true;
+              free_steps = i;
+              break;
+            }
+          }
         }
-      }
-      if (trajectory.empty()) {
-        continue;
-      }
-      if (config_.use_admissible_velocity) {
-        // 첫 점부터 닿으면 멈출 거리가 없다. 그 밖에는 닿는 궤적도 acc_v로 그 앞에 설 수
-        // 있으면 [1] 후보로 남긴다.
-        const double dist = std::abs(v) * config_.dt * static_cast<double>(free_steps);
-        if (free_steps == 0 || std::abs(v) > admissibleVelocity(dist)) {
+        if (trajectory.empty()) {
           continue;
         }
-      } else if (collides) {
-        continue;
-      }
+        if (collides && turning_in_place) {
+          // 제자리 회전(v≈0, w≠0)이 궤적 중간에 닿으면 버린다 - 허용 속도 조건(v=0이면 늘 "설 수 있음")은
+          // 회전 감속(acc_w)을 안 보므로, 닿기 전에 회전을 멈출 수 있다고 볼 근거가 없다. 사각
+          // 풋프린트는 v=0이어도 매 스텝 yaw가 바뀐 자세로 검사한다(대각선 0.72 m > 좁은 통로 0.6 m).
+          // 정지(w≈0)는 남긴다 - 다가오는 동적 장애물(예측)과 궤적 중간에 닿아도 그 자리에 서 있는 것은
+          // 후보여야 한다(tier 1). 버리면 느린 전진이나 kNoValidTrajectory만 남는다.
+          continue;
+        }
+        if (config_.use_admissible_velocity) {
+          // 첫 점부터 닿으면 멈출 거리가 없다. 그 밖에는 닿는 궤적도 acc_v로 그 앞에 설 수
+          // 있으면 [1] 후보로 남긴다.
+          const double dist = std::abs(v) * config_.dt * static_cast<double>(free_steps);
+          if (free_steps == 0 || std::abs(v) > admissibleVelocity(dist)) {
+            continue;
+          }
+        } else if (collides) {
+          continue;
+        }
 
-      // 닿는 궤적은 설 수 있는 마지막 점(닿기 직전)에서 heading을 본다.
-      const TrajectoryPoint & trajectory_end =
-        trajectory[std::min(free_steps, heading_steps) - 1];
-      const double cost = evaluateCost(trajectory_end, heading_target, v, max_cell_cost) +
-        config_.dynamic_weight * dynamicObstacleCost(min_dynamic_surface_distance);
-      const int tier = collides ? 1 : 0;
-      if (cost < best_cost[tier]) {
-        best_cost[tier] = cost;
-        best_v[tier] = v;
-        best_w[tier] = w;
-        found[tier] = true;
+        // 닿는 궤적은 설 수 있는 마지막 점(닿기 직전)에서 heading을 본다.
+        const TrajectoryPoint & trajectory_end =
+          trajectory[std::min(free_steps, heading_steps) - 1];
+        // 동적 거리비용: 여유 밖 장애물은 궤적을 따라 잰 최소 거리, 이미 여유 안인 장애물은 설 수 있는
+        // 마지막 점(궤적 끝)에서의 거리 - 둘 중 큰 쪽(#228 연우 리뷰)
+        double dynamic_cost = dynamicObstacleCost(min_dynamic_surface_distance);
+        if (any_within_margin) {
+          dynamic_cost = std::max(dynamic_cost, withinMarginObstacleCost(
+              dynamic_obstacles, start_distances, static_cast<double>(free_steps) * config_.dt,
+              trajectory[free_steps - 1]));
+        }
+        const double cost =
+          evaluateCost(trajectory_end, heading_target, v, max_cell_cost, turn_search) +
+          config_.dynamic_weight * dynamic_cost;
+        const int tier = collides ? 1 : 0;
+        if (cost < best.cost[tier]) {
+          best.cost[tier] = cost;
+          best.v[tier] = v;
+          best.w[tier] = w;
+          best.found[tier] = true;
+        }
       }
     }
+    return best;
+  };
+
+  Best best;
+  bool chosen = false;
+  if (rotate_mode) {
+    DynamicWindow turn_window = window;
+    turn_window.max_v = turn_window.min_v;
+    best = search(turn_window, 1, true);
+    if (best.found[0] && std::abs(best.w[0]) > kMinTurnRate) {
+      // 회전 후보의 궤적 끝 방향 오차가 지금보다 min_gain 이상 줄 때만 채택한다. w 샘플은 지금 각속도 둘레라
+      // state.w≠0이면 정확한 0이 없어, 회전이 양쪽 다 막혀도 거의 안 도는 샘플(예: w=0.01)이 남는다 - 그걸
+      // 채택하면 전체 윈도우를 안 보고 그 자리에 선다.
+      // min_gain = acc_w * dt * sim_time / 2: 서 있다가 한 주기에 낼 수 있는 최대 각속도(acc_w*dt)로 sim_time 동안
+      // 돌면 줄어드는 오차의 절반(기본값 3.2 * 0.1 * 2.0 / 2 = 0.32 rad). 정상적인 회전은 출발 주기에도 이만큼
+      // 줄이고, 막혀서 거의 안 도는 샘플은 못 넘는다. 설정값에서 계산하므로 acc_w·dt·sim_time이 바뀌면 같이 바뀐다.
+      // 전체 윈도우 최선과 비용으로 겨루는 안은 velocity_weight 때문에 전진 호가 늘 이겨 출발 때 크게 돌았다.
+      const TrajectoryPoint end = simulateTrajectory(state, best.v[0], best.w[0]).back();
+      const double end_error = std::abs(normalizeAngle(
+          std::atan2(goal.y - end.y, goal.x - end.x) - end.yaw));
+      const double min_gain = 0.5 * config_.acc_w * config_.dt * config_.sim_time;
+      chosen = end_error < heading_error - min_gain;
+    }
+  }
+  if (!chosen) {
+    best = search(window, config_.v_samples, false);
   }
 
-  const int tier = found[0] ? 0 : 1;
-  if (!found[tier]) {
+  const int tier = best.found[0] ? 0 : 1;
+  if (!best.found[tier]) {
     result.status = DwaStatus::kNoValidTrajectory;
     return result;
   }
 
   result.status = DwaStatus::kOk;
-  result.v = best_v[tier];
-  result.w = best_w[tier];
+  result.v = best.v[tier];
+  result.w = best.w[tier];
   return result;
 }
 

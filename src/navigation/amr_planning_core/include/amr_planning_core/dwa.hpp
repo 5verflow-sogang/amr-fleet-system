@@ -182,6 +182,25 @@ struct DwaConfig
   // 끝점에 붙은 궤적 끝에서 보면 위와 같이 방향이 튄다.
   // 정지(v=0)에서는 false와 같은 기준점(lookahead_distance 앞)이다.
   bool adaptive_lookahead = true;
+
+  // --- 제자리 회전 ---
+
+  // 지금 자세에서 heading 기준점(lookahead_distance 앞)까지 방향 오차가 이 값(rad)보다 크면 제자리 회전
+  // 모드에 들어가고, rotate_in_place_exit_angle 이하가 되면 나온다(히스테리시스 - 경계에서 회전/전진이 매
+  // 주기 바뀌며 떨지 않게). 모드에서는 v≈0 샘플도 회전한 뒤 방향으로 heading 비용을 매겨(평소에는 정지
+  // 함정 때문에 1.0, 4-3절) 출발 때 크게 틀어진 방향·좁은 통로 90° 진입에서 크게 도는 전진 호 대신
+  // 제자리에서 돈다. 경로를 받는 computeVelocityCommand에서만 쓴다(점 하나 버전은 그대로). 0 이하면 끈다.
+  // 기본값은 Nav2 RPP rotate_to_heading_min_angle(0.785)과 같다. exit_angle이 min_angle보다 크면 매 주기 모드가
+  // 바뀌므로 DwaPlanner가 min_angle로 줄인다. 동적 장애물이 safety_margin + influence_radius 안에 있으면 모드에
+  // 들어가지 않는다(회피 중 경로 쪽으로 서서 도는 것을 막는다).
+  double rotate_in_place_min_angle = 0.785;  // 45°
+  double rotate_in_place_exit_angle = 0.524;  // 30°
+
+  // v≈0 회전 샘플은 풋프린트 반길이·반폭을 이만큼(m) 키워 정적 장애물 충돌을 검사한다. 안전 노드
+  // (amr_safety config/safety.yaml side_margin, collision.path_hazard)는 제자리 회전 중 모서리가 이 거리 안으로
+  // 가까워지면 정지시킨다 - DWA가 그보다 빠듯한 회전을 고르면 DWA는 계속 돌고 안전 노드는 계속 막아 멈춘다.
+  // 그래서 두 값은 같아야 한다. 0이면 키우지 않는다.
+  double rotate_in_place_clearance = 0.05;
 };
 
 // 경로 위에서 로봇에 가장 가까운 점부터 누적 거리가 distance 이상이 되는 첫 점
@@ -262,11 +281,16 @@ public:
 
   const DwaConfig & config() const noexcept {return config_;}
 
+  // 마지막 computeVelocityCommand가 제자리 회전 모드였는지(히스테리시스 상태).
+  bool rotatingInPlace() const noexcept {return rotating_in_place_;}
+
 private:
   // footprintCollides의 내부 버전. 충돌 여부와 함께 샘플링한 셀 중 가장 높은
   // 비용값(충돌 시 닿은 셀의 비용)을 clearance 비용 계산에 쓰도록 돌려준다.
+  // margin(m)만큼 반길이·반폭을 키운 사각형으로 검사한다(v≈0 회전 샘플의 rotate_in_place_clearance).
   bool evaluateFootprint(
-    const Grid & grid, double x, double y, double yaw, double * max_cell_cost) const;
+    const Grid & grid, double x, double y, double yaw, double * max_cell_cost,
+    double margin = 0.0) const;
 
   // dynamicObstacleCollides의 내부 버전. 충돌 여부와 함께(비충돌 시) 가장 가까운
   // 장애물의 표면까지 거리(음수 없음, 장애물이 없으면 +inf)를 돌려준다.
@@ -275,6 +299,12 @@ private:
   bool evaluateDynamicObstacles(
     const std::vector<DynamicObstacle> & obstacles, double t, double x, double y, double yaw,
     double * min_surface_distance, const std::vector<double> * start_distances = nullptr) const;
+
+  // 이미 안전 여유 안인 장애물(start_distances <= margin)의 거리비용 [0,1]: 궤적 끝(t, point)에서
+  // 표면까지 거리를 닿음(0)부터 margin + influence_radius까지 1 -> 0으로. 멀어지는 궤적일수록 작다.
+  double withinMarginObstacleCost(
+    const std::vector<DynamicObstacle> & obstacles, const std::vector<double> & start_distances,
+    double t, const TrajectoryPoint & point) const;
 
   // 동적 장애물 거리비용 [0,1]. 표면까지 거리가 안전 여유(safety_margin)에 가까울수록
   // 1.0, dynamic_obstacle_influence_radius보다 멀면(장애물이 없을 때 포함) 0.0.
@@ -285,9 +315,10 @@ private:
   // "목표를 바라보며 제자리에 멈추기"가 실제로 전진하는 선택보다 싸 보이는 국소
   // 최소에 빠진다(정지 궤적은 trajectory_end가 시작점과 같아서 heading이 0이 되기
   // 쉽다). dwa.cpp의 evaluateCost 구현 주석 참고.
+  // score_stationary_heading이면(제자리 회전 모드) v≈0도 회전한 뒤 방향으로 heading을 매긴다.
   double evaluateCost(
     const TrajectoryPoint & trajectory_end, const Point2D & goal, double v,
-    double max_cell_cost) const;
+    double max_cell_cost, bool score_stationary_heading = false) const;
 
   double headingCost(const TrajectoryPoint & trajectory_end, const Point2D & goal) const;
 
@@ -299,6 +330,9 @@ private:
     const std::optional<Point2D> & final_goal) const;
 
   DwaConfig config_;
+  // 제자리 회전 모드 히스테리시스 상태 - 주기 사이에 이어진다. computeVelocityCommand가 const라
+  // mutable로 둔다(플러그인은 컨트롤러 하나에 DwaPlanner 하나, 한 스레드에서 부른다).
+  mutable bool rotating_in_place_ = false;
 };
 
 }  // namespace amr_planning_core

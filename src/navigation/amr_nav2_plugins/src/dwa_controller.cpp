@@ -71,6 +71,14 @@ void DwaController::configure(
   declareAndGet(node, prefix + "lookahead_distance", lookahead_distance_);
   config.lookahead_distance = lookahead_distance_;
   declareAndGet(node, prefix + "adaptive_lookahead", config.adaptive_lookahead);
+  declareAndGet(node, prefix + "rotate_in_place_min_angle", config.rotate_in_place_min_angle);
+  declareAndGet(node, prefix + "rotate_in_place_exit_angle", config.rotate_in_place_exit_angle);
+  declareAndGet(node, prefix + "rotate_in_place_clearance", config.rotate_in_place_clearance);
+  if (config.rotate_in_place_exit_angle > config.rotate_in_place_min_angle) {
+    RCLCPP_WARN(
+      logger_, "DWA: rotate_in_place_exit_angle(%.3f) > min_angle(%.3f) - min_angle로 줄인다",
+      config.rotate_in_place_exit_angle, config.rotate_in_place_min_angle);
+  }
   declareAndGet(node, prefix + "xy_goal_tolerance", xy_goal_tolerance_);
   declareAndGet(node, prefix + "yaw_goal_tolerance", yaw_goal_tolerance_);
 
