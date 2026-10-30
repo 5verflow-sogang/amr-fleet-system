@@ -1,0 +1,11 @@
+# 추적 정확도 KPI 장면 D: A–B 통로 I17 출발 위치, 로봇 (0, 1.5) 정지, worker_2가 기둥 사이를 지그재그로 오가며
+# 로봇 0.36 m 옆(표면 사이)을 지난다. 가려졌다 다시 보일 때의 ID 전환·재판정을 본다 (perception.md 1-7)
+#   tools/harness/docker_run.sh tracking_kpi_d -n 10
+name: tracking_kpi_d
+extends: tracking_kpi
+packages: amr_gazebo amr_odometry amr_tracking
+params:
+  robot_x: "0.0"
+  robot_y: "1.5"
+  duration_s: "300.0"
+  wait_s: "315.0"

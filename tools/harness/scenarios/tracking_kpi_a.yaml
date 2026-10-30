@@ -1,0 +1,10 @@
+# 추적 정확도 KPI 장면 A: 메인 통로, 로봇 (0, 10.5) 정지, worker_1(0.3~0.8 m/s)이 2.5 m 옆을 왕복 (perception.md 1-7)
+#   tools/harness/docker_run.sh tracking_kpi_a -n 10
+name: tracking_kpi_a
+extends: tracking_kpi
+packages: amr_gazebo amr_odometry amr_tracking
+params:
+  robot_x: "0.0"
+  robot_y: "10.5"
+  duration_s: "300.0"
+  wait_s: "315.0"

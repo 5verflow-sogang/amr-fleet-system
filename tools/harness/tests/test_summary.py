@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harness.runner import fault_meta, render  # noqa: E402
 from harness.summary import (avoidance_metrics, fleet_metrics, kidnap_metrics, kpi_verdict,  # noqa: E402
-                             nav_kpi_metrics, nav_metrics, summarize, to_markdown)
+                             nav_kpi_metrics, nav_metrics, summarize, to_markdown, tracking_metrics)
 
 
 def make_run(root: Path, name: str, scenario='loc_basic', label='', outcome='completed', rmse=0.02):
@@ -330,3 +330,124 @@ def test_avoidance_metrics(tmp_path):
     m = avoidance_metrics(run)
     assert m['avoid.amr_01.valid'] == 0.0 and 'avoid.amr_01.pass' not in m
     assert m['avoid.amr_01.collisions'] == 1
+
+
+def track_summary(pred=0.2, hold=0.6, vel=0.1, approach=None, false_safety=None):
+    """tracking_eval summary.json에서 tracking_metrics가 읽는 부분만 (amr_perception_core.tracking_eval 형식)."""
+    def st(rmse=None, mean=None, n=100, mx=None):
+        return {'n': n if rmse is not None or mean is not None else 0, 'rmse': rmse, 'mean': mean,
+                'median': mean, 'p95': mx, 'max': mx}
+    overall = {'pos': st(0.15), 'vel': st(vel), 'speed': st(mean=-0.05), 'radial': st(mean=-0.1),
+               'heading': st(mean=8.0), 'nees_pos': dict(st(mean=4.0), within_chi2_95=0.8),
+               'nees_vel': dict(st(mean=3.0), within_chi2_95=0.9),
+               'pred_1': st(pred), 'hold_1': st(hold), 'pred_2': st(0.5), 'hold_2': st(1.2),
+               'match_rate_in_range': 0.95, 'id_switches': 2}
+    by_speed = {b: {'seen': 1, 'classified': 1, 'from_seen': st(mean=1.2)} for b in ('<0.6', '0.6-1.0', '>=1.0')}
+    return {'overall': overall, 'false_dynamic_per_frame': 0.01, 'duplicate_dynamic_per_frame': 0.0,
+            'latency': {'from_seen': st(mean=1.2, mx=2.0), 'not_classified': 0, 'by_speed': by_speed},
+            'approach': approach, 'false_dynamic_safety': false_safety}
+
+
+def make_track_run(root: Path, name: str, scenario: str, outcome='completed', **kw):
+    run = root / name
+    (run / 'tracking').mkdir(parents=True)
+    (run / 'meta.json').write_text(json.dumps({'scenario': scenario, 'label': 'main', 'outcome': outcome}))
+    (run / 'tracking' / 'summary.json').write_text(json.dumps(track_summary(**kw)))
+    return run
+
+
+def approach(ttc, dist=7.0, latency=1.7, late=False):
+    """summary.json approach. ttc 0이면 판정 없음(late면 최근접 뒤 판정), None이면 잴 수 없음 (기록 시작 전부터)."""
+    judged = bool(ttc) or late
+    return {'gt_id': 'worker_approach', 'ttc_s': ttc, 'judged_before_closest': int(bool(ttc)),
+            'dynamic_dist': dist if judged else None, 'latency_from_seen': latency if judged else None,
+            'note': '' if ttc else '최근접 뒤 판정' if late else '판정 없음' if ttc == 0.0 else '첫 구간이 기록 시작 전부터'}
+
+
+def test_tracking_metrics(tmp_path):
+    run = tmp_path / 'r'
+    run.mkdir()
+    assert tracking_metrics(run) == {}
+    run = make_track_run(tmp_path, 'a', 'tracking_kpi_a', pred=0.25, hold=0.65, vel=0.12)
+    m = tracking_metrics(run)
+    assert m['track.pred_gain_1s'] == pytest.approx(0.40) and m['track.pred_1s.n'] == 100
+    assert m['track.vel.rmse'] == 0.12 and m['track.vel.n'] == 100
+    assert m['track.radial.mean'] == -0.1 and m['track.nees_pos.within95'] == 0.8
+    assert m['track.latency.ge1_0.mean'] == 1.2 and m['track.id_switches'] == 2
+    assert not [k for k in m if k.startswith('track.d1_')]          # 물체가 여럿인 기록 (approach 없음)
+    # 로봇 자세·속도가 없던 기록: 가짜 때문에 늘어난 감속·정지는 없다
+    assert m['track.false_dynamic_per_frame'] == 0.01
+    assert not [k for k in m if k.startswith(('track.false_limited', 'track.false_stop', 'track.false_min'))]
+    fs = {'frames': 3000, 'duration_s': 299.9, 'limited_s': 6.0, 'limited_frac': 0.02, 'limited_events': 4,
+          'stop_s': 1.2, 'stop_frac': 0.004, 'stop_events': 2, 'false_min_clearance': 0.35,
+          'false_min_ttc': None}
+    m = tracking_metrics(make_track_run(tmp_path, 'fs', 'tracking_kpi_e', false_safety=fs))
+    assert m['track.false_limited_frac'] == 0.02 and m['track.false_stop_frac'] == 0.004
+    assert m['track.false_stop_events'] == 2 and m['track.false_min_clearance'] == 0.35
+    # 가짜가 없던 기록은 최소 거리가 비어 있어 넣지 않는다 (비율·횟수 0은 넣는다)
+    m = tracking_metrics(make_track_run(tmp_path, 'fs0', 'tracking_kpi_e', false_safety=dict(
+        fs, limited_s=0.0, limited_frac=0.0, limited_events=0, stop_s=0.0, stop_frac=0.0, stop_events=0,
+        false_min_clearance=None)))
+    assert m['track.false_stop_events'] == 0.0 and 'track.false_min_clearance' not in m
+    # 움직이는 GT와 짝이 없으면 P1 값은 없고 표본 수 0이 남는다
+    run = make_track_run(tmp_path, 'b', 'tracking_kpi_a', pred=None, hold=None)
+    m = tracking_metrics(run)
+    assert 'track.pred_gain_1s' not in m and m['track.pred_1s.n'] == 0
+    # 장면 C: 판정 없이 최근접까지 오면 0, 잴 수 없으면 넣지 않는다
+    m = tracking_metrics(make_track_run(tmp_path, 'c', 'tracking_kpi_c10', approach=approach(4.3)))
+    assert m['track.d1_ttc_s'] == 4.3 and m['track.d1_dist_m'] == 7.0 and m['track.d1_latency_s'] == 1.7
+    m = tracking_metrics(make_track_run(tmp_path, 'd', 'tracking_kpi_c10', approach=approach(0.0)))
+    assert m['track.d1_ttc_s'] == 0.0 and 'track.d1_dist_m' not in m
+    # 최근접 뒤 판정: 거리·지연은 있지만 인정된 판정이 아니라 참고 분포에 넣지 않는다
+    m = tracking_metrics(make_track_run(tmp_path, 'late', 'tracking_kpi_c10',
+                                        approach=approach(0.0, dist=6.1, latency=8.2, late=True)))
+    assert m['track.d1_ttc_s'] == 0.0 and 'track.d1_dist_m' not in m and 'track.d1_latency_s' not in m
+    m = tracking_metrics(make_track_run(tmp_path, 'e', 'tracking_kpi_c10',
+                                        approach=dict(approach(None), dynamic_dist=3.9, latency_from_seen=1.7)))
+    assert not [k for k in m if k.startswith('track.d1_')]
+
+
+def test_tracking_p1_p2_verdict_only_in_scenes_abde(tmp_path):
+    a = [make_track_run(tmp_path, f'a{i}', 'tracking_kpi_a', pred=0.2, hold=0.6 + 0.01 * i, vel=0.1 + 0.01 * i)
+         for i in range(10)]
+    c = [make_track_run(tmp_path, f'c{i}', 'tracking_kpi_c10', approach=approach(4.0)) for i in range(10)]
+    s = summarize(a + c)
+    ma, mc = s['tracking_kpi_a/main']['metrics'], s['tracking_kpi_c10/main']['metrics']
+    assert ma['track.pred_gain_1s']['kpi'] == 'PASS' and ma['track.vel.rmse']['kpi'] == 'PASS'
+    assert 'kpi' not in ma['track.pos.rmse']                         # 참고 지표
+    assert 'kpi' not in mc['track.pred_gain_1s'] and 'kpi' not in mc['track.vel.rmse']
+    # P1은 CI 하한이 0보다 커야 한다. 추정 속도가 0이면 예측 = 정지 가정이라 차가 정확히 0이다
+    assert kpi_verdict('track.pred_gain_1s', 0.0, 0.0, 0.0, 'tracking_kpi_b') == 'FAIL'
+    assert kpi_verdict('track.pred_gain_1s', 0.05, 0.1, -0.01, 'tracking_kpi_d') == 'MARGINAL'
+    assert kpi_verdict('track.pred_gain_1s', -0.1, 0.0, -0.2, 'tracking_kpi_e') == 'FAIL'
+    assert kpi_verdict('track.vel.rmse', 0.18, 0.22, 0.15, 'tracking_kpi_e') == 'MARGINAL'
+    assert kpi_verdict('track.vel.rmse', 0.25, 0.3, 0.21, 'tracking_kpi_a') == 'FAIL'
+    assert kpi_verdict('track.vel.rmse', 0.1, 0.12, 0.08, 'tracking_kpi') is None   # 공통 틀
+
+
+def test_tracking_d1_worst_case_verdict(tmp_path):
+    def d1(name, ttcs, scenario='tracking_kpi_c10', failed=0):
+        root = tmp_path / name
+        runs = [make_track_run(root, f'r{i}', scenario, approach=approach(t)) for i, t in enumerate(ttcs)]
+        runs += [make_track_run(root, f'f{i}', scenario, outcome='timeout') for i in range(failed)]
+        g = summarize(runs)[f'{scenario}/main']
+        return g['metrics'].get('track.d1_ttc_s', {}), to_markdown({'g': g})
+
+    ok = [3.0 + 0.1 * i for i in range(10)]
+    m, md = d1('pass', ok)
+    assert m['kpi'] == 'PASS' and m['min'] == 3.0 and '최악값으로 판정' in md
+    assert d1('pass15', ok, 'tracking_kpi_c15')[0]['kpi'] == 'PASS'
+    # 한 번이라도 3 s 밑이면 평균이 높아도 FAIL. 판정 없이 최근접까지 온 실행(0)도 FAIL
+    assert d1('one_low', ok[:9] + [2.9])[0]['kpi'] == 'FAIL'
+    assert d1('unjudged', ok[:9] + [0.0])[0]['kpi'] == 'FAIL'
+    # 재지 못한 실행이 있으면 보류 (빼고 PASS를 주지 않는다)
+    m = d1('short', ok[:9])[0]
+    assert 'kpi' not in m and m['kpi_note'] == '보류 (n=9<10)'
+    m = d1('harness_fail', ok, failed=1)[0]
+    assert 'kpi' not in m and m['kpi_note'] == '보류 (하네스 실패 1회)'
+    m = d1('missing', ok + [None])[0]
+    assert 'kpi' not in m and m['kpi_note'] == '보류 (값 없는 실행 1회)'
+    assert d1('fail_first', ok[:9] + [2.0], failed=1)[0]['kpi'] == 'FAIL'   # 실패 실행이 있어도 FAIL은 FAIL
+    # 0.5 m/s(c05)는 참고 속력이라 판정하지 않는다
+    m = d1('c05', ok, 'tracking_kpi_c05')[0]
+    assert 'kpi' not in m and 'kpi_note' not in m
