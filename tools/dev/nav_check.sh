@@ -36,12 +36,19 @@ for a in "$@"; do
   esac
 done
 
-CID="$(docker ps -qf name=dev-run | head -1)"
+# 이 체크아웃의 compose 프로젝트 dev 컨테이너만 쓴다. 이름(dev-run)으로 찾으면 다른 워크트리 것을 잡는다 (#243)
+PROJECT="$(cd "$REPO" && docker compose config 2>/dev/null | sed -n 's/^name: //p' | head -1)" || true
+[ -n "$PROJECT" ] || { echo "docker compose 프로젝트 이름을 못 읽었다 ($REPO)"; exit 1; }
+find_dev() {
+  docker ps -q --filter "label=com.docker.compose.project=$PROJECT" \
+    --filter label=com.docker.compose.service=dev | head -1
+}
+CID="$(find_dev)"
 if [ -z "$CID" ]; then
   if [ "$STOP" = 1 ] || [ -n "$OBSTACLES" ]; then echo "dev 컨테이너가 없다"; exit 0; fi
   echo "dev 컨테이너가 없어 새로 띄운다 (빌드가 처음부터라 몇 분 걸린다)"
   (cd "$REPO" && docker compose --profile dev run -d --rm dev sleep infinity >/dev/null)
-  CID="$(docker ps -qf name=dev-run | head -1)"
+  CID="$(find_dev)"
   BUILD=1
 fi
 # shellcheck disable=SC2016  # 컨테이너 안에서 펼친다
@@ -79,6 +86,10 @@ on_int() {
   docker exec "$CID" bash -c "kill -INT \$(cat $OUT/pid 2>/dev/null) 2>/dev/null" || true
 }
 trap on_int INT
+
+# ipc: host라 /dev/shm을 모든 컨테이너가 같이 쓴다. 죽은 프로세스의 Fast DDS 파일이 쌓이면 /scan이 Nav2에 안 들어온다 (#243).
+# 쓰는 중인 파일은 남기므로 --attach에서도 안전하다 (하네스 runner.py와 같다)
+docker exec "$CID" bash -c "$SETUP; fastdds shm clean >/dev/null 2>&1" || true
 
 set +e
 docker exec -i "$CID" bash -c "$SETUP; python3 - \"\$@\"" _ --out "$OUT" ${COLOR_ARG[@]+"${COLOR_ARG[@]}"} ${ARGS[@]+"${ARGS[@]}"} \
