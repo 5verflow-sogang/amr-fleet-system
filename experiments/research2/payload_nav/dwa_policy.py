@@ -15,6 +15,9 @@
 - xy_goal_tolerance만 Gazebo(0.25 m)와 다르게 환경 도착 기준(0.2 m)으로 둔다. 플러그인 주석대로 goal_checker와
   같아야 하고, 0.25 m면 도착 반경 밖에서 서 버린다
 
+최고 속도 max_v는 nav2_params(창고 스택 순항 0.5 m/s)가 아니라 빈 차 안전 순항 속도(규칙 정책과 같은 값, 약 1.25 m/s)다.
+B1·B2와 규칙 정책이 같은 순항 속도에서 출발해야 속도 상한 차이가 아니라 정책 차이를 비교한다 (10/18 결정).
+
 질량은 가감속 한계 acc_v로 들어간다 (나머지 파라미터는 nav2_params.yaml DWA 블록 그대로):
 - B1 ('b1'): 빈 차 기준 a_max(0 kg) 고정
 - B2 ('b2'): 관측 질량 기준 a_max(m_obs). 질량을 모르면 B1과 같다 (실험 설계 3절)
@@ -32,6 +35,7 @@ from typing import Optional
 import numpy as np
 
 from .dynamics import max_linear_accel
+from .rule_policy import safe_cruise_speed
 
 DWA_VARIANTS = ('b1', 'b2')
 
@@ -45,7 +49,9 @@ _LIB = _RESEARCH2 / 'dwa_cpp' / 'build' / 'libamr_dwa.so'
 @dataclass(frozen=True)
 class DwaParams:
     """nav2_params.yaml controller_server.DWA (DwaConfig 필드 이름 그대로, acc_v 제외) + 플러그인 + local costmap."""
-    max_v: float = 2.0
+    # 빈 차 안전 순항 속도 (rule_policy.safe_cruise_speed(0 kg), 최소 출현 간격 0.5 m·반응 0.1 s, 약 1.248 m/s).
+    # 로봇 스펙 2.0이면 DWA가 거의 최고 속도로 달려 돌발 장애물 충돌이 속도 상한 탓이 된다 (10/18, README)
+    max_v: float = safe_cruise_speed(0.0)
     min_v: float = 0.0
     max_w: float = 1.5
     acc_w: float = 3.2
