@@ -43,7 +43,7 @@ ros2 launch amr_localization localization.launch.py odom_topic:=wheel/odom   # D
 | `start_map_server` | `true` | 로봇 여러 대면 한 번만 `true` |
 | `odom_topic` | `odom` | 휠 오도메트리 토픽 |
 | `use_imu` | `true` | IMU가 없는 환경에서는 `false` |
-| `initial_x`·`initial_y`·`initial_yaw` | `0.0439`·`0.0288`·`0.0` | AMCL 초기 위치 (map 기준). 기본 스폰 world (0, 1.5, 0)을 아래 정렬 원점으로 바꾼 값. 다른 지도·스폰이면 같이 바꾼다 |
+| `initial_x`·`initial_y`·`initial_yaw` | `0.0439`·`0.0288`·`0.00088` | AMCL 초기 위치 (map 기준). 기본 스폰 world (0, 1.5, 0)을 아래 정렬 원점으로 바꾼 값. 다른 지도·스폰이면 같이 바꾼다 |
 
 - 함께 띄워야 하는 것: 시뮬레이터와 로봇(`amr_gazebo`), 휠 오도메트리·센서 필터(`amr_odometry`). D4에 따라 `amr_odometry`는 `publish_tf:=false`(기본), DiffDrive는 `publish_odom_tf:=false`로 띄운다.
 - 위치 오차는 `eval_node`(아래)로 잰다: 추정 `odometry/filtered`, `map_origin_in_world: [-0.0439, 1.4712, -0.00088]`.

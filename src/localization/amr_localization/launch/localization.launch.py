@@ -176,6 +176,6 @@ def generate_launch_description():
         DeclareLaunchArgument('recovery_events_file', default_value='', description='복구 이벤트 CSV (비우면 안 씀)'),
         DeclareLaunchArgument('initial_x', default_value='0.0439', description='AMCL 초기 위치 x (map 기준) [m]'),
         DeclareLaunchArgument('initial_y', default_value='0.0288', description='AMCL 초기 위치 y (map 기준) [m]'),
-        DeclareLaunchArgument('initial_yaw', default_value='0.0', description='AMCL 초기 방향 (map 기준) [rad]'),
+        DeclareLaunchArgument('initial_yaw', default_value='0.00088', description='AMCL 초기 방향 (map 기준) [rad]'),
         OpaqueFunction(function=_localization),
     ])
