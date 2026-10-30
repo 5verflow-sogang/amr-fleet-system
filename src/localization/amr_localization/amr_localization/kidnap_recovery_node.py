@@ -64,7 +64,8 @@ class KidnapRecoveryNode(Node):
             rotate_s=d('rotate_s', 15.0).value, max_attempts=d('max_attempts', 3).value,
             local_first=d('local_first', True).value, nomotion_max=d('nomotion_max', 4).value,
             confirm_s=d('confirm_s', 3.0).value, marker_settle_s=d('marker_settle_s', 10.0).value,
-            marker_max=d('marker_max', 3).value, marker_nomotion_max=d('marker_nomotion_max', 12).value)
+            marker_max=d('marker_max', 3).value, marker_nomotion_max=d('marker_nomotion_max', 12).value,
+            max_recovery_s=d('max_recovery_s', 100.0).value)
         # 재초기화 때만 파티클을 늘린다. AMCL은 재초기화 순간 max_particles개를 뿌리고 KLD로 곧 줄이므로 평소 정확도에는
         # 영향이 없다. 설정 전체를 10,000으로 두면 직진 RMSE가 2.02 → 2.38 cm로 나빠졌다 (localization.md 4-5절).
         # 0이면 끈다. 되돌린 뒤에는 필터가 다시 초기화될 수 있어 복구된 자세를 작은 공분산으로 다시 넣는다
@@ -72,6 +73,10 @@ class KidnapRecoveryNode(Node):
         self.normal_particles = d('normal_particles', 2000).value
         self.restore_std_m = d('restore_std_m', 0.1).value
         self.restore_std_yaw = d('restore_std_yaw', 0.05).value
+        # 복구 뒤 다시 넣은 자세에서 제자리 갱신을 이만큼 더 부른다 (check_hz마다 1번). 멈춰 있으면 AMCL이 갱신하지 않아
+        # 수렴 판정 때의 어긋남(seed 14·20: 옆 10~14 cm, 일치율은 끝점 10 cm 안이면 맞음으로 세어 0.98)이 그대로 남았다
+        self.refine_nomotion = d('refine_nomotion', 4).value
+        self._refine_left = 0
         # 국소 재초기화 때 뿌리는 파티클 범위 (1σ). 바퀴 미끄러짐·충돌로 몇 m 어긋난 경우를 덮는다.
         # 1.0 m에서는 1.9 m 이동을 못 찾았고(통로 방향 1.5 m 오차 남음) 2.5 m에서 9.5초에 복구했다 (10/6)
         self.local_std_m = d('local_std_m', 2.5).value
@@ -79,7 +84,9 @@ class KidnapRecoveryNode(Node):
         # 마커 자세: 이보다 오래된 영상(AMCL이 odom으로 더할 수 있는 범위)이나 σ가 큰 자세는 버린다.
         # σ가 너무 작으면 파티클이 한 점에 몰려 판 하나의 방향 오차(비스듬히 보면 수 °)를 스캔으로 못 고친다 → 하한
         self.marker_max_age_s = d('marker_max_age_s', 1.0).value
-        self.marker_max_std_m = d('marker_max_std_m', 2.0).value
+        self.marker_max_future_s = d('marker_max_future_s', 0.1).value
+        # σ 1.5 m는 판까지 약 6 m (amr_docking SigmaModel). 6 m 넘는 판은 40회 27번 읽기가 모두 6.5 m 틀렸다 (seed 15)
+        self.marker_max_std_m = d('marker_max_std_m', 1.5).value
         self.marker_min_std_m = d('marker_min_std_m', 0.1).value
         self.marker_min_std_yaw = d('marker_min_std_yaw', 0.05).value
         # 마지막으로 받은 마커: (map 자세, 그때 odom 자세, σ m, σ rad). 다음 시도는 지금 odom으로 옮겨 다시 뿌린다
@@ -160,6 +167,11 @@ class KidnapRecoveryNode(Node):
         n_events = len(self.machine.events)
         self._apply(self.machine.step(self._now(), self.ratio, self.amcl_std))
         self._log_new_events(n_events)
+        if self.machine.state != TRACKING:
+            self._refine_left = 0
+        elif self._refine_left > 0 and self.nomotion.service_is_ready():
+            self._refine_left -= 1
+            self.nomotion.call_async(Empty.Request())
         self.state_pub.publish(String(data=self.machine.state))
         self.ratio_pub.publish(Float32(data=float(self.ratio)))
 
@@ -169,7 +181,8 @@ class KidnapRecoveryNode(Node):
         age = self._now() - rclpy.time.Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
         c = msg.pose.covariance
         std_m = math.sqrt(max(c[0], c[7], 0.0))
-        if age > self.marker_max_age_s or std_m > self.marker_max_std_m:
+        # 미래 시각(음수 age)도 버린다: 시계가 다른 노드의 stamp면 carry_forward가 엉뚱한 구간을 더한다
+        if not -self.marker_max_future_s <= age <= self.marker_max_age_s or std_m > self.marker_max_std_m:
             return
         p = msg.pose.pose
         pose = (p.position.x, p.position.y,
@@ -221,6 +234,7 @@ class KidnapRecoveryNode(Node):
             self._log_event(e)
             if e.kind in ('recovered', 'restored'):
                 pose = self.pose
+                self._refine_left = self.refine_nomotion
                 self._with_particles(self.normal_particles, lambda p=pose: self._set_pose(p, self.restore_std_m,
                                                                                          self.restore_std_yaw))
 

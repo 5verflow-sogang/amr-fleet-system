@@ -196,6 +196,68 @@ def test_marker_reinit_limited_per_loss():
     assert used == 2
 
 
+def test_last_attempt_after_marker_is_global_and_ignores_markers():
+    # 마커가 틀렸으면(뒤집힌 해·다른 판) 마커 주변만 돌다 끝나지 않게: 마지막 시도는 전역이고 마커가 끊지 않는다 (#240)
+    cfg = RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, confirm_s=1.0, marker_settle_s=1.0,
+                         max_attempts=3, max_recovery_s=0.0)
+    m = KidnapRecovery(cfg)
+    run(m, [(0.1, 1.0)])                            # 감지 → 1차 국소
+    assert m.marker_hint(0.2) == [STOP, MARKER_REINIT, NOMOTION]
+    acts = run(m, [(0.4, 1.0)] * 9, t0=0.5)         # 마커 판정 실패 → 2차 마커 주변 → 정지·회전·확인 실패 → 3차 (t 4.5)
+    kinds = [e.kind for e in m.events]
+    assert kinds == ['lost', 'local_reinit', 'marker_reinit', 'marker_retry', 'rotate', 'confirm', 'reinit']
+    assert [STOP, REINIT, NOMOTION] in acts and m.attempts == 3
+    assert m.marker_hint(4.7) == []                 # 3차(전역) 중에는 마커를 받지 않는다
+    run(m, [(0.4, 1.0)] * 8, t0=5.0)
+    assert m.state == 'failed'
+
+
+def test_last_attempt_stays_on_marker_when_scan_fits():
+    # 일치율은 높은데 σ만 기준을 조금 넘어 판정을 못 받은 경우(seed 19: 1.00, σ 0.33 m) 맞는 자세를 전역이 지우지 않는다
+    cfg = RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, confirm_s=1.0, marker_settle_s=1.0,
+                         max_attempts=3, max_recovery_s=0.0)
+    m = KidnapRecovery(cfg)
+    run(m, [(0.1, 1.0)])
+    m.marker_hint(0.2)
+    acts = run(m, [(0.99, 0.35)] * 9, t0=0.5)       # 마커 → 2차 마커 주변 → 정지·회전·확인 → 3차
+    kinds = [e.kind for e in m.events]
+    assert kinds[-1] == 'marker_retry' and 'reinit' not in kinds and m.attempts == 3
+    assert REINIT not in [a for step in acts for a in step]
+
+
+def test_marker_accepted_in_last_attempt_if_none_before():
+    # 마커를 처음 본 게 마지막 시도면 받는다 (아직 틀린 마커로 시도를 쓴 적이 없다)
+    cfg = RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, confirm_s=1.0, max_attempts=2, max_recovery_s=0.0)
+    m = KidnapRecovery(cfg)
+    run(m, [(0.1, 1.0)] * 8)                        # 1차 국소 실패 → 2차 전역
+    assert m.attempts == 2 and m.events[-1].kind == 'reinit'
+    assert m.marker_hint(4.1) == [STOP, MARKER_REINIT, NOMOTION]
+
+
+def test_marker_does_not_cut_converging_attempt():
+    # 같은 통로: 국소 재초기화로 수렴 조건을 통과하는 중에 온 마커는 무시한다 (틀린 마커가 맞던 시도를 버리지 않게)
+    m = KidnapRecovery(RecoveryConfig(lost_checks=1, ok_checks=3))
+    run(m, [(0.1, 1.0)])
+    run(m, [(0.95, 0.2)], t0=0.5)                   # 1번 통과
+    assert m.marker_hint(0.7) == []
+    run(m, [(0.95, 0.2)] * 2, t0=1.0)
+    assert m.state == 'tracking' and 'marker_reinit' not in [e.kind for e in m.events]
+    m2 = KidnapRecovery(RecoveryConfig(lost_checks=1, ok_checks=3))
+    run(m2, [(0.1, 1.0), (0.4, 1.0)])               # 통과 중이 아니면 받는다
+    assert m2.marker_hint(0.7) == [STOP, MARKER_REINIT, NOMOTION]
+
+
+def test_recovery_time_limit_fails_even_mid_attempt():
+    # 마커가 시도 끝 무렵에 오면 시도가 marker_settle_s만큼 늘어난다 → 잃은 뒤 max_recovery_s에서 끊는다
+    cfg = RecoveryConfig(lost_checks=1, settle_s=10.0, rotate_s=15.0, max_recovery_s=5.0)
+    m = KidnapRecovery(cfg)
+    run(m, [(0.1, 1.0)])
+    run(m, [(0.4, 1.0)] * 9, t0=0.5)                # t 4.5까지는 시도 중
+    assert m.state == 'settling'
+    assert m.step(5.0, 0.4, 1.0) == [STOP] and m.state == 'failed'
+    assert m.events[-1].kind == 'failed' and '복구 시간' in m.events[-1].detail
+
+
 def test_carry_forward_adds_odom_motion_in_robot_frame():
     # 영상 뒤 odom에서 로봇 기준 앞으로 1 m 가고 90° 돌았다 → map에서도 로봇 기준 앞으로 1 m, 90°
     then = (5.0, -2.0, math.pi / 2)                # odom 기준 그때 (북쪽을 봄)

@@ -13,10 +13,17 @@
     수렴 조건을 다시 만족하면(사람이 위치를 다시 잡아 준 경우 등) TRACKING으로 돌아온다
     마커판 자세(aruco_pose)가 들어오면 SETTLING·ROTATING 중 어디서든 그 자세로 다시 뿌리고(MARKER_REINIT)
       멈춰서 marker_settle_s 동안 판정한다 → 미수렴이면 다음 시도. 판 ID가 다 달라 통로·앞뒤를 헷갈리지 않아
-      스캔만으로 못 찾는 다른 통로 이동을 푼다 (4-7절). 시도를 일찍 끝낼 뿐 늘리지 않아 복구 시간 상한은 그대로다.
+      스캔만으로 못 찾는 다른 통로 이동을 푼다 (4-7절).
       마커를 한 번이라도 받았으면 다음 시도도 전역 대신 마지막 마커 자세 주변으로 뿌리고(전역은 맞는 통로 후보를
       지운다), 제자리 갱신을 marker_nomotion_max번까지 부른다 (좁게 뿌려 한 점에 몰려도 맞는 곳이다.
-      far 10회(10/25) seed 10: 4번 갱신에 3.8 → 1.1 m로 줄다가 갱신이 끊겨 멈췄다)
+      far 10회(10/25) seed 10: 4번 갱신에 3.8 → 1.1 m로 줄다가 갱신이 끊겨 멈췄다).
+      마커가 틀려도(뒤집힌 PnP 해, 다른 판) 빠져나오게, 마커로 뿌린 뒤의 마지막 시도는 직전 일치율이 ok_ratio 아래면
+      전역이고 그 시도에서는 마커를 받지 않는다 (#240 민지 리뷰). 일치율이 ok_ratio 이상이면 자세는 맞고 σ만 덜 줄어든
+      것이라 마커 주변으로 한 번 더 한다 (seed 19: 일치율 1.00·σ 0.33 m인 맞는 자세를 전역이 지웠다).
+      멈춰서 수렴 조건을 통과하는 중(_ok > 0)에도 마커가 끊지 않는다 (같은 통로에서 국소로 맞춰 가던 시도를 틀린
+      마커가 버리지 않게)
+    잃은 뒤 max_recovery_s가 지나면 시도 중이어도 FAILED. 마커가 시도 끝 무렵에 오면 그 시도가 marker_settle_s만큼
+      늘어 상한이 약 84초(3 × 28초)에서 113.5초까지 늘어나서다. BT 복구 대기 상한 120초(#166) 안에 끝나게 둔다
 
 수렴: 멈춘 상태(SETTLING)에서 일치율 ≥ ok_ratio이고 AMCL 위치 표준편차 ≤ ok_std_m가 ok_checks번 연속.
 회전 중에는 판정하지 않는다 (스캔·자세 시각 차이로 일치율이 흔들린다).
@@ -61,6 +68,8 @@ class RecoveryConfig:
     marker_settle_s: float = 10.0
     marker_max: int = 3
     marker_nomotion_max: int = 12
+    # 잃은 뒤 이 시간이 지나면 FAILED (0이면 끔). 감지 1.5초를 더해도 BT 대기 상한 120초(#166)에 18초 여유
+    max_recovery_s: float = 100.0
 
 
 @dataclass
@@ -83,6 +92,8 @@ class KidnapRecovery:
     _confirming: bool = False
     _marker: bool = False
     _markers: int = 0
+    _ratio: float = math.nan       # 마지막 일치율 (마지막 시도를 전역으로 할지 고를 때)
+    _global_last: bool = False     # 마커 뒤 마지막 시도를 전역으로 했다 (마커를 받지 않는다)
     lost_at: Optional[float] = None
 
     def _converged(self, ratio: float, std_m: float) -> bool:
@@ -98,9 +109,13 @@ class KidnapRecovery:
             return [STOP]
         self.state, self._since, self._ok = SETTLING, now, 0
         self._nomotion, self._confirming, self._marker = 1, False, False
-        if self._markers:
+        last = self.attempts >= self.config.max_attempts
+        fits = not math.isnan(self._ratio) and self._ratio >= self.config.ok_ratio
+        if self._markers and (not last or fits):
             self.events.append(Event(now, 'marker_retry', f'{self.attempts}번째'))
             return [STOP, MARKER_REINIT, NOMOTION]
+        # 마커로 뿌렸는데 스캔이 지도와 안 맞으면 마지막 시도는 전역 (마커가 틀렸으면 마커 주변만 돌다 끝나지 않게)
+        self._global_last = bool(self._markers)
         local = self.config.local_first and self.attempts == 1
         self.events.append(Event(now, 'local_reinit' if local else 'reinit', f'{self.attempts}번째'))
         return [STOP, LOCAL_REINIT if local else REINIT, NOMOTION]
@@ -108,10 +123,12 @@ class KidnapRecovery:
     def step(self, now: float, ratio: float, std_m: float) -> list[str]:
         """일치율(ratio)과 AMCL 위치 표준편차(std_m, x·y 중 큰 값)로 한 번 판단하고 동작 목록을 돌려준다."""
         c = self.config
+        self._ratio = ratio
         if self.state == TRACKING:
             self._low = self._low + 1 if (not math.isnan(ratio) and ratio < c.lost_ratio) else 0
             if self._low >= c.lost_checks:
                 self._low, self.attempts, self._markers, self.lost_at = 0, 0, 0, now
+                self._global_last = False
                 self.events.append(Event(now, 'lost', f'일치율 {ratio:.2f}'))
                 return self._start_attempt(now)
             return []
@@ -119,6 +136,10 @@ class KidnapRecovery:
             if self.state == SETTLING and self._converged(ratio, std_m):
                 self.state = TRACKING
                 self.events.append(Event(now, 'recovered', f'{now - self.lost_at:.1f}s, 일치율 {ratio:.2f}'))
+                return [STOP]
+            if c.max_recovery_s > 0 and now - self.lost_at >= c.max_recovery_s:
+                self.state = FAILED
+                self.events.append(Event(now, 'failed', f'복구 시간 {c.max_recovery_s:.0f}s'))
                 return [STOP]
             elapsed = now - self._since
             if self.state == SETTLING:
@@ -153,10 +174,15 @@ class KidnapRecovery:
         """마커판으로 잰 로봇 자세가 들어왔다. 복구 중이면 그 자세로 다시 뿌리고 멈춰서 판정한다.
 
         지금 시도의 남은 단계를 마커 판정(marker_settle_s, 정지 확인과 같이 미수렴이면 다음 시도)으로 바꾼다.
-        tracking이면 필요 없고, failed는 포기한 상태라 사람·BT에 맡긴다 (그래도 수렴하면 restored로 돌아온다)
+        tracking이면 필요 없고, failed는 포기한 상태라 사람·BT에 맡긴다 (그래도 수렴하면 restored로 돌아온다).
+        받지 않는 경우: 수렴 조건을 통과하는 중(멈춰서 _ok > 0), 마커로 뿌린 뒤 일치율이 낮아 전역으로 간 마지막 시도
         """
         c = self.config
         if self.state not in (SETTLING, ROTATING) or self._markers >= c.marker_max:
+            return []
+        if self.state == SETTLING and self._ok > 0:
+            return []
+        if self._global_last:
             return []
         if self._marker and now - self._since < c.marker_settle_s:
             return []
