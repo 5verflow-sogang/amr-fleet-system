@@ -109,8 +109,9 @@ TEST_F(CheckBatteryTest, LowBatteryFailsBeforeMoving)
   EXPECT_FALSE(ctx->busy());
 }
 
-// 픽업까지는 충분했는데 싣는 사이 떨어지면 하역 이동 전에 끝낸다 (작업을 받을 때의 거부로는 못 잡는 경우)
-TEST_F(CheckBatteryTest, BatteryDropDuringTaskFailsBeforeDropoff)
+// 싣는 사이 떨어져도 하역 쪽(on_low=warn)은 실패하지 않고 끝까지 배송한다. 실패하면 서버가 픽업부터 다른 로봇에
+// 다시 줘서 같은 물건을 두 번 싣게 된다 (#253 하연 리뷰)
+TEST_F(CheckBatteryTest, BatteryDropAfterLoadingStillDelivers)
 {
   ctx->battery_percent = 50.0;
   assign_delivery();
@@ -120,10 +121,10 @@ TEST_F(CheckBatteryTest, BatteryDropDuringTaskFailsBeforeDropoff)
       }
     });
   const std::vector<std::string> expected = {
-    P + "move_to_pickup", P + "docking", P + "loading", P + "move_to_dropoff", FAILED + "move_to_dropoff"};
+    P + "move_to_pickup", P + "docking", P + "loading",
+    P + "move_to_dropoff", P + "docking", P + "unloading", DONE};
   EXPECT_EQ(events, expected);
-  EXPECT_EQ(last_code, ErrorInfo::ASSIGN_BATTERY_LOW);
-  EXPECT_EQ(nav_starts, 1);
+  EXPECT_EQ(nav_starts, 2);
 }
 
 // 충전 작업은 VisitStation을 지나지 않아 배터리가 낮아도 충전소로 간다

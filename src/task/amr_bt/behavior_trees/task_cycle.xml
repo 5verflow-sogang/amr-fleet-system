@@ -20,12 +20,12 @@
         <Sequence name="run_task">
           <IfThenElse name="pickup_if_delivery">
             <IsDelivery/>
-            <SubTreePlus ID="VisitStation" station="pickup" move_phase="move_to_pickup" work_phase="loading"/>
+            <SubTreePlus ID="VisitStation" station="pickup" move_phase="move_to_pickup" work_phase="loading" low_battery="fail"/>
             <AlwaysSuccess/>
           </IfThenElse>
           <IfThenElse name="dropoff">
             <IsDelivery/>
-            <SubTreePlus ID="VisitStation" station="dropoff" move_phase="move_to_dropoff" work_phase="unloading"/>
+            <SubTreePlus ID="VisitStation" station="dropoff" move_phase="move_to_dropoff" work_phase="unloading" low_battery="warn"/>
             <Sequence name="charge_or_return">
               <ReportPhase phase="move_to_dropoff"/>
               <MoveTo goal="dropoff"/>
@@ -51,7 +51,7 @@
   <BehaviorTree ID="VisitStation">
     <Sequence name="visit">
       <ReportPhase phase="{move_phase}"/>
-      <CheckBattery min_percent="5"/>
+      <CheckBattery min_percent="5" on_low="{low_battery}"/>
       <MoveTo goal="{station}"/>
       <SubTreePlus ID="DockWithRetry" station="{station}"/>
       <ReportPhase phase="{work_phase}"/>

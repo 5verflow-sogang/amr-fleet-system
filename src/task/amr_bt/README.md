@@ -107,7 +107,11 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 - `RobotState.battery_percent`로 낸다. 이동 거리는 `odom` 기준 TF 위치 변화(2 Hz)
 - 충전 작업은 충전소 도킹 뒤 `Charge` 노드가 `charge_target_percent`(100)까지 기다린다. 그동안 `RobotState.mode` = `MODE_CHARGING`. `charge_timeout_s`(600 s) 안에 안 차면 FAILED(`CHARGE_TIMEOUT` 502)
 - `reject_below_percent`(10 %)보다 낮으면 충전이 아닌 할당을 `ASSIGN_BATTERY_LOW`로 거부한다. 서버는 20 % 미만 로봇을 후보에서 빼므로(`min_battery_percent`) 보통은 그 전에 걸러진다
-- 받는 순간만 보는 위 거부와 달리, 배송 도중에는 `CheckBattery`가 스테이션으로 출발하기 전마다 본다. 5 %(`min_percent`, 트리 속성) 아래면 출발하지 않고 FAILED(`ASSIGN_BATTERY_LOW` 101, `"battery 4.0% below 5.0% before move_to_dropoff"`)를 보내 서버가 다시 할당하게 한다. 충전 작업은 `VisitStation`을 지나지 않아 배터리가 낮아도 충전소로 간다
+- 받는 순간만 보는 위 거부와 달리, 배송 도중에는 `CheckBattery`가 스테이션으로 출발하기 전마다 본다 (5 %, `min_percent` 트리 속성)
+  - 픽업 쪽(`on_low=fail`): 아래면 출발하지 않고 FAILED(`ASSIGN_BATTERY_LOW` 101, `"battery 4.0% below 5.0% before move_to_pickup"`)를 보내 서버가 다시 할당하게 한다
+  - 하역 쪽(`on_low=warn`): 이미 실었으므로 경고만 남기고 끝까지 배송한다. 여기서 실패하면 서버가 작업을 픽업부터 다른 로봇에 다시 줘서 같은 물건을 두 번 싣게 된다 (#253 하연 리뷰). 하역 한 구간은 배터리 1–3 %다
+  - 작업을 받을 때의 거부(10 %)가 먼저 걸러서 실제로 걸리는 경우는 드물다. 거부 기준을 낮추거나 받은 뒤 오래 기다린 작업에서 막는 안전장치다
+  - 충전 작업은 `VisitStation`을 지나지 않아 배터리가 낮아도 충전소로 간다
 - 아직 없는 것: 0 %에서 멈추기, 적재 질량에 따른 소모 차이
 
 ### Groot·작업 로그
@@ -129,9 +133,9 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 | --- | --- | --- |
 | `CMakeLists.txt` | `amr_bt_nodes` 라이브러리에 새 소스 (테스트를 붙이면 `ament_add_gtest`도) | 6줄 (+5 −1, 노드만이면 1줄) |
 | `src/bt_nodes.cpp` | 새 헤더 include와 `register_nodes()`에 등록 한 줄 | 2줄 (+2) |
-| `behavior_trees/task_cycle.xml` | 트리에 노드 끼워 넣기 | 3줄 (+2 −1, 그중 1줄은 주석) |
+| `behavior_trees/task_cycle.xml` | 트리에 노드 끼워 넣기, 서브트리 인자(`low_battery`) | 7줄 (+4 −3, 그중 1줄은 주석) |
 
-- 결과: **기존 코드 3개 파일**(9줄 추가·2줄 삭제), 새 파일 3개(`include/amr_bt/check_battery.hpp`·`src/check_battery.cpp`·`test/test_check_battery.cpp`). 기준(3개 이내) 충족
+- 결과: **기존 코드 3개 파일**(11줄 추가·4줄 삭제), 새 파일 3개(`include/amr_bt/check_battery.hpp`·`src/check_battery.cpp`·`test/test_check_battery.cpp`). 기준(3개 이내) 충족
 - 노드는 `TaskContext`(작업·배터리·구역·위치 상태, 이동·도킹 포트)와 트리 속성(입력 포트)만으로 동작해야 이 범위에 든다
 - 한계
   - 새 ROS 토픽을 읽는 노드(예: 인지 결과로 물품을 확인하는 노드)는 `task_context.hpp`(값 칸)와 `amr_bt_node.cpp`(구독)도 고쳐야 해서 5개 파일이다. BT 노드가 ROS를 직접 쓰지 않게(ROS 없이 테스트) 만든 구조의 대가다
