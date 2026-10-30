@@ -75,7 +75,7 @@ python3 experiments/bt_cycle/run_cycle.py \
 | 서브트리 | 2종 (`VisitStation`, `DockWithRetry`), 각각 2번 재사용 | `behavior_trees/task_cycle.xml` |
 | 자동 복구 | 4종: Nav2 재시도(`nav_retries` 2), 도킹 재시도(3회), 구역 대기 멈춤·재개, 위치 복구 멈춤·재개 | amr_bt gtest·launch 테스트. Gazebo에서 실제로 일어난 건 도킹 재시도(위 2회)뿐 |
 | Groot 모니터링 | ZMQ 퍼블리셔만 (`groot_port`) | Groot 화면에 붙여 확인한 적은 없음 |
-| 노드 추가 확장성 | 재지 않음 | - |
+| 노드 추가 확장성 | 10/30: `CheckBattery` 노드를 추가해 기존 코드 3개 파일(11줄 추가·4줄 삭제) 수정, 기준(3개 이내) 충족 | [amr_bt README](../../src/task/amr_bt/README.md) "노드 추가로 확장하기" |
 
 ## 돌리며 찾은 것
 

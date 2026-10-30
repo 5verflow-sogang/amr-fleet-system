@@ -50,9 +50,9 @@ TaskCycle (Sequence)
 ├── WaitForTask                         수락한 작업이 생길 때까지 RUNNING
 └── Fallback
     ├── Sequence
-    │   ├── IfThenElse(IsDelivery) → VisitStation(pickup: move_to_pickup → MoveTo → DockWithRetry → loading → Dwell)
+    │   ├── IfThenElse(IsDelivery) → VisitStation(pickup: move_to_pickup → CheckBattery → MoveTo → DockWithRetry → loading → Dwell)
     │   ├── IfThenElse(IsDelivery)
-    │   │   ├── VisitStation(dropoff: move_to_dropoff → MoveTo → DockWithRetry → unloading → Dwell)
+    │   │   ├── VisitStation(dropoff: move_to_dropoff → CheckBattery → MoveTo → DockWithRetry → unloading → Dwell)
     │   │   └── move_to_dropoff → MoveTo → IfThenElse(IsCharge) → DockWithRetry(dropoff) → charging → Charge
     │   └── FinishTask                  COMPLETED
     └── FailTask                        FAILED (실패, 그때 단계와 원인 코드 ctx.fail(code, message))
@@ -66,7 +66,7 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 - 스테이션 이름(`pickup_station_id`·`dropoff_station_id`)이 비면 도킹을 건너뛴다
 - 단계 이름은 [architecture.md 5-1절](../../../docs/architecture.md)의 `TaskStatus.phase`
 - 끝나면 처음으로 돌아가 다음 작업을 기다린다
-- 노드: 펼친 트리 기준 56개, 직접 만든 종류 11개 (`WaitForTask`·`IsDelivery`·`IsCharge`·`HasStation`·`ReportPhase`·`MoveTo`·`Dock`·`Dwell`·`Charge`·`FinishTask`·`FailTask`). 명세 KPI 15개 이상은 테스트(`TreeHasAtLeast15Nodes`)로 지킨다
+- 노드: 펼친 트리 기준 58개, 직접 만든 종류 12개 (`WaitForTask`·`IsDelivery`·`IsCharge`·`HasStation`·`ReportPhase`·`MoveTo`·`Dock`·`Dwell`·`Charge`·`FinishTask`·`FailTask`·`CheckBattery`). 명세 KPI 15개 이상은 테스트(`TreeHasAtLeast15Nodes`)로 지킨다
 
 ### 작업 전체 시간 상한
 
@@ -107,6 +107,11 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 - `RobotState.battery_percent`로 낸다. 이동 거리는 `odom` 기준 TF 위치 변화(2 Hz)
 - 충전 작업은 충전소 도킹 뒤 `Charge` 노드가 `charge_target_percent`(100)까지 기다린다. 그동안 `RobotState.mode` = `MODE_CHARGING`. `charge_timeout_s`(600 s) 안에 안 차면 FAILED(`CHARGE_TIMEOUT` 502)
 - `reject_below_percent`(10 %)보다 낮으면 충전이 아닌 할당을 `ASSIGN_BATTERY_LOW`로 거부한다. 서버는 20 % 미만 로봇을 후보에서 빼므로(`min_battery_percent`) 보통은 그 전에 걸러진다
+- 받는 순간만 보는 위 거부와 달리, 배송 도중에는 `CheckBattery`가 스테이션으로 출발하기 전마다 본다 (5 %, `min_percent` 트리 속성)
+  - 픽업 쪽(`on_low=fail`): 아래면 출발하지 않고 FAILED(`ASSIGN_BATTERY_LOW` 101, `"battery 4.0% below 5.0% before move_to_pickup"`)를 보내 서버가 다시 할당하게 한다
+  - 하역 쪽(`on_low=warn`): 이미 실었으므로 경고만 남기고 끝까지 배송한다. 여기서 실패하면 서버가 작업을 픽업부터 다른 로봇에 다시 줘서 같은 물건을 두 번 싣게 된다 (#253 하연 리뷰). 하역 한 구간은 배터리 1–3 %다
+  - 작업을 받을 때의 거부(10 %)가 먼저 걸러서 실제로 걸리는 경우는 드물다. 거부 기준을 낮추거나 받은 뒤 오래 기다린 작업에서 막는 안전장치다
+  - 충전 작업은 `VisitStation`을 지나지 않아 배터리가 낮아도 충전소로 간다
 - 아직 없는 것: 0 %에서 멈추기, 적재 질량에 따른 소모 차이
 
 ### Groot·작업 로그
@@ -119,6 +124,23 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 - `Dock`은 Dock.action을 한 번 부른다. 재시도는 트리의 `RetryUntilSuccessful(num_attempts=3)`가 한다 (Dock.action 주석: "3회 재시도는 BT가 한다")
 - 3번 다 실패하면 마지막 결과의 `error_code`(900번대, ErrorInfo와 같은 값)와 `"docking at <station> failed 3 times: ..."`로 FAILED를 보낸다. 서버는 FAILED 작업을 다른 로봇에 다시 할당한다(대체 작업, `amr_fleet_manager` `failed_retries`)
 - `docking` 단계 보고는 재시도해도 한 번이다
+
+### 노드 추가로 확장하기 (명세 KPI "BT 확장 시 기존 코드 수정 3개 파일 이내")
+
+노드는 새 파일 한 쌍(헤더·소스)에 만들고, 기존 파일은 세 곳만 고친다. `CheckBattery`(위 가상 배터리)를 이 방법으로 추가해 쟀다.
+
+| 기존 파일 | 고친 것 | `CheckBattery` 때 |
+| --- | --- | --- |
+| `CMakeLists.txt` | `amr_bt_nodes` 라이브러리에 새 소스 (테스트를 붙이면 `ament_add_gtest`도) | 6줄 (+5 −1, 노드만이면 1줄) |
+| `src/bt_nodes.cpp` | 새 헤더 include와 `register_nodes()`에 등록 한 줄 | 2줄 (+2) |
+| `behavior_trees/task_cycle.xml` | 트리에 노드 끼워 넣기, 서브트리 인자(`low_battery`) | 7줄 (+4 −3, 그중 1줄은 주석) |
+
+- 결과: **기존 코드 3개 파일**(11줄 추가·4줄 삭제), 새 파일 3개(`include/amr_bt/check_battery.hpp`·`src/check_battery.cpp`·`test/test_check_battery.cpp`). 기준(3개 이내) 충족
+- 노드는 `TaskContext`(작업·배터리·구역·위치 상태, 이동·도킹 포트)와 트리 속성(입력 포트)만으로 동작해야 이 범위에 든다
+- 한계
+  - 새 ROS 토픽을 읽는 노드(예: 인지 결과로 물품을 확인하는 노드)는 `task_context.hpp`(값 칸)와 `amr_bt_node.cpp`(구독)도 고쳐야 해서 5개 파일이다. BT 노드가 ROS를 직접 쓰지 않게(ROS 없이 테스트) 만든 구조의 대가다
+  - 새 작업 종류(`Task.TYPE_*`)는 노드 추가가 아니라 `amr_msgs`·Fleet 서버·작업 생성기까지 바뀐다
+  - 새 오류 코드가 필요하면 `amr_msgs` `ErrorInfo.msg`도 고친다. `CheckBattery`는 기존 `ASSIGN_BATTERY_LOW`를 썼다
 
 ### 아직 없는 것
 
