@@ -70,10 +70,10 @@ def test_write_map_matches_v1_format(tmp_path):
 
 
 @pytest.mark.skipif(not os.path.exists(SDF), reason='amr_gazebo 월드가 없다')
-def test_warehouse_gt_map_same_grid_as_v1_and_narrow_passages_06(tmp_path, capsys):
+def test_warehouse_gt_map_same_grid_as_v2_and_narrow_passages_06(tmp_path, capsys):
     out = tmp_path / 'warehouse_gt.yaml'
     assert main([SDF, str(out)]) == 0
     img = read_pgm(str(tmp_path / 'warehouse_gt.pgm'))
-    assert img.shape == (1616, 2417)
+    assert img.shape == (1609, 2411)
     log = capsys.readouterr().out
     assert log.count('빈 칸 24~24칸') == 2   # 좁은 통로 ①·② 모두 0.6 m

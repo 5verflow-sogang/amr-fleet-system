@@ -17,7 +17,10 @@ params:
   controller: nav2
   cruise_mps: "0.5"
   curve_kappa: "0.2"
-  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1_0025.yaml
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v2_0025.yaml
+  # 위 지도의 정렬 원점. 스택(map_origin_in_world)과 측정(nav_kpi.py --origin) 둘 다 이 값을 쓴다.
+  # 지도를 바꾸면 여기만 같이 바꾼다 (v1 0.025 m: [-0.0562, 1.5317, 0.00009], #249 민지 리뷰)
+  map_origin: "[-0.0439, 1.4712, -0.00088]"
   # 녹화는 기본 끔: 50쌍(46분)이면 GT·plan만으로 수백 MB다. 실패한 쌍을 Foxglove로 볼 때 --set record=true
   record: "false"
 processes:
@@ -26,6 +29,7 @@ processes:
     cmd: >-
       ros2 launch amr_bringup system.launch.py num_robots:=1 gui:=false enable_camera:=false
       fleet:=false bt:=false nav2:=true seed:={seed} robots_file:=/repo/experiments/nav_kpi/robots.yaml
+      map:={map} map_origin_in_world:="{map_origin}"
     ready_topic: /amr_01/odometry/filtered
     # 시뮬레이터 + 위치추정 + Nav2 기동. ready_cmds도 이 시간 안에
     ready_timeout_s: 300
@@ -61,7 +65,7 @@ driver:
   # 실제 시간. runner timeout_s보다 짧게 (drive.py command 모드 설명)
   timeout_s: 3500
   cmd: >-
-    python3 /repo/experiments/nav_kpi/nav_kpi.py --out-dir {run_dir}/nav_kpi --pairs {pairs}
+    python3 /repo/experiments/nav_kpi/nav_kpi.py --out-dir {run_dir}/nav_kpi --pairs {pairs} --origin "{map_origin}"
     --controller {controller} --cruise-mps {cruise_mps} --curve-kappa {curve_kappa}
 # plots/nav_map.png(지도 위 계획 경로·GT 궤적·성공/실패 목표), plots/nav_time.png(예측·실제 주행시간)
 postprocess:

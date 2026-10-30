@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""지도 v1(SLAM)과 정답 지도(gt_map)를 겹쳐 그려 어디가 얼마나 휘었는지 보인다 (#183).
+"""SLAM 지도(기본 v2)와 정답 지도(gt_map)를 겹쳐 그려 어디가 얼마나 휘었는지 보인다 (#183).
 
-    python3 draw_map_bend.py maps/warehouse_v1_0025.yaml maps/warehouse_gt.yaml \\
-        ../../simulation/amr_gazebo/worlds/warehouse.sdf maps/warehouse_v1_bend.png
+    python3 draw_map_bend.py maps/warehouse_v2_0025.yaml maps/warehouse_gt.yaml \\
+        ../../simulation/amr_gazebo/worlds/warehouse.sdf maps/warehouse_v2_bend.png
     # 일부만 2배로: --crop X0 X1 Y0 Y1 (map 좌표) --scale 2
-    # 다른 SLAM 지도: --label 'map v2' --map-origin-in-world X Y YAW (그 지도의 정렬 원점)
+    # 다른 SLAM 지도: --label 'map v1' --map-origin-in-world -0.0562 1.5317 0.00009 (그 지도의 정렬 원점)
 
 - 파랑: 정답 지도 물체, 빨강: 지도 v1 점유 칸. 두 지도는 같은 칸(0.025 m, 원점 [−30.2, −21.8])이라 칸끼리 겹친다.
   칸이 다른 지도(예: v2)면 정답 지도를 그 지도 칸과 정렬 원점에 맞춰 SDF에서 다시 그린다 (gt_map.rasterize)
@@ -83,7 +83,7 @@ def main(argv=None):
     ap.add_argument('--map-origin-in-world', nargs=3, type=float, default=list(MAP_ORIGIN_IN_WORLD))
     ap.add_argument('--crop', nargs=4, type=float, metavar=('X0', 'X1', 'Y0', 'Y1'), help='map 좌표 구역만')
     ap.add_argument('--scale', type=int, default=1)
-    ap.add_argument('--label', default='map v1', help='SLAM 지도 이름 (범례)')
+    ap.add_argument('--label', default='map v2', help='SLAM 지도 이름 (범례)')
     a = ap.parse_args(argv)
 
     v1, m1 = load_map(a.v1_yaml)

@@ -355,7 +355,8 @@ def main():
     ap.add_argument('--waypoints', default=str(HERE / 'waypoints.yaml'))
     ap.add_argument('--namespace', default='amr_01')
     ap.add_argument('--origin', type=lambda s: [float(v) for v in s.strip('[]').split(',')],
-                    default=[-0.0562, 1.5317, 0.00009], help='map_origin_in_world [x, y, yaw]')
+                    default=[-0.0439, 1.4712, -0.00088],
+                    help='map_origin_in_world [x, y, yaw]. 기본은 지도 v2 0.025 m 정렬값 (system.launch.py와 같게)')
     ap.add_argument('--pairs', type=int, default=0, help='앞에서부터 이만큼만 (0이면 전부)')
     ap.add_argument('--planner-id', default='GridBased')
     ap.add_argument('--cruise-mps', type=float, default=0.5,
