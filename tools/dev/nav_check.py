@@ -147,7 +147,9 @@ def stop_stack(proc: Optional[subprocess.Popen]) -> None:
 
 
 def kill_leftovers() -> None:
-    for pattern in ('ros2 launch amr_bringup system.launch.py', 'ign gazebo', 'gz sim', 'ruby.*ign'):
+    # bridge·clock_throttle은 kill -9로 끝난 실행 뒤 고아로 남는다 (#243)
+    for pattern in ('ros2 launch amr_bringup system.launch.py', 'ign gazebo', 'gz sim', 'ruby.*ign',
+                    'parameter_bridge', 'clock_throttle'):
         subprocess.run(['pkill', '-9', '-f', pattern], check=False)
 
 
