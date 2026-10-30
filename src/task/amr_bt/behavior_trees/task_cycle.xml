@@ -47,10 +47,11 @@
     </Sequence>
   </BehaviorTree>
 
-  <!-- 스테이션 한 곳: 이동 → 도킹 → 싣기·내리기 (station: pickup·dropoff) -->
+  <!-- 스테이션 한 곳: (배터리 확인) → 이동 → 도킹 → 싣기·내리기 (station: pickup·dropoff) -->
   <BehaviorTree ID="VisitStation">
     <Sequence name="visit">
       <ReportPhase phase="{move_phase}"/>
+      <CheckBattery min_percent="5"/>
       <MoveTo goal="{station}"/>
       <SubTreePlus ID="DockWithRetry" station="{station}"/>
       <ReportPhase phase="{work_phase}"/>

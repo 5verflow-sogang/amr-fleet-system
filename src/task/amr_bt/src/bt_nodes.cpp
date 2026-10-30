@@ -1,5 +1,6 @@
 #include "amr_bt/bt_nodes.hpp"
 
+#include "amr_bt/check_battery.hpp"
 #include "amr_msgs/action/dock.hpp"
 #include "amr_msgs/msg/task_status.hpp"
 
@@ -458,6 +459,7 @@ void register_nodes(BT::BehaviorTreeFactory & factory, std::shared_ptr<TaskConte
   register_with_context<Charge>(factory, "Charge", ctx);
   register_with_context<FinishTask>(factory, "FinishTask", ctx);
   register_with_context<FailTask>(factory, "FailTask", ctx);
+  register_with_context<CheckBattery>(factory, "CheckBattery", ctx);
 }
 
 }  // namespace amr_bt
