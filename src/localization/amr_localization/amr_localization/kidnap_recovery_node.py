@@ -6,8 +6,11 @@
       일치율이 lost_ratio 아래로 lost_checks번 연속 떨어지면 위치를 잃은 것으로 본다.
 복구: 1차 국소 재초기화(마지막으로 확실했던 자세 주변, initialpose) → 2차부터 AMCL 전역 재초기화.
       각 시도마다 움직이지 않고 갱신 요청 → (허용 시) 제자리 회전 → 수렴 확인.
+      복구 중 마커판 자세(aruco_pose, amr_docking aruco_localizer)가 들어오면 그 자세·공분산으로 initialpose를 내고
+      멈춰서 판정한다. 영상 시각 뒤 움직인 만큼은 odom TF로 더한다 (회전 중에 본 판). AMCL도 initialpose stamp로
+      보정하지만 "지금" odom TF를 조회해서, TF가 조금만 늦어도 실패하고 보정 없이 넣는다
 
-구독: /map, scan, odometry/filtered, amcl_pose
+구독: /map, scan, odometry/filtered, amcl_pose, aruco_pose (marker_topic, 비우면 끔)
 호출: reinitialize_global_localization, request_nomotion_update (AMCL, std_srvs/Empty),
       amcl/set_parameters (재초기화 직전 max_particles를 boost_particles로, 복구 뒤 normal_particles로)
 발행: cmd_vel_recovery (탐색 중에만), initialpose (국소 재초기화),
@@ -35,8 +38,8 @@ from std_msgs.msg import Float32, String
 from std_srvs.srv import Empty
 
 from .eval.trajectory import quaternion_from_yaw, yaw_from_quaternion
-from .kidnap import (LOCAL_REINIT, NOMOTION, REINIT, ROTATING, STOP, TRACKING, KidnapRecovery, RecoveryConfig,
-                     endpoints, grid_from_occupancy, match_ratio)
+from .kidnap import (LOCAL_REINIT, MARKER_REINIT, NOMOTION, REINIT, ROTATING, STOP, TRACKING, KidnapRecovery,
+                     RecoveryConfig, carry_forward, endpoints, grid_from_occupancy, match_ratio)
 
 
 class KidnapRecoveryNode(Node):
@@ -52,6 +55,7 @@ class KidnapRecoveryNode(Node):
         self.explore_speed = d('explore_speed', 0.2).value
         self.front_clearance = d('front_clearance', 1.0).value
         self.base_frame = d('base_frame', 'base_footprint').value
+        self.odom_frame = d('odom_frame', 'odom').value
         self.events_file = d('events_file', '').value
         cfg = RecoveryConfig(
             lost_ratio=d('lost_ratio', 0.5).value, lost_checks=d('lost_checks', 3).value,
@@ -59,7 +63,9 @@ class KidnapRecoveryNode(Node):
             settle_s=d('settle_s', 10.0).value, allow_rotate=d('allow_rotate', True).value,
             rotate_s=d('rotate_s', 15.0).value, max_attempts=d('max_attempts', 3).value,
             local_first=d('local_first', True).value, nomotion_max=d('nomotion_max', 4).value,
-            confirm_s=d('confirm_s', 3.0).value)
+            confirm_s=d('confirm_s', 3.0).value, marker_settle_s=d('marker_settle_s', 10.0).value,
+            marker_max=d('marker_max', 3).value, marker_nomotion_max=d('marker_nomotion_max', 12).value,
+            max_recovery_s=d('max_recovery_s', 100.0).value)
         # 재초기화 때만 파티클을 늘린다. AMCL은 재초기화 순간 max_particles개를 뿌리고 KLD로 곧 줄이므로 평소 정확도에는
         # 영향이 없다. 설정 전체를 10,000으로 두면 직진 RMSE가 2.02 → 2.38 cm로 나빠졌다 (localization.md 4-5절).
         # 0이면 끈다. 되돌린 뒤에는 필터가 다시 초기화될 수 있어 복구된 자세를 작은 공분산으로 다시 넣는다
@@ -67,10 +73,24 @@ class KidnapRecoveryNode(Node):
         self.normal_particles = d('normal_particles', 2000).value
         self.restore_std_m = d('restore_std_m', 0.1).value
         self.restore_std_yaw = d('restore_std_yaw', 0.05).value
+        # 복구 뒤 다시 넣은 자세에서 제자리 갱신을 이만큼 더 부른다 (check_hz마다 1번). 멈춰 있으면 AMCL이 갱신하지 않아
+        # 수렴 판정 때의 어긋남(seed 14·20: 옆 10~14 cm, 일치율은 끝점 10 cm 안이면 맞음으로 세어 0.98)이 그대로 남았다
+        self.refine_nomotion = d('refine_nomotion', 4).value
+        self._refine_left = 0
         # 국소 재초기화 때 뿌리는 파티클 범위 (1σ). 바퀴 미끄러짐·충돌로 몇 m 어긋난 경우를 덮는다.
         # 1.0 m에서는 1.9 m 이동을 못 찾았고(통로 방향 1.5 m 오차 남음) 2.5 m에서 9.5초에 복구했다 (10/6)
         self.local_std_m = d('local_std_m', 2.5).value
         self.local_std_yaw = d('local_std_yaw', 0.8).value
+        # 마커 자세: 이보다 오래된 영상(AMCL이 odom으로 더할 수 있는 범위)이나 σ가 큰 자세는 버린다.
+        # σ가 너무 작으면 파티클이 한 점에 몰려 판 하나의 방향 오차(비스듬히 보면 수 °)를 스캔으로 못 고친다 → 하한
+        self.marker_max_age_s = d('marker_max_age_s', 1.0).value
+        self.marker_max_future_s = d('marker_max_future_s', 0.1).value
+        # σ 1.5 m는 판까지 약 6 m (amr_docking SigmaModel). 6 m 넘는 판은 40회 27번 읽기가 모두 6.5 m 틀렸다 (seed 15)
+        self.marker_max_std_m = d('marker_max_std_m', 1.5).value
+        self.marker_min_std_m = d('marker_min_std_m', 0.1).value
+        self.marker_min_std_yaw = d('marker_min_std_yaw', 0.05).value
+        # 마지막으로 받은 마커: (map 자세, 그때 odom 자세, σ m, σ rad). 다음 시도는 지금 odom으로 옮겨 다시 뿌린다
+        self.last_marker = None
         self.last_good = None
         self.machine = KidnapRecovery(cfg)
         ns = self.get_namespace().strip('/')
@@ -91,6 +111,9 @@ class KidnapRecoveryNode(Node):
         self.create_subscription(LaserScan, 'scan', self._on_scan, qos_profile_sensor_data)
         self.create_subscription(Odometry, 'odometry/filtered', self._on_pose, 10)
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self._on_amcl, 10)
+        marker_topic = d('marker_topic', 'aruco_pose').value
+        if marker_topic:
+            self.create_subscription(PoseWithCovarianceStamped, marker_topic, self._on_marker, 10)
         self.reinit = self.create_client(Empty, 'reinitialize_global_localization')
         self.nomotion = self.create_client(Empty, 'request_nomotion_update')
         self.amcl_params = self.create_client(SetParameters, d('amcl_node', 'amcl').value + '/set_parameters')
@@ -142,24 +165,78 @@ class KidnapRecoveryNode(Node):
         if self.machine.state == TRACKING and self.ratio >= self.machine.config.ok_ratio:
             self.last_good = self.pose
         n_events = len(self.machine.events)
-        for action in self.machine.step(self._now(), self.ratio, self.amcl_std):
+        self._apply(self.machine.step(self._now(), self.ratio, self.amcl_std))
+        self._log_new_events(n_events)
+        if self.machine.state != TRACKING:
+            self._refine_left = 0
+        elif self._refine_left > 0 and self.nomotion.service_is_ready():
+            self._refine_left -= 1
+            self.nomotion.call_async(Empty.Request())
+        self.state_pub.publish(String(data=self.machine.state))
+        self.ratio_pub.publish(Float32(data=float(self.ratio)))
+
+    def _on_marker(self, msg: PoseWithCovarianceStamped):
+        if self.machine.state == TRACKING or msg.header.frame_id != 'map':
+            return
+        age = self._now() - rclpy.time.Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
+        c = msg.pose.covariance
+        std_m = math.sqrt(max(c[0], c[7], 0.0))
+        # 미래 시각(음수 age)도 버린다: 시계가 다른 노드의 stamp면 carry_forward가 엉뚱한 구간을 더한다
+        if not -self.marker_max_future_s <= age <= self.marker_max_age_s or std_m > self.marker_max_std_m:
+            return
+        p = msg.pose.pose
+        pose = (p.position.x, p.position.y,
+                yaw_from_quaternion(p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w))
+        then, now = self._odom_pose(rclpy.time.Time.from_msg(msg.header.stamp)), self._odom_pose(rclpy.time.Time())
+        if then is None or now is None:
+            return
+        std_yaw = math.sqrt(max(c[35], 0.0))
+        n_events = len(self.machine.events)
+        actions = self.machine.marker_hint(self._now())
+        if MARKER_REINIT in actions:
+            self.last_marker = (pose, then, max(std_m, self.marker_min_std_m), max(std_yaw, self.marker_min_std_yaw))
+        self._apply(actions)
+        self._log_new_events(n_events)
+
+    def _marker_reinit(self):
+        """마지막 마커 자세를 그 뒤 odom 이동만큼 옮겨 그 주변 σ로 다시 뿌린다."""
+        now = self._odom_pose(rclpy.time.Time())
+        if self.last_marker is None or now is None:
+            return
+        pose, then, std_m, std_yaw = self.last_marker
+        self._set_pose(carry_forward(pose, then, now), std_m, std_yaw)
+
+    def _odom_pose(self, stamp):
+        """odom 기준 로봇 자세 (x, y, yaw). Time()이면 가장 최근. TF가 없으면 None"""
+        try:
+            t = self.tf_buffer.lookup_transform(self.prefix + self.odom_frame, self.prefix + self.base_frame, stamp)
+        except tf2_ros.TransformException:
+            return None
+        q = t.transform.rotation
+        return t.transform.translation.x, t.transform.translation.y, yaw_from_quaternion(q.x, q.y, q.z, q.w)
+
+    def _apply(self, actions):
+        for action in actions:
             if action == LOCAL_REINIT:
                 self._with_particles(self.boost_particles, self._local_reinit)
+            elif action == MARKER_REINIT:
+                self._with_particles(self.boost_particles, self._marker_reinit)
             elif action == REINIT and self.reinit.service_is_ready():
                 self._with_particles(self.boost_particles, lambda: self.reinit.call_async(Empty.Request()))
             elif action == NOMOTION and self.nomotion.service_is_ready():
                 self.nomotion.call_async(Empty.Request())
             elif action == STOP:
                 self.cmd_pub.publish(Twist())
+
+    def _log_new_events(self, n_events: int):
         for e in self.machine.events[n_events:]:
             self.get_logger().warn(f'[kidnap] {e.kind} {e.detail}')
             self._log_event(e)
             if e.kind in ('recovered', 'restored'):
                 pose = self.pose
+                self._refine_left = self.refine_nomotion
                 self._with_particles(self.normal_particles, lambda p=pose: self._set_pose(p, self.restore_std_m,
                                                                                          self.restore_std_yaw))
-        self.state_pub.publish(String(data=self.machine.state))
-        self.ratio_pub.publish(Float32(data=float(self.ratio)))
 
     def _with_particles(self, count: int, then):
         """AMCL max_particles를 바꾼 뒤 then()을 부른다. 끄거나(0) 서비스가 없으면 바로 부른다."""

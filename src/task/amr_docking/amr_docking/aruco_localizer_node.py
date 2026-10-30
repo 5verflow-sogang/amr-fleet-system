@@ -9,6 +9,7 @@ kidnap_recovery)가 이 자세로 초기 위치를 좁게 다시 잡는다 (민�
 TF: 카메라 광학 프레임 → base_frame (URDF), world → map (system.launch.py 정렬 원점)
 
 판이 여럿 보이면 가장 가까운 판 하나로 낸다. 공분산은 판까지 거리에 따라 커진다 (localize.SigmaModel).
+같은 판을 연달아 비슷한 자리로 읽었을 때만 낸다 (localize.Agreement, 뒤집힌 PnP 해 거르기).
 """
 
 import math
@@ -31,7 +32,7 @@ from tf2_ros.transform_listener import TransformListener
 
 from .detector import MarkerDetector, to_gray
 from .docking_server_node import _rotation
-from .localize import Pose2D, SigmaModel, board_in_base, inverse, robot_from_board, transform
+from .localize import Agreement, Pose2D, SigmaModel, board_in_base, inverse, robot_from_board, transform
 from .markers import load_stations
 
 
@@ -60,6 +61,9 @@ class ArucoLocalizer(Node):
             xy0=p('sigma_xy0', SigmaModel.xy0).value, xy2=p('sigma_xy2', SigmaModel.xy2).value,
             yaw0=math.radians(p('sigma_yaw0_deg', math.degrees(SigmaModel.yaw0)).value),
             yaw1=math.radians(p('sigma_yaw1_deg', math.degrees(SigmaModel.yaw1)).value))
+        # confirm_n이 1이면 거르지 않는다
+        self.agreement = Agreement(n=p('confirm_n', 2).value, tol_m=p('confirm_tol_m', 0.4).value,
+                                   window_s=p('confirm_window_s', 2.0).value)
 
         self.detector = MarkerDetector()
         self.tf_buffer = Buffer()
@@ -153,6 +157,8 @@ class ArucoLocalizer(Node):
         o = origin.transform
         map_in_world = Pose2D(o.translation.x, o.translation.y, _yaw(o.rotation))
         robot = transform(robot_world, inverse(map_in_world))
+        if not self.agreement.check(Time.from_msg(msg.header.stamp).nanoseconds * 1e-9, station.name, robot.x, robot.y):
+            return
         sxy, syaw = self.sigma.sigma(distance, station.board.spacing)
 
         out = PoseWithCovarianceStamped()

@@ -20,6 +20,8 @@
     confirm_s: 3.0
     max_attempts: 3
     local_first: true
+    # 잃은 뒤 이 시간이 지나면 시도 중이어도 failed (0이면 끔). 마커가 늦게 오면 시도가 늘어나서 둔다 (4-2절)
+    max_recovery_s: 100.0
     local_std_m: 2.5
     local_std_yaw: 0.8
     # 재초기화 때만 AMCL max_particles를 늘리고 복구 뒤 되돌린다 (normal은 amcl.yaml과 같게, 0이면 끔)
@@ -27,4 +29,20 @@
     normal_particles: 2000
     restore_std_m: 0.1
     restore_std_yaw: 0.05
+    # 복구 뒤 다시 넣은 자세에서 제자리 갱신을 더 부르는 횟수. 멈춰 있으면 AMCL이 갱신하지 않아 수렴 때 어긋남이 남는다
+    refine_nomotion: 4
+    # 마커판 자세 (amr_docking aruco_localizer, map 기준). 복구 중에 들어오면 그 자세·공분산으로 initialpose를 내고
+    # 멈춰서 marker_settle_s 동안 판정, 미수렴이면 다음 시도. 한 번 잃은 동안 marker_max번까지 (4-7절)
+    marker_topic: aruco_pose
+    marker_settle_s: 10.0
+    marker_max: 3
+    # 마커를 받은 뒤(다음 시도도 마커 주변, 마지막 시도는 전역) 제자리 갱신 상한. 좁게 뿌려 몰려도 맞는 곳이라 nomotion_max보다 크게
+    marker_nomotion_max: 12
+    # 이보다 오래된 영상·큰 σ는 버린다. σ 하한은 판 하나의 방향 오차를 스캔으로 고칠 여지를 남긴다
+    marker_max_age_s: 1.0
+    marker_max_future_s: 0.1
+    # σ 1.5 m = 판까지 약 6 m. 그보다 먼 판은 PnP 뒤집힌 해가 연달아 같게 나와 Agreement를 통과한다 (4-7절)
+    marker_max_std_m: 1.5
+    marker_min_std_m: 0.1
+    marker_min_std_yaw: 0.05
     explore_forward: false
