@@ -43,8 +43,10 @@ def run_policy_episode(act, env, seed: int, options=None) -> dict:
     obs, info = env.reset(seed=seed, options=options)
     speeds, min_clear, min_ttc = [info['v']], math.inf, math.inf
     x0 = env.state.x
+    total_reward = 0.0
     while True:
-        obs, _, terminated, truncated, info = env.step(act(obs))
+        obs, reward, terminated, truncated, info = env.step(act(obs))
+        total_reward += reward
         speeds.append(info['v'])
         min_clear = min(min_clear, info['min_clearance'])
         min_ttc = min(min_ttc, time_to_collision(env))
@@ -57,6 +59,7 @@ def run_policy_episode(act, env, seed: int, options=None) -> dict:
     return {
         'outcome': info['outcome'],
         'success': info['outcome'] == 'success',
+        'return': total_reward,                       # 환경 보상 합 (할인 없음). v3 체크포인트 선택에 쓴다
         'collision': info['outcome'] == 'collision',
         'timeout': info['outcome'] == 'timeout',
         'collision_with': info['collision_with'],     # obstacle / wall / None
