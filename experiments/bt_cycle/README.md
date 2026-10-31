@@ -13,6 +13,13 @@ ros2 launch amr_bringup system.launch.py num_robots:=1 nav2:=true docking:=true 
 python3 experiments/bt_cycle/run_cycle.py --pairs rack_c6:rack_b6 rack_b6:rack_c6 --repeat 1 --csv results.csv
 ```
 
+하네스로 N회 반복해 재려면 `task_cycle` 시나리오를 쓴다 (작업 생성기가 `single_cycle` 일정 40건을 넣는다, 아래 10/30 재측정):
+
+```bash
+tools/harness/gcp_run.sh task_cycle -n 8 --label kpi       # GCP (RTF 1.0). 1회 25분에 약 5건, 8회면 34건 이상
+tools/harness/docker_run.sh task_cycle -n 1 --label smoke  # 로컬 (Windows Docker에서는 아래 한계 참고)
+```
+
 - `--pairs`: 픽업:드롭오프 스테이션 쌍 (`amr_fleet_manager/config/stations.yaml` 이름). 차례로 돈다
 - `--repeat`: 쌍 목록을 몇 바퀴 돌지 (작업 3은 34회 이상이 되게)
 - 작업 좌표는 map 기준이다. `--origin`은 system.launch.py `map_origin_in_world`와 같게 둔다 (기본 [0, 1.5, 0])
@@ -76,6 +83,41 @@ python3 experiments/bt_cycle/run_cycle.py \
 | 자동 복구 | 4종: Nav2 재시도(`nav_retries` 2), 도킹 재시도(3회), 구역 대기 멈춤·재개, 위치 복구 멈춤·재개 | amr_bt gtest·launch 테스트. Gazebo에서 실제로 일어난 건 도킹 재시도(위 2회)뿐 |
 | Groot 모니터링 | ZMQ 퍼블리셔만 (`groot_port`) | Groot 화면에 붙여 확인한 적은 없음 |
 | 노드 추가 확장성 | 재지 않음 | - |
+
+## 결과: 단일 작업 성공률 재측정 (10/30, dev 512b6bf, 하네스 `task_cycle`, GCP)
+
+10/15 뒤로 내비(DWA #228·#244, EKF #245 등)가 많이 바뀌어 최신 코드로 다시 쟀다. 10/15와 달리 하네스로 돌렸고, 구역 클라이언트를 켜고 통신 지연 100 ms(원 명세)를 넣었다. 로봇 1대, 지도 v1 0.025 m, 동적 장애물 없음, 실제 ArUco 도킹(카메라 켬).
+
+```bash
+tools/harness/gcp_run.sh task_cycle -n 8 --label kpi   # 실행 41069607856, n2d-standard-16
+```
+
+| 항목 | 결과 | 기준 | 판정 |
+| --- | --- | --- | --- |
+| 단일 작업 성공률 | **38/38 COMPLETED (100 %)**, 실패 0 | 97 % (34회 이상, 실패 1회까지) | 통과 |
+| 실패 원인별 (이동·도킹·위치·교통·통신·충전·작업 시간 초과) | 모두 0 | - | - |
+| 정체(60 s 넘게 멈춤) | 0 | 0 | 통과 |
+| 시뮬레이션 속도 | RTF 1.0 (8회 모두) | - | - |
+
+- 8회(seed 1–8, 1회 25분), 회마다 3–6건 완료. 할당 46건 = 완료 38 + 실행이 끝날 때 진행 중이던 8건(회마다 1건)
+- 작업당 이동 거리 평균 50.7 m (32.4–72.7), 요청 → 완료 평균 763 s (대기열 대기 포함)
+- 도킹 76번(픽업·하역)이 모두 성공했다. 도킹 서버는 멈춰서 잰 평균이 2 cm·1° 안일 때만 성공으로 끝내므로 76번 모두 서버 측정으로 기준 안이다. 오차 수치는 따로 뽑지 않았다 (도킹 KPI 자체는 [amr_docking README](../../src/task/amr_docking/README.md) 10/12 GT 측정)
+- 38/38의 95 % 신뢰구간 하한(Clopper–Pearson)은 약 90.7 %다. 판정은 10/15와 같은 "34회 이상, 실패 1회까지"로 했다
+- 원자료: `gs://amr-fleet-results/runs/task_cycle-kpi/20261030_41069607856/`
+
+**로컬 Windows Docker에서는 카메라를 켜면 돌지 않았다 (10/28–30).** 같은 시나리오·코드가 로컬에서는 첫 작업도 못 끝냈다 (costmap이 스캔을 받아들이지 못해 로봇 정지 → `NAV_TIMEOUT`). GCP 리눅스에서는 위처럼 정상이다.
+
+| 확인 | 결과 |
+| --- | --- |
+| 카메라 끔 (도킹 흉내) | 로컬도 3/3 COMPLETED |
+| 10/15 코드 (36/36 낸 것) | 로컬에서 같은 증상 → 코드 문제 아님 |
+| 하네스 없이 10/15 방식(직접 실행) | 같은 증상 → 하네스 문제 아님 |
+| Fast DDS 공유 메모리 끔 (UDP만) | 같은 증상 |
+| 스캔 도착 지연 | 평균 0.02 s, 카메라 켬·끔 같음 → 스캔은 제때 옴 |
+| RTF (Gazebo만 / 전체 스택) | 카메라 끔 1.0 / 켬 약 0.81 / 전체 스택 약 0.62. 병목은 Gazebo CPU 렌더링 (LiDAR도 `gpu_lidar`라 렌더링한다) |
+
+- 10/15에는 같은 PC에서 카메라를 켜고 RTF 0.98이었다. 그 뒤 바뀐 건 Windows 보안 업데이트(KB5127648, 10/15 22:27)뿐이었다 (WSL 3.0.3·NVIDIA 드라이버는 10/15 측정 전, Docker Desktop은 9/30 뒤 그대로). 원인은 확정하지 못했다
+- 그래서 카메라가 필요한 이 측정은 GCP에서 한다. 로컬에서 돌리려면 Gazebo 렌더링을 GPU로 넘겨야 할 것으로 본다
 
 ## 돌리며 찾은 것
 

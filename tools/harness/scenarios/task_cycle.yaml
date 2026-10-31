@@ -1,0 +1,62 @@
+# 단일 작업 성공률 시나리오 (원 명세 8장 KPI 97 %, 지수). 로봇 1대 + 위치추정 + Nav2 + 구역 클라이언트 + ArUco 도킹
+# (카메라 켬) + Fleet 서버·장애 주입기 + 작업 생성기. Fleet 할당 → BT → Nav2 이동 → 도킹 → 싣기 → 이동 → 도킹 →
+# 내리기 → COMPLETED를 실제로 돈다 (experiments/bt_cycle를 하네스로 옮긴 것).
+# 성공률은 끝난 작업(COMPLETED + FAILED) 중 COMPLETED 비율로 본다. 실행 끝 무렵에 받은 작업은 못 끝나 완료율에서 빠진다.
+#
+#   tools/harness/gcp_run.sh task_cycle -n 8 --label kpi        # KPI: 1회 25분에 약 5건 → 8회면 34건 이상
+#   tools/harness/docker_run.sh task_cycle -n 1 --label smoke --set duration_s=900
+#
+# GCP(n2d-16)에서 돌린다: 10/30 8회 RTF 1.0, 38/38 COMPLETED (experiments/bt_cycle README).
+# 로컬 Windows Docker에서는 카메라를 CPU로 그려 RTF 약 0.6으로 떨어지고 costmap이 스캔을 받아들이지 못해 로봇이
+# 선다 (10/28–30, 카메라를 끄면 정상, 10/15 코드도 같음).
+name: task_cycle
+packages: amr_bringup
+num_robots: 1
+use_sim_time: true
+seed_base: 1
+timeout_s: 2700
+params:
+  num_robots: 1
+  # 원 명세 "로봇 간 통신 지연(최대 100ms)을 시뮬레이션에 반영"
+  delay_ms: 100
+  loss_pct: 0
+  # 작업 하나가 실제 시간 5~10분이라 25분이면 3~5건
+  duration_s: 1500
+  # 작업 시나리오 (amr_fleet_manager config/scenarios/<이름>.yaml)
+  task_scenario: single_cycle
+processes:
+  # 지도·정렬 원점은 system.launch.py 기본값 (작업 생성기 기본값과 같다)
+  - name: stack
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true zone_client:=true
+      docking:=true enable_camera:=true seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct}
+      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
+      fault_events_file:={run_dir}/fault_events.csv
+    ready_topic: /fleet/heartbeat
+    ready_cmds:
+      - timeout 20 ros2 lifecycle get /amr_01/bt_navigator | grep -q '^active'
+    ready_timeout_s: 240
+    settle_s: 5
+  - name: cpu_monitor
+    cmd: python3 /repo/tools/harness/cpu_monitor.py --out {run_dir}/cpu.csv --interval 1.0
+    settle_s: 1
+  # 녹화를 작업 생성기보다 먼저 시작한다 (작업 생성기는 서버 구독을 확인한 뒤 일정을 시작한다)
+  - name: rosbag
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/amr_[0-9][0-9]/odom'
+    settle_s: 3
+  - name: task_generator
+    cmd: >-
+      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json
+      scenario_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/scenarios/{task_scenario}.yaml
+driver:
+  mode: wait
+  # 작업 일정이 실제 시간이라 실제 시간으로 기다린다
+  use_sim_time: false
+  duration_s: "{duration_s}"
+postprocess:
+  - name: fleet_metrics
+    cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots {num_robots}
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
+  - pkill -9 -f "[c]pu_monitor.py" || true
