@@ -3,11 +3,12 @@
 # 내리기 → COMPLETED를 실제로 돈다 (experiments/bt_cycle를 하네스로 옮긴 것).
 # 성공률은 끝난 작업(COMPLETED + FAILED) 중 COMPLETED 비율로 본다. 실행 끝 무렵에 받은 작업은 못 끝나 완료율에서 빠진다.
 #
+#   tools/harness/gcp_run.sh task_cycle -n 8 --label kpi        # KPI: 1회 25분에 약 5건 → 8회면 34건 이상
 #   tools/harness/docker_run.sh task_cycle -n 1 --label smoke --set duration_s=900
-#   tools/harness/gcp_run.sh task_cycle -n 1 --label smoke
 #
-# 카메라를 CPU로 그려 시뮬레이션이 느리다 (로컬 RTF 약 0.6). 로컬 Windows Docker에서는 카메라를 켜면 costmap이
-# 스캔을 받아들이지 못해 로봇이 서는 문제가 있어(10/28–30, 카메라를 끄면 정상) GCP 리눅스에서 같은지 본다.
+# GCP(n2d-16)에서 돌린다: 10/30 8회 RTF 1.0, 38/38 COMPLETED (experiments/bt_cycle README).
+# 로컬 Windows Docker에서는 카메라를 CPU로 그려 RTF 약 0.6으로 떨어지고 costmap이 스캔을 받아들이지 못해 로봇이
+# 선다 (10/28–30, 카메라를 끄면 정상, 10/15 코드도 같음).
 name: task_cycle
 packages: amr_bringup
 num_robots: 1
