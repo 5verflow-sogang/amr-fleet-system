@@ -498,9 +498,11 @@ def test_common_eval_same_conditions_for_every_variant():
         # 질량끼리 같은 시나리오 (0~3번이 시나리오 0, 4~7번이 시나리오 1)
         assert scenarios[0] == scenarios[3] and scenarios[4] == scenarios[7] and scenarios[0] != scenarios[4]
         out = cb.evaluate(model)
+        # 질량별 속도·충돌률 (collision_25kg는 예전 실행과 같은 이름)
         assert set(out) == {'success_rate', 'collision_rate', 'timeout_rate', 'mean_time_s',
-                            'speed_0kg', 'speed_2kg', 'speed_10kg', 'speed_25kg', 'collision_25kg'}
-        assert all(0.0 <= out[k] <= 1.0 for k in ('success_rate', 'collision_rate', 'collision_25kg'))
+                            'speed_0kg', 'speed_2kg', 'speed_10kg', 'speed_25kg',
+                            'collision_0kg', 'collision_2kg', 'collision_10kg', 'collision_25kg'}
+        assert all(0.0 <= out[k] <= 1.0 for k in ('success_rate', 'collision_rate', 'collision_0kg', 'collision_25kg'))
 
 
 # ---------------------------------------------------------------- v1 튜닝 옵션

@@ -43,3 +43,11 @@ def test_changed_training_scenario_is_evaluated_on_config_scenario():
     assert cfg.observe_mass   # 시나리오 밖 설정은 실행 것 그대로
     assert popout_gaps(cfg) == popout_gaps(base)
     assert popout_gaps(trained) != popout_gaps(base)
+
+
+def test_fixed_mass_obs_conditions():
+    # told0·told25는 실제 질량과 관계없이 그 질량을 알려 준다 (v3 정보 실험). 기존 조건은 그대로
+    assert evaluate.mass_obs_for('told0', 25.0) == 0.0
+    assert evaluate.mass_obs_for('told25', 0.0) == 25.0
+    assert evaluate.mass_obs_for('exact', 10.0) == 10.0 and evaluate.mass_obs_for('unknown', 10.0) is None
+    assert evaluate.mass_obs_label('told0') == 'told0'

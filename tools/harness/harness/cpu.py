@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
 
@@ -28,7 +29,15 @@ GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ('perception', ('tracking_node', 'safety_node', 'detection_node', 'docking_server')),
 )
 GROUP_NAMES = tuple(name for name, _ in GROUPS) + ('other',)
-CSV_HEADER = ['time', 'cores', 'allowed_cores', 'cpu_pct', 'host_cpu_pct'] + [f'cores_{g}' for g in GROUP_NAMES]
+# 역할: 실제 운용에서 어느 컴퓨터에 올라가는가. 서버(Fleet 서버), 로봇 N(그 네임스페이스의 노드),
+# 시뮬레이터, 실험 도구(실제 운용에 없음), 그 밖(other). CPU KPI를 서버·로봇 1대 기준으로 따로 보려고 센다
+TOOLS = ('fault_injector', 'task_generator', 'bag record', 'cpu_monitor', 'clock_throttle')
+ROBOT_NS = re.compile(r'__ns:=/?(amr_\d+)')
+# 패키지 이름(amr_fleet_manager)이 아니라 노드 실행 파일·이름으로 서버를 찾는다. 'ros2 launch amr_fleet_manager ...' 같은
+# launch 프로세스는 여러 노드를 띄우는 관리 프로세스라 서버 몫이 아니다(other)
+SERVER = re.compile(r'(amr_fleet_manager/fleet_manager\b|__node:=fleet_manager\b)')
+CSV_HEADER = (['time', 'cores', 'allowed_cores', 'cpu_pct', 'host_cpu_pct'] + [f'cores_{g}' for g in GROUP_NAMES]
+              + ['cores_server', 'cores_tool', 'cores_robot_max', 'cores_robot_mean'])
 
 
 def classify(cmdline: str) -> str:
@@ -37,6 +46,20 @@ def classify(cmdline: str) -> str:
         if any(n in cmdline for n in needles):
             return name
     return 'other'
+
+
+def role(cmdline: str) -> str:
+    """프로세스 명령줄 → 'sim' | 'tool' | 'server' | 로봇 네임스페이스(예: 'amr_01') | 'other'."""
+    if classify(cmdline) == 'sim':
+        return 'sim'
+    if any(t in cmdline for t in TOOLS):
+        return 'tool'
+    if 'ros2 launch' in cmdline:
+        return 'other'
+    if SERVER.search(cmdline):
+        return 'server'
+    m = ROBOT_NS.search(cmdline)
+    return m.group(1) if m else 'other'
 
 
 def proc_label(cmdline: str) -> str:
@@ -150,12 +173,15 @@ class Sampler:
         if self.prev_time is not None and now > self.prev_time:
             dt = now - self.prev_time
             groups = {g: 0.0 for g in GROUP_NAMES}
+            roles: Dict[str, float] = {}
             for pid, (cmd, ticks) in pids.items():
                 # 이번 구간에 새로 생긴 프로세스는 다음 구간부터 센다
                 if pid in self.prev_pids:
                     used_s = max(ticks - self.prev_pids[pid], 0) / self.clk_tck
                     group = classify(cmd)
                     groups[group] += used_s / dt
+                    r = role(cmd)
+                    roles[r] = roles.get(r, 0.0) + used_s / dt
                     label = proc_label(cmd)
                     self.proc_seconds[label] = self.proc_seconds.get(label, 0.0) + used_s
                     self.proc_group[label] = group
@@ -168,8 +194,12 @@ class Sampler:
             host_pct = None
             if host is not None and self.prev_host is not None and host[1] > self.prev_host[1]:
                 host_pct = 100.0 * (host[0] - self.prev_host[0]) / (host[1] - self.prev_host[1])
+            robots = [v for k, v in roles.items() if k.startswith('amr_')]
             row = {'time': now, 'cores': cores, 'allowed_cores': allowed, 'cpu_pct': 100.0 * cores / allowed,
-                   'host_cpu_pct': host_pct, **{f'cores_{g}': v for g, v in groups.items()}}
+                   'host_cpu_pct': host_pct, **{f'cores_{g}': v for g, v in groups.items()},
+                   'cores_server': roles.get('server', 0.0), 'cores_tool': roles.get('tool', 0.0),
+                   'cores_robot_max': max(robots, default=0.0),
+                   'cores_robot_mean': sum(robots) / len(robots) if robots else 0.0}
         self.prev_time, self.prev_cgroup, self.prev_host = now, cgroup, host
         self.prev_pids = {pid: ticks for pid, (_, ticks) in pids.items()}
         return row

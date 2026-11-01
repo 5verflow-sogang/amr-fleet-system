@@ -1,0 +1,22 @@
+# 단일 작업 성공률용 작업 시나리오 (하네스 task_cycle, 로봇 1대). 서버 대기열에 넣어 두면 로봇이 하나씩 받는다.
+# 스테이션은 BT 단일 작업 성공률 측정(experiments/bt_cycle, 10/15 36/36)의 6개 경로에서 쓴 곳을 섞었다:
+# 창고 서쪽 끝 도크(dock_1·dock_2)와 동쪽 도크(dock_a·dock_b), 세 열의 랙. 배송 하나가 약 15~50 m.
+count: 40
+start_delay_s: 5.0
+arrival: fixed
+interval_s: 5.0
+flows:
+  - type: delivery
+    pickup: [rack_c6, rack_b5, rack_a5, rack_c3]
+    dropoff: [rack_b6, dock_b, dock_1, rack_b3]
+    weight: 1.0
+  - type: delivery
+    pickup: [dock_a, dock_2]
+    dropoff: [rack_a6, rack_c2]
+    weight: 1.0
+items:
+  small: 0.5
+  medium: 0.3
+  large: 0.2
+priority: [0, 0]
+deadline_s: 0.0

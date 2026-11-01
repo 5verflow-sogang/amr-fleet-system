@@ -30,6 +30,7 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 set(dependencies
   amr_msgs
@@ -44,6 +45,7 @@ set(dependencies
   tf2_geometry_msgs
   geometry_msgs
   nav_msgs
+  std_msgs
 )
 
 add_library(waypoint SHARED
@@ -98,6 +100,9 @@ if(BUILD_TESTING)
   target_include_directories(test_obstacles PRIVATE include)
   target_link_libraries(test_obstacles amr_planning_core::amr_planning_core)
   ament_target_dependencies(test_obstacles amr_msgs)
+
+  ament_add_gtest(test_avoid_mode test/test_avoid_mode.cpp)
+  target_include_directories(test_avoid_mode PRIVATE include)
 
   ament_add_gtest(test_plugin_loadable test/test_plugin_loadable.cpp)
   target_link_libraries(test_plugin_loadable dwa_controller)
