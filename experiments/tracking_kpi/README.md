@@ -45,6 +45,30 @@ uv run --no-project --with rosbags --with numpy python -I experiments/tracking_k
 | `make_tables.py` | perception.md 1-7 결과 표 다섯 개 (마크다운) |
 | `analyze.py` | 결과 뒤 분석: P2 원인 분해, 물체별 ID 전환·NEES, 처음 잡는 거리, 가짜 동적 트랙, 판정 안 된 구간 |
 | `measure_radius.py` | 녹화에서 작업자를 잡은 트랙의 반경과 LiDAR 빔 간격 (`frames.csv`에는 짝 트랙의 반경이 없다) |
+| `replay_bench.py` | 재생 벤치. 녹화된 스캔·TF로 추적기를 ROS·Gazebo 없이 다시 돌리고 평가한다 (아래 "재생 벤치") |
+
+## 재생 벤치 (추적기 수정 비교)
+
+녹화(rosbag)의 스캔·TF로 추적 노드와 같은 계산(군집화 → 빈 공간 증거 → 추적)을 코어 함수로 다시 하고, `tracking_eval`과 같은 평가를 낸다. Gazebo도 GCP도 없이 실행 하나가 몇 초다. 출력은 GCP 실행 폴더와 같은 모양이라 4~5번(`summarize.py`·`make_tables.py`·`analyze.py`)을 그대로 쓴다.
+
+```bash
+# 녹화까지 받는다
+python3 -I experiments/tracking_kpi/fetch_runs.py <기록 CSV> --out experiments/tracking_kpi/raw/dev --with-rosbag
+# 지금 설정 / 설정을 바꿔서 (tracking.yaml 이름=값)
+uv run --no-project --with rosbags --with numpy --with pyyaml python -I experiments/tracking_kpi/replay_bench.py \
+    experiments/tracking_kpi/raw/dev/*/*/*_0[0-9] --out experiments/tracking_kpi/raw/bench/base --check-node
+uv run --no-project --with rosbags --with numpy --with pyyaml python -I experiments/tracking_kpi/replay_bench.py \
+    experiments/tracking_kpi/raw/dev/*/*/*_0[0-9] --out experiments/tracking_kpi/raw/bench/sa2 --set accel_noise_std=2.0
+```
+
+- 설정은 저장소의 `src/perception/amr_tracking/config/tracking.yaml`을 읽는다. 바꾼 값은 결과의 `meta.json` `bench`에 남는다
+- 평가 시간 범위는 실행 폴더에 GCP 평가 결과(`tracking/frames.csv`)가 있으면 그 범위, 없으면 첫 프레임부터 `duration_s`
+- 확인 (11/1, 본 측정 C10·E·B 1회씩): 설정 그대로면 녹화 속 노드 출력과 C10 504/504, E 902/905, B 2996/3105프레임 같다(녹화 시작 5 s 뒤부터, 트랙 번호가 아니라 위치로 비교). 다른 프레임은 하네스가 추적 노드를 녹화보다 약 2 s 먼저 띄워 생긴 정지 물체 트랙의 차이다
+- **수정 효과는 개발용 녹화(장애물 시드 1001~, `--set seed_offset=1000`)로 본다.** 본 측정 녹화(시드 1~10)로 값을 맞추면 판정에 쓴 장면으로 튜닝하는 셈이라, 본 측정 녹화는 `--check-node`로 벤치가 노드·GCP 평가와 같은지 확인할 때만 쓴다(GT와 짝지어지는 값이 GCP와 다르면 실패 코드)
+- 장면 C는 작업자 속력이 고정이라 시드가 장면을 바꾸지 않는다. 개발용 C는 속력·출발 거리가 다른 장면으로 따로 만든다
+- 폐루프는 못 본다. 로봇이 트랙에 반응하는 실험(I17)은 시뮬레이션으로 잰다
+- 노드에서만 하는 일(메시지로 낼 때의 반경 규칙, 카메라 연관, 지도 대조, TTC)은 벤치에 없다. **추적기 수정은 코어(`amr_perception_core`)에 넣어야 벤치로 비교된다.** `tracking.yaml`에 벤치가 모르는 값이 생기면 경고한다
+- GCP 평가와 비교하면 GT와 짝지어지는 값(RMSE·짝 수·판정 지연·D1)은 같다(본 측정 C10·E·B 1회씩 확인). 프레임당 값(가짜 동적·트랙 수)은 녹화 전 프레임만큼 분모가 달라 조금 다르다. 수정 전후는 벤치끼리 비교한다
 
 ## 원자료
 
