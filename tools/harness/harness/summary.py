@@ -41,7 +41,8 @@ NAV_KPI = {'navkpi.plan_success_rate': (0.98, 'min'), 'navkpi.replan_p95_ms': (5
            'navkpi.cte_curve_mean_m': (0.10, 'max')}
 # 추적 정확도 KPI (docs/algorithms/perception.md 1-7): (기준, 방향). gt = 기준보다 커야 함 (CI 하한으로 판정).
 # P1은 0과 같아도 불합격이다 (추정 속도가 0이면 예측과 정지 가정이 같아진다). 장면 A·B·D·E에서만 판정한다
-TRACK_KPI = {'track.pred_gain_1s': (0.0, 'gt'), 'track.vel.rmse': (0.2, 'max')}
+# P2는 센서 범위(12 m) 안 짝의 속도 RMSE다 (3막 재측정부터, 결과 전 등록). 전체 거리 track.vel.rmse는 참고 지표
+TRACK_KPI = {'track.pred_gain_1s': (0.0, 'gt'), 'track.vel_in_range.rmse': (0.2, 'max')}
 TRACK_KPI_SCENARIOS = {'tracking_kpi_a', 'tracking_kpi_b', 'tracking_kpi_d', 'tracking_kpi_e'}
 # 최악값으로 판정하는 KPI: 지표 → (기준 하한, 최소 실행 수, 판정할 시나리오). 안전 기준이라 평균·CI가 아니라
 # 모든 실행이 기준 이상이어야 한다 (D1, perception.md 1-7)
@@ -347,7 +348,7 @@ def tracking_metrics(run_dir: Path) -> dict[str, float]:
 
     판정하는 지표 (TRACK_KPI, WORST_KPI):
       track.pred_gain_1s  정지 가정 RMSE − 등속 예측 RMSE (+1 s, 움직이는 GT). P1
-      track.vel.rmse      속도 벡터 오차 RMSE. P2
+      track.vel_in_range.rmse  센서 범위(12 m) 안 짝의 속도 벡터 오차 RMSE. P2
       track.d1_ttc_s      접근 판정 TTC (GT 물체가 하나인 기록만, approach.ttc_s). D1. 판정 없이 최근접까지 오면 0이고,
                           잴 수 없는 실행(None)은 넣지 않는다. 그 실행이 빠진 것은 최악값 판정이 보류로 드러낸다
     나머지는 참고 지표다. 표본이 없어 비어 있는 값은 넣지 않고, P1·P2의 표본 수(.n)는 늘 넣는다.
@@ -368,6 +369,9 @@ def tracking_metrics(run_dir: Path) -> dict[str, float]:
         out['track.pred_1s.n'] = o['pred_1']['n']
         put('vel.rmse', o['vel']['rmse'])
         out['track.vel.n'] = o['vel']['n']
+        if 'vel_in_range' in o:          # 전 평가 결과에는 없다
+            put('vel_in_range.rmse', o['vel_in_range']['rmse'])
+            out['track.vel_in_range.n'] = o['vel_in_range']['n']
         put('match_rate', o['match_rate_in_range'])
         put('pos.rmse', o['pos']['rmse'])
         put('radial.mean', o['radial']['mean'])          # 센서 방향 편향 (음수 = 센서 쪽)
