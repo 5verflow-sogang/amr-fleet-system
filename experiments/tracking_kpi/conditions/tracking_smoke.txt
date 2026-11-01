@@ -1,0 +1,9 @@
+# 추적 KPI 짧은 시험 (PR #251 코드, 장면마다 1회). 돌아가는지만 본다 — KPI 숫자는 보지 않는다 (시드 1 = 본 측정과 같음)
+# A·B·D는 300 s 대신 120 s만 기록 (driver는 15 s 더 기다린다). C(40 s)·E(주행 끝까지)는 그대로
+tracking_kpi_a   -n 1 --set duration_s=120.0 --set wait_s=135.0 --label smoke
+tracking_kpi_b   -n 1 --set duration_s=120.0 --set wait_s=135.0 --label smoke
+tracking_kpi_c05 -n 1 --label smoke
+tracking_kpi_c10 -n 1 --label smoke
+tracking_kpi_c15 -n 1 --label smoke
+tracking_kpi_d   -n 1 --set duration_s=120.0 --set wait_s=135.0 --label smoke
+tracking_kpi_e   -n 1 --label smoke
