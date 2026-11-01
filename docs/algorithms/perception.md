@@ -141,6 +141,8 @@ GT 장애물(사람 1 m, 지게차·로봇 2.5 m 안)과 짝이 없는 동적 �
 
 **C안으로 정했다 (10/8).** `tracking_node`가 `scan`을 구독해 군집화하고(`measurement_source: scan`, 기본), 군집 반경을 트랙 반경으로 쓴다(지수 평활 `radius_smoothing` 0.3). `perception/obstacle_measurements`(PoseArray) 입력은 시험용 발행기용으로 남긴다(`measurement_source: poses`, `use_synthetic:=true`).
 
+**동적 트랙 최소 반경 (11/1).** 사람은 LiDAR 높이에서 다리만 보여, 카메라를 끄면(또는 카메라 시야 밖이면) 클래스 없이 다리 반경으로 나갔다(추적 KPI 본 측정 C10 중앙 0.109 m, 실제 0.25 m). DWA·안전 노드·TTC가 쓰는 여유가 0.14 m 작아진다. 내보내는 반경을 max(트랙 반경, 클래스 최소 반경, 클래스 없는 동적 트랙이면 `dynamic_min_radius` 0.25 m)로 한다(`association.published_radius`, 재생 벤치도 같은 함수). 지게차·로봇은 군집 반경이 더 커서 바뀌지 않고, 정적 트랙은 DWA·안전 노드가 쓰지 않아 그대로다. 개발용 녹화 18회에서 가짜 동적 때문에 늘어난 정지는 0번 그대로, 감속은 B 실행 하나에서 0.2%였다.
+
 ### 1-3-1. 다리 묶기
 
 LiDAR 높이(약 0.2 m)에서 사람은 다리 두 개로 보인다(amr_gazebo README). 그대로 추적하면 사람 하나가 반경 0.1 m짜리 트랙 두 개가 되어, ORCA·안전 노드가 사람 크기를 작게 본다.
@@ -439,6 +441,7 @@ ros2 run amr_tracking tracking_eval --ros-args -r __ns:=/amr_01 -p use_sim_time:
 
 - I17 전에 정할 것 (회피 측정에 바로 영향):
   - 카메라를 끈 스택의 사람 반경. 카메라를 켜서 `person` 최소 반경을 쓰거나, 클래스가 없는 동적 트랙에 최소 반경을 둔다.
+    클래스가 없는 동적 트랙에 0.25 m 바닥을 두었다(1-3, `dynamic_min_radius`).
   - 미끄러지는 트랙. 측정이 끊긴 동적 트랙의 coasting 시간을 줄이거나, 그동안 속도를 줄이거나, TTC 계산에서 뺀다.
     작업자가 돌아서서 생기던 것은 보조 연관으로 없앴다(1-3-3, 개발용 C 가짜 정지 9 → 0번). 가려져서 미끄러지는 경우는 남는다.
   - 처음 잡는 거리(약 7 m). 로봇이 움직일 때 회피 모드가 TTC 3 s 전에 켜지는지 I17에서 `dwa/avoid_mode`로 확인한다.

@@ -21,7 +21,7 @@ ROS 토픽을 직접 다루지 않는다. 공개 함수·클래스 목록을 여
 | `clustering` | `ClusteringConfig`, `scan_to_points`, `cluster_scan`, `is_obstacle_candidate`, `merge_leg_pairs`, `detect_obstacles`, `transform_points_2d` | 스캔 군집화(adaptive breakpoint, 튄 점 하나 건너뛰기) → R1 크기 규칙 → 다리 묶기 |
 | `free_space` | `FreeSpaceGrid(resolution, size, max_range, endpoint_margin, free_memory, hit_quiet, hit_clearance)` | 빈 공간 침입 증거(R4). `integrate(sensor_xy, directions, ranges, t)`, `evidence(points, t)` |
 | `static_map` | `StaticMapMask(occupancy, resolution, origin, occupied_threshold, inflation)` | 정적 지도 대조(R2). `is_static(points)`, `best_offset(points, max_shift, step)` |
-| `association` | `AssociationConfig`, `associate(tracks, detections, t, config)`, `ClassLabeler` | 카메라 검출 ↔ 트랙 연관, 트랙별 클래스 근거 누적(히스테리시스). `FixedDetection`, `TrackSnapshot`, `TrackLabel` |
+| `association` | `AssociationConfig`, `associate(tracks, detections, t, config)`, `ClassLabeler`, `published_radius(...)` | 카메라 검출 ↔ 트랙 연관, 트랙별 클래스 근거 누적(히스테리시스). 내보내는 반경 = max(트랙 반경, 클래스 최소 반경, 클래스 없는 동적 트랙 최소 반경). `FixedDetection`, `TrackSnapshot`, `TrackLabel` |
 | `tracking_eval` | `EvalConfig`, `TrackingEvaluator(config, gt_ids)`, `TrackObs`, `TimeSeries`, `associate_nearest`, `world_from_odom`, `format_summary_ko` | 추적 결과 ↔ GT 평가 (`tracking_eval` 노드). `add_gt`, `add_frame` → `evaluate()` = (프레임별 행, 동적 판정 구간, 요약). perception.md 1-7절 |
 
 ### 충돌 위험·안전 (`amr_tracking`, `amr_safety` 노드가 사용)

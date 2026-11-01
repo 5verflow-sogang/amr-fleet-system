@@ -108,6 +108,10 @@
     # 클래스별 최소 반경 [m]. 사람은 LiDAR 높이(0.38 m)에서 다리만 보여 반경이 0.12 m 정도로 작게 잡혔다
     min_radius_classes: ["person"]
     min_radius_values: [0.25]
+    # 클래스가 아직 없는(unknown) 동적 트랙의 최소 반경 [m]. 카메라를 끄면(또는 카메라 시야 밖이면) 사람이 클래스 없이
+    # 다리 반경(중앙 0.11 m, 추적 KPI 본 측정 C10)으로 나가 DWA·안전 노드·TTC 여유가 0.14 m 작아졌다.
+    # 지게차·로봇은 군집 반경이 더 커서 바뀌지 않는다. 0.0이면 끈다
+    dynamic_min_radius: 0.25
 
     publish_markers: true    # perception/obstacle_markers (RViz 확인용)
     stats_period: 5.0        # s. 프레임당 후보·트랙 수, 처리 시간 로그 주기
