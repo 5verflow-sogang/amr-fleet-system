@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Iterable, Optional
 
-from .summary import _fmt, fleet_metrics, load_meta
+from .summary import WORST_KPI, _fmt, fleet_metrics, load_meta
 
 ENV = 'HARNESS_DISCORD_WEBHOOK'
 
@@ -103,11 +103,18 @@ def build_payload(summary: dict, context: str = '', plot: Optional[tuple[str, st
         status = group_status(group)
         fields = []
         for metric, d in group['metrics'].items():
-            if not d.get('kpi') and metric not in HEADLINE:
+            if not d.get('kpi') and metric not in HEADLINE and metric not in WORST_KPI:
                 continue
-            ci = '' if d['ci_low'] is None else f" (95% CI {_fmt(d['ci_low'], metric)} ~ {_fmt(d['ci_high'], metric)})"
-            label = f"{metric} · {d['kpi']}" if d.get('kpi') else metric
-            fields.append({'name': label[:256], 'value': f"{_fmt(d['mean'], metric)}{ci}"[:1024], 'inline': True})
+            if metric in WORST_KPI:
+                # 최악값 판정이라 평균·CI가 아니라 가장 나쁜 실행을 보여 준다. 보류 사유도 붙인다
+                value = f"최소 {_fmt(d['min'], metric)} ({d['n']}회, 최악값 판정)"
+            else:
+                ci = ('' if d['ci_low'] is None
+                      else f" (95% CI {_fmt(d['ci_low'], metric)} ~ {_fmt(d['ci_high'], metric)})")
+                value = f"{_fmt(d['mean'], metric)}{ci}"
+            verdict = d.get('kpi') or (d.get('kpi_note') if metric in WORST_KPI else None)
+            label = f"{metric} · {verdict}" if verdict else metric
+            fields.append({'name': label[:256], 'value': value[:1024], 'inline': True})
         description = f"완료 {len(group['runs'])}회, 실패 {len(group['failed'])}회"
         if group['failed']:
             description += ' (' + ', '.join(f"{f['run_id']}: {f['outcome']}" for f in group['failed'][:5]) + ')'

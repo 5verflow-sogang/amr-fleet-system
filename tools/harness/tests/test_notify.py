@@ -96,6 +96,23 @@ def test_payload_limits():
     assert all(len(e['fields']) == 25 for e in payload['embeds'])
 
 
+def test_payload_shows_worst_case_kpi_minimum():
+    # D1(track.d1_ttc_s)은 최악값 판정: 평균 3.9 s인데 FAIL로 보이지 않게 최솟값을 보여 주고, 보류 사유도 붙인다
+    d1 = {'n': 10, 'mean': 3.87, 'std': 1.3, 'min': 0.0, 'max': 4.3, 'ci_low': 3.01, 'ci_high': 4.3}
+    summary = {'tracking_kpi_c15/main': {'runs': ['r'] * 10, 'failed': [],
+                                         'metrics': {'track.d1_ttc_s': dict(d1, kpi='FAIL')}},
+               'tracking_kpi_c10/main': {'runs': ['r'] * 9, 'failed': [],
+                                         'metrics': {'track.d1_ttc_s': dict(d1, n=9, min=3.4,
+                                                                            kpi_note='보류 (n=9<10)')}}}
+    fail, short = build_payload(summary)['embeds']
+    assert fail['fields'] == [{'name': 'track.d1_ttc_s · FAIL', 'value': '최소 0 (10회, 최악값 판정)',
+                               'inline': True}]
+    assert fail['title'].startswith('❌')
+    assert short['fields'][0]['name'] == 'track.d1_ttc_s · 보류 (n=9<10)'
+    assert short['fields'][0]['value'] == '최소 3.4 (9회, 최악값 판정)'
+    assert short['title'].startswith('ℹ️')            # 보류는 PASS로 보이지 않는다
+
+
 class _Hook(BaseHTTPRequestHandler):
     received = []
     status = 204
