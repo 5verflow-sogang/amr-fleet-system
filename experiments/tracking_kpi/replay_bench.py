@@ -14,15 +14,19 @@
 - 출력은 GCP 실행 폴더와 같은 모양(<out>/<장면-라벨>/<묶음>/<실행>/{meta.json, tracking/…})이라
   tools/harness/summarize.py, make_tables.py, analyze.py를 그대로 쓴다
 - --check-node (설정을 바꾸지 않았을 때만 뜻이 있다):
-  - 실행 폴더에 GCP 평가 결과(tracking/summary.json)가 있으면 GT와 짝지어지는 값(RMSE·짝 수·D1)이 같은지 본다.
-    다르면 실패 코드로 끝난다
+  - 실행 폴더에 GCP 평가 결과(tracking/summary.json·frames.csv)가 있으면 추적기가 정하는 값(위치·속도 RMSE와 짝 수,
+    예측·정지 가정 오차는 짝마다, 동적 판정 지연·접근 판정)이 같은지 본다. 다르면 다른 값의 이름을 보이고 실패 코드로
+    끝난다 (구간 시작에 따라 달라지는 값 GT_START_KEYS와 창 끝 뒤를 목표로 하는 예측 짝 PRED_COLS는 뺀다)
   - 벤치 트랙이 녹화 속 노드 출력과 같은 프레임 수를 참고로 보인다. 하네스는 추적 노드를 녹화보다 약 2 s 먼저
     띄워, 녹화 전부터 있던 정지 물체 트랙 때문에 몇 프레임은 다를 수 있다(장애물은 그 뒤에 띄운다)
 - 폐루프는 못 본다: 로봇이 트랙에 반응하는 실험(I17)은 시뮬레이션으로 잰다
 - 노드에서만 하는 일은 벤치에 없다(메시지로 낼 때의 반경 규칙, 카메라 연관, 지도 대조, TTC). 추적기 수정은
   코어(amr_perception_core)에 넣어야 벤치로 비교된다. tracking.yaml에 벤치가 모르는 값이 생기면 경고한다
-- GCP 평가와 비교: GT와 짝지어지는 값(RMSE·짝 수·판정 지연·D1)은 같다. 프레임당 값(가짜 동적·트랙 수)은 하네스가
-  추적 노드를 녹화보다 먼저 띄워 녹화 전 프레임만큼 분모가 달라 조금 다르다. 수정 전후는 벤치끼리 비교한다
+- GCP 평가와 비교: 추적기가 정하는 값(위치·속도 RMSE와 짝 수, 짝마다의 예측 오차, 처음 본 뒤 판정 지연·판정 거리, D1)은
+  같다. 예측 RMSE·짝 수는 창 끝 뒤를 목표로 하는 짝만큼 다를 수 있다(PRED_COLS). 구간 시작과 거기서 잰 값
+  (판정 지연 from_start, 시작 거리)은 녹화에 새로 뜬 장애물의 GT가 늦게부터 들어 있어 GCP와 다를 수 있다. 프레임당 값
+  (가짜 동적·트랙 수)은 하네스가 추적 노드를 녹화보다 먼저 띄워 녹화 전 프레임만큼 분모가 달라 조금 다르다.
+  수정 전후는 벤치끼리 비교한다 (같은 녹화라 이 차이가 똑같다)
 """
 import argparse
 import bisect
@@ -54,6 +58,15 @@ ROBOT_GT_MAX_GAP = 0.05   # tracking_eval_node와 같다
 # 평가 창 끝 뒤 GT를 이만큼만 쓴다. GCP 평가 노드는 기록 시간이 끝나면 바로 저장해 그 뒤 GT가 없다
 # (안 자르면 창 끝 1 s의 +1 s 예측 짝이 GCP보다 많아진다)
 GT_AFTER_WINDOW_S = 0.1
+# 구간 시작(장애물이 움직이며 범위에 들어온 시각)에 따라 달라지는 값. 녹화에는 새로 뜬 장애물의 GT가 GCP 평가 노드보다
+# 늦게부터 들어 있어(본 측정 C10 0.8 s, 개발용 C 0.15 s. 새 토픽을 찾는 시간으로 보임) 구간 시작이 GCP보다 늦을 수 있다.
+# 그래서 --check-node 대조에서 뺀다
+# (by_speed는 구간 평균 속력으로 칸을 나눈다). GT만으로 정해져 같은 녹화끼리는 똑같으므로 수정 전후 비교에는 영향이 없다
+GT_START_KEYS = ('t_start', 'start_dist', 'latency_from_start', 'from_start', 'by_speed')
+# 예측·정지 가정 오차 열과 앞을 보는 시간 [s]. 목표 시각(t + 앞)이 평가 창 끝보다 뒤인 짝은 GCP 평가 노드가 멈추기 전에
+# 받은 GT에 달려 있어(실행마다 몇십 ms 다르다. 벤치는 GT_AFTER_WINDOW_S로 어림) --check-node에서 한쪽에만 있어도 된다
+# (개발용 E 실행 00: 창 끝 98.7 s, GCP에만 목표 98.8 s 짝 2개)
+PRED_COLS = {'pred_err_1s': 1.0, 'hold_err_1s': 1.0, 'pred_err_2s': 2.0, 'hold_err_2s': 2.0}
 # 벤치가 쓰는 tracking.yaml 이름 (노드의 설정 읽기와 같아야 한다. --check-node로 확인)
 KALMAN_KEYS = ('accel_noise_std', 'measurement_noise_std', 'initial_velocity_std')
 TRACKER_KEYS = ('gate_mahalanobis_sq', 'confirm_hits', 'max_coast_time', 'dynamic_speed_threshold',
@@ -210,9 +223,31 @@ def track_obs(track, default_radius):
                     float(track.radius if track.radius is not None else default_radius))
 
 
+class _Evaluator(TrackingEvaluator):
+    """'기록 시작 전부터'(censored) 구간을 첫 평가 프레임 대신 평가 시작(벤치 추적기가 돌고 평가 범위 안인 첫 시각)
+    기준으로 가르는 평가 코어.
+
+    첫 스캔 때 로봇 GT가 아직 없으면(첫 샘플이 조금 늦다) 그 프레임은 평가에서 빠지지만 추적기는 이미 돌았다.
+    그 사이 나타난 장애물은 추적기가 처음부터 본 구간인데 첫 평가 프레임 기준이면 censored가 되어 D1이 빈다
+    (개발용 C 실행 02: 첫 스캔 3.6 s, 로봇 GT 3.62 s, 작업자 3.7 s). 평가 시작 전부터 진행 중이던 구간은
+    그대로 censored라, 녹화보다 먼저 움직이던 장애물이 벤치에서 중간부터 잡혀 판정 지연이 짧게 섞이지 않는다.
+    코어의 _episodes(history, first_t)를 덮어쓴다. 코어에서 이름·인자가 바뀌면 여기도 고친다
+    (안 고치면 예전 기준으로 돌아가 개발용 C 실행 02의 --check-node가 '다름'으로 잡는다).
+    """
+
+    def __init__(self, config, gids, eval_start):
+        super().__init__(config, gids)
+        self.eval_start = eval_start
+
+    def _episodes(self, history, first_t):
+        if self.eval_start is not None and first_t is not None:
+            first_t = min(first_t, self.eval_start)
+        return super()._episodes(history, first_t)
+
+
 def evaluate(rec: Recording, frames, window):
     """tracking_eval 노드와 같은 평가. window = (시작, 끝) 시각, 끝이 None이면 녹화 끝까지."""
-    ev = TrackingEvaluator(EvalConfig(), sorted(rec.obstacles))
+    ev = _Evaluator(EvalConfig(), sorted(rec.obstacles), max(window[0], frames[0][0]) if frames else None)
     gt_end = math.inf if window[1] is None else window[1] + GT_AFTER_WINDOW_S
     for gid, samples in rec.obstacles.items():
         for s in samples:
@@ -281,27 +316,45 @@ def eval_window(run: Path, frames, meta):
     return start, (start + duration if duration > 0 else None)
 
 
-def check_gcp(run: Path, summary):
-    """GCP 평가와 GT 관련 값이 같은지. GCP 결과가 없으면 None."""
-    path = run / 'tracking/summary.json'
-    if not path.is_file():
+def _same(a, b) -> bool:
+    """summary.json 값 비교 (실수는 1e-9 안, NaN끼리 같다)."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_same(a[k], b[k]) for k in a)
+    if isinstance(a, float) and isinstance(b, float):
+        return abs(a - b) <= 1e-9 or (math.isnan(a) and math.isnan(b))
+    return a == b
+
+
+def _match_rows(path: Path):
+    """frames.csv의 짝 행 {(시각, GT id): 행} (값은 write_csv가 쓴 문자열 그대로)."""
+    with open(path, newline='', encoding='utf-8') as f:
+        return {(r['t'], r['gt_id']): r for r in csv.DictReader(f) if r['kind'] == 'match'}
+
+
+def check_gcp(run: Path, summary, bench_frames: Path, window_end: float):
+    """GCP 평가와 다른 값의 이름 목록 (같으면 빈 목록). GCP 결과가 없으면 None.
+
+    위치·속도 오차(overall), 동적 판정 지연(latency), 접근 판정(approach)은 요약끼리 본다. 구간 시작에 따라
+    달라지는 값(GT_START_KEYS)만 뺀다. 예측·정지 가정 오차는 짝마다(frames.csv의 시각·GT) 본다: 둘 다 있으면
+    같아야 하고, 한쪽에만 있어도 되는 것은 목표 시각이 평가 창 끝보다 뒤인 짝뿐이다(PRED_COLS).
+    """
+    path, frames = run / 'tracking/summary.json', run / 'tracking/frames.csv'
+    if not (path.is_file() and frames.is_file()):
         return None
     gcp = json.loads(path.read_text())
-    for key in ('pos', 'vel', 'pred_1', 'hold_1', 'pred_2', 'hold_2'):
-        a, b = summary['overall'][key], gcp['overall'][key]
-        if a['n'] != b['n'] or (a['n'] and abs(a['rmse'] - b['rmse']) > 1e-9):
-            return False
-    if summary['latency']['episodes'] != gcp['latency']['episodes']:
-        return False
-    a, b = summary.get('approach'), gcp.get('approach')
-    if bool(a) != bool(b):
-        return False
-    if not a:
-        return True
-    ta, tb = a.get('ttc_s'), b.get('ttc_s')   # 잴 수 없으면 None
-    if ta is None or tb is None:
-        return ta is None and tb is None
-    return abs(ta - tb) < 1e-9
+    diffs = [f'overall.{k}' for k in ('pos', 'vel') if not _same(summary['overall'][k], gcp['overall'][k])]
+    for block in ('latency', 'approach'):
+        a, b = summary.get(block) or {}, gcp.get(block) or {}
+        diffs += [f'{block}.{k}' for k in sorted(set(a) | set(b))
+                  if k not in GT_START_KEYS and not _same(a.get(k), b.get(k))]
+    g_rows, b_rows = _match_rows(frames), _match_rows(bench_frames)
+    if g_rows.keys() != b_rows.keys():
+        return diffs + ['frames.match']
+    for col, ahead in PRED_COLS.items():
+        if any(g.get(col, '') != b_rows[key].get(col, '') and float(key[0]) + ahead <= window_end + 1e-6
+               for key, g in g_rows.items()):
+            diffs.append(f'frames.{col}')
+    return diffs
 
 
 def write_csv(path: Path, rows):
@@ -333,7 +386,8 @@ def main(argv=None):
             print(f'경고: {run.name}에 카메라 검출이 녹화돼 있다. 벤치는 카메라 연관(클래스·최소 반경)을 하지 않는다',
                   file=sys.stderr)
         frames = replay(rec, p)
-        rows, episodes, summary = evaluate(rec, frames, eval_window(run, frames, meta))
+        window = eval_window(run, frames, meta)
+        rows, episodes, summary = evaluate(rec, frames, window)
         dest = a.out / Path(*run.resolve().parts[-3:])
         (dest / 'tracking').mkdir(parents=True, exist_ok=True)
         meta['bench'] = {'set': a.set, 'tracking_yaml': str(TRACKING_YAML.relative_to(REPO))}
@@ -345,9 +399,10 @@ def main(argv=None):
         if a.check_node:
             same, total, worst = check_node(rec, frames)
             line += f' | 노드와 같은 프레임 {same}/{total}'
-            gcp = check_gcp(run, summary)
-            line += {None: ' | GCP 평가 없음', True: ' | GCP 평가와 같음', False: ' | GCP 평가와 다름'}[gcp]
-            bad += gcp is False
+            diffs = check_gcp(run, summary, dest / 'tracking/frames.csv', window[1])
+            line += (' | GCP 평가 없음' if diffs is None else ' | GCP 평가와 같음' if not diffs
+                     else f" | GCP 평가와 다름: {', '.join(diffs)}")
+            bad += bool(diffs)
         print(line)
     return 1 if bad else 0
 
