@@ -155,6 +155,7 @@ class TrackingNode(Node):
             maneuver_max_speed=p('maneuver_max_speed', 1.5).value,
             maneuver_margin=p('maneuver_margin', 0.15).value,
             maneuver_max_age=p('maneuver_max_age', 0.5).value,
+            maneuver_max_radius=p('maneuver_max_radius', 0.4).value,
         ))
         self.clustering = ClusteringConfig(
             breakpoint_lambda_deg=p('breakpoint_lambda_deg', 10.0).value,

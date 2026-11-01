@@ -48,10 +48,15 @@ class TrackerConfig:
     # maneuver_max_speed는 명세 장애물 최대 속력(1.5 m/s)으로 둔다. 넉넉히 2.0으로 두면 지게차처럼 큰 물체의 군집 중심이
     # 보이는 면에 따라 0.3~0.7 m 튀는 것(2~3.5 m/s 꼴)까지 기동으로 받아 속도가 엉터리로 다시 잡혔다(개발용 B).
     # maneuver_margin은 두 관측 차이의 잡음 몫(measurement_noise_std 0.05면 약 2σ). 0.1이면 1.5 m/s 반전을 놓친다.
+    # maneuver_max_radius: 지금까지 본 가장 큰 군집 반경이 이보다 큰 트랙(지게차)은 하지 않는다. 큰 물체는 가려지거나
+    # 보이는 면이 바뀔 때 군집 중심이 0.4~0.6 m 튀어, 명세 최대 속력 안에서도 기동으로 받아 12 m 안 지게차 속도
+    # RMSE가 0.236 → 0.281 m/s로 나빠졌다(개발용 B). 사람 트랙은 가장 큰 반경이 0.24 m 이하였다(개발용 녹화 87개).
+    # 다른 로봇(0.6 × 0.4 m)도 대개 넘어 빠진다(개발용 B robot_1, 짝은 모두 12 m 밖). 반경 없이 측정하면 제한하지 않는다
     # maneuver_max_speed 0(기본)이면 끈다. 노드는 tracking.yaml 값을 쓴다
     maneuver_max_speed: float = 0.0
     maneuver_margin: float = 0.15
     maneuver_max_age: float = 0.5
+    maneuver_max_radius: float = 0.4
 
     def __post_init__(self):
         if not (math.isfinite(self.gate_mahalanobis_sq) and self.gate_mahalanobis_sq > 0.0):
@@ -66,7 +71,7 @@ class TrackerConfig:
             value = getattr(self, name)
             if not (math.isfinite(value) and value >= 0.0):
                 raise ValueError(f'{name}는 0 이상이어야 한다: {value}')
-        for name in ('max_coast_time', 'dynamic_speed_threshold', 'maneuver_max_age'):
+        for name in ('max_coast_time', 'dynamic_speed_threshold', 'maneuver_max_age', 'maneuver_max_radius'):
             value = getattr(self, name)
             if not (math.isfinite(value) and value > 0.0):
                 raise ValueError(f'{name}는 양수여야 한다: {value}')
@@ -84,6 +89,7 @@ class Track:
     evidence_frames: int = 0    # 빈 공간 침입 증거가 붙은 측정을 받은 프레임 수 (누적)
     radius: Optional[float] = None  # 장애물 반경 [m] (측정 반경의 지수 평활). 반경 없이 측정하면 None
     last_z: Optional[np.ndarray] = None   # 마지막 관측 위치 (보조 연관 기준점)
+    max_radius: Optional[float] = None    # 지금까지 본 가장 큰 측정 반경 [m] (보조 연관에서 큰 물체를 뺀다)
 
 
 def _as_measurement(value: Sequence[float]) -> np.ndarray:
@@ -198,6 +204,7 @@ class MultiTargetTracker:
     def _update_radius(self, track: Track, r: Optional[float]) -> None:
         if r is None:
             return
+        track.max_radius = r if track.max_radius is None else max(track.max_radius, r)
         if track.radius is None:
             track.radius = r
         else:
@@ -211,6 +218,7 @@ class MultiTargetTracker:
             last_z=z,
             confirmed=self.config.confirm_hits <= 1,
             radius=radius,
+            max_radius=radius,
         )
         self._next_id += 1  # 사라진 트랙의 ID는 다시 쓰지 않는다
         return track
@@ -231,7 +239,8 @@ class MultiTargetTracker:
         for ti, track in enumerate(self._tracks):
             age = t - track.last_update
             if (ti in matched_tracks or not (track.confirmed and track.is_dynamic) or track.last_z is None
-                    or age <= 0.0 or age > cfg.maneuver_max_age):
+                    or age <= 0.0 or age > cfg.maneuver_max_age
+                    or (track.max_radius is not None and track.max_radius > cfg.maneuver_max_radius)):
                 continue
             reach = cfg.maneuver_max_speed * age + cfg.maneuver_margin
             for mi in free:
