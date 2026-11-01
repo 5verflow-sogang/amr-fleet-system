@@ -150,6 +150,9 @@ class TrackingNode(Node):
             dynamic_confirm_frames=p('dynamic_confirm_frames', 5).value,
             dynamic_evidence_frames=p('dynamic_evidence_frames', 3).value,
             radius_smoothing=p('radius_smoothing', 0.3).value,
+            maneuver_max_speed=p('maneuver_max_speed', 1.5).value,
+            maneuver_margin=p('maneuver_margin', 0.15).value,
+            maneuver_max_age=p('maneuver_max_age', 0.5).value,
         ))
         self.clustering = ClusteringConfig(
             breakpoint_lambda_deg=p('breakpoint_lambda_deg', 10.0).value,

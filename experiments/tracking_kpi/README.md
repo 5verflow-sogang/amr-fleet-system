@@ -57,12 +57,17 @@ uv run --no-project --with rosbags --with numpy python -I experiments/tracking_k
 python3 -I experiments/tracking_kpi/fetch_runs.py <기록 CSV> --out experiments/tracking_kpi/raw/dev --with-rosbag
 # 지금 설정 / 설정을 바꿔서 (tracking.yaml 이름=값)
 uv run --no-project --with rosbags --with numpy --with pyyaml python -I experiments/tracking_kpi/replay_bench.py \
-    experiments/tracking_kpi/raw/dev/*/*/*_0[0-9] --out experiments/tracking_kpi/raw/bench/base --check-node
+    experiments/tracking_kpi/raw/dev/*/*/*_0[0-9] --out experiments/tracking_kpi/raw/bench/base
 uv run --no-project --with rosbags --with numpy --with pyyaml python -I experiments/tracking_kpi/replay_bench.py \
     experiments/tracking_kpi/raw/dev/*/*/*_0[0-9] --out experiments/tracking_kpi/raw/bench/sa2 --set accel_noise_std=2.0
+# 벤치 = 노드·GCP 평가 확인: 녹화 때의 노드 설정으로 돌린다. 보조 연관(perception.md 1-3-3) 전 녹화는 끈다
+uv run --no-project --with rosbags --with numpy --with pyyaml python -I experiments/tracking_kpi/replay_bench.py \
+    experiments/tracking_kpi/raw/dev/*/*/*_0[0-9] --out experiments/tracking_kpi/raw/bench/check --check-node \
+    --set maneuver_max_speed=0.0
 ```
 
 - 설정은 저장소의 `src/perception/amr_tracking/config/tracking.yaml`을 읽는다. 바꾼 값은 결과의 `meta.json` `bench`에 남는다
+- `--check-node`는 녹화 때의 노드 설정과 같을 때만 뜻이 있다(녹화의 커밋은 `meta.json`). 11/1까지의 녹화(본 측정, 개발용 A~E)는 보조 연관 전이라 `--set maneuver_max_speed=0.0`을 붙인다. 그대로 돌리면 바뀐 추적이 '다름'으로 나온다
 - 평가 시간 범위는 실행 폴더에 GCP 평가 결과(`tracking/frames.csv`)가 있으면 그 범위, 없으면 첫 프레임부터 `duration_s`. '기록 시작 전부터' 구간은 첫 평가 프레임이 아니라 벤치 추적기가 돌기 시작한 첫 스캔 기준으로 가른다(첫 스캔 때 로봇 GT가 없으면 그 프레임이 평가에서 빠져, 녹화 시작 무렵 나타난 장애물의 D1이 비었다. 개발용 C 실행 02)
 - 확인 (11/1, 본 측정 C10·E·B 1회씩, 개발용 A~E 3회씩 = 18회): 설정 그대로면 녹화 속 노드 출력과 개발용 A·C·D·E 12회와 본 측정 C10·E는 모든 프레임이 같다(녹화 시작 5 s 뒤부터, 트랙 번호가 아니라 위치로 비교). B는 개발용 3068/3108·3102/3102·3041/3102, 본 측정 3000/3105프레임: 하네스가 추적 노드를 녹화보다 약 2 s 먼저 띄워, 녹화 전부터 있던 트랙의 필터 상태가 mm 단위로 다르게 이어진다. 시각은 노드와 같은 식(나노초 정수 × 1e-9)으로 바꾼다. sec + nanosec × 1e-9로는 끝자리가 달라 못 본 시간 2.0 s 같은 경계 판정이 엇갈려 프레임이 더 달랐다
 - **수정 효과는 개발용 녹화(장애물 시드 1001~, `--set seed_offset=1000`)로 본다.** 본 측정 녹화(시드 1~10)로 값을 맞추면 판정에 쓴 장면으로 튜닝하는 셈이라, 본 측정 녹화는 `--check-node`로 벤치가 노드·GCP 평가와 같은지 확인할 때만 쓴다(추적기가 정하는 값이 GCP와 다르면 실패 코드와 다른 값 이름. 예측·정지 가정 오차는 짝마다 대조하고, 목표 시각이 평가 창 끝보다 뒤인 짝만 한쪽에 없어도 된다: GCP 평가 노드가 멈추기 전에 받은 GT가 실행마다 몇십 ms 달라서)

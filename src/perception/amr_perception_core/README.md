@@ -13,11 +13,11 @@ ROS 토픽을 직접 다루지 않는다. 공개 함수·클래스 목록을 여
 | 모듈 | 이름 | 설명 |
 | --- | --- | --- |
 | `kalman` | `KalmanConfig(accel_noise_std, measurement_noise_std, initial_velocity_std)` | KF 잡음 파라미터 |
-| `kalman` | `ConstantVelocityKF(position, timestamp, config)` | 등속 모델 KF. 상태 `[px, py, vx, vy]`, 위치 관측. `predict(t)`, `update(z, r=None)`, `mahalanobis_sq(z)`, `position`·`velocity`·`position_covariance`·`velocity_covariance`·`speed`·`heading` |
+| `kalman` | `ConstantVelocityKF(position, timestamp, config)` | 등속 모델 KF. 상태 `[px, py, vx, vy]`, 위치 관측. `predict(t)`, `update(z, r=None)`, `restart(z, previous_z, elapsed)`(두 관측으로 다시 잡기), `mahalanobis_sq(z)`, `position`·`velocity`·`position_covariance`·`velocity_covariance`·`speed`·`heading` |
 | `kalman` | `transition_matrix(dt)`, `process_noise(dt, σa)` | F, Q = σa² G Gᵀ (가속도 백색잡음 이산 모델) |
-| `tracker` | `TrackerConfig(kalman, gate_mahalanobis_sq, confirm_hits, max_coast_time, dynamic_speed_threshold, dynamic_confirm_frames, dynamic_evidence_frames, radius_smoothing)` | 트랙 관리 파라미터 |
-| `tracker` | `MultiTargetTracker(config)` | `step(t, measurements, radii=None, free_evidence=None)` → 확정 트랙 목록. 예측 → 연관(확정 트랙 우선, 마할라노비스 게이트, greedy) → 갱신 → 생성 → 삭제 → 동적 판정(속력 + 빈 공간 증거). `reset()` |
-| `tracker` | `Track` | `track_id`, `kf`, `hits`, `last_update`, `confirmed`, `is_dynamic`, `radius`, `evidence_frames` |
+| `tracker` | `TrackerConfig(kalman, gate_mahalanobis_sq, confirm_hits, max_coast_time, dynamic_speed_threshold, dynamic_confirm_frames, dynamic_evidence_frames, radius_smoothing, maneuver_max_speed, maneuver_margin, maneuver_max_age)` | 트랙 관리 파라미터 |
+| `tracker` | `MultiTargetTracker(config)` | `step(t, measurements, radii=None, free_evidence=None)` → 확정 트랙 목록. 예측 → 연관(확정 트랙 게이트 → 보조 연관(급한 기동, 동적 트랙을 마지막 관측 위치에서 갈 수 있는 거리 안 측정과) → 미확정 트랙 게이트, 마할라노비스, greedy) → 갱신 → 생성 → 삭제 → 동적 판정(속력 + 빈 공간 증거). `reset()` |
+| `tracker` | `Track` | `track_id`, `kf`, `hits`, `last_update`, `confirmed`, `is_dynamic`, `radius`, `evidence_frames`, `last_z` |
 | `clustering` | `ClusteringConfig`, `scan_to_points`, `cluster_scan`, `is_obstacle_candidate`, `merge_leg_pairs`, `detect_obstacles`, `transform_points_2d` | 스캔 군집화(adaptive breakpoint, 튄 점 하나 건너뛰기) → R1 크기 규칙 → 다리 묶기 |
 | `free_space` | `FreeSpaceGrid(resolution, size, max_range, endpoint_margin, free_memory, hit_quiet, hit_clearance)` | 빈 공간 침입 증거(R4). `integrate(sensor_xy, directions, ranges, t)`, `evidence(points, t)` |
 | `static_map` | `StaticMapMask(occupancy, resolution, origin, occupied_threshold, inflation)` | 정적 지도 대조(R2). `is_static(points)`, `best_offset(points, max_shift, step)` |

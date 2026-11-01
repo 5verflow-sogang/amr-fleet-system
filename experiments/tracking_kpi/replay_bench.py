@@ -70,7 +70,8 @@ PRED_COLS = {'pred_err_1s': 1.0, 'hold_err_1s': 1.0, 'pred_err_2s': 2.0, 'hold_e
 # 벤치가 쓰는 tracking.yaml 이름 (노드의 설정 읽기와 같아야 한다. --check-node로 확인)
 KALMAN_KEYS = ('accel_noise_std', 'measurement_noise_std', 'initial_velocity_std')
 TRACKER_KEYS = ('gate_mahalanobis_sq', 'confirm_hits', 'max_coast_time', 'dynamic_speed_threshold',
-                'dynamic_confirm_frames', 'dynamic_evidence_frames', 'radius_smoothing')
+                'dynamic_confirm_frames', 'dynamic_evidence_frames', 'radius_smoothing',
+                'maneuver_max_speed', 'maneuver_margin', 'maneuver_max_age')
 CLUSTER_KEYS = ('breakpoint_lambda_deg', 'range_noise_std', 'max_gap_beams', 'min_points', 'max_obstacle_extent',
                 'leg_max_extent', 'leg_merge_distance')
 FREE_KEYS = {'free_space_resolution': 'resolution', 'free_space_size': 'size', 'free_space_max_range': 'max_range',

@@ -10,7 +10,7 @@ ID가 바뀌는 것을 막기 위해서다. 붐비는 상황에서 최적 할당
 
 from dataclasses import dataclass, field
 import math
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -37,6 +37,21 @@ class TrackerConfig:
     dynamic_evidence_frames: int = 3
     # 측정 반경을 트랙 반경에 반영하는 비율 (지수 평활). 프레임마다 보이는 면이 달라 군집 반경이 흔들린다
     radius_smoothing: float = 0.3
+    # 보조 연관 (급한 기동): 1차 연관에서 짝을 못 찾은 동적 트랙과 측정을, 트랙을 마지막으로 본 자리에서 물리적으로
+    # 갈 수 있는 거리(maneuver_max_speed × 지난 시간 + maneuver_margin) 안이면 짝짓는다. 등속 예측은 반전 순간 앞으로
+    # 가 버려 게이트(약 0.25 m)를 벗어나지만 실제 물체는 마지막으로 본 자리 근처에 있다 (1.0 m/s 반전이면 2프레임,
+    # 1.5 m/s면 1프레임에 놓쳐 새 트랙이 생기고 옛 트랙은 헛트랙으로 미끄러졌다. 근거·측정은 perception.md 1-3-3).
+    # 짝지으면 마지막으로 본 자리와 지금 자리, 두 관측으로 위치·속도를 다시 잡는다 (ID·확정·동적 판정은 그대로).
+    # 동적으로 판정된 트랙만 한다: 정적 물체는 가림으로 군집 중심이 튀어도 새 트랙으로 두어야 속도가 붙지 않는다
+    # (붙이면 튄 거리/프레임 간격만큼 속도가 생겨 가짜 동적이 될 수 있다).
+    # maneuver_max_age [s]보다 오래 못 본 트랙(가려짐)은 하지 않는다: 그때는 예측 위치 기준 게이트가 맞다.
+    # maneuver_max_speed는 명세 장애물 최대 속력(1.5 m/s)으로 둔다. 넉넉히 2.0으로 두면 지게차처럼 큰 물체의 군집 중심이
+    # 보이는 면에 따라 0.3~0.7 m 튀는 것(2~3.5 m/s 꼴)까지 기동으로 받아 속도가 엉터리로 다시 잡혔다(개발용 B).
+    # maneuver_margin은 두 관측 차이의 잡음 몫(measurement_noise_std 0.05면 약 2σ). 0.1이면 1.5 m/s 반전을 놓친다.
+    # maneuver_max_speed 0(기본)이면 끈다. 노드는 tracking.yaml 값을 쓴다
+    maneuver_max_speed: float = 0.0
+    maneuver_margin: float = 0.15
+    maneuver_max_age: float = 0.5
 
     def __post_init__(self):
         if not (math.isfinite(self.gate_mahalanobis_sq) and self.gate_mahalanobis_sq > 0.0):
@@ -47,7 +62,11 @@ class TrackerConfig:
                 raise ValueError(f'{name}는 1 이상의 정수여야 한다: {value}')
         if not 0.0 < self.radius_smoothing <= 1.0:
             raise ValueError(f'radius_smoothing은 (0, 1] 범위여야 한다: {self.radius_smoothing}')
-        for name in ('max_coast_time', 'dynamic_speed_threshold'):
+        for name in ('maneuver_max_speed', 'maneuver_margin'):
+            value = getattr(self, name)
+            if not (math.isfinite(value) and value >= 0.0):
+                raise ValueError(f'{name}는 0 이상이어야 한다: {value}')
+        for name in ('max_coast_time', 'dynamic_speed_threshold', 'maneuver_max_age'):
             value = getattr(self, name)
             if not (math.isfinite(value) and value > 0.0):
                 raise ValueError(f'{name}는 양수여야 한다: {value}')
@@ -64,6 +83,7 @@ class Track:
     fast_frames: int = 0        # 속력이 임계값을 넘은 연속 프레임 수
     evidence_frames: int = 0    # 빈 공간 침입 증거가 붙은 측정을 받은 프레임 수 (누적)
     radius: Optional[float] = None  # 장애물 반경 [m] (측정 반경의 지수 평활). 반경 없이 측정하면 None
+    last_z: Optional[np.ndarray] = None   # 마지막 관측 위치 (보조 연관 기준점)
 
 
 def _as_measurement(value: Sequence[float]) -> np.ndarray:
@@ -127,10 +147,14 @@ class MultiTargetTracker:
         for track in self._tracks:
             track.kf.predict(t)
 
-        matches, unmatched = self._associate(zs)
-        for ti, mi in matches:
+        matches, maneuver, unmatched = self._associate(zs, t)
+        for ti, mi in matches + maneuver:
             track = self._tracks[ti]
-            track.kf.update(zs[mi])
+            if (ti, mi) in maneuver:
+                track.kf.restart(zs[mi], track.last_z, t - track.last_update)
+            else:
+                track.kf.update(zs[mi])
+            track.last_z = zs[mi]
             self._update_radius(track, rs[mi])
             track.evidence_frames += evidence[mi]
             track.hits += 1
@@ -184,18 +208,55 @@ class MultiTargetTracker:
             track_id=self._next_id,
             kf=ConstantVelocityKF(z, t, self.config.kalman),
             last_update=t,
+            last_z=z,
             confirmed=self.config.confirm_hits <= 1,
             radius=radius,
         )
         self._next_id += 1  # 사라진 트랙의 ID는 다시 쓰지 않는다
         return track
 
-    def _associate(self, zs: List[np.ndarray]) -> Tuple[List[Tuple[int, int]], List[int]]:
-        """확정 트랙 → 미확정 트랙 순서로, 게이트 안에서 가까운 쌍부터 짝짓는다.
+    def _associate_maneuver(self, zs: List[np.ndarray], matches: List[Tuple[int, int]], used_measurements: Set[int],
+                            t: float) -> List[Tuple[int, int]]:
+        """보조 연관: 게이트에서 짝을 못 찾은 동적 트랙 ↔ 남은 측정을 마지막 관측 위치 기준으로 (TrackerConfig 주석).
 
-        (트랙 index, 측정 index) 목록과 짝이 없는 측정 index를 돌려준다.
+        이미 짝지어진 측정은 건드리지 않으므로 다른 물체의 측정을 빼앗지 않는다. 가까운 쌍부터 1:1로 짝짓는다.
+        (트랙 index, 측정 index) 목록을 돌려준다.
         """
-        used_measurements, matches = set(), []
+        cfg = self.config
+        if cfg.maneuver_max_speed <= 0.0:
+            return []
+        matched_tracks = {ti for ti, _ in matches}
+        free = [mi for mi in range(len(zs)) if mi not in used_measurements]
+        candidates = []
+        for ti, track in enumerate(self._tracks):
+            age = t - track.last_update
+            if (ti in matched_tracks or not (track.confirmed and track.is_dynamic) or track.last_z is None
+                    or age <= 0.0 or age > cfg.maneuver_max_age):
+                continue
+            reach = cfg.maneuver_max_speed * age + cfg.maneuver_margin
+            for mi in free:
+                d = float(np.hypot(*(zs[mi] - track.last_z)))
+                if d <= reach:
+                    candidates.append((d, ti, mi))
+        candidates.sort()
+        used_tracks, taken, extra = set(), set(), []
+        for _, ti, mi in candidates:
+            if ti in used_tracks or mi in taken:
+                continue
+            used_tracks.add(ti)
+            taken.add(mi)
+            extra.append((ti, mi))
+        return extra
+
+    def _associate(self, zs: List[np.ndarray], t: float
+                   ) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]], List[int]]:
+        """확정 트랙 → 보조 연관(동적 트랙) → 미확정 트랙 순서로, 게이트 안에서 가까운 쌍부터 짝짓는다.
+
+        보조 연관을 미확정 트랙보다 먼저 한다: 잡음으로 생겨 오래 예측만 한 미확정 트랙은 게이트가 넓어서,
+        돌아선 사람의 측정을 확정 트랙보다 먼저 가져가 새 ID를 만들 수 있다.
+        게이트 짝 목록, 보조 연관 짝 목록 (각각 (트랙 index, 측정 index)), 짝이 없는 측정 index를 돌려준다.
+        """
+        used_measurements, matches, maneuver = set(), [], []
         z_all = np.array(zs).reshape(-1, 2)
         for confirmed in (True, False):
             candidates = []
@@ -215,5 +276,8 @@ class MultiTargetTracker:
                 used_tracks.add(ti)
                 used_measurements.add(mi)
                 matches.append((ti, mi))
+            if confirmed:
+                maneuver = self._associate_maneuver(zs, matches, used_measurements, t)
+                used_measurements.update(mi for _, mi in maneuver)
         unmatched = [mi for mi in range(len(zs)) if mi not in used_measurements]
-        return matches, unmatched
+        return matches, maneuver, unmatched

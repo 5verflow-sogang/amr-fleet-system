@@ -90,6 +90,23 @@ class ConstantVelocityKF:
         self.P = f @ self.P @ f.T + process_noise(dt, self.config.accel_noise_std)
         self.t = float(timestamp)
 
+    def restart(self, z: Sequence[float], previous_z: Sequence[float], elapsed: float) -> None:
+        """지금 시각의 관측 z와 elapsed [s] 전의 관측 previous_z로 상태를 다시 잡는다 (시각은 그대로).
+
+        위치 = z, 속도 = (z − previous_z) / elapsed. 공분산은 두 관측 잡음 R에서 나온 값
+        (위치 R, 위치-속도 R/elapsed, 속도 2R/elapsed²)이라 다음 관측들이 속도 잡음을 빠르게 줄인다.
+        급한 기동으로 예측이 크게 빗나갔을 때(tracker 보조 연관) 옛 속도를 버리고 새 움직임을 따라가려고 쓴다.
+        옛 속도를 공분산만 키워 남겨 두면, 반전 직후 게이트 안에서 뒤처진 위치 오차까지 속도로 옮겨 가 속도가 과하게 튄다.
+        """
+        zx, zy = _finite_xy(z, 'z')
+        px, py = _finite_xy(previous_z, 'previous_z')
+        e = float(elapsed)
+        if not (math.isfinite(e) and e > 0.0):
+            raise ValueError(f'elapsed는 양수여야 한다: {elapsed}')
+        r = self.measurement_covariance()
+        self.x = np.array([zx, zy, (zx - px) / e, (zy - py) / e])
+        self.P = np.block([[r, r / e], [r / e, 2.0 * r / e ** 2]])
+
     def measurement_covariance(self) -> np.ndarray:
         return np.eye(2) * self.config.measurement_noise_std ** 2
 
