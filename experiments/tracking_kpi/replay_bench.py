@@ -108,7 +108,9 @@ def yaw_of(q):
 
 
 def stamp_of(header):
-    return header.stamp.sec + header.stamp.nanosec * 1e-9
+    # 추적 노드와 같은 식 (rclpy Time.nanoseconds * 1e-9). sec + nanosec * 1e-9와는 끝자리가 달라
+    # 못 본 시간 2.0 s 같은 경계 판정이 노드와 엇갈렸다 (개발용 D 실행 01·02, B 실행 01)
+    return (header.stamp.sec * 1_000_000_000 + header.stamp.nanosec) * 1e-9
 
 
 def compose(a, b):
