@@ -1,0 +1,15 @@
+# 추적기 개발용 정면 접근 (판정에 쓰지 않는다, experiments/tracking_kpi README "재생 벤치"): 로봇 (0, 10.5) 정지, 작업자 1명이
+# 정면 12 m에서 1.25 m/s로 다가와 차체 앞 약 1.15 m에서 돌아간다. 본 측정 장면 C(10 m, 0.5·1.0·1.5 m/s)와 겹치지 않게 했다.
+# 60 s면 실행마다 약 7번 돌아서서, 반전 뒤 헛트랙과 처음 잡는 거리를 본다 (장애물 설정 파일 주석)
+#   tools/harness/gcp_run.sh tracking_kpi_cdev -n 3 --label dev
+name: tracking_kpi_cdev
+extends: tracking_kpi
+packages: amr_gazebo amr_odometry amr_tracking
+params:
+  robot_x: "0.0"
+  robot_y: "10.5"
+  obstacles_config: $(ros2 pkg prefix amr_tracking)/share/amr_tracking/config/eval_obstacles_approach_dev_1.25.yaml
+  obstacle_ids: worker_approach
+  obstacle_ready_topic: /dynamic_obstacles/worker_approach/ground_truth/odom
+  duration_s: "60.0"
+  wait_s: "75.0"

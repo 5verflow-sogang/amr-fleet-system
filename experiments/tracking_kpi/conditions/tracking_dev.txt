@@ -1,0 +1,9 @@
+# 추적기 개발용 녹화 (재생 벤치 입력, 판정에 쓰지 않는다). 본 측정 장면·시드와 겹치지 않게 한다
+# - A·B·D·E: 장애물 시드 1001~1003 (seed_offset 1000)
+# - C: 시드로는 장면이 안 바뀌어 개발용 장면 tracking_kpi_cdev (1.25 m/s, 12 m 출발)
+# 짧은 C를 맨 앞에 둬서 첫 결과를 빨리 확인한다. 받기: fetch_runs.py <이 파일>.log.csv --out raw/dev --with-rosbag
+tracking_kpi_cdev -n 3 --label dev
+tracking_kpi_e -n 3 --set seed_offset=1000 --label dev
+tracking_kpi_a -n 3 --set seed_offset=1000 --label dev
+tracking_kpi_b -n 3 --set seed_offset=1000 --label dev
+tracking_kpi_d -n 3 --set seed_offset=1000 --label dev

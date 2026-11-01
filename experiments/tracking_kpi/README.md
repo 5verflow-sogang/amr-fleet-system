@@ -39,6 +39,7 @@ uv run --no-project --with rosbags --with numpy python -I experiments/tracking_k
 | `conditions/tracking_main.txt` | 본 측정 조건 (장면 7개 × 10회, 라벨 `main`). 짧은 C10을 맨 앞에 둬서 10회 연속 실행을 먼저 확인했다 |
 | `conditions/tracking_main_b_rerun.txt` | B 다시 측정 (라벨 `main_rerun`, perception.md 1-7 "무효 실행") |
 | `conditions/tracking_smoke.txt` | 짧은 시험 (장면마다 1회, 라벨 `smoke`) |
+| `conditions/tracking_dev.txt` | 추적기 개발용 녹화 (라벨 `dev`, 판정에 안 씀). A·B·D·E는 장애물 시드 1001~1003, C는 개발용 장면 `tracking_kpi_cdev` |
 | `conditions/*.log.csv` | `gcp_batch.py` 실행 기록. 조건마다 GitHub Actions 실행 번호와 결과 |
 | `fetch_runs.py` | 기록에서 조건마다 마지막으로 성공한 실행만 골라 버킷에서 받고, 파일마다 md5·크기를 대조한다. 틀리면 `gcloud storage cat`으로 하나씩 다시 받는다 |
 | `check_main.py` | 실행별 완료·종료 전 오류·장애물 속도 명령 전달·프레임 수·평가 입력·결과 칸, 장면별 10회·시드 1~10·같은 커밋 |
@@ -65,7 +66,7 @@ uv run --no-project --with rosbags --with numpy --with pyyaml python -I experime
 - 평가 시간 범위는 실행 폴더에 GCP 평가 결과(`tracking/frames.csv`)가 있으면 그 범위, 없으면 첫 프레임부터 `duration_s`
 - 확인 (11/1, 본 측정 C10·E·B 1회씩): 설정 그대로면 녹화 속 노드 출력과 C10 504/504, E 902/905, B 2996/3105프레임 같다(녹화 시작 5 s 뒤부터, 트랙 번호가 아니라 위치로 비교). 다른 프레임은 하네스가 추적 노드를 녹화보다 약 2 s 먼저 띄워 생긴 정지 물체 트랙의 차이다
 - **수정 효과는 개발용 녹화(장애물 시드 1001~, `--set seed_offset=1000`)로 본다.** 본 측정 녹화(시드 1~10)로 값을 맞추면 판정에 쓴 장면으로 튜닝하는 셈이라, 본 측정 녹화는 `--check-node`로 벤치가 노드·GCP 평가와 같은지 확인할 때만 쓴다(GT와 짝지어지는 값이 GCP와 다르면 실패 코드)
-- 장면 C는 작업자 속력이 고정이라 시드가 장면을 바꾸지 않는다. 개발용 C는 속력·출발 거리가 다른 장면으로 따로 만든다
+- 장면 C는 작업자 속력이 고정이라 시드가 장면을 바꾸지 않는다. 개발용 C는 따로 만든 `tracking_kpi_cdev`(1.25 m/s, 12 m 출발, 60 s, 실행마다 약 7번 반전)를 쓴다. 지금 추적기는 1.25 m/s 반전에서 트랙을 놓쳐 헛트랙이 드러나고, 12 m에서 출발해 처음 잡는 거리가 늘었는지 본다
 - 폐루프는 못 본다. 로봇이 트랙에 반응하는 실험(I17)은 시뮬레이션으로 잰다
 - 노드에서만 하는 일(메시지로 낼 때의 반경 규칙, 카메라 연관, 지도 대조, TTC)은 벤치에 없다. **추적기 수정은 코어(`amr_perception_core`)에 넣어야 벤치로 비교된다.** `tracking.yaml`에 벤치가 모르는 값이 생기면 경고한다
 - GCP 평가와 비교하면 GT와 짝지어지는 값(RMSE·짝 수·판정 지연·D1)은 같다(본 측정 C10·E·B 1회씩 확인). 프레임당 값(가짜 동적·트랙 수)은 녹화 전 프레임만큼 분모가 달라 조금 다르다. 수정 전후는 벤치끼리 비교한다
