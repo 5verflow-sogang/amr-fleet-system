@@ -43,6 +43,9 @@
     maneuver_max_speed: 1.5
     maneuver_margin: 0.15
     maneuver_max_age: 0.5
+    # 지금까지 본 가장 큰 군집 반경이 이보다 큰 트랙(지게차)은 하지 않는다. 큰 물체는 가려지거나 보이는 면이 바뀔 때
+    # 중심이 0.4~0.6 m 튀어 12 m 안 지게차 속도가 나빠졌다(개발용 B 0.236 → 0.281 m/s). 사람은 0.24 m 이하였다
+    maneuver_max_radius: 0.4
     # R3: 속력이 dynamic_speed_threshold [m/s]를 넘는 프레임이 dynamic_confirm_frames번 연속되면 동적 (이후 유지).
     # 멈춰 선 사람도 동적으로 남는다. 정지 물체의 속도 추정 잡음으로 한두 프레임 넘는 것은 연속 조건이 거른다
     dynamic_speed_threshold: 0.25

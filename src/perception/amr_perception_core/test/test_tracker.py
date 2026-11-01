@@ -87,6 +87,7 @@ def test_rejects_time_going_backwards():
     {'maneuver_max_speed': -1.0},
     {'maneuver_margin': float('nan')},
     {'maneuver_max_age': 0.0},
+    {'maneuver_max_radius': 0.0},
 ])
 def test_rejects_invalid_config(kwargs):
     with pytest.raises(ValueError):
@@ -307,3 +308,24 @@ def test_maneuver_association_restarts_velocity_from_last_two_measurements():
     np.testing.assert_allclose(track.kf.position, [1.65, 0.0])
     np.testing.assert_allclose(track.kf.velocity, [-2.5, 0.0])
     assert track.confirmed and track.is_dynamic and track.hits == 21
+
+
+def _walk_sized(tracker, radii, frames=20):
+    """_walk와 같은 동적 트랙인데 프레임마다 측정 반경을 준다 (radii: 프레임 번호 → 반경)."""
+    for k in range(frames):
+        tracker.step(k * 0.1, [(0.1 * k, 0.0)], [radii(k)])
+    assert tracker.tracks[0].is_dynamic
+
+
+@pytest.mark.parametrize('radii, joined', [
+    (lambda k: 0.15, True),                          # 사람 크기: 돌아서면 이어 붙인다
+    (lambda k: 0.8, False),                          # 지게차 크기: 새 트랙으로 둔다
+    (lambda k: 0.8 if k < 5 else 0.25, False),       # 한 번이라도 크게 보였으면 일부만 보여도 뺀다
+])
+def test_maneuver_association_skips_large_objects(radii, joined):
+    # 큰 물체는 가려지거나 보이는 면이 바뀔 때 군집 중심이 튀어 기동으로 받으면 속도가 엉터리가 된다
+    tracker = MultiTargetTracker(MANEUVER)
+    _walk_sized(tracker, radii)
+    tracker.step(2.0, [(1.65, 0.0)], [0.15])          # 1.9 → 1.65: 게이트 밖, 갈 수 있는 거리 0.30 m 안
+    assert (len(tracker.tracks) == 1) == joined
+    assert (tracker.tracks[0].last_update == pytest.approx(2.0)) == joined
