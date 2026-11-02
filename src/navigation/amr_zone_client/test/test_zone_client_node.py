@@ -10,12 +10,15 @@ import rclpy
 from amr_msgs.msg import SafetyStatus, ZoneGrant
 from geometry_msgs.msg import Point, Pose, PoseWithCovariance, Twist, Vector3
 from nav_msgs.msg import Odometry, Path
+from std_msgs.msg import Header
 
 from amr_zone_client.zone_client_node import ZoneClientNode
 
 
-def _odom(x: float, y: float) -> Odometry:
-    return Odometry(pose=PoseWithCovariance(pose=Pose(position=Point(x=x, y=y))))
+def _odom(x: float, y: float, frame_id: str = 'map') -> Odometry:
+    return Odometry(
+        header=Header(frame_id=frame_id),
+        pose=PoseWithCovariance(pose=Pose(position=Point(x=x, y=y))))
 
 
 def test_no_robot_pose_sets_speed_cap_to_zero():
@@ -42,6 +45,24 @@ def test_robot_pose_timeout_sets_speed_cap_to_zero():
             assert node._robot_xy() == (1.0, 2.0)
 
             node._last_pose_t -= node._robot_pose_timeout_s + 0.1
+            assert node._robot_xy() is None
+
+            node._update()
+            assert node._speed_cap == 0.0
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+def test_robot_pose_with_wrong_frame_id_is_discarded():
+    # ekf_local(odom 기준)을 잘못 물리는 등 frame_id가 map_frame이 아니면 그 위치는 버리고
+    # fail-closed로 본다 (#66 하연 리뷰 후속)
+    rclpy.init()
+    try:
+        node = ZoneClientNode()
+        try:
+            node._on_robot_pose(_odom(1.0, 2.0, frame_id='amr_01/odom'))
             assert node._robot_xy() is None
 
             node._update()

@@ -11,7 +11,9 @@ TransformListener()는 /tf를 구독해 모든 로봇의 TF를 다 받아 처리
 너무 뜸하다. odometry/filtered는 ekf_global이 amcl_pose+오도메트리+IMU를 계속 융합해 내는 map
 기준 추정치라 지금 TF 조회가 주던 것과 같다). TF는 zones_frame(세계 좌표 → map, 정적) 변환에만
 남겨 뒀고, 그 변환이 끝나면(_ensure_core) 리스너를 바로 치운다 - 평소(zones_frame 비움)에는 TF를
-전혀 안 쓴다.
+전혀 안 쓴다. 토픽을 잘못 물려서(예: odom 기준 ekf_local) 좌표계가 다른 위치가 들어오는 걸 조용히
+놓치지 않으려고, header.frame_id가 map_frame이 아니면 그 메시지는 버리고 위치가 끊긴 것처럼
+fail-closed로 본다(_on_robot_pose).
 
 구역 상한에 더해 safety/status(SafetyStatus.speed_limit)도 반영한다(#69·#70) - 둘 중 더
 작은 쪽을 쓰고, 끊기면 제한 없음으로 본다. README 'SafetyStatus 연동' 절 참고.
@@ -196,6 +198,16 @@ class ZoneClientNode(Node):
 
     def _on_robot_pose(self, msg: Odometry):
         if self._shutting_down:
+            return
+        # ekf_global은 map 기준으로 낸다고 가정하는데, 실수로 ekf_local(odom 기준) 쪽을 물리거나
+        # robot_pose_topic을 잘못 설정하면 좌표계가 달라 구역 판단이 조용히 틀려진다. header.frame_id가
+        # map_frame(기본 'map', amr_localization launch에서 네임스페이스 접두어 없이 공유)이 아니면
+        # 이 값은 버리고 위치가 안 온 것처럼 fail-closed로 본다 (#66 하연 리뷰 후속).
+        if msg.header.frame_id != self._map_frame:
+            self.get_logger().warn(
+                f'{self._robot_pose_topic} frame_id가 {self._map_frame!r}이 아님'
+                f'({msg.header.frame_id!r}) - 이 위치는 버림',
+                throttle_duration_sec=5.0)
             return
         # 최신 값만 저장한다 - 구역 판단은 지금처럼 _update(update_rate_hz) 주기로 한다.
         self._last_pose_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)

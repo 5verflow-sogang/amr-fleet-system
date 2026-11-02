@@ -257,6 +257,10 @@ controller_server (Nav2) → cmd_vel_nav → [velocity_smoother, 아직 없음] 
 콜백은 최신 값만 저장하고(`_on_robot_pose`), 구역 판단은 지금처럼 `_update`(`update_rate_hz`) 주기로
 읽는다. `robot_pose_timeout_s`(기본 1 s) 동안 못 받으면 TF 조회 실패 때와 같이 fail-closed다.
 
+받은 메시지의 `header.frame_id`가 `map_frame`(기본 `map`)이 아니면 좌표계가 다른 값(예:
+`ekf_local`의 odom 기준 출력을 잘못 물린 경우)을 조용히 섞어 쓰지 않도록 그 메시지는 버리고
+위치가 끊긴 것처럼 fail-closed로 본다(`_on_robot_pose`).
+
 ## 실행
 
 ```bash
@@ -272,8 +276,8 @@ colcon test --packages-select amr_zone_client
 
 - `test/test_geometry.py`, `test/test_core.py`, `test/test_zones_config.py`: ROS 비의존 pytest.
 - `test/test_zone_client_node.py`: 노드만 가볍게 띄워 위치 토픽으로 구역 진입·이탈을 판단하는지,
-  위치가 끊겼을 때 fail-closed로 도는지 확인한다(launch_testing 없이, `test_zone_client_launch.py`보다
-  가벼운 경로).
+  위치가 끊겼을 때·`frame_id`가 `map_frame`과 다를 때 fail-closed로 도는지 확인한다(launch_testing
+  없이, `test_zone_client_launch.py`보다 가벼운 경로).
 - `test/test_zone_client_launch.py`: 실제 `amr_fleet_manager`(`fleet_manager`)·`amr_fault_injector`
   (`zone_grants`만 중계, `delay_ms:=0`)를 띄우고 `Odometry`(위치)·`Path`를 직접 흘려서 요청 → 허가 →
   진입 → 반납을 끝까지 확인한다.
