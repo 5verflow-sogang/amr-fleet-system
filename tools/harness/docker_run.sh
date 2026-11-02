@@ -30,8 +30,9 @@ PACKAGES="${HARNESS_PACKAGES:-${SCENARIO_PACKAGES:-amr_gazebo amr_odometry amr_l
 run_container() {
   local extra="$1"; shift
   # --init: 부모가 먼저 끝난 프로세스(Gazebo 실행기 등)를 거둬 좀비가 쌓이지 않게 한다
+  # --shm-size: 기본 64 MB면 로봇 5대 스택이 1회차에 거의 다 써, 반복할수록 Fast DDS가 공유 메모리를 못 잡고 UDP로 돌아가 CPU가 포화된다 (11/1 fleet_stack-kpi)
   # shellcheck disable=SC2086
-  docker run --rm --init -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-}" -e HARNESS_DISCORD_WEBHOOK \
+  docker run --rm --init --shm-size=1g -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-}" -e HARNESS_DISCORD_WEBHOOK \
     -e HARNESS_RUNNER_MACHINE -e HARNESS_RUNNER_SLOT -e HARNESS_TRIGGERED_BY $extra \
     -v "$REPO:/repo" -w /repo "$IMAGE" bash -c "
       set -e
