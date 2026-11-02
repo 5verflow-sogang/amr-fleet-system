@@ -146,6 +146,7 @@ ros2 run amr_safety avoidance_eval_offline /tmp/amr_avoidance/run1 --set return_
 
 - `map_origin_in_world`: world에서 본 map 원점 `[x, y, yaw]`. 전역 경로(map)를 GT 좌표계(world)로 옮기는 데만 쓴다. 스택이 쓰는 지도의 정렬값과 같아야 한다. 틀리면 그 차이가 경로 이탈에 그대로 섞인다(v1·v2 0.025 m 정렬값은 약 6 cm 차이로, 회피 구간 시작 기준 0.1 m의 절반이 넘는다). `nav_avoidance`는 지도와 정렬값을 params `map`·`map_origin` 한 곳에 두고 스택과 이 노드에 같이 넘긴다(기본 v2 0.025 m `[-0.0439, 1.4712, -0.00088]`, [amr_mapping README](../../localization/amr_mapping/README.md)). 손으로 `nav2_dwa_demo`(map->odom 항등)에 붙이면 map 원점이 스폰 위치와 같은 `[0.0, 1.5, 0.0]`(노드 기본값)이다.
 - `nav_avoidance` 시나리오의 장애물은 실행마다 시드로 만든다(`ros2 run amr_safety avoidance_obstacles --seed <시드> --out <파일>`, [`avoidance_eval/obstacles.py`](amr_safety/avoidance_eval/obstacles.py)). 작업자 1명이 x 2.5~4.0 m 중 한 곳에서 통로를 건너고, 방향·처음 위치(만나는 시점)·속도가 시드마다 다르다. 속도는 시드 3개 중 1개가 원 명세 1.0 m/s, 나머지는 0.5~1.5 m/s다. 같은 시드면 같은 시험이다. 만든 설정은 실행 폴더 `obstacles.yaml`에 남는다.
+  - 작업자는 로봇을 피하지 않는다. 다만 로봇이 멈춘 채 앞길을 막으면 약 0.5 m 앞에서 서고, 로봇이 5 s 넘게 계속 멈춰 있으면 돌아선다(`yield_to_robots: [amr_01]`, [amr_gazebo README](../../simulation/amr_gazebo/README.md)). 사람은 멈춘 로봇에 걸어 들어가지 않는다. 로봇을 보지 않던 작업자로 돌린 시험 30회(11/1)에서는 충돌 29건 중 22건이 서 있는 로봇에 작업자가 걸어 들어간 것이었다.
 - 손으로 돌릴 때 쓰는 고정 예시는 [`config/avoidance_eval_obstacles.yaml`](config/avoidance_eval_obstacles.yaml)(x = 3에서 1.0 m/s)이다.
 - 정적 장애물(벽·랙)과의 충돌은 보지 않는다. GT에 정적 물체 모양이 없어서다.
 
