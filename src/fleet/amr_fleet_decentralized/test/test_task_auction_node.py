@@ -618,7 +618,7 @@ def test_idle_robot_waits_for_remembered_earlier_announce_in_reannounce_gap():
         rclpy.shutdown()
 
 
-def test_idle_robot_bids_on_later_task_after_remembered_announce_expires():
+def test_idle_robot_accepts_later_task_after_remembered_announce_expires():
     """기억 중인 이른 작업(task_early)이 announce_memory_s 동안 다시 공고되지 않으면(다른 로봇이
     맡았거나 끝났다고 본다) 더는 기다리지 않고 보류 중이던 늦은 작업(task_late)의 AWARD를
     수락한다."""
@@ -665,7 +665,7 @@ def test_idle_robot_bids_on_later_task_after_remembered_announce_expires():
         rclpy.shutdown()
 
 
-def test_idle_robot_bids_on_later_task_when_remembered_earlier_task_is_ineligible():
+def test_idle_robot_accepts_later_task_when_remembered_earlier_task_is_ineligible():
     """기억 중인 이른 작업(task_early)에 지금 입찰 자격이 없으면(여기선 마감을 못 맞춤) 보류 중인
     늦은 작업(task_late)의 AWARD를 기다리지 않고 곧바로 수락한다 - 자격 없는 작업은 아무도
     입찰하지 않아 계속 재공고되며 기억이 매번 갱신될 수 있어, 자격 체크 없이 기다리면 못 맡을
@@ -762,13 +762,17 @@ def test_announce_memory_and_award_wait_do_not_compound():
 
 
 def test_award_wait_s_has_margin_against_remembered_tasks_reannounce_cycle_with_comm_delay():
-    """award_wait_s(3.5초, 10/29 재계산 - 통신 지연 최대 136 ms 조건)는 재공고 쪽에 여유가
-    있다. 보류 중인 AWARD를 받은 순간 더 급한 작업이 "재공고 틈"(기억 중, _remembered)에
-    있으면, 그 작업이 다시 열려 AWARD를 받기까지 최소 no_bid_retry_s + bid_window_s + 공고
-    지연 + AWARD 지연 + 틱(1.0 + 2.0 + 2 x 0.136 + 0.1 = 3.372초, params.py 주석과 같음)이
-    걸린다 - award_wait_s(3.5초)보다 짧아 그 안에 도착하면 제대로 수락한다. 이 가짜 버스는
-    전송이 즉시 끝나는(동기) 지연 0 조건이라, 지연·틱만큼 시계를 더 돌려 "그만큼 늦게
-    도착했다"를 흉내 낸다."""
+    """award_wait_s(3.5초, 11/2 재계산 - #250 민지 리뷰, 통신 지연 최대 136 ms + 경매인 틱
+    지연 조건)는 재공고 쪽에 여유가 있다. 보류 중인 AWARD를 받은 순간 더 급한 작업이
+    "재공고 틈"(기억 중, _remembered)에 있으면, 그 작업이 다시 열려 AWARD를 받기까지 최소
+    no_bid_retry_s + bid_window_s + AWARD 지연 + 틱 3개(경매인이 ① 첫 입찰 창 마감 ② 재공고
+    시각 ③ 재공고된 입찰 창 마감을 알아채는 데 한 틱씩, params.py 주석과 같음)
+    = 1.0 + 2.0 + 0.136 + 3 x 0.1 = 3.436초가 걸린다 - award_wait_s(3.5초)보다 짧아 그 안에
+    도착하면 제대로 수락한다. 공고 지연은 안 넣는다(bid_window_s가 훨씬 커서 경매인의 결정
+    시각 자체는 안 늦어진다). 이 가짜 버스는 전송이 즉시 끝나는(동기) 지연 0 조건이라,
+    지연·틱만큼 시계를 더 돌려 "그만큼 늦게 도착했다"를 흉내 낸다 - ①의 틱은 재공고 틈이
+    시작되는 시점 자체가 늦어지는 것이므로, 편의상 ②와 같은 구간(no_bid_retry_s 뒤)에
+    더해 셌다(총합은 어느 구간에 넣어도 같다)."""
     rclpy.init()
     nodes = {}
     try:
@@ -781,7 +785,7 @@ def test_award_wait_s_has_margin_against_remembered_tasks_reannounce_cycle_with_
         }
         robot = nodes['amr_01']
         robot._active_task = (('amr_99', 1), 'other_task')
-        delay_s = 0.136  # 통신 지연 최대(KPI 조건)
+        delay_s = 0.136  # 통신 지연 최대(KPI 조건) - AWARD에만 넣는다(공고 지연은 안 넣음)
         tick_s = 0.1  # update_rate_hz 기본값(10 Hz)의 틱 간격
 
         bus.publish(_make_auction('amr_10', 1, 'task_early', bid_window_s=2.0, created=0.0))
@@ -803,14 +807,14 @@ def test_award_wait_s_has_margin_against_remembered_tasks_reannounce_cycle_with_
         assert robot._active_task is None
         assert set(robot._pending_awards) == {('amr_11', 1)}
 
-        # no_bid_retry_s(1.0) 뒤 task_early가 재공고된다 - 공고 지연만큼 늦게 도착한다
-        clock[0] = award_received_at + nodes['amr_10']._no_bid_retry_s + delay_s
+        # no_bid_retry_s(1.0) 뒤 task_early가 재공고된다 - 틱 2개(①+②) 늦게 도착한다
+        clock[0] = award_received_at + nodes['amr_10']._no_bid_retry_s + 2 * tick_s
         nodes['amr_10']._on_timer()
         bus.pump()
         assert ('amr_10', 2) in robot._bid_resends
 
-        # 재공고된 task_early의 입찰 창(bid_window_s)이 끝나고, 틱만큼 늦게 경매인이 결정해
-        # AWARD 지연만큼 늦게 도착한다 - 지금까지 쓴 시간이 바로 재공고 쪽 요구 최소치(3.372초)
+        # 재공고된 task_early의 입찰 창(bid_window_s)이 끝나고, 틱(③)만큼 늦게 경매인이 결정해
+        # AWARD 지연만큼 늦게 도착한다 - 지금까지 쓴 시간이 바로 재공고 쪽 요구 최소치(3.436초)
         clock[0] += 2.0 + tick_s + delay_s
         required_min_s = clock[0] - award_received_at
         nodes['amr_10']._on_timer()
