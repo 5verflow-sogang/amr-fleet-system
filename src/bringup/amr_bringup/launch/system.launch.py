@@ -122,9 +122,10 @@ def _system(context):
 
 def generate_launch_description():
     share = get_package_share_directory('amr_bringup')
-    # 지도 v1 0.025 m(10/13 결정) + 지도↔월드 정렬 원점(10/12 회의 B안, #98·#157). 0.05 m보다 정지 오차가 작다
-    # (GCP 10회: 정지 2.09 vs 2.84 cm, localization.md 3-1절). Nav2 경로 계획이 느리면 Nav2만 0.05 m 지도로 나눈다
-    default_map = os.path.join(get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v1_0025.yaml')
+    # 지도 v2 0.025 m(#242 재매핑, 물체별 밀림 최대 16.0 → 4.0 cm) + 그 지도↔월드 정렬 원점(10/12 회의 B안).
+    # 0.025 m는 0.05 m보다 정지 오차가 작다 (v1 GCP 10회: 정지 2.09 vs 2.84 cm, localization.md 3-1절).
+    # Nav2 경로 계획이 느리면 Nav2만 0.05 m 지도(warehouse_v2, 원점 [0.0173, 1.4556, 0.00026])로 나눈다
+    default_map = os.path.join(get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v2_0025.yaml')
 
     args = [
         # 로봇·시뮬레이터
@@ -139,7 +140,7 @@ def generate_launch_description():
         # 위치추정
         ('localization', 'true', 'AMCL + EKF. 끄면 DiffDrive odom TF를 쓴다'),
         ('map', default_map, '지도 yaml'),
-        ('map_origin_in_world', '[-0.0562, 1.5317, 0.00009]',
+        ('map_origin_in_world', '[-0.0439, 1.4712, -0.00088]',
          'world에서 본 map 원점 [x, y, yaw] (지도 정렬값, amr_mapping README). AMCL 초기 위치 계산'),
         ('use_imu', 'true', 'EKF에 IMU를 넣을지'),
         # 작업 수행
