@@ -33,7 +33,7 @@ map
 ```
 
 좌표는 부모 프레임 기준 (x, y, z) [m]. 센서 위치는 원 명세서 TF 예시값이며, 1주차 URDF 골격에서 `view_frames`로 위 구조를 확인했다. 위치추정까지 띄운 전체 트리 확인은 [2-2절](#2-2-전체-tf-트리-확인-view_frames-107).
-센서 위치(extrinsic)는 2주차 센서 플러그인에서 위 값 그대로 확정했다. 센서 메시지의 `frame_id`는 위 링크 이름과 같다 (`lidar_link`, `imu_link`, `camera_optical_frame`, sim에서 확인).
+센서 위치(extrinsic)는 2주차 센서 플러그인에서 위 값 그대로 확정했고, 값은 `amr_description` `config/extrinsics.yaml` 한 곳에 있다 (확인 절차: [amr_description README "센서 캘리브레이션"](../src/simulation/amr_description/README.md#센서-캘리브레이션)). 센서 메시지의 `frame_id`는 위 링크 이름과 같다 (`lidar_link`, `imu_link`, `camera_optical_frame`, sim에서 확인).
 
 ### 2-1. TF 발행 주체 (D4, A안: EKF 두 개)
 
