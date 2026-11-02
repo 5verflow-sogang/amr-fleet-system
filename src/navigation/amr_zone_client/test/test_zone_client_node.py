@@ -1,4 +1,5 @@
-"""zone_client_node.py의 TF 조회 실패 시 동작(fail-closed) 확인 (#66 하연 리뷰).
+"""zone_client_node.py의 위치 토픽 처리와 끊겼을 때 동작(fail-closed) 확인 (#66 하연 리뷰,
+perf/zone-client-pose-topic).
 
 launch_testing 없이 노드를 직접 만들어서 확인하는 가벼운 rclpy 단위 테스트다 - 실제
 fleet_manager·Gazebo까지는 필요 없다. test_zone_client_launch.py(launch_testing)와는
@@ -7,20 +8,79 @@ fleet_manager·Gazebo까지는 필요 없다. test_zone_client_launch.py(launch_
 
 import rclpy
 from amr_msgs.msg import SafetyStatus, ZoneGrant
-from geometry_msgs.msg import Twist, Vector3
-from nav_msgs.msg import Path
+from geometry_msgs.msg import Point, Pose, PoseWithCovariance, Twist, Vector3
+from nav_msgs.msg import Odometry, Path
 
 from amr_zone_client.zone_client_node import ZoneClientNode
 
 
-def test_tf_lookup_failure_sets_speed_cap_to_zero():
+def _odom(x: float, y: float) -> Odometry:
+    return Odometry(pose=PoseWithCovariance(pose=Pose(position=Point(x=x, y=y))))
+
+
+def test_no_robot_pose_sets_speed_cap_to_zero():
     rclpy.init()
     try:
         node = ZoneClientNode()
         try:
-            # 아무 TF도 흘려주지 않았으니 map->base_footprint 조회는 반드시 실패한다
+            # 위치 토픽을 한 번도 못 받았으니 _robot_xy()는 반드시 None이다
             node._update()
             assert node._speed_cap == 0.0
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+def test_robot_pose_timeout_sets_speed_cap_to_zero():
+    # 위치를 받은 적은 있지만 robot_pose_timeout_s보다 오래 조용하면 끊김으로 본다
+    rclpy.init()
+    try:
+        node = ZoneClientNode()
+        try:
+            node._on_robot_pose(_odom(1.0, 2.0))
+            assert node._robot_xy() == (1.0, 2.0)
+
+            node._last_pose_t -= node._robot_pose_timeout_s + 0.1
+            assert node._robot_xy() is None
+
+            node._update()
+            assert node._speed_cap == 0.0
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+class _RecordingCore:
+    """core.update에 넘어온 robot_xy를 그대로 기록한다 (구역 진입·이탈 판단 자체는 test_core.py에서
+    본다 - 여기서는 위치 토픽 → _robot_xy() → core.update 연결만 확인한다)."""
+
+    def __init__(self):
+        self.seen_xy = []
+
+    def update(self, now, path_xy, robot_xy, safety_limit, current_speed):
+        self.seen_xy.append(robot_xy)
+        return [], None, None, []
+
+    def state_label(self, now):
+        return 'idle'
+
+
+def test_robot_pose_topic_feeds_zone_update():
+    rclpy.init()
+    try:
+        node = ZoneClientNode()
+        try:
+            core = _RecordingCore()
+            node._core = core
+
+            node._on_robot_pose(_odom(1.0, 2.0))
+            node._update()
+            node._on_robot_pose(_odom(5.5, -3.0))
+            node._update()
+
+            assert core.seen_xy == [(1.0, 2.0), (5.5, -3.0)]
         finally:
             node.destroy_node()
     finally:
@@ -86,7 +146,7 @@ def test_stop_published_once_when_speed_cap_drops_to_zero_without_new_cmd_vel():
             pub, core = _FakePublisher(), _FakeCore()
             node._cmd_vel_pub = pub
             node._core = core
-            node._lookup_robot_xy = lambda: (0.0, 0.0)
+            node._robot_xy = lambda: (0.0, 0.0)
 
             node._on_cmd_vel(Twist(linear=Vector3(x=0.5)))
             assert pub.sent == [0.5]

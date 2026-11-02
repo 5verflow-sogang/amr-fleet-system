@@ -1,7 +1,17 @@
 """로봇 측 구역 진입 처리 노드. amr_fleet_manager(#57)의 ZoneRequest/ZoneGrant 서버와 짝이다.
 
-계획 경로(/<ns>/plan)와 현재 위치(map_frame → base_frame TF)로 구역 경계까지 남은 거리를 계산해
+계획 경로(/<ns>/plan)와 현재 위치(robot_pose_topic, map 기준)로 구역 경계까지 남은 거리를 계산해
 ZoneRequest를 보내고, 허가 전까지는 cmd_vel을 감속·정지시킨다. 흐름은 README '동작 규칙' 참고.
+
+위치는 TF가 아니라 토픽으로 받는다(perf/zone-client-pose-topic, 하연 분석) - 공용 Buffer()+
+TransformListener()는 /tf를 구독해 모든 로봇의 TF를 다 받아 처리하므로, 구역 요청이 0건이어도
+로봇 1대당 약 0.3 코어를 쓰고 있었다. map 기준 위치는 로봇마다 자기 ekf_global만 내는 네임스페이스
+안 상대 토픽(robot_pose_topic, 기본 odometry/filtered)으로 이미 나오고 있어 그걸 직접 구독한다
+(amr_localization launch 참고 - amcl_pose는 AMCL이 update_min_d(0.1 m)만큼 움직이기 전엔 안 보내
+너무 뜸하다. odometry/filtered는 ekf_global이 amcl_pose+오도메트리+IMU를 계속 융합해 내는 map
+기준 추정치라 지금 TF 조회가 주던 것과 같다). TF는 zones_frame(세계 좌표 → map, 정적) 변환에만
+남겨 뒀고, 그 변환이 끝나면(_ensure_core) 리스너를 바로 치운다 - 평소(zones_frame 비움)에는 TF를
+전혀 안 쓴다.
 
 구역 상한에 더해 safety/status(SafetyStatus.speed_limit)도 반영한다(#69·#70) - 둘 중 더
 작은 쪽을 쓰고, 끊기면 제한 없음으로 본다. README 'SafetyStatus 연동' 절 참고.
@@ -22,7 +32,7 @@ from typing import List, Optional
 import rclpy
 from amr_msgs.msg import SafetyStatus, ZoneGrant, ZoneRequest
 from geometry_msgs.msg import Twist
-from nav_msgs.msg import Path
+from nav_msgs.msg import Odometry, Path
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -53,7 +63,14 @@ class ZoneClientNode(Node):
         # zones.yaml area_world의 좌표계. 비우면 map_frame 좌표로 그대로 본다 (TF 없는 테스트).
         # 'world'면 TF map ← world로 바꿔 쓴다 - 지도 원점이 world와 달라 그대로 쓰면 구역이 어긋난다
         self._zones_frame = p('zones_frame', '').value
-        self._base_frame = p('base_frame', 'base_footprint').value
+        # 로봇 위치(map 기준) 토픽. 네임스페이스 안 상대 이름 - ekf_global 출력(odometry/filtered,
+        # amr_localization launch)이 기본이다. amcl_pose(AMCL 원출력)는 update_min_d(0.1 m)만큼
+        # 움직이기 전엔 안 보내 너무 뜸하다 - odometry/filtered가 TF(map→base_frame)가 주던 것과
+        # 같은, 계속 융합되는 추정치다.
+        robot_pose_topic = p('robot_pose_topic', 'odometry/filtered').value
+        # 이 시간 동안 위치를 못 받으면(한 번도 못 받았을 때 포함) TF 조회 실패와 같이 fail-closed로
+        # 본다 - safety_status_timeout_s와 같은 패턴.
+        robot_pose_timeout_s = p('robot_pose_timeout_s', 1.0).value
         plan_topic = p('plan_topic', 'plan').value
         # 서버 → 로봇(zone_grants)은 장애 주입기가 중계하므로 네임스페이스 안 상대 이름을 기본값으로 쓴다.
         # zone_requests(로봇 → 서버)는 중계되지 않는 절대 토픽이다 (fleet_manager_node.py, api.md 4-2절)
@@ -117,8 +134,22 @@ class ZoneClientNode(Node):
         # 전에 켠다 - prepare_shutdown() 참고.
         self._shutting_down = False
 
-        self._tf_buffer = Buffer()
-        self._tf_listener = TransformListener(self._tf_buffer, self)
+        # 로봇 위치(map 기준) - 콜백에서 최신 값만 저장하고, 끊김 판단(robot_pose_timeout_s)은
+        # safety_status와 같은 패턴으로 노드가 한다(core는 ROS 비의존이라 타임스탬프를 모른다).
+        self._robot_pose_topic = robot_pose_topic
+        self._robot_pose_timeout_s = robot_pose_timeout_s
+        self._last_pose_xy: Optional[tuple] = None
+        self._last_pose_t: Optional[float] = None
+
+        # TF는 zones_frame(세계 좌표 → map, 정적) 변환에만 쓴다 - 평소(zones_frame 비움, self._core가
+        # 이미 위에서 만들어짐)에는 전혀 안 띄운다. 변환이 끝나면(_ensure_core) 바로 치운다 - 공용
+        # /tf를 구독해 모든 로봇의 TF를 받는 TransformListener를 평소에 계속 띄워 두는 게 이 노드의
+        # CPU 사용량을 키운 원인이었다(perf/zone-client-pose-topic, 하연 분석).
+        self._tf_buffer: Optional[Buffer] = None
+        self._tf_listener: Optional[TransformListener] = None
+        if self._core is None:
+            self._tf_buffer = Buffer()
+            self._tf_listener = TransformListener(self._tf_buffer, self)
 
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self._request_pub = self.create_publisher(ZoneRequest, zone_requests_topic, qos)
@@ -128,12 +159,13 @@ class ZoneClientNode(Node):
         self.create_subscription(Path, plan_topic, self._on_path, 10)
         self.create_subscription(Twist, cmd_vel_in_topic, self._on_cmd_vel, 10)
         self.create_subscription(SafetyStatus, safety_status_topic, self._on_safety_status, 10)
+        self.create_subscription(Odometry, robot_pose_topic, self._on_robot_pose, 10)
         self._update_timer = self.create_timer(1.0 / update_rate_hz, self._update)
 
         self.get_logger().info(
             f'zone_client({self._robot_id}): 구역 {zones and [z.zone_id for z in zones] or "없음"}, '
-            f'구독 {zone_grants_topic} (허가), {plan_topic} (경로), {safety_status_topic} '
-            f'(speed_limit) · 발행 {zone_requests_topic}, {_STATE_TOPIC} (상태)')
+            f'구독 {zone_grants_topic} (허가), {plan_topic} (경로), {robot_pose_topic} (위치), '
+            f'{safety_status_topic} (speed_limit) · 발행 {zone_requests_topic}, {_STATE_TOPIC} (상태)')
 
     def _on_path(self, msg: Path):
         if self._shutting_down:
@@ -161,6 +193,13 @@ class ZoneClientNode(Node):
             return
         self._safety_speed_limit = msg.speed_limit
         self._safety_status_last_t = self.get_clock().now().nanoseconds * 1e-9
+
+    def _on_robot_pose(self, msg: Odometry):
+        if self._shutting_down:
+            return
+        # 최신 값만 저장한다 - 구역 판단은 지금처럼 _update(update_rate_hz) 주기로 한다.
+        self._last_pose_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)
+        self._last_pose_t = self.get_clock().now().nanoseconds * 1e-9
 
     def _on_cmd_vel(self, msg: Twist):
         if self._shutting_down:
@@ -193,13 +232,17 @@ class ZoneClientNode(Node):
         self._cmd_vel_pub.publish(out)
         self._last_cmd_vel_mps = linear_x
 
-    def _lookup_robot_xy(self):
-        try:
-            tf = self._tf_buffer.lookup_transform(self._map_frame, self._base_frame, rclpy.time.Time())
-        except TransformException as e:
-            self.get_logger().warn(f'{self._map_frame}→{self._base_frame} TF 없음: {e}', throttle_duration_sec=5.0)
+    def _robot_xy(self):
+        """최근(robot_pose_timeout_s 안) 받은 로봇 위치(map 기준). 없거나 끊겼으면 None."""
+        if self._last_pose_xy is None:
             return None
-        return (tf.transform.translation.x, tf.transform.translation.y)
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now - self._last_pose_t > self._robot_pose_timeout_s:
+            self.get_logger().warn(
+                f'{self._robot_pose_topic} 위치 끊김({self._robot_pose_timeout_s:g}초 넘게 안 옴)',
+                throttle_duration_sec=5.0)
+            return None
+        return self._last_pose_xy
 
     def _ensure_core(self) -> bool:
         """zones_frame → map_frame TF로 구역을 바꿔 core를 만든다. 아직 TF가 없으면 False."""
@@ -219,6 +262,12 @@ class ZoneClientNode(Node):
         self.get_logger().info(
             f'구역 좌표 {self._zones_frame}→{self._map_frame} 변환 (dx={t.x:.3f}, dy={t.y:.3f}, '
             f'dyaw={yaw:.5f}): ' + ', '.join(f'{z.zone_id} {tuple(round(v, 3) for v in z.area)}' for z in zones))
+        # 변환이 끝났다 - 더는 안 쓰니 /tf·/tf_static 구독을 치운다(이 변환 하나만 쓰려고 평소에도
+        # 공용 TF를 계속 받는 게 CPU를 키운 원인이었다, perf/zone-client-pose-topic).
+        self.destroy_subscription(self._tf_listener.tf_sub)
+        self.destroy_subscription(self._tf_listener.tf_static_sub)
+        self._tf_listener = None
+        self._tf_buffer = None
         return True
 
     def _update(self):
@@ -228,11 +277,11 @@ class ZoneClientNode(Node):
             # 구역이 어디인지 모르면 fail-closed: 위치를 모를 때와 같은 규칙으로 상한을 0으로 묶는다
             self._set_speed_cap(0.0)
             return
-        robot_xy = self._lookup_robot_xy()
+        robot_xy = self._robot_xy()
         if robot_xy is None:
-            # 위치를 모르면 fail-closed: 상한을 0으로 묶어 멈춰 세운다. 경고는 TF 조회 쪽에서
+            # 위치를 모르면 fail-closed: 상한을 0으로 묶어 멈춰 세운다. 경고는 위치 쪽에서
             # 이미 throttle해서 남긴다 (#66). BACKING 중이면(위치가 있어야 후진 거리를 재므로)
-            # 같은 규칙으로 바로 정지한다 - core 상태는 그대로 두고(이번 틱만 건너뜀) TF가
+            # 같은 규칙으로 바로 정지한다 - core 상태는 그대로 두고(이번 틱만 건너뜀) 위치가
             # 돌아오면 이어서 재개한다.
             self._set_speed_cap(0.0)
             if self._backing_linear_x is not None:

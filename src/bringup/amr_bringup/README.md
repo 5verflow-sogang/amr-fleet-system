@@ -45,7 +45,7 @@ ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose \
 | `amr_localization localization` | AMCL + EKF 두 개 | 초기 위치(스폰 자세를 map 좌표로), 지도 서버는 첫 로봇에서 한 번 |
 | `amr_bt amr_bt` | Fleet 작업 수신 | `fleet:=true`면 `relayed:=true`(장애 주입기 중계본) |
 | `amr_bringup nav2` | planner·controller·behavior·bt_navigator | `nav2:=true`. 프레임 접두어, 스캔 절대 이름, 속도 출력 `cmd_vel_nav` |
-| `amr_zone_client` | 좁은 통로 진입 허가·속도 제한 | `zone_client:=true`. 서버와 같은 `zones.yaml`, `base_frame=<ns>/base_footprint`, `use_sim_time` |
+| `amr_zone_client` | 좁은 통로 진입 허가·속도 제한 | `zone_client:=true`. 서버와 같은 `zones.yaml`, `use_sim_time` |
 | `amr_tracking` | LiDAR 장애물 추적, TTC | `tracking:=true` |
 | `amr_detection` | YOLO 인식 | `detection:=true` (카메라 필요) |
 | `amr_docking` | ArUco 도킹 서버 (마커판은 월드에 한 번) | `docking:=true` (Nav2·카메라 필요). 속도는 Nav2와 같은 `cmd_vel_nav` 자리 |
