@@ -44,8 +44,11 @@ run_container() {
       # 레포 주인(호스트 사용자)과 컨테이너 사용자(root)가 달라 git이 거부하면 meta.json git_sha가 unknown이 된다
       git config --global --add safe.directory /repo 2>/dev/null || true
       if [ -n \"\$HARNESS_PREP\" ]; then bash -c \"\$HARNESS_PREP\"; fi
+      # 빌드 타입을 안 주면 최적화 없이(-O0) 빌드돼 5대 Nav2 스택에서 DWA가 20 Hz 제어 주기를 놓친다(#265).
+      # CI(ci.yml)와 같은 RelWithDebInfo로 맞춘다
       colcon build --base-paths src --build-base /tmp/harness_ws/build --install-base /tmp/harness_ws/install \
-        --packages-up-to $PACKAGES > /tmp/harness_build.log 2>&1 || { tail -30 /tmp/harness_build.log; exit 1; }
+        --packages-up-to $PACKAGES --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        > /tmp/harness_build.log 2>&1 || { tail -30 /tmp/harness_build.log; exit 1; }
       source /tmp/harness_ws/install/setup.bash
       python3 tools/harness/run.py $(printf '%q ' "$@")"
 }

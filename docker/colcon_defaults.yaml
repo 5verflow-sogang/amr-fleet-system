@@ -1,0 +1,6 @@
+# colcon 기본 인자 (docker-compose.yml이 COLCON_DEFAULTS_FILE로 넘긴다). 명령줄 인자가 있으면 그쪽이 우선이다.
+# 빌드 타입을 정하지 않으면 CMake가 최적화 없이(-O0) 빌드해, 5대 Nav2 스택에서 DWA가 20 Hz 제어 주기를 놓친다
+# (#265). CI(ci.yml)와 같은 RelWithDebInfo(-O2 -g)로 맞춘다 - 경고 0 검사도 CI가 이 타입으로 한다.
+build:
+  cmake-args:
+    - -DCMAKE_BUILD_TYPE=RelWithDebInfo
