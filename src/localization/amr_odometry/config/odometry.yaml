@@ -13,7 +13,7 @@
     base_frame: base_footprint
     # D4(A안): odom → base_footprint는 ekf_local이 발행한다. EKF 없이 단독 시험할 때만 true
     publish_tf: false
-    # odom 발행 주기 [Hz]. Gazebo joint_states는 1 kHz라 적분은 매번 하고 발행만 묶는다 (EKF 50 Hz)
+    # odom 발행 주기 [Hz]. joint_states(50 Hz, amr_gazebo joint_state_throttle)는 받을 때마다 적분하고 발행만 묶는다 (EKF 50 Hz)
     publish_rate: 50.0
 
     # 속도 공분산 하한 [(m/s)², (rad/s)²]. 정지 중에도 EKF가 측정을 과신하지 않게 한다

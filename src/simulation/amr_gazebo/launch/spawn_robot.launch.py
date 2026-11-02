@@ -5,7 +5,8 @@
 ROS 토픽 (<ns> = namespace):
     /<ns>/cmd_vel       geometry_msgs/Twist     ROS → Gazebo
     /<ns>/diff_drive/odom  nav_msgs/Odometry    Gazebo → ROS (DiffDrive 이상적 odom, 노이즈 없음)
-    /<ns>/joint_states  sensor_msgs/JointState  Gazebo → ROS
+    /<ns>/joint_states  sensor_msgs/JointState  Gazebo → ROS (joint_states_raw 약 1000 Hz를 joint_state_throttle이
+                        joint_state_rate_hz로 줄인다)
     /<ns>/ground_truth/odom  nav_msgs/Odometry  Gazebo → ROS (진짜 위치, frame "world", 평가 전용)
     /<ns>/scan_raw      sensor_msgs/LaserScan   Gazebo → ROS (노이즈 포함 원본, 10 Hz)
     /<ns>/imu/data_raw  sensor_msgs/Imu         Gazebo → ROS (노이즈·바이어스 포함 원본, 100 Hz)
@@ -42,7 +43,9 @@ def _spawn(context):
         f'{topic_ns}/scan_raw@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan',
         f'{topic_ns}/imu/data_raw@sensor_msgs/msg/Imu[ignition.msgs.IMU',
     ]
-    remappings = []
+    # Fortress JointStatePublisher는 물리 스텝마다(약 1000 Hz) 내고 주기 설정이 없다. 브리지 출력은 _raw로 받고
+    # joint_state_throttle(C++)이 줄여 joint_states로 낸다 (src/joint_state_throttle_node.cpp)
+    remappings = [(f'{topic_ns}/joint_states', f'{topic_ns}/joint_states_raw')]
     if enable_camera == 'true':
         bridge_args += [
             f'{topic_ns}/camera/image@sensor_msgs/msg/Image[ignition.msgs.Image',
@@ -102,6 +105,14 @@ def _spawn(context):
             parameters=[{'use_sim_time': use_sim_time == 'true'}],
             output='screen',
         ),
+        Node(
+            package='amr_gazebo',
+            executable='joint_state_throttle',
+            namespace=ns,
+            # 메시지 stamp만 보고 시계는 쓰지 않아 use_sim_time을 주지 않는다 (/clock 구독 비용)
+            parameters=[{'rate_hz': float(LaunchConfiguration('joint_state_rate_hz').perform(context))}],
+            output='screen',
+        ),
     ]
 
 
@@ -116,6 +127,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'max_linear_acceleration', default_value='1.0',
             description='DiffDrive 선가속 상한 [m/s²]. 크게 주면 바퀴 토크 한계가 질량에 따라 가감속을 정한다'),
+        DeclareLaunchArgument(
+            'joint_state_rate_hz', default_value='50.0',
+            description='바퀴 joint_states 발행 속도 [Hz]. Gazebo는 물리 스텝(1 ms)마다 내지만 받는 쪽마다 CPU를 먹는다'),
         DeclareLaunchArgument('gt_rate', default_value='100', description='GT 토픽 발행 주기 [Hz]'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         DeclareLaunchArgument(

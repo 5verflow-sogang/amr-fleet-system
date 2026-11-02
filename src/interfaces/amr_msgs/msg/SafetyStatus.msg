@@ -34,6 +34,7 @@ float32 min_obstacle_distance
 #   제한 없음(LEVEL_NORMAL): inf (공통 규칙 "inf = 해당 없음", docs/api.md 4-3절)
 #   감속(LEVEL_WARNING): 0.6. 반응 지연 0.2 s + 감속 1.0 m/s²로 0.3 m 안에 서려면
 #     CRITICAL에 들어갈 때 속도가 0.6 m/s 이하여야 한다 (0.6×0.2 + 0.6²/2 = 0.30 m)
+#     움직이는 장애물이 차체 0.5 m 안이면 0.15 (바로 옆 사람이 돌아서도 추적이 알아채는 0.5 s 동안 거의 안 가게)
 #   정지(LEVEL_CRITICAL, LEVEL_ESTOP): 0.0
 # 음수는 쓰지 않는다
 float32 speed_limit

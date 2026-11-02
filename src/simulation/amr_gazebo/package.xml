@@ -10,6 +10,10 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
 
+  <!-- 바퀴 joint_states 발행 속도 줄이기 (src/joint_state_throttle_node.cpp) -->
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+
   <!-- 동적 장애물 노드 (scripts/dynamic_obstacles_node.py) -->
   <exec_depend>rclpy</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
@@ -29,6 +33,7 @@
   <!-- rviz2는 gui 이미지에만 설치한다 (sim.launch.py rviz:=true일 때만 필요) -->
 
   <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

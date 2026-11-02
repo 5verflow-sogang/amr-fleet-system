@@ -288,7 +288,7 @@ tools/harness/results/<run_id>/
 | `frame_alignment` | `fixed` | 좌표계 정렬 방식 |
 | `host` | CPU 모델·코어 수, 메모리, GPU 유무 | CPU 80%·응답 시간 KPI는 실행 컴퓨터에 따라 달라짐 |
 | `versions` | ROS 배포판, 시뮬레이터, Docker 이미지 태그 | 환경 차이 추적 |
-| `use_sim_time`, `real_time_factor` | `true`, `0.87` | 시뮬레이터가 실제보다 느리게 돌았는지 |
+| `use_sim_time`, `real_time_factor` | `true`, `0.87` | 시뮬레이터가 실제보다 느리게 돌았는지. 주행 구간의 `/clock` 진행 ÷ 실제 시간 (11/2부터. 그 전 실제 시간으로 기다리는 시나리오 `fleet_stack`·`task_cycle`은 늘 1.0으로 잘못 찍혔다). `/clock`이 없으면 `null` |
 | `rmw_implementation` | `rmw_cyclonedds_cpp` | 연구 1 After 측정의 DDS 벤더 비교 (하연, #33) |
 | `qos_profile` | `default` | 연구 1 After 측정의 QoS 튜닝 전후 구분. 값은 [api.md 6절](../../docs/api.md#6-qos-기본값) 프로파일 이름 (하연, #33) |
 | `observation_cutoff` | `{"end": 612.3, "grace_s": 1.0, "cutoff": 610.8, "start": 12.4}` | 연구 1 지연·손실·Ack에서 뺀 실행 끝 구간(하연·민지, #33)과 녹화 초반 구간(`start`) |

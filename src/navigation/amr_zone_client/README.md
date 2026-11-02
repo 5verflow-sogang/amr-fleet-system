@@ -12,6 +12,7 @@
 | Publish | `/fleet/zone_requests` (파라미터 `zone_requests_topic`) | `amr_msgs/msg/ZoneRequest` | 진입 요청·연장·반납. 중계되지 않는 절대 토픽이라 기본값이 항상 `/fleet/zone_requests`다 (`fleet_manager_node.py`) |
 | Subscribe | `fleet/zone_grants` (파라미터 `zone_grants_topic`) | `amr_msgs/msg/ZoneGrant` | 서버 응답. 네임스페이스 안 상대 이름 → `amr_fault_injector`가 중계한 `/<robot_id>/fleet/zone_grants` |
 | Subscribe | `plan` (파라미터 `plan_topic`) | `nav_msgs/msg/Path` | Nav2 전역 계획 경로. 로봇 현재 위치 기준으로 다시 계산된 것을 그대로 쓴다 |
+| Subscribe | `odometry/filtered` (파라미터 `robot_pose_topic`) | `nav_msgs/msg/Odometry` | 로봇 위치(map 기준, ekf_global 출력). 콜백은 최신 값만 저장하고, 구역 판단은 `update_rate_hz` 주기로 읽는다 (perf/zone-client-pose-topic) |
 | Subscribe | `cmd_vel_nav` (파라미터 `cmd_vel_in_topic`) | `geometry_msgs/msg/Twist` | 게이팅 전 속도 명령 (Nav2 controller_server, 향후 velocity_smoother의 출력) |
 | Subscribe | `safety/status` (파라미터 `safety_status_topic`) | `amr_msgs/msg/SafetyStatus` | `speed_limit`을 구역 상한과 함께 선속도 상한에 반영 ('SafetyStatus 연동' 절 참고) |
 | Publish | `cmd_vel_zone_limited` (파라미터 `cmd_vel_out_topic`) | `geometry_msgs/msg/Twist` | 게이팅 후 속도 명령. 허가 전엔 선속도만 깎는다, 각속도는 그대로. `BACKING` 중에는 `cmd_vel_nav`를 무시하고 직접 낸 후진 속도다. **로봇의 최종 `cmd_vel`이 아니다** — 'cmd_vel 체인' 절 참고 |
@@ -100,8 +101,14 @@
 - `ZoneGrant`는 전체 로봇에 방송되므로 `robot_id`가 다르면 무시한다. 추가로, 지금 기다리는
   `request_id`와 다른 응답(늦게 온 지난 요청의 응답 등)도 무시한다 — 메시지 규약에는 없는, 장애 주입기의
   지연·재배열을 견디기 위한 구현 선택이다.
-- TF(`map_frame`→`base_frame`) 조회에 실패하면 fail-closed로 속도 상한을 0으로 묶는다(경고 로그는
-  5초 throttle). `BACKING` 중에도 같은 규칙이다 — 아래 'BACKING(교착 해소)' 절 참고.
+- 로봇 위치(`robot_pose_topic`)를 한 번도 못 받았으면 fail-closed로 속도 상한을 0으로 묶는다.
+  받은 적이 있으면 `robot_pose_timeout_s`(기본 1 s)보다 오래 끊겨도 속도를 묶지 않고 마지막 위치를
+  그대로 쓴다 — 예전 TF 조회가 버퍼의 최신 값을 나이와 상관없이 주던 것과 같다. 끊겼다는 사실은
+  경고 로그만(5초 throttle) 남긴다(#271 하연 리뷰: CPU 포화로 EKF 주기가 느려질 때 속도를 0으로
+  묶으면 구역과 상관없는 정지가 새 정체를 만든다 — 이 PR은 성능 개선이라 동작은 예전과 같아야
+  한다). `frame_id`가 `map_frame`과 다르면(위 '로봇 위치' 절) 그 메시지는 못 받은 것과 같이 버린다.
+  `BACKING` 중에도(한 번도 못 받았을 때의 fail-closed) 같은 규칙이다 — 아래 'BACKING(교착 해소)'
+  절 참고.
 
 ### 상태 토픽(zone_client/state)
 
@@ -150,8 +157,9 @@ failed > backing > blocked > waiting > inside > approaching > idle
 덕분에 더는 서버 `release_timeout_s`(`amr_fleet_manager.yaml` 기본 30 s)보다 작아야 할 필요가
 없다 — 재전송이 `last_seen`을 계속 갱신하므로 서버가 "반납이 안 온다"고 구역을 넘겨버릴 일이 없다.
 
-TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BACKING` 중에도 그 순간 0을 낸다(`core`
-상태는 그대로 두고 그 틱만 건너뛴다 — TF가 돌아오면 이어서 재개한다).
+위치(`robot_pose_topic`)를 한 번도 못 받았을 때는 평소 규칙과 같다 — `BACKING` 중에도 그 순간
+0을 낸다(`core` 상태는 그대로 두고 그 틱만 건너뛴다 — 위치가 돌아오면 이어서 재개한다). 받은
+적이 있으면 끊겨도 마지막 위치로 후진 거리를 계속 잰다(#271).
 
 `safety/status`와의 관계(#137 지수 리뷰): 후진 속도도 `speed_limit`에 걸린다(크기 `|v|` 기준) —
 뒤가 막혀 안전 노드가 멈추라고 하면(`CRITICAL`, `speed_limit` 0) 후진도 `decel_mps2`로 부드럽게
@@ -171,9 +179,10 @@ TF(`map_frame`→`base_frame`) 조회 실패는 평소 규칙과 같다 — `BAC
 | --- | --- | --- |
 | `robot_id` | 노드 네임스페이스(`/amr_03` → `amr_03`, 없으면 `amr_01`) | `ZoneRequest.robot_id`, `ZoneGrant` 필터링 기준. 파라미터로 주면 그 값이 우선한다 |
 | `zones_file` | `''` | 구역 목록 yaml 경로. 서버(`amr_fleet_manager`)와 같은 파일을 가리켜야 한다. 비어 있으면 구역 없음 |
-| `map_frame` | `map` | TF 대상 좌표계 이름 |
+| `map_frame` | `map` | `zones_frame` → `map_frame` TF(시작할 때 한 번)에 쓰는 이름 |
 | `zones_frame` | `''` | `zones.yaml` `area_world`의 좌표계. `world`면 TF `map ← world`로 바꿔 쓴다(시뮬레이션). 비우면 `map_frame` 그대로 (아래 "좌표계에 대해") |
-| `base_frame` | `base_footprint` | TF 로봇 좌표계 이름 |
+| `robot_pose_topic` | `odometry/filtered` | 로봇 위치(map 기준) 토픽, 네임스페이스 안 상대 이름. ekf_global 출력 (perf/zone-client-pose-topic) |
+| `robot_pose_timeout_s` | `1.0` | 받은 적이 있는 위치가 이 시간보다 오래되면 끊김 경고만 남긴다(속도는 안 묶음). 한 번도 못 받았으면 이 값과 무관하게 fail-closed(속도 상한 0) |
 | `plan_topic` | `plan` | Nav2 전역 경로 (상대 이름) |
 | `zone_grants_topic` | `fleet/zone_grants` | 상대 이름 (네임스페이스 → 장애 주입기 중계본) |
 | `cmd_vel_in_topic` / `cmd_vel_out_topic` | `cmd_vel_nav` / `cmd_vel_zone_limited` | cmd_vel 게이트 입·출력 ('cmd_vel 체인' 절 참고) |
@@ -238,9 +247,29 @@ controller_server (Nav2) → cmd_vel_nav → [velocity_smoother, 아직 없음] 
 
 - `zones_frame:=world`이면 시작할 때 TF `map ← world`를 조회해 구역을 `map` 좌표로 바꾼 뒤 판단한다.
   TF는 `amr_bringup system.launch.py`가 지도 원점으로 한 번 발행한다(`world → map` 정적 TF). 원점 값을 이 노드가
-  따로 들고 있지 않아 지도를 바꿔도 여기는 고칠 게 없다.
+  따로 들고 있지 않아 지도를 바꿔도 여기는 고칠 게 없다. 이 TF 하나만 쓰려고 띄운 리스너는 변환이
+  끝나면 바로 치운다 - 평소에는 TF를 전혀 안 쓴다(perf/zone-client-pose-topic, 아래 참고).
 - TF가 오기 전에는 구역이 어디인지 모르므로 위치를 모를 때와 같이 속도 상한 0으로 멈춘다 (fail-closed).
-- `zones_frame`을 비우면(기본) `map` 좌표로 그대로 본다. TF 없는 단위·launch 테스트용이다.
+- `zones_frame`을 비우면(기본) `map` 좌표로 그대로 본다. TF를 전혀 안 쓰는 단위·launch 테스트용이다.
+
+## 로봇 위치
+
+로봇 위치는 TF가 아니라 `robot_pose_topic`(기본 `odometry/filtered`, ekf_global 출력, map 기준)
+토픽으로 받는다. 전에는 매 틱(`update_rate_hz`) `map_frame` → `base_frame` TF를 조회했는데, 그러려고
+띄운 `tf2_ros.TransformListener`가 공용 `/tf`를 구독해 5대 로봇의 TF를 전부 받아 처리하느라, 구역
+요청이 0건이어도 로봇 1대당 약 0.3 코어를 썼다(하연 분석). `odometry/filtered`는 `ekf_global`이
+`amcl_pose` + 오도메트리 + IMU를 계속 융합해 내는 map 기준 추정치라 TF 조회가 주던 것과 같다 -
+`amcl_pose`(AMCL 원출력)는 `update_min_d`(0.1 m)만큼 움직이기 전엔 안 보내 너무 뜸해서 안 쓴다.
+콜백은 최신 값만 저장하고(`_on_robot_pose`), 구역 판단은 지금처럼 `_update`(`update_rate_hz`) 주기로
+읽는다. 한 번도 못 받았을 때만 TF 조회 실패 때와 같이 fail-closed다. 받은 적이 있으면
+`robot_pose_timeout_s`(기본 1 s)보다 오래돼도 속도를 묶지 않고 마지막 값을 그대로 쓴다 - 예전 TF
+조회(`lookup_transform(..., Time())`)가 버퍼의 최신 값을 나이와 상관없이 주던 것과 같다(#271 하연
+리뷰: CPU 포화로 EKF 주기가 느려질 때 속도를 0으로 묶으면 구역과 상관없는 정지가 새 정체를 만든다
+- 이 PR은 성능 개선이라 동작은 예전과 같아야 한다). 끊겼다는 사실은 경고 로그만 남긴다.
+
+받은 메시지의 `header.frame_id`가 `map_frame`(기본 `map`)이 아니면 좌표계가 다른 값(예:
+`ekf_local`의 odom 기준 출력을 잘못 물린 경우)을 조용히 섞어 쓰지 않도록 그 메시지는 버리고
+위치가 끊긴 것처럼 fail-closed로 본다(`_on_robot_pose`).
 
 ## 실행
 
@@ -256,9 +285,13 @@ colcon test --packages-select amr_zone_client
 ```
 
 - `test/test_geometry.py`, `test/test_core.py`, `test/test_zones_config.py`: ROS 비의존 pytest.
+- `test/test_zone_client_node.py`: 노드만 가볍게 띄워 위치 토픽으로 구역 진입·이탈을 판단하는지,
+  위치를 한 번도 못 받았을 때·`frame_id`가 `map_frame`과 다를 때 fail-closed로 도는지, 받은 뒤
+  끊기면 경고만 남기고 마지막 위치로 계속 판단하는지(#271) 확인한다(launch_testing 없이,
+  `test_zone_client_launch.py`보다 가벼운 경로).
 - `test/test_zone_client_launch.py`: 실제 `amr_fleet_manager`(`fleet_manager`)·`amr_fault_injector`
-  (`zone_grants`만 중계, `delay_ms:=0`)를 띄우고 TF·`Path`를 직접 흘려서 요청 → 허가 → 진입 → 반납을
-  끝까지 확인한다.
+  (`zone_grants`만 중계, `delay_ms:=0`)를 띄우고 `Odometry`(위치)·`Path`를 직접 흘려서 요청 → 허가 →
+  진입 → 반납을 끝까지 확인한다.
 
 ## 알려진 한계
 
