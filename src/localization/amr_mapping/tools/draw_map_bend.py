@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""지도 v1(SLAM)과 정답 지도(gt_map)를 겹쳐 그려 어디가 얼마나 휘었는지 보인다 (#183).
+"""SLAM 지도(기본 v2)와 정답 지도(gt_map)를 겹쳐 그려 어디가 얼마나 휘었는지 보인다 (#183).
 
-    python3 draw_map_bend.py maps/warehouse_v1_0025.yaml maps/warehouse_gt.yaml \\
-        ../../simulation/amr_gazebo/worlds/warehouse.sdf maps/warehouse_v1_bend.png
+    python3 draw_map_bend.py maps/warehouse_v2_0025.yaml maps/warehouse_gt.yaml \\
+        ../../simulation/amr_gazebo/worlds/warehouse.sdf maps/warehouse_v2_bend.png
     # 일부만 2배로: --crop X0 X1 Y0 Y1 (map 좌표) --scale 2
-    # 다른 SLAM 지도: --label 'map v2' --map-origin-in-world X Y YAW (그 지도의 정렬 원점)
+    # 다른 SLAM 지도: --label 'map v1' --map-origin-in-world -0.0562 1.5317 0.00009 (그 지도의 정렬 원점)
 
-- 파랑: 정답 지도 물체, 빨강: 지도 v1 점유 칸. 두 지도는 같은 칸(0.025 m, 원점 [−30.2, −21.8])이라 칸끼리 겹친다.
-  칸이 다른 지도(예: v2)면 정답 지도를 그 지도 칸과 정렬 원점에 맞춰 SDF에서 다시 그린다 (gt_map.rasterize)
-- 물체마다 v1이 정답에서 밀린 방향·크기를 화살표(20배)와 cm로 적는다. map_quality 구조 정확도와 같은
+- 파랑: 정답 지도 물체, 빨강: SLAM 지도(기본 v2) 점유 칸. 두 지도는 같은 칸(0.025 m, 원점 [−30.1, −21.6])이라 칸끼리 겹친다.
+  칸이 다른 지도(예: v1, 원점 [−30.2, −21.8])면 정답 지도를 그 지도 칸과 정렬 원점에 맞춰 SDF에서 다시 그린다 (gt_map.rasterize)
+- 물체마다 SLAM 지도가 정답에서 밀린 방향·크기를 화살표(20배)와 cm로 적는다. map_quality 구조 정확도와 같은
   "물체별 밀림"인데, 지도 전체 정렬을 다시 구하지 않고 launch 정렬 원점(map_origin_in_world) 그대로 잰다 -
   내비·Fleet 실험에서 로봇이 실제로 겪는 어긋남이다
 - 파란 점선: 위치 KPI 측정 구역 (draw_kpi_zone.py ZONE, map 기준)
@@ -83,7 +83,7 @@ def main(argv=None):
     ap.add_argument('--map-origin-in-world', nargs=3, type=float, default=list(MAP_ORIGIN_IN_WORLD))
     ap.add_argument('--crop', nargs=4, type=float, metavar=('X0', 'X1', 'Y0', 'Y1'), help='map 좌표 구역만')
     ap.add_argument('--scale', type=int, default=1)
-    ap.add_argument('--label', default='map v1', help='SLAM 지도 이름 (범례)')
+    ap.add_argument('--label', default='map v2', help='SLAM 지도 이름 (범례)')
     a = ap.parse_args(argv)
 
     v1, m1 = load_map(a.v1_yaml)
