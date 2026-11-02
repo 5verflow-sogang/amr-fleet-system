@@ -96,6 +96,8 @@ class SafetyNode(Node):
             ttc_warning=p('ttc_warning', 2.0).value,
             dynamic_warning_distance=p('dynamic_warning_distance', 1.5).value,
             warning_speed_limit=p('warning_speed_limit', 0.6).value,
+            dynamic_slow_distance=p('dynamic_slow_distance', 0.5).value,
+            dynamic_slow_speed_limit=p('dynamic_slow_speed_limit', 0.15).value,
             release_hold_s=p('release_hold_s', 0.5).value,
             scan_timeout_s=p('scan_timeout', 0.5).value,
             tracks_timeout_s=p('tracks_timeout', 1.0).value,
