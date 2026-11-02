@@ -13,7 +13,11 @@ TransformListener()는 /tf를 구독해 모든 로봇의 TF를 다 받아 처리
 남겨 뒀고, 그 변환이 끝나면(_ensure_core) 리스너를 바로 치운다 - 평소(zones_frame 비움)에는 TF를
 전혀 안 쓴다. 토픽을 잘못 물려서(예: odom 기준 ekf_local) 좌표계가 다른 위치가 들어오는 걸 조용히
 놓치지 않으려고, header.frame_id가 map_frame이 아니면 그 메시지는 버리고 위치가 끊긴 것처럼
-fail-closed로 본다(_on_robot_pose).
+fail-closed로 본다(_on_robot_pose). 위치 자체는 한 번도 못 받았을 때만 fail-closed다. 받은 적이
+있으면 robot_pose_timeout_s보다 오래돼도 속도를 묶지 않고 마지막 값을 그대로 쓴다 - 예전 TF
+조회(lookup_transform(..., Time()))가 버퍼의 최신 값을 나이와 상관없이 주던 것과 같다. 끊겼다는
+사실은 경고로만 남긴다 (#271 하연 리뷰: CPU 포화로 EKF 주기가 느려질 때 속도를 0으로 묶으면
+구역과 상관없는 정지가 새 정체를 만든다 - 이 PR은 성능 개선이라 동작은 예전과 같아야 한다).
 
 구역 상한에 더해 safety/status(SafetyStatus.speed_limit)도 반영한다(#69·#70) - 둘 중 더
 작은 쪽을 쓰고, 끊기면 제한 없음으로 본다. README 'SafetyStatus 연동' 절 참고.
@@ -70,8 +74,10 @@ class ZoneClientNode(Node):
         # 움직이기 전엔 안 보내 너무 뜸하다 - odometry/filtered가 TF(map→base_frame)가 주던 것과
         # 같은, 계속 융합되는 추정치다.
         robot_pose_topic = p('robot_pose_topic', 'odometry/filtered').value
-        # 이 시간 동안 위치를 못 받으면(한 번도 못 받았을 때 포함) TF 조회 실패와 같이 fail-closed로
-        # 본다 - safety_status_timeout_s와 같은 패턴.
+        # 한 번도 못 받았으면 fail-closed(TF 조회가 아예 없는 프레임에 실패하던 것과 같음). 받은 적이
+        # 있으면 이 시간보다 오래돼도 마지막 값을 그대로 쓴다 - TF 조회(lookup_transform(..., Time()))가
+        # 버퍼의 최신 값을 나이와 상관없이 주던 것과 같다. 오래 끊기면 경고만 남긴다 (#271 하연 리뷰:
+        # CPU 포화로 EKF 주기가 느려질 때 속도를 0으로 묶으면 구역과 상관없는 정지가 새 정체를 만든다).
         robot_pose_timeout_s = p('robot_pose_timeout_s', 1.0).value
         plan_topic = p('plan_topic', 'plan').value
         # 서버 → 로봇(zone_grants)은 장애 주입기가 중계하므로 네임스페이스 안 상대 이름을 기본값으로 쓴다.
@@ -245,15 +251,20 @@ class ZoneClientNode(Node):
         self._last_cmd_vel_mps = linear_x
 
     def _robot_xy(self):
-        """최근(robot_pose_timeout_s 안) 받은 로봇 위치(map 기준). 없거나 끊겼으면 None."""
+        """로봇 위치(map 기준). 한 번도 못 받았으면 None(fail-closed) - 전에 TF 조회가 없는 프레임에
+        TransformException을 내던 것과 같다. 받은 적이 있으면 오래됐어도 그 마지막 값을 그대로 쓴다 -
+        전에 TF 조회(lookup_transform(..., Time()))가 버퍼의 가장 최근 값을 나이와 상관없이 주던 것과
+        같다 (#271 하연 리뷰: robot_pose_timeout_s로 끊겼다고 속도를 0으로 묶으면, CPU 포화로 EKF
+        주기가 느려질 때 구역과 상관없는 정지가 생겨 새 정체를 만든다 - 이 PR은 성능 개선이라 동작은
+        예전과 같아야 한다). 오래된 값을 쓰고 있다는 사실만 경고로 남긴다.
+        """
         if self._last_pose_xy is None:
             return None
         now = self.get_clock().now().nanoseconds * 1e-9
         if now - self._last_pose_t > self._robot_pose_timeout_s:
             self.get_logger().warn(
-                f'{self._robot_pose_topic} 위치 끊김({self._robot_pose_timeout_s:g}초 넘게 안 옴)',
-                throttle_duration_sec=5.0)
-            return None
+                f'{self._robot_pose_topic} 위치가 {self._robot_pose_timeout_s:g}초 넘게 안 옴 - '
+                f'마지막 위치를 그대로 쓴다', throttle_duration_sec=5.0)
         return self._last_pose_xy
 
     def _ensure_core(self) -> bool:
@@ -291,10 +302,11 @@ class ZoneClientNode(Node):
             return
         robot_xy = self._robot_xy()
         if robot_xy is None:
-            # 위치를 모르면 fail-closed: 상한을 0으로 묶어 멈춰 세운다. 경고는 위치 쪽에서
-            # 이미 throttle해서 남긴다 (#66). BACKING 중이면(위치가 있어야 후진 거리를 재므로)
-            # 같은 규칙으로 바로 정지한다 - core 상태는 그대로 두고(이번 틱만 건너뜀) 위치가
-            # 돌아오면 이어서 재개한다.
+            # 위치를 한 번도 못 받았으면 fail-closed: 상한을 0으로 묶어 멈춰 세운다 (받은 적이
+            # 있으면 robot_xy는 끊겨도 마지막 값을 주므로 여기 안 들어온다 - #271 하연 리뷰).
+            # 경고는 위치 쪽에서 이미 throttle해서 남긴다 (#66). BACKING 중이면(위치가 있어야
+            # 후진 거리를 재므로) 같은 규칙으로 바로 정지한다 - core 상태는 그대로 두고(이번 틱만
+            # 건너뜀) 위치가 돌아오면 이어서 재개한다.
             self._set_speed_cap(0.0)
             if self._backing_linear_x is not None:
                 self._publish_cmd(0.0)

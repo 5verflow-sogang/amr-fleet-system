@@ -1,5 +1,6 @@
-"""zone_client_node.py의 위치 토픽 처리와 끊겼을 때 동작(fail-closed) 확인 (#66 하연 리뷰,
-perf/zone-client-pose-topic).
+"""zone_client_node.py의 위치 토픽 처리와 끊겼을 때 동작 확인 (#66, #271 하연 리뷰,
+perf/zone-client-pose-topic). 위치를 한 번도 못 받았을 때만 fail-closed고, 받은 뒤 끊기면
+마지막 값을 그대로 쓰면서 경고만 남긴다(#271) - 예전 TF 조회와 같은 동작.
 
 launch_testing 없이 노드를 직접 만들어서 확인하는 가벼운 rclpy 단위 테스트다 - 실제
 fleet_manager·Gazebo까지는 필요 없다. test_zone_client_launch.py(launch_testing)와는
@@ -35,20 +36,46 @@ def test_no_robot_pose_sets_speed_cap_to_zero():
         rclpy.shutdown()
 
 
-def test_robot_pose_timeout_sets_speed_cap_to_zero():
-    # 위치를 받은 적은 있지만 robot_pose_timeout_s보다 오래 조용하면 끊김으로 본다
+class _RecordingLogger:
+    """get_logger()를 흉내 내서 warn 호출만 기록한다 (경고가 남는지만 본다)."""
+
+    def __init__(self):
+        self.warnings = []
+
+    def warn(self, msg, *args, **kwargs):
+        self.warnings.append(msg)
+
+    def info(self, *args, **kwargs):
+        pass
+
+    def error(self, *args, **kwargs):
+        pass
+
+
+def test_robot_pose_timeout_keeps_last_position_and_warns():
+    # 위치를 받은 적이 있으면 robot_pose_timeout_s보다 오래 조용해도 속도를 묶지 않고 마지막 위치를
+    # 그대로 쓴다 - 예전 TF 조회(lookup_transform(..., Time()))가 버퍼의 최신 값을 나이와 상관없이
+    # 주던 것과 같다 (#271 하연 리뷰: CPU 포화로 EKF 주기가 느려질 때 속도를 0으로 묶으면 구역과
+    # 상관없는 정지가 새 정체를 만든다). 끊겼다는 사실은 경고로만 남긴다.
     rclpy.init()
     try:
         node = ZoneClientNode()
         try:
+            logger = _RecordingLogger()
+            node.get_logger = lambda: logger
+            core = _RecordingCore()
+            node._core = core
+
             node._on_robot_pose(_odom(1.0, 2.0))
             assert node._robot_xy() == (1.0, 2.0)
 
             node._last_pose_t -= node._robot_pose_timeout_s + 0.1
-            assert node._robot_xy() is None
+            assert node._robot_xy() == (1.0, 2.0)  # 끊겨도 마지막 값을 그대로 준다
+            assert logger.warnings  # 끊겼다는 경고는 남긴다
 
             node._update()
-            assert node._speed_cap == 0.0
+            assert core.seen_xy[-1] == (1.0, 2.0)  # 구역 판단은 마지막 위치로 계속된다
+            assert node._speed_cap != 0.0  # 위치가 끊겼다고 속도를 묶지 않는다
         finally:
             node.destroy_node()
     finally:
