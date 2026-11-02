@@ -93,7 +93,7 @@ class WheelOdometryNode(Node):
         if len(msg.position) <= max(self.indices):
             return
 
-        # Gazebo는 joint_states를 물리 스텝(1 kHz)마다 보낸다. 적분은 매번 하고,
+        # joint_states(amr_gazebo joint_state_throttle이 1 kHz → 50 Hz로 줄임)는 받을 때마다 적분하고,
         # 발행은 publish_rate로 묶어 그 구간의 평균 속도를 낸다
         d_left = self.encoder.measure(LEFT, msg.position[self.indices[LEFT]])
         d_right = self.encoder.measure(RIGHT, msg.position[self.indices[RIGHT]])
