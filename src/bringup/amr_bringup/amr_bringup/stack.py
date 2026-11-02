@@ -78,11 +78,12 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
         stack.append(Include('amr_bringup', 'nav2.launch.py', dict(
             namespace=name, cmd_vel_topic=chain['nav_out'], use_sim_time='true')))
     if opt.zone_client:
-        # 서버와 같은 구역 목록. 시뮬레이션 프레임은 <ns>/base_footprint라 접두어를 넘긴다.
-        # zones.yaml은 world 좌표라 TF map ← world(system.launch가 발행)로 바꿔 쓰게 한다 (구역 1.5 m 어긋남 수정)
+        # 서버와 같은 구역 목록. zones.yaml은 world 좌표라 TF map ← world(system.launch가 발행)로
+        # 바꿔 쓰게 한다 (구역 1.5 m 어긋남 수정). 로봇 위치는 네임스페이스 안 상대 토픽
+        # (robot_pose_topic 기본값)이라 접두어를 따로 넘길 게 없다 (perf/zone-client-pose-topic)
         stack.append(Include('amr_zone_client', 'zone_client.launch.py', dict(
             namespace=name, robot_id=name, zones_file=opt.zones_file, zones_frame='world',
-            base_frame=f'{name}/base_footprint', cmd_vel_out_topic=chain['zone_out'], use_sim_time='true')))
+            cmd_vel_out_topic=chain['zone_out'], use_sim_time='true')))
     if opt.docking:
         # 도킹 서버는 Nav2 컨트롤러 자리로 속도를 낸다 (같은 cmd_vel 체인)
         stack.append(Include('amr_docking', 'docking.launch.py', dict(

@@ -1,7 +1,8 @@
 """zone_client_node를 실제 amr_fleet_manager 서버·amr_fault_injector 중계와 함께 띄워 확인한다 (launch_testing).
 
 요청(경계 3 m 앞) → 허가(대기 로봇 없음 → 바로 GRANTED) → 진입 → 연장(같은 request_id 재요청, lease 연장) → 반납까지.
-위치는 TF(map → base_footprint)를, 경로는 nav_msgs/Path를 이 테스트가 직접 발행해서 흉내 낸다.
+위치는 robot_pose_topic(기본 odometry/filtered, map 기준)을, 경로는 nav_msgs/Path를 이 테스트가
+직접 발행해서 흉내 낸다 (perf/zone-client-pose-topic - 전에는 TF map → base_footprint였다).
 """
 
 import tempfile
@@ -16,9 +17,8 @@ import launch_testing.asserts
 import pytest
 import rclpy
 from amr_msgs.msg import ZoneGrant, ZoneRequest
-from geometry_msgs.msg import PoseStamped, TransformStamped
-from nav_msgs.msg import Path
-from tf2_ros import TransformBroadcaster
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry, Path
 
 ZONES_YAML = 'zones:\n  - id: test_zone\n    capacity: 1\n    area_world: [5.0, 6.0, -1.0, 1.0]\n'
 
@@ -58,7 +58,7 @@ class TestZoneClientLive(unittest.TestCase):
 
     def setUp(self):
         self.node = rclpy.create_node('test_zone_client_live')
-        self.tf = TransformBroadcaster(self.node)
+        self.pose_pub = self.node.create_publisher(Odometry, '/amr_01/odometry/filtered', 10)
 
     def tearDown(self):
         self.node.destroy_node()
@@ -70,13 +70,13 @@ class TestZoneClientLive(unittest.TestCase):
         return condition()
 
     def publish_robot_x(self, x: float):
-        tf = TransformStamped()
-        tf.header.stamp = self.node.get_clock().now().to_msg()
-        tf.header.frame_id = 'map'
-        tf.child_frame_id = 'base_footprint'
-        tf.transform.translation.x = x
-        tf.transform.rotation.w = 1.0
-        self.tf.sendTransform(tf)
+        odom = Odometry()
+        odom.header.stamp = self.node.get_clock().now().to_msg()
+        odom.header.frame_id = 'map'
+        odom.child_frame_id = 'base_footprint'
+        odom.pose.pose.position.x = x
+        odom.pose.pose.orientation.w = 1.0
+        self.pose_pub.publish(odom)
 
     def test_request_wait_grant_enter_release(self):
         requests, grants = [], []
@@ -96,7 +96,7 @@ class TestZoneClientLive(unittest.TestCase):
         self.assertTrue(self.spin_until(lambda: path_pub.get_subscription_count() >= 1, 15.0))
         path_pub.publish(path)
 
-        # 경계(5.0) 3 m 앞에서 TF를 계속 흘려준다 (노드 타이머가 주기적으로 읽는다)
+        # 경계(5.0) 3 m 앞에서 위치를 계속 흘려준다 (노드 타이머가 주기적으로 읽는다)
         end = time.monotonic() + 5.0
         while time.monotonic() < end and not requests:
             self.publish_robot_x(2.0)
