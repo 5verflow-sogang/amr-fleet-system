@@ -11,7 +11,8 @@
 #
 # - 목표는 Nav2가 active가 된 뒤 드라이버가 보낸다(nav_kpi와 같은 방식). avoidance_eval을 먼저 띄워
 #   첫 전역 경로(/amr_01/plan)를 놓치지 않게 했다
-# - 지도는 system.launch.py 기본(warehouse_v1 0.025 m)이고 map 원점의 world 위치는 정렬값(amr_localization README)이다
+# - 지도와 그 정렬 원점(map 원점의 world 자세)은 params map·map_origin 한 곳에 두고 스택(map:=·map_origin_in_world:=)과
+#   avoidance_eval에 같이 넘긴다. 둘이 다르면 그 차이가 경로 이탈에 섞인다 (nav_kpi와 같은 방식)
 # - 추적 노드는 system.launch.py가 amr_tracking tracking.yaml로 띄운다 (카메라 끔: 사람 반경은 dynamic_min_radius)
 # - 녹화(record, 기본 켬): 회피 모드(dwa/avoid_mode)·안전 단계(safety/status)·트랙·위험·cmd_vel 두 단계·스캔.
 #   avoidance_eval은 GT·경로만 남기므로, 회피 모드가 켜졌는지·안전 노드가 멈췄는지는 녹화로 본다.
@@ -26,8 +27,10 @@ params:
   # 목표 (map 기준)
   goal_x: 6.0
   goal_y: 0.0
-  # map 원점의 world 자세 [x, y, yaw] (0.025 m 지도 정렬값). GCP params 값에는 공백을 못 쓴다
-  map_origin: "[-0.0562,1.5317,0.00009]"
+  # 지도와 그 정렬 원점 = map 원점의 world 자세 [x, y, yaw] (v2 0.025 m, amr_mapping README). 지도를 바꾸면 둘을
+  # 같이 바꾼다 (v1 0.025 m: [-0.0562,1.5317,0.00009]). GCP --set 값에는 공백을 못 쓴다
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v2_0025.yaml
+  map_origin: "[-0.0439,1.4712,-0.00088]"
   # 목표 결과를 받은 뒤 더 기록하는 시간 [s] (복귀 판정 return_hold_s 1.0 s + 여유)
   after_goal_s: 5
   record: "true"
@@ -49,6 +52,7 @@ processes:
       ros2 launch amr_bringup system.launch.py num_robots:=1 gui:=false enable_camera:=false
       fleet:=false bt:=false nav2:=true tracking:=true safety:=true seed:=$(( {seed} + {seed_offset} ))
       robots_file:=/repo/experiments/nav_kpi/robots.yaml
+      map:={map} map_origin_in_world:="{map_origin}"
     ready_topic: /amr_01/odometry/filtered
     # 시뮬레이터 + 위치추정 + Nav2 기동. ready_cmds도 이 시간 안에
     ready_timeout_s: 300
