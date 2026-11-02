@@ -80,6 +80,56 @@ def test_proximity_warning_only_for_dynamic_tracks():
     assert far_dynamic.level == LEVEL_NORMAL
 
 
+def test_close_dynamic_track_slows_further_whatever_its_direction():
+    # I17 시드 1019·1029: 바로 옆에서 멀어지던 사람(TTC 무한)이 돌아서 출발한 로봇에 부딪혔다
+    close = _update(SafetyMonitor(), obstacles=[_obs(track_id=4, clearance=0.5)])
+    assert (close.level, close.reason, close.related_track_id) == (
+        LEVEL_WARNING, REASON_OBSTACLE_PROXIMITY, 4)
+    assert close.speed_limit == pytest.approx(0.15)
+    assert '저속' in close.detail
+    assert _update(SafetyMonitor(), obstacles=[_obs(clearance=0.51)]).speed_limit == pytest.approx(0.6)
+    # 정적 트랙은 그대로 (진행 경로 판정이 맡는다)
+    assert _update(SafetyMonitor(), obstacles=[_obs(clearance=0.2, dynamic=False)]).level == LEVEL_NORMAL
+    # 거리 0이면 끈다
+    off = SafetyMonitor(SafetyConfig(dynamic_slow_distance=0.0))
+    assert _update(off, obstacles=[_obs(clearance=0.0)]).speed_limit == pytest.approx(0.6)
+
+
+def test_close_dynamic_slow_is_reported_over_other_warnings():
+    # 진행 경로 밖 LiDAR 근접(0.6)·TTC 경고와 같이 걸려도 상한은 더 낮은 쪽, 설명도 그 원인
+    state = _update(SafetyMonitor(), scan=0.2, obstacles=[_obs(track_id=9, clearance=0.2, ttc=1.5)])
+    assert (state.level, state.speed_limit, state.related_track_id) == (
+        LEVEL_WARNING, pytest.approx(0.15), 9)
+    assert '저속' in state.detail
+
+
+def test_close_dynamic_slow_applies_at_once_and_lifts_after_hold():
+    monitor = SafetyMonitor()
+    assert _update(monitor, now=0.0, obstacles=[_obs(clearance=1.0)]).speed_limit == pytest.approx(0.6)
+    # 같은 WARNING 안에서 더 낮아지는 것은 바로
+    assert _update(monitor, now=0.1, obstacles=[_obs(clearance=0.4)]).speed_limit == pytest.approx(0.15)
+    # 높아지는 것은 release_hold_s 동안 풀린 채여야
+    assert _update(monitor, now=0.2, obstacles=[_obs(clearance=1.0)]).speed_limit == pytest.approx(0.15)
+    assert _update(monitor, now=0.6, obstacles=[_obs(clearance=1.0)]).speed_limit == pytest.approx(0.15)
+    state = _update(monitor, now=0.7, obstacles=[_obs(clearance=1.0)])
+    assert (state.level, state.speed_limit) == (LEVEL_WARNING, pytest.approx(0.6))
+    # 정지로는 바로, 정지에서 근접 저속으로는 기다린다
+    assert _update(monitor, now=0.8, obstacles=[_obs(clearance=0.4, ttc=0.5)]).level == LEVEL_CRITICAL
+    assert _update(monitor, now=0.9, obstacles=[_obs(clearance=0.4)]).level == LEVEL_CRITICAL
+    state = _update(monitor, now=1.4, obstacles=[_obs(clearance=0.4)])
+    assert (state.level, state.speed_limit) == (LEVEL_WARNING, pytest.approx(0.15))
+
+
+def test_close_dynamic_slow_hold_does_not_shorten_warning_hold():
+    # 근접 저속 유지는 따로 센다: WARNING → NORMAL은 모든 경고가 풀린 때부터 release_hold_s
+    monitor = SafetyMonitor()
+    _update(monitor, now=0.0, obstacles=[_obs(clearance=0.4)])
+    _update(monitor, now=0.1, obstacles=[_obs(clearance=1.0)])            # 저속만 풀림
+    assert _update(monitor, now=0.3).level == LEVEL_WARNING              # 경고도 풀림
+    assert _update(monitor, now=0.7).level == LEVEL_WARNING              # 0.4 s
+    assert _update(monitor, now=0.8).level == LEVEL_NORMAL               # 0.5 s
+
+
 def test_worst_obstacle_wins():
     state = _update(SafetyMonitor(), obstacles=[_obs(1, ttc=2.0), _obs(2, ttc=0.5)])
     assert (state.level, state.related_track_id) == (LEVEL_CRITICAL, 2)
@@ -186,7 +236,10 @@ def test_min_distance_uses_tracks_and_scan():
 
 
 @pytest.mark.parametrize('kwargs', [dict(critical_distance=0.0), dict(ttc_warning=math.inf),
-                                    dict(ttc_critical=4.0), dict(release_hold_s=-1.0)])
+                                    dict(ttc_critical=4.0), dict(release_hold_s=-1.0),
+                                    dict(dynamic_slow_distance=-0.1), dict(dynamic_slow_distance=2.0),
+                                    dict(dynamic_slow_speed_limit=0.0),
+                                    dict(dynamic_slow_speed_limit=0.7)])
 def test_config_rejects_bad_values(kwargs):
     with pytest.raises(ValueError):
         SafetyConfig(**kwargs)
