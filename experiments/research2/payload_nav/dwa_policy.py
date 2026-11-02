@@ -91,7 +91,7 @@ class DwaParams:
     # v≈0 회전 샘플은 평소 탐색에 있어서, 켜 두면 B1·B2가 바뀐다
     rotate_in_place_clearance: float = 0.0
     # TTC 회피 모드(창고 스택, navigation.md 4-10절)는 논문 값으로 끈다. 연구 2 환경에는 collision_risks가 없고,
-    # 켜면 B1·B2의 안전 여유·가중치·sim_time이 바뀐다
+    # 켜면 B1·B2의 안전 여유·가중치·궤적 길이(avoid_rollout_time)가 바뀐다
     avoid_mode_enabled: bool = False
     follow_path: bool = True          # 플러그인처럼 전역 경로를 넘긴다 (#195). False면 예전 지점 호출
     path_resolution: float = 0.05
