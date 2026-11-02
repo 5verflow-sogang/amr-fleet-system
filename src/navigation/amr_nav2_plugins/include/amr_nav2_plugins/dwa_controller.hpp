@@ -1,6 +1,7 @@
 #ifndef AMR_NAV2_PLUGINS__DWA_CONTROLLER_HPP_
 #define AMR_NAV2_PLUGINS__DWA_CONTROLLER_HPP_
 
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -92,6 +93,8 @@ private:
   rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Bool>::SharedPtr avoid_mode_pub_;
   std::mutex avoid_mutex_;
   AvoidModeSwitch avoid_switch_;
+  // 이번 회피 모드에 들어갈 때의 DwaPlanner::avoidFallbackCount() - 끌 때 이번 회피 동안 대체 탐색 주기 수를 남긴다
+  std::size_t avoid_fallback_count_at_enter_ = 0;
 
   // Nav2 speed_limit 관례: 음수면 제한 없음. percentage면 config().max_v에 대한 비율.
   double speed_limit_ = -1.0;

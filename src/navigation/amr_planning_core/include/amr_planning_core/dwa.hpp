@@ -1,6 +1,7 @@
 #ifndef AMR_PLANNING_CORE__DWA_HPP_
 #define AMR_PLANNING_CORE__DWA_HPP_
 
+#include <cstddef>
 #include <optional>
 #include <vector>
 
@@ -303,6 +304,13 @@ public:
   // 지금 궤적 시뮬레이션 길이(s): 평소 sim_time, 회피 모드면 avoid_rollout_time.
   double rolloutTime() const noexcept {return rollout_time_;}
 
+  // 회피 모드 대체 탐색: 회피 모드 설정으로 유효 궤적이 하나도 없으면(kNoValidTrajectory) 같은 호출 안에서 평소
+  // 설정(안전 여유·dynamic_weight 원래 값, 궤적 길이는 회피 모드 그대로)으로 한 번 더 고른다(4-10절).
+  // lastUsedAvoidFallback: 마지막 computeVelocityCommand가 대체 탐색을 했는지(결과가 kNoValidTrajectory여도 true).
+  // avoidFallbackCount: 이 플래너가 대체 탐색을 한 주기 수(누적).
+  bool lastUsedAvoidFallback() const noexcept {return used_avoid_fallback_;}
+  std::size_t avoidFallbackCount() const noexcept {return avoid_fallback_count_;}
+
   // 마지막 computeVelocityCommand가 제자리 회전 모드였는지(히스테리시스 상태).
   bool rotatingInPlace() const noexcept {return rotating_in_place_;}
 
@@ -346,12 +354,19 @@ private:
 
   // 두 computeVelocityCommand의 공통 구현. follow_path가 false면 path는 목표 점 하나이고
   // heading 기준점은 늘 그 점이다(경로 추종 설정을 안 쓴다).
+  // selectCommand + 회피 모드 대체 탐색(두 computeVelocityCommand가 부른다).
+  DwaCommand selectWithAvoidFallback(
+    const RobotState & state, const std::vector<Point2D> & path, bool follow_path,
+    const Grid & grid, const std::vector<DynamicObstacle> & dynamic_obstacles,
+    const std::optional<Point2D> & final_goal) const;
+
   DwaCommand selectCommand(
     const RobotState & state, const std::vector<Point2D> & path, bool follow_path,
     const Grid & grid, const std::vector<DynamicObstacle> & dynamic_obstacles,
     const std::optional<Point2D> & final_goal) const;
 
-  DwaConfig config_;
+  // 대체 탐색 동안만 평소 설정으로 바꿔 두므로 mutable(아래 rotating_in_place_와 같은 이유, 한 스레드에서 부른다)
+  mutable DwaConfig config_;
   DwaConfig base_config_;   // 생성 때 설정(회피 모드 아닐 때)
   DwaConfig avoid_config_;  // 회피 모드 설정
   bool avoid_mode_ = false;
@@ -359,6 +374,8 @@ private:
   // 제자리 회전 모드 히스테리시스 상태 - 주기 사이에 이어진다. computeVelocityCommand가 const라
   // mutable로 둔다(플러그인은 컨트롤러 하나에 DwaPlanner 하나, 한 스레드에서 부른다).
   mutable bool rotating_in_place_ = false;
+  mutable bool used_avoid_fallback_ = false;
+  mutable std::size_t avoid_fallback_count_ = 0;
 };
 
 }  // namespace amr_planning_core
