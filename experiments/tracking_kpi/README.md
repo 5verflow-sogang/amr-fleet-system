@@ -42,7 +42,7 @@ uv run --no-project --with rosbags --with numpy python -I experiments/tracking_k
 | `conditions/tracking_dev.txt` | 추적기 개발용 녹화 (라벨 `dev`, 판정에 안 씀). A·B·D·E는 장애물 시드 1001~1003, C는 개발용 장면 `tracking_kpi_cdev` |
 | `conditions/*.log.csv` | `gcp_batch.py` 실행 기록. 조건마다 GitHub Actions 실행 번호와 결과 |
 | `fetch_runs.py` | 기록에서 조건마다 마지막으로 성공한 실행만 골라 버킷에서 받고, 파일마다 md5·크기를 대조한다. 틀리면 `gcloud storage cat`으로 하나씩 다시 받는다 |
-| `check_main.py` | 실행별 완료·종료 전 오류·장애물 속도 명령 전달·프레임 수·평가 입력·결과 칸, 장면별 10회·시드 1~10·같은 커밋 |
+| `check_main.py` | 실행별 완료·종료 전 오류·장애물 속도 명령 전달·프레임 수·평가 입력·결과 칸·`seed_offset` 0, 장면별 10회·시드 1~10(실제로 넘긴 `scene_seed`)·같은 커밋 |
 | `make_tables.py` | perception.md 1-7 결과 표 다섯 개 (마크다운) |
 | `analyze.py` | 결과 뒤 분석: P2 원인 분해, 물체별 ID 전환·NEES, 처음 잡는 거리, 가짜 동적 트랙, 판정 안 된 구간 |
 | `measure_radius.py` | 녹화에서 작업자를 잡은 트랙의 반경과 LiDAR 빔 간격 (`frames.csv`에는 짝 트랙의 반경이 없다) |
@@ -63,6 +63,7 @@ uv run --no-project --with rosbags --with numpy --with pyyaml python -I experime
 ```
 
 - 설정은 저장소의 `src/perception/amr_tracking/config/tracking.yaml`을 읽는다. 바꾼 값은 결과의 `meta.json` `bench`에 남는다
+- 결과 `meta.json`의 라벨에는 `+bench_<이름>`이 붙는다(`--name`, 기본은 `--out` 폴더 이름: 위 예는 `dev+bench_base`·`dev+bench_sa2`). 요약은 시나리오 + 라벨로 묶어서, 붙이지 않으면 벤치끼리, 녹화와도 한 묶음이 된다. `git_sha`는 트랙을 만든 벤치 시점 코드(커밋 안 한 변경이 있으면 `-dirty`)이고, 녹화 때 `run_id`·라벨·`git_sha`는 `bench.recording`에 남는다
 - 평가 시간 범위는 실행 폴더에 GCP 평가 결과(`tracking/frames.csv`)가 있으면 그 범위, 없으면 첫 프레임부터 `duration_s`. '기록 시작 전부터' 구간은 첫 평가 프레임이 아니라 벤치 추적기가 돌기 시작한 첫 스캔 기준으로 가른다(첫 스캔 때 로봇 GT가 없으면 그 프레임이 평가에서 빠져, 녹화 시작 무렵 나타난 장애물의 D1이 비었다. 개발용 C 실행 02)
 - 확인 (11/1, 본 측정 C10·E·B 1회씩, 개발용 A~E 3회씩 = 18회): 설정 그대로면 녹화 속 노드 출력과 개발용 A·C·D·E 12회와 본 측정 C10·E는 모든 프레임이 같다(녹화 시작 5 s 뒤부터, 트랙 번호가 아니라 위치로 비교). B는 개발용 3068/3108·3102/3102·3041/3102, 본 측정 3000/3105프레임: 하네스가 추적 노드를 녹화보다 약 2 s 먼저 띄워, 녹화 전부터 있던 트랙의 필터 상태가 mm 단위로 다르게 이어진다. 시각은 노드와 같은 식(나노초 정수 × 1e-9)으로 바꾼다. sec + nanosec × 1e-9로는 끝자리가 달라 못 본 시간 2.0 s 같은 경계 판정이 엇갈려 프레임이 더 달랐다
 - **수정 효과는 개발용 녹화(장애물 시드 1001~, `--set seed_offset=1000`)로 본다.** 본 측정 녹화(시드 1~10)로 값을 맞추면 판정에 쓴 장면으로 튜닝하는 셈이라, 본 측정 녹화는 `--check-node`로 벤치가 노드·GCP 평가와 같은지 확인할 때만 쓴다(추적기가 정하는 값이 GCP와 다르면 실패 코드와 다른 값 이름. 예측·정지 가정 오차는 짝마다 대조하고, 목표 시각이 평가 창 끝보다 뒤인 짝만 한쪽에 없어도 된다: GCP 평가 노드가 멈추기 전에 받은 GT가 실행마다 몇십 ms 달라서)

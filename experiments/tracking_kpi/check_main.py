@@ -4,6 +4,8 @@
     python3 -I check_main.py results/tracking_kpi_c10-main [results/...]
 
 실행 폴더(*_00 ~ *_09)마다 한 줄. 마지막에 장면 전체 확인(실행 수, 시드 1~10, 같은 커밋).
+- 시드는 실제로 넘긴 장애물 시드(meta scene_seed = seed + seed_offset)로 본다. seed_offset이 0이 아니면(개발용 녹화)
+  실행마다 문제로 센다
 - 로그 오류는 종료 신호(SIGINT) 전에 나온 것만 문제로 센다. 종료 단계 오류는 짧은 시험에서 모두 무해했다
 """
 import json
@@ -30,11 +32,24 @@ def early_errors(log):
     return bad
 
 
+def seed_offset(meta):
+    return int((meta.get('params') or {}).get('seed_offset', 0))
+
+
+def scene_seed(meta):
+    """실제로 넘긴 장애물 시드. scene_seed가 생기기 전 실행(본 측정 70회 등)은 seed + seed_offset으로 계산한다."""
+    if 'scene_seed' in meta:
+        return meta['scene_seed']
+    return meta['seed'] + seed_offset(meta) if isinstance(meta.get('seed'), int) else None
+
+
 def check_run(run):
     problems = []
     meta = json.loads((run / 'meta.json').read_text())
     if meta.get('outcome') != 'completed':
         problems.append(f"outcome {meta.get('outcome')}")
+    if seed_offset(meta):
+        problems.append(f'seed_offset {seed_offset(meta)} (본 측정은 0, 이 값은 개발용 녹화)')
     for log in sorted((run / 'logs').glob('*.log')):
         bad = early_errors(log)
         if bad:
@@ -80,13 +95,13 @@ def main(argv):
         seeds, shas, rtfs = [], set(), []
         for run in runs:
             meta, problems, info = check_run(run)
-            seeds.append(meta.get('seed'))
+            seeds.append(scene_seed(meta))
             shas.add(str(meta.get('git_sha', ''))[:7])
             if isinstance(meta.get('real_time_factor'), (int, float)):
                 rtfs.append(meta['real_time_factor'])
             mark = 'ok  ' if not problems else '문제'
             extra = ', '.join(f'{k} {v}' for k, v in info.items())
-            print(f"  {mark} {run.name[-2:]} 시드 {meta.get('seed')} RTF {meta.get('real_time_factor')} | {extra}")
+            print(f"  {mark} {run.name[-2:]} 시드 {scene_seed(meta)} RTF {meta.get('real_time_factor')} | {extra}")
             for p in problems:
                 print(f'       - {p}')
             total_bad += bool(problems)

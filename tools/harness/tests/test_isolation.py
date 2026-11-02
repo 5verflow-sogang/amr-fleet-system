@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import run  # noqa: E402
@@ -47,6 +49,24 @@ def test_run_once_without_isolation_keeps_shell_domain(tmp_path, monkeypatch):
     meta = run_once(bash_scenario('true'), {'repeat': 0, 'seed': 1}, tmp_path / 'r0', reset_dds=False)
     assert meta['dds'] == {'ros_domain_id': 42, 'reset': False}
     assert os.environ['ROS_DOMAIN_ID'] == '42'
+
+
+def test_run_once_records_seed_actually_passed(tmp_path, monkeypatch):
+    # GCP 개발용 녹화(--set seed_offset=1000): seed는 반복 번호 그대로, 실제로 넘긴 값은 scene_seed ("seed 규칙" 5)
+    monkeypatch.setenv('ROS_DOMAIN_ID', '42')
+    meta = run_once(bash_scenario('true'), {'repeat': 2, 'seed': 3, 'seed_offset': '1000'}, tmp_path / 'r0',
+                    reset_dds=False)
+    assert (meta['seed'], meta['scene_seed']) == (3, 1003)
+    assert json.loads((tmp_path / 'r0' / 'meta.json').read_text())['scene_seed'] == 1003
+    meta = run_once(bash_scenario('true'), {'repeat': 2, 'seed': 3}, tmp_path / 'r1', reset_dds=False)
+    assert meta['scene_seed'] == 3
+
+
+@pytest.mark.parametrize('offset', ['abc', '-5'])
+def test_bad_seed_offset_stops_before_running(tmp_path, monkeypatch, offset):
+    monkeypatch.setattr(run, 'run_once', lambda *a, **k: (_ for _ in ()).throw(AssertionError('돌렸음')))
+    with pytest.raises(SystemExit):
+        run.main(['loc_basic', '-n', '1', '--seed-base', '3', '--set', f'seed_offset={offset}', '--out', str(tmp_path)])
 
 
 def test_split_calls_with_same_stamp_summarize_together(tmp_path, monkeypatch):

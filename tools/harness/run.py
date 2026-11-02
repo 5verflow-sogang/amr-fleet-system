@@ -22,7 +22,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from harness.runner import (ConfigOverrides, apply_param_sets, dds_domain, dds_reset, installed_path,  # noqa: E402
-                            patch_yaml, run_once)
+                            patch_yaml, run_once, scene_seed)
 from harness.notify import notify  # noqa: E402
 from harness.summary import summarize, to_markdown  # noqa: E402
 
@@ -100,6 +100,10 @@ def main(argv=None) -> int:
     if seed_base < 1:
         # 0은 패키지마다 뜻이 다르다(매번 무작위 / 고정값). 하네스는 0을 넘기지 않는다 (README "seed 규칙")
         ap.error('--seed-base는 1 이상이어야 한다 (튜닝 실험은 1001부터)')
+    try:
+        scene_seed({**params, 'seed': seed_base})  # seed_offset이 잘못됐으면 돌리기 전에 멈춘다
+    except ValueError as e:
+        ap.error(str(e))
     stamp = args.stamp or time.strftime('%Y%m%d-%H%M%S')
     out = Path(args.out)
     tag = f"{scenario['name']}{'-' + args.label if args.label else ''}"
