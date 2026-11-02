@@ -1717,4 +1717,146 @@ TEST(DwaPlannerTest, AvoidModeDisabledMatchesPreviousBehavior)
   }
 }
 
+namespace
+{
+
+// 사각 풋프린트(반길이 0.3, 반폭 0.2)와 원 장애물이 실제로 닿았는지(여유 없이)
+bool touches(const RobotState & s, const DynamicObstacle & o)
+{
+  const double c = std::cos(-s.yaw);
+  const double sn = std::sin(-s.yaw);
+  const double lx = c * (o.x - s.x) - sn * (o.y - s.y);
+  const double ly = sn * (o.x - s.x) + c * (o.y - s.y);
+  const double dx = std::max(std::abs(lx) - 0.3, 0.0);
+  const double dy = std::max(std::abs(ly) - 0.2, 0.0);
+  return std::hypot(dx, dy) < o.radius;
+}
+
+DwaConfig makeAvoidConfig()
+{
+  DwaConfig config = makeStackConfig();
+  config.avoid_mode_enabled = true;
+  return config;
+}
+
+}  // namespace
+
+TEST(DwaPlannerTest, AvoidFallbackMovesPastWorkerStandingBeside)
+{
+  // #263 시드 1028: 로봇이 서 있는 작업자 0.33 m 옆에서 (0, 0)만 냈다. 작업자는 서 있어도 추적 속도가 0이 아니다
+  // (돌아서기·잡음, 여기서는 로봇 쪽 0.05 m/s). 회피 모드 여유(0.6 m) 안이라 모든 궤적이 "지금보다 가까워짐"이
+  // 되어 유효 궤적이 없다 - 같은 주기에 평소 여유(0.2 m)로 다시 골라 앞으로 비켜 간다(4-10절).
+  TestGrid test_grid(200, 80, 0.05);
+  std::vector<Point2D> path;
+  appendLine(path, 1.0, 2.0, 8.0, 2.0);
+  DwaPlanner planner(makeAvoidConfig());
+  planner.setAvoidMode(true);
+  RobotState state;
+  state.x = 2.0;
+  state.y = 2.0;
+  DynamicObstacle worker;
+  worker.radius = 0.25;
+  worker.x = 2.0;
+  worker.y = 2.0 + 0.2 + 0.33 + worker.radius;
+  worker.vy = -0.05;
+  const DwaCommand command =
+    planner.computeVelocityCommand(state, path, test_grid.grid(), {worker});
+  EXPECT_TRUE(planner.lastUsedAvoidFallback());
+  EXPECT_EQ(planner.avoidFallbackCount(), 1u);
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  EXPECT_GT(command.v, 1e-3);
+  EXPECT_TRUE(planner.avoidMode());  // 대체 탐색 뒤에도 회피 모드 설정으로 돌아와 있다
+  EXPECT_DOUBLE_EQ(
+    planner.config().dynamic_obstacle_safety_margin,
+    makeAvoidConfig().dynamic_obstacle_safety_margin + makeAvoidConfig().avoid_margin_add);
+  // 가만히 서 있으면(정지 추적 속도 0) 회피 모드 여유로도 앞으로 가는 궤적이 남아 대체 탐색을 안 쓴다
+  worker.vy = 0.0;
+  planner.computeVelocityCommand(state, path, test_grid.grid(), {worker});
+  EXPECT_FALSE(planner.lastUsedAvoidFallback());
+  EXPECT_EQ(planner.avoidFallbackCount(), 1u);
+}
+
+TEST(DwaPlannerTest, AvoidFallbackKeepsMovingWhenRearOverlapsWorkerPath)
+{
+  // #263 시드 1001·1007: 천천히(0.06 m/s) 가던 로봇의 뒤 끝이 작업자가 내려오는 길(x 1.8) 위에 걸쳐 있다. 회피 모드
+  // 여유로는 모든 궤적이 막혀 (0, 0)을 내고 그 자리에 서서 뒤 모서리가 맞았다. 대체 탐색으로 계속 앞으로 가면
+  // 작업자가 오기 전에 길을 비운다 - 매 주기 서지 않고, 닿지 않는다.
+  TestGrid test_grid(200, 80, 0.05);
+  std::vector<Point2D> path;
+  appendLine(path, 1.0, 2.0, 8.0, 2.0);
+  const DwaConfig config = makeAvoidConfig();
+  DwaPlanner planner(config);
+  planner.setAvoidMode(true);
+  RobotState state;
+  state.x = 2.0;  // 뒤 끝 x 1.7
+  state.y = 2.0;
+  state.v = 0.06;
+  DynamicObstacle worker;
+  worker.radius = 0.25;
+  worker.x = 1.8;
+  worker.y = 2.0 + 0.2 + 0.5 + worker.radius;
+  worker.vy = -0.3;
+  for (int step = 0; step < 40; ++step) {
+    const DwaCommand command =
+      planner.computeVelocityCommand(state, path, test_grid.grid(), {worker});
+    ASSERT_EQ(command.status, DwaStatus::kOk) << "step=" << step;
+    ASSERT_GT(command.v, 1e-3) << "step=" << step;
+    state.x += command.v * std::cos(state.yaw) * config.dt;
+    state.y += command.v * std::sin(state.yaw) * config.dt;
+    state.yaw = wrapAngle(state.yaw + command.w * config.dt);
+    state.v = command.v;
+    state.w = command.w;
+    worker.y += worker.vy * config.dt;
+    ASSERT_FALSE(touches(state, worker)) << "step=" << step;
+  }
+  EXPECT_GT(planner.avoidFallbackCount(), 0u);
+  EXPECT_GT(state.x, 3.0);
+}
+
+TEST(DwaPlannerTest, AvoidFallbackLeavesNormalModeUnchanged)
+{
+  // 대체 탐색은 회피 모드에서 유효 궤적이 없을 때만 돈다. 평소 모드(회피 모드 끔·기능 끔)는 같은 장면에서도 안 돌고
+  // 결과가 회피 모드 기능이 없는 플래너와 같다. 대체 탐색으로도 없으면(발밑이 치명 셀) 지금처럼 kNoValidTrajectory다.
+  TestGrid test_grid(200, 80, 0.05);
+  std::vector<Point2D> path;
+  appendLine(path, 1.0, 2.0, 8.0, 2.0);
+  RobotState state;
+  state.x = 2.0;
+  state.y = 2.0;
+  DynamicObstacle worker;
+  worker.radius = 0.25;
+  worker.x = 2.0;
+  worker.y = 2.0 + 0.2 + 0.33 + worker.radius;
+  worker.vy = -0.05;
+
+  DwaPlanner avoid_off(makeAvoidConfig());  // 기능은 켰지만 회피 모드는 꺼진 상태
+  DwaPlanner disabled(makeStackConfig());   // 기능 끔
+  disabled.setAvoidMode(true);
+  const DwaPlanner plain(makeStackConfig());
+  const DwaCommand reference = plain.computeVelocityCommand(state, path, test_grid.grid(), {worker});
+  for (DwaPlanner * planner : {&avoid_off, &disabled}) {
+    const DwaCommand command =
+      planner->computeVelocityCommand(state, path, test_grid.grid(), {worker});
+    EXPECT_FALSE(planner->lastUsedAvoidFallback());
+    EXPECT_EQ(planner->avoidFallbackCount(), 0u);
+    EXPECT_EQ(command.status, reference.status);
+    EXPECT_EQ(command.v, reference.v);
+    EXPECT_EQ(command.w, reference.w);
+  }
+
+  // 회피 모드여도 유효 궤적이 있으면(장애물 없음) 대체 탐색을 안 쓴다
+  DwaPlanner avoiding(makeAvoidConfig());
+  avoiding.setAvoidMode(true);
+  avoiding.computeVelocityCommand(state, path, test_grid.grid());
+  EXPECT_FALSE(avoiding.lastUsedAvoidFallback());
+
+  // 대체 탐색으로도 없으면 kNoValidTrajectory 그대로
+  TestGrid blocked(200, 80, 0.05);
+  blocked.setRegion(2.10, 2.11, 2.10, 2.11, 254);  // 풋프린트 안 한 셀
+  const DwaCommand stuck = avoiding.computeVelocityCommand(state, path, blocked.grid());
+  EXPECT_TRUE(avoiding.lastUsedAvoidFallback());
+  EXPECT_EQ(stuck.status, DwaStatus::kNoValidTrajectory);
+  EXPECT_TRUE(avoiding.avoidMode());
+}
+
 }  // namespace amr_planning_core
