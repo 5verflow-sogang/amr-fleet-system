@@ -38,15 +38,18 @@ def main(argv):
         return node.get_clock().now().nanoseconds * 1e-9
 
     # RTF는 /clock으로 잰다. 실제 시간으로 기다리는 시나리오(use_sim_time: false)에서 노드 시계로 재면
-    # sim_s = wall_s가 되어 Gazebo가 느려도 늘 1.0이었다 (fleet_stack, 11/2). 주행 구간에서 처음·마지막으로
-    # 받은 (sim 시각, 실제 시각)을 둔다
-    sim_clock = {}
-
-    def on_clock(m):
-        sim_clock.setdefault('first', (m.clock.sec + m.clock.nanosec * 1e-9, time.monotonic()))
-        sim_clock['last'] = (m.clock.sec + m.clock.nanosec * 1e-9, time.monotonic())
-
-    node.create_subscription(Clock, '/clock', on_clock, qos_profile_sensor_data)
+    # sim_s = wall_s가 되어 Gazebo가 느려도 늘 1.0이었다 (fleet_stack, 11/2). 주행 시작·끝에 /clock을 한 번씩만
+    # 받는다: 내내 구독하면 파이썬 콜백이 초당 수십~수백 번 돌아 측정 도구가 CPU를 먹는다 (#272 리뷰)
+    def clock_sample(timeout_s=2.0):
+        """/clock 한 번 → (sim 시각, 받은 실제 시각). timeout_s 안에 안 오면(가짜 로봇 시나리오) None."""
+        got = []
+        sub = node.create_subscription(Clock, '/clock', lambda m: got.append(
+            (m.clock.sec + m.clock.nanosec * 1e-9, time.monotonic())), qos_profile_sensor_data)
+        t0 = time.monotonic()
+        while not got and time.monotonic() - t0 < timeout_s:
+            rclpy.spin_once(node, timeout_sec=0.05)
+        node.destroy_subscription(sub)
+        return got[0] if got else None
 
     # 시뮬레이션 시계(/clock)가 들어올 때까지 기다린다
     t_wait = time.monotonic()
@@ -64,7 +67,7 @@ def main(argv):
             rclpy.spin_once(node, timeout_sec=0.05)
 
     wall0 = time.monotonic()
-    sim_clock.clear()
+    first = clock_sample()
     mode = spec.get('mode', 'segments')
     if mode == 'segments':
         pub = node.create_publisher(Twist, spec['topic'], 10)
@@ -95,20 +98,20 @@ def main(argv):
         return 2
 
     wall_s = time.monotonic() - wall0
-    sim_s = sim_clock['last'][0] - sim_clock['first'][0] if 'first' in sim_clock else None
+    last = clock_sample() if first is not None else None
+    sim_s = last[0] - first[0] if last is not None else None
     print(json.dumps({'sim_s': None if sim_s is None else round(sim_s, 3), 'wall_s': round(wall_s, 3),
-                      'rtf': rtf(sim_clock)}), flush=True)
+                      'rtf': rtf(first, last)}), flush=True)
     node.destroy_node()
     rclpy.try_shutdown()
     return 0
 
 
-def rtf(sim_clock: dict):
-    """처음·마지막 /clock 사이의 sim 시간 ÷ 실제 시간. /clock이 없거나 한 번뿐이면 None."""
-    if 'first' not in sim_clock:
+def rtf(first, last):
+    """두 /clock 표본 (sim 시각, 실제 시각) 사이의 sim 시간 ÷ 실제 시간. 표본이 없으면 None."""
+    if first is None or last is None or last[1] <= first[1]:
         return None
-    (s0, w0), (s1, w1) = sim_clock['first'], sim_clock['last']
-    return round((s1 - s0) / (w1 - w0), 3) if w1 > w0 else None
+    return round((last[0] - first[0]) / (last[1] - first[1]), 3)
 
 
 if __name__ == '__main__':
