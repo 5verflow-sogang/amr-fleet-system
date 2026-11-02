@@ -58,11 +58,13 @@ processes:
       - ros2 lifecycle get /map_server | grep -q '^active'
       - ros2 lifecycle get /amr_01/amcl | grep -q '^active'
     settle_s: 5
-  # 복구 노드. 이 시나리오에는 twist_mux·안전 노드가 없어 회전 명령을 cmd_vel로 바로 낸다
+  # 복구 노드. 이 시나리오에는 twist_mux·안전 노드가 없어 회전 명령을 cmd_vel로 바로 낸다.
+  # 복구 뒤 제자리 갱신(refine_nomotion)은 잰 조건대로 aruco=true일 때만 4번 (노드 기본 0, #240 민지 리뷰)
   - name: kidnap_recovery
     cmd: >-
-      ros2 run amr_localization kidnap_recovery --ros-args -r __ns:=/amr_01 -p use_sim_time:=true
-      -p cmd_vel_topic:=/amr_01/cmd_vel -p events_file:={run_dir}/kidnap/events.csv
+      refine=0; [ "{aruco}" = true ] && refine=4;
+      exec ros2 run amr_localization kidnap_recovery --ros-args -r __ns:=/amr_01 -p use_sim_time:=true
+      -p cmd_vel_topic:=/amr_01/cmd_vel -p events_file:={run_dir}/kidnap/events.csv -p refine_nomotion:=$refine
     ready_topic: /amr_01/kidnap_recovery/state
   # 복구 노드 상태가 tracking이 아닐 때만 인식한다 (only_when_lost)
   - name: aruco_localizer

@@ -29,8 +29,9 @@
     normal_particles: 2000
     restore_std_m: 0.1
     restore_std_yaw: 0.05
-    # 복구 뒤 다시 넣은 자세에서 제자리 갱신을 더 부르는 횟수. 멈춰 있으면 AMCL이 갱신하지 않아 수렴 때 어긋남이 남는다
-    refine_nomotion: 4
+    # 복구 뒤 다시 넣은 자세에서 제자리 갱신을 더 부르는 횟수 (0이면 끔). 효과가 작아(13.5 → 12.2 cm, 4-7절) 기본은 끄고
+    # 잰 조건인 하네스 kidnap aruco=true에서만 4로 켠다. 카메라 끔 조건은 이 값 없이 쟀다
+    refine_nomotion: 0
     # 마커판 자세 (amr_docking aruco_localizer, map 기준). 복구 중에 들어오면 그 자세·공분산으로 initialpose를 내고
     # 멈춰서 marker_settle_s 동안 판정, 미수렴이면 다음 시도. 한 번 잃은 동안 marker_max번까지 (4-7절)
     marker_topic: aruco_pose

@@ -17,9 +17,10 @@
       마커를 한 번이라도 받았으면 다음 시도도 전역 대신 마지막 마커 자세 주변으로 뿌리고(전역은 맞는 통로 후보를
       지운다), 제자리 갱신을 marker_nomotion_max번까지 부른다 (좁게 뿌려 한 점에 몰려도 맞는 곳이다.
       far 10회(10/25) seed 10: 4번 갱신에 3.8 → 1.1 m로 줄다가 갱신이 끊겨 멈췄다).
-      마커가 틀려도(뒤집힌 PnP 해, 다른 판) 빠져나오게, 마커로 뿌린 뒤의 마지막 시도는 직전 일치율이 ok_ratio 아래면
-      전역이고 그 시도에서는 마커를 받지 않는다 (#240 민지 리뷰). 일치율이 ok_ratio 이상이면 자세는 맞고 σ만 덜 줄어든
-      것이라 마커 주변으로 한 번 더 한다 (seed 19: 일치율 1.00·σ 0.33 m인 맞는 자세를 전역이 지웠다).
+      마커가 틀려도(뒤집힌 PnP 해, 다른 판) 빠져나오게, 마커로 뿌린 뒤의 마지막 시도는 직전 시도의 정지 확인·마커 판정
+      구간 최대 일치율이 ok_ratio 아래면 전역이고, 그 시도에서는 마커를 받지 않고 제자리 갱신도 nomotion_max번까지다
+      (#240 민지 리뷰). 일치율이 ok_ratio 이상이면 자세는 맞고 σ만 덜 줄어든 것이라 마커 주변으로 한 번 더 한다
+      (seed 19: 일치율 1.00·σ 0.33 m인 맞는 자세를 전역이 지웠다).
       멈춰서 수렴 조건을 통과하는 중(_ok > 0)에도 마커가 끊지 않는다 (같은 통로에서 국소로 맞춰 가던 시도를 틀린
       마커가 버리지 않게)
     잃은 뒤 max_recovery_s가 지나면 시도 중이어도 FAILED. 마커가 시도 끝 무렵에 오면 그 시도가 marker_settle_s만큼
@@ -92,7 +93,8 @@ class KidnapRecovery:
     _confirming: bool = False
     _marker: bool = False
     _markers: int = 0
-    _ratio: float = math.nan       # 마지막 일치율 (마지막 시도를 전역으로 할지 고를 때)
+    _ratio: float = math.nan       # 마지막 일치율 (정지 확인 구간이 없던 시도에서 마지막 시도를 고를 때)
+    _confirm_best: float = math.nan  # 정지 확인·마커 판정 구간의 최대 일치율 (마지막 시도를 전역으로 할지 고를 때)
     _global_last: bool = False     # 마커 뒤 마지막 시도를 전역으로 했다 (마커를 받지 않는다)
     lost_at: Optional[float] = None
 
@@ -110,7 +112,10 @@ class KidnapRecovery:
         self.state, self._since, self._ok = SETTLING, now, 0
         self._nomotion, self._confirming, self._marker = 1, False, False
         last = self.attempts >= self.config.max_attempts
-        fits = not math.isnan(self._ratio) and self._ratio >= self.config.ok_ratio
+        # 직전 샘플 하나는 0.9 근처에서 흔들려서 멈춰서 본 구간의 최댓값으로 고른다 (#240 민지 리뷰)
+        ratio = self._ratio if math.isnan(self._confirm_best) else self._confirm_best
+        self._confirm_best = math.nan
+        fits = not math.isnan(ratio) and ratio >= self.config.ok_ratio
         if self._markers and (not last or fits):
             self.events.append(Event(now, 'marker_retry', f'{self.attempts}번째'))
             return [STOP, MARKER_REINIT, NOMOTION]
@@ -133,6 +138,8 @@ class KidnapRecovery:
                 return self._start_attempt(now)
             return []
         if self.state in (SETTLING, ROTATING):
+            if self.state == SETTLING and self._confirming and not math.isnan(ratio):
+                self._confirm_best = ratio if math.isnan(self._confirm_best) else max(self._confirm_best, ratio)
             if self.state == SETTLING and self._converged(ratio, std_m):
                 self.state = TRACKING
                 self.events.append(Event(now, 'recovered', f'{now - self.lost_at:.1f}s, 일치율 {ratio:.2f}'))
@@ -145,7 +152,9 @@ class KidnapRecovery:
             if self.state == SETTLING:
                 window = c.marker_settle_s if self._marker else c.confirm_s if self._confirming else c.settle_s
                 if elapsed < window:
-                    if self._nomotion < (c.marker_nomotion_max if self._markers else c.nomotion_max):
+                    # 마커 뒤 마지막 전역 시도는 넓게 뿌린 경우라 nomotion_max (갱신이 많으면 틀린 곳에 몰린다)
+                    narrow = self._markers and not self._global_last
+                    if self._nomotion < (c.marker_nomotion_max if narrow else c.nomotion_max):
                         self._nomotion += 1
                         return [NOMOTION]
                     return []
@@ -161,7 +170,7 @@ class KidnapRecovery:
             if c.confirm_s > 0:
                 # 멈춘 상태에서 한 번 더 판정한다 (회전 중 놓친 수렴을 다음 시도로 버리지 않게)
                 self.state, self._since, self._ok, self._confirming = SETTLING, now, 0, True
-                self._nomotion = 1
+                self._nomotion, self._confirm_best = 1, math.nan
                 self.events.append(Event(now, 'confirm'))
                 return [STOP, NOMOTION]
             return self._start_attempt(now)
@@ -189,6 +198,7 @@ class KidnapRecovery:
         self._markers += 1
         self.state, self._since, self._ok = SETTLING, now, 0
         self._nomotion, self._confirming, self._marker = 1, True, True
+        self._confirm_best = math.nan
         self.events.append(Event(now, 'marker_reinit', f'{self._markers}번째'))
         return [STOP, MARKER_REINIT, NOMOTION]
 

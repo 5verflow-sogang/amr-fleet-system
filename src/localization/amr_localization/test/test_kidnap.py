@@ -225,6 +225,36 @@ def test_last_attempt_stays_on_marker_when_scan_fits():
     assert REINIT not in [a for step in acts for a in step]
 
 
+def test_last_attempt_uses_best_ratio_of_confirm_window():
+    # 직전 샘플 하나(0.85)가 아니라 정지 확인 구간 최댓값(0.95)으로 고른다. 0.9 근처에서 흔들려도 결정이 같게 (#240)
+    cfg = RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, confirm_s=1.0, marker_settle_s=1.0,
+                         max_attempts=3, max_recovery_s=0.0)
+    m = KidnapRecovery(cfg)
+    run(m, [(0.1, 1.0)])
+    m.marker_hint(0.2)
+    run(m, [(0.4, 1.0)] * 7 + [(0.95, 1.0), (0.85, 1.0)], t0=0.5)    # 확인 구간 t 4.0·4.5 → 3차
+    kinds = [e.kind for e in m.events]
+    assert kinds[-1] == 'marker_retry' and 'reinit' not in kinds and m.attempts == 3
+
+
+def test_global_last_attempt_after_marker_keeps_normal_nomotion_limit():
+    # 마커 뒤 마지막 전역 시도는 넓게 뿌린 경우라 marker_nomotion_max가 아니라 nomotion_max (#240)
+    cfg = RecoveryConfig(lost_checks=1, settle_s=5.0, rotate_s=1.0, confirm_s=1.0, marker_settle_s=1.0,
+                         max_attempts=3, max_recovery_s=0.0, nomotion_max=3, marker_nomotion_max=8)
+    m = KidnapRecovery(cfg)
+    run(m, [(0.1, 1.0)])
+    m.marker_hint(0.2)
+    t, acts = 0.5, []
+    while m.state != 'rotating' or 'reinit' not in [e.kind for e in m.events]:
+        step = m.step(t, 0.4, 1.0)
+        if 'reinit' in [e.kind for e in m.events]:
+            acts.append(step)
+        t += 0.5
+        assert t < 30.0
+    assert [STOP, REINIT, NOMOTION] == acts[0]
+    assert sum(s.count(NOMOTION) for s in acts) == 3
+
+
 def test_marker_accepted_in_last_attempt_if_none_before():
     # 마커를 처음 본 게 마지막 시도면 받는다 (아직 틀린 마커로 시도를 쓴 적이 없다)
     cfg = RecoveryConfig(lost_checks=1, settle_s=1.0, rotate_s=1.0, confirm_s=1.0, max_attempts=2, max_recovery_s=0.0)

@@ -114,7 +114,8 @@ ros2 run amr_localization kidnap_recovery --ros-args -r __ns:=/amr_01 -p use_sim
 | `settle_s`, `allow_rotate`, `rotate_s`, `max_attempts` | 10, true, 15, 3 | 시도마다 정지 갱신 → 제자리 회전 |
 | `marker_topic` | `aruco_pose` | 마커판 자세 (amr_docking `aruco_localizer`, map 기준). 복구 중 들어오면 그 자세로 다시 뿌린다. 비우면 끔 |
 | `marker_settle_s`, `marker_max`, `marker_nomotion_max` | 10, 3, 12 | 마커로 뿌린 뒤 판정 시간, 한 번 잃은 동안 횟수, 제자리 갱신 상한. 미수렴이면 다음 시도도 마커 주변 |
-| `marker_max_age_s`, `marker_max_std_m` | 1.0, 2.0 | 이보다 오래된 영상·큰 σ의 마커 자세는 버린다 |
+| `marker_max_age_s`, `marker_max_std_m` | 1.0, 1.5 | 이보다 오래된 영상·큰 σ의 마커 자세는 버린다 |
+| `refine_nomotion` | 0 | 복구 자세를 다시 넣은 뒤 제자리 갱신을 더 부르는 횟수. 효과가 작아 기본은 끔, 하네스 `kidnap` `aruco=true`에서만 4 |
 | `marker_min_std_m`, `marker_min_std_yaw` | 0.1, 0.05 | AMCL에 넣는 σ 하한 |
 | `events_file` | `''` | 감지·재초기화·복구 시각 CSV |
 

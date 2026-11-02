@@ -73,9 +73,9 @@ class KidnapRecoveryNode(Node):
         self.normal_particles = d('normal_particles', 2000).value
         self.restore_std_m = d('restore_std_m', 0.1).value
         self.restore_std_yaw = d('restore_std_yaw', 0.05).value
-        # 복구 뒤 다시 넣은 자세에서 제자리 갱신을 이만큼 더 부른다 (check_hz마다 1번). 멈춰 있으면 AMCL이 갱신하지 않아
-        # 수렴 판정 때의 어긋남(seed 14·20: 옆 10~14 cm, 일치율은 끝점 10 cm 안이면 맞음으로 세어 0.98)이 그대로 남았다
-        self.refine_nomotion = d('refine_nomotion', 4).value
+        # 복구 뒤 다시 넣은 자세에서 제자리 갱신을 이만큼 더 부른다 (check_hz마다 1번, 다시 넣은 다음 tick부터).
+        # 효과가 작아(seed 21: 13.5 → 12.2 cm) 기본은 끄고, 잰 조건인 하네스 aruco=true에서만 4로 켠다 (#240 민지 리뷰)
+        self.refine_nomotion = d('refine_nomotion', 0).value
         self._refine_left = 0
         # 국소 재초기화 때 뿌리는 파티클 범위 (1σ). 바퀴 미끄러짐·충돌로 몇 m 어긋난 경우를 덮는다.
         # 1.0 m에서는 1.9 m 이동을 못 찾았고(통로 방향 1.5 m 오차 남음) 2.5 m에서 9.5초에 복구했다 (10/6)
@@ -164,14 +164,15 @@ class KidnapRecoveryNode(Node):
         self.ratio = match_ratio(self.grid, pts, self.match_tol)
         if self.machine.state == TRACKING and self.ratio >= self.machine.config.ok_ratio:
             self.last_good = self.pose
+        # 복구 자세를 다시 넣은 뒤(_restore, 앞 tick 이후)에만 부른다. 같은 tick이면 다시 넣기 전 필터에 걸릴 수 있다
+        if self.machine.state == TRACKING and self._refine_left > 0 and self.nomotion.service_is_ready():
+            self._refine_left -= 1
+            self.nomotion.call_async(Empty.Request())
         n_events = len(self.machine.events)
         self._apply(self.machine.step(self._now(), self.ratio, self.amcl_std))
         self._log_new_events(n_events)
         if self.machine.state != TRACKING:
             self._refine_left = 0
-        elif self._refine_left > 0 and self.nomotion.service_is_ready():
-            self._refine_left -= 1
-            self.nomotion.call_async(Empty.Request())
         self.state_pub.publish(String(data=self.machine.state))
         self.ratio_pub.publish(Float32(data=float(self.ratio)))
 
@@ -233,10 +234,12 @@ class KidnapRecoveryNode(Node):
             self.get_logger().warn(f'[kidnap] {e.kind} {e.detail}')
             self._log_event(e)
             if e.kind in ('recovered', 'restored'):
-                pose = self.pose
-                self._refine_left = self.refine_nomotion
-                self._with_particles(self.normal_particles, lambda p=pose: self._set_pose(p, self.restore_std_m,
-                                                                                         self.restore_std_yaw))
+                self._with_particles(self.normal_particles, lambda p=self.pose: self._restore(p))
+
+    def _restore(self, pose):
+        """복구된 자세를 작은 공분산으로 다시 넣고, 그 뒤에 부를 제자리 갱신 횟수를 정한다."""
+        self._set_pose(pose, self.restore_std_m, self.restore_std_yaw)
+        self._refine_left = self.refine_nomotion
 
     def _with_particles(self, count: int, then):
         """AMCL max_particles를 바꾼 뒤 then()을 부른다. 끄거나(0) 서비스가 없으면 바로 부른다."""
