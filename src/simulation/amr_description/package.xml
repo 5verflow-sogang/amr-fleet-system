@@ -18,6 +18,8 @@
 
   <test_depend>ament_cmake_pytest</test_depend>
   <test_depend>python3-yaml</test_depend>
+  <!-- CI는 rosdep -t build·test만 설치해 exec_depend인 xacro가 없다. test_extrinsics.py가 import한다 -->
+  <test_depend>xacro</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
