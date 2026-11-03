@@ -15,7 +15,8 @@ num_robots: 1
 use_sim_time: true
 seed_base: 1
 # 주행(대기)은 시뮬레이션 시간이라 Gazebo가 느리면 실제 시간이 늘어난다. RTF 0.3까지 견디게 둔다
-# (duration_s 1500 / 0.3 = 5000 s + 기동). GitHub job 제한 240분 안에 들게 GCP는 -n 3 이하
+# (duration_s 1500 / 0.3 = 5000 s + 기동). GitHub job 제한 240분 안에 들게 GCP는 -n 2 이하 (RTF 0.3 기준).
+# 11/2 실측 RTF 0.42면 1회 약 60분이라 -n 3까지 된다. 시계가 멈추면 60초 뒤 실패로 끝난다 (drive.py)
 timeout_s: 5400
 params:
   num_robots: 1
