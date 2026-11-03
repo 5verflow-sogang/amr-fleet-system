@@ -118,7 +118,7 @@ launch는 안전 노드와 함께 E-Stop 버튼 노드(`estop_button`)도 띄운
 - 보고서에는 무효 사유별·하네스 실패 outcome별 실행 수와, 유효 실행 합격률의 Clopper-Pearson 95% 신뢰구간을 함께 낸다(`pass_rate`). 판정에는 쓰지 않는 참고값이다. 30/30이어도 구간은 88.4~100%라 실패율 상한이 약 12%다.
 - 하네스 요약(`tools/harness` `avoid.*` 지표)은 판정하지 않고 분포만 보여 준다. `pass`는 유효 실행만 넣고(무효는 `valid` 0), 복귀 못 한 회피 수는 `unreturned`로 늘 넣는다.
 
-기준값은 모두 노드 파라미터(`AvoidanceParams` 필드 이름 그대로, 실수 파라미터는 `5.0`처럼 소수점을 붙인다)이고 `avoidance_summary.json`의 `params`에 남는다. 0.1·0.2 m·1.0 s는 초안이다. DWA 회피 모드가 들어간 뒤 장애물 없는 주행의 추종 오차 분포를 보고 확정한다(추종 오차가 0.1 m를 자주 넘으면 회피 구간이 잘게 쪼개진다).
+기준값은 모두 노드 파라미터(`AvoidanceParams` 필드 이름 그대로, 실수 파라미터는 `5.0`처럼 소수점을 붙인다)이고 `avoidance_summary.json`의 `params`에 남는다. 0.1·0.2 m·1.0 s는 장애물 없는 주행의 추종 오차를 보고 확정했다(11/3): 아래 등록 코드로 돌린 로컬 30회에서 장애물이 1.5 m 밖일 때 이탈은 중앙 0.8 cm, p99 6.5 cm였고, 장애물과 무관한 추종 오차 구간은 0개였다(추종 오차가 0.1 m를 자주 넘으면 회피 구간이 잘게 쪼개진다).
 
 **출력** (`output_dir`, 기본 `/tmp/amr_avoidance/<로봇>_<시각>`)
 
@@ -132,9 +132,12 @@ launch는 안전 노드와 함께 E-Stop 버튼 노드(`estop_button`)도 띄운
 **실행**
 
 ```bash
-# 하네스 (초안 시나리오, 아직 미실행): 30회 → 판정
-python3 tools/harness/run.py nav_avoidance -n 30
-ros2 run amr_safety avoidance_report tools/harness/results/nav_avoidance_<시각>_* --out i17.md --json i17.json
+# 본 측정 (아래 "본 측정 등록"): GCP는 한 번에 15회까지라 시드 2001~2015, 2016~2030 두 번 → 받아서 판정
+tools/harness/gcp_run.sh nav_avoidance -n 15 --seed-base 2001 --label main --pr 262 --slot b1
+tools/harness/gcp_run.sh nav_avoidance -n 15 --seed-base 2016 --label main --pr 262 --slot b2
+ros2 run amr_safety avoidance_report <실행 폴더 30개> --runs 30 --out i17.md --json i17.json
+# 로컬 (Mac Docker 등, 튜닝은 연습 시드 1001~)
+tools/harness/docker_run.sh nav_avoidance -n 30 --seed-base 1001 --label dev
 
 # 손으로: 주행 스택을 띄운 뒤
 ros2 run amr_safety avoidance_eval --ros-args -r __ns:=/amr_01 -p use_sim_time:=true \
@@ -150,6 +153,26 @@ ros2 run amr_safety avoidance_eval_offline /tmp/amr_avoidance/run1 --set return_
   - 작업자는 로봇을 피하지 않는다. 다만 로봇이 멈춘 채 앞길을 막으면 약 0.5 m 앞에서 서고, 로봇이 5 s 넘게 계속 멈춰 있으면 돌아선다(`yield_to_robots: [amr_01]`, [amr_gazebo README](../../simulation/amr_gazebo/README.md)). 사람은 멈춘 로봇에 걸어 들어가지 않는다. 로봇을 보지 않던 작업자로 돌린 시험 30회(11/1)에서는 충돌 29건 중 22건이 서 있는 로봇에 작업자가 걸어 들어간 것이었다.
 - 손으로 돌릴 때 쓰는 고정 예시는 [`config/avoidance_eval_obstacles.yaml`](config/avoidance_eval_obstacles.yaml)(x = 3에서 1.0 m/s)이다.
 - 정적 장애물(벽·랙)과의 충돌은 보지 않는다. GT에 정적 물체 모양이 없어서다.
+
+### 본 측정 등록 (11/3, 결과 전, 이진·연우)
+
+결과를 보기 전에 정한다. 측정 전에 무엇이든 바꾸면 이 절을 먼저 고치고 잰다.
+
+- **코드**: 이 절을 넣은 #262 커밋 하나로 고정한다. #263(작업자 비킴), #268(DWA 회피 모드 대체 탐색), #277(안전 노드 근접 저속, dev에 머지됨)과 dev 3200aeb가 들어 있다. 측정 중에는 push하지 않는다
+  - 결과에 측정 커밋 번호를 적는다. #263·#268이 dev에 머지된 뒤, 그 dev 커밋과 측정 커밋의 I17 관련 코드(`src/navigation`, `src/perception`, `src/simulation/amr_gazebo`, `src/bringup`, `tools/harness/scenarios/nav_avoidance.yaml`)가 같은지 `git diff`로 확인해 결과에 적는다
+  - 빌드는 RelWithDebInfo(-O2, dev #269)다. 11/1 GCP 시험 30회와 11/2 로컬 확인 일부는 그 전(최적화 없음)이라 본 측정과 조건이 다르다
+- **시나리오**: `nav_avoidance` (지도 v2 0.025 m, 원점 `[-0.0439,1.4712,-0.00088]`). Nav2(DWA 회피 모드) + 추적 + 안전 노드, 로봇 world (0, 1.5) → map (6, 0). 작업자 1명, 시드 3개 중 1개는 1.0 m/s, 나머지 0.5~1.5 m/s (위 장애물 설명)
+  - **주행 중 장애물 인식은 LiDAR만 쓴다** (지수·이진과 정한 구성): 카메라 끔(`enable_camera:=false`), Nav2 global·local costmap은 `scan`만, Depth 포인트클라우드는 costmap에 붙이지 않는다. 추적의 사람 반경은 `dynamic_min_radius` 0.25 m
+- **시드**: 2001~2030 (`gcp_run.sh --seed-base 2001`·`2016`으로 15회씩 두 번, #283). 1~30은 11/1 시험, 1001~은 튜닝에 썼다. 실행마다 `meta.json`의 `seed`·`scene_seed`가 2001~2030인지 본다
+- **판정**: `avoidance_report` 최악값(위 "I17 판정"). 30회 모두 충돌 0, 최대 이탈 ≤ 1.0 m, 복귀 ≤ 5.0 s, 목표 도착. 충돌은 로봇이 서 있든 움직이든 모두 센다
+  - 시간 지표(복귀 시간 등)는 GT 메시지 시각, 곧 시뮬레이션 시간으로 잰다(`use_sim_time`). RTF와 상관없다(#272는 실제 시간으로 기다리는 시나리오에서 하네스 RTF가 늘 1.0으로 찍히던 표시 문제였다)
+- **무효 실행**: `avoidance_eval`이 무효로 본 실행과 하네스 `error`(예: Nav2 시작 단계 통신 문제로 전역 경로가 안 나옴)는 같은 시드로 다시 돌린다. 다시 돌린 시드·횟수·이유를 결과에 적는다
+- **러너**: GCP c2d-standard-8 (슬롯 b1~b4, 11/1 시험과 같은 종류). RTF를 결과에 함께 적는다
+- **설정**: 바꾸지 않는다
+  - DWA 회피 모드: `avoid_ttc_enter_s` 3.0, `avoid_margin_add` 0.4, `avoid_weight_scale` 2.0, `avoid_rollout_time` 3.0, 궤적이 없으면 평소 여유로 다시 탐색(#268)
+  - 안전 노드: `dynamic_slow_distance` 0.5 m, `dynamic_slow_speed_limit` 0.15 m/s(#277), 그 밖은 `config/safety.yaml`
+  - 평가: `start_deviation` 0.1 m, `return_deviation` 0.2 m, `return_hold_s` 1.0 s, `collision_margin` 0.01 m (기본값)
+- **이 코드로 한 로컬 확인** (Mac Docker, RTF 0.96, 연습 시드 1001~1030, 무효는 같은 시드로 다시): `avoidance_report` PASS, 유효 30/30 충돌 0, 최대 이탈 0.147 m, 최대 복귀 0 s, 최소 이격 0.058 m. #268·#277 없이는 27/30, #268만은 28/30이었고 충돌 5건이 모두 "작업자가 로봇 옆 0.2~0.3 m에서 돌아선 직후 로봇 출발"이었다(#277 본문)
 
 ## 테스트
 
