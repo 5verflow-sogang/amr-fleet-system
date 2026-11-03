@@ -1,0 +1,15 @@
+key,attempt,slot,run_id,url,status,conclusion,started,finished
+tracking_kpi_c10 -n 10 --label main,1,a,41209526181,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41209526181,dispatched,,2026-10-31T23:18:41,
+tracking_kpi_c10 -n 10 --label main,1,a,41209526181,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41209526181,completed,success,2026-10-31T23:18:41,2026-10-31T23:40:05
+tracking_kpi_c15 -n 10 --label main,1,a,41211196789,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41211196789,dispatched,,2026-10-31T23:40:13,
+tracking_kpi_c15 -n 10 --label main,1,a,41211196789,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41211196789,completed,success,2026-10-31T23:40:13,2026-10-31T23:58:34
+tracking_kpi_a -n 10 --label main,1,a,41212604248,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41212604248,dispatched,,2026-10-31T23:58:41,
+tracking_kpi_a -n 10 --label main,1,a,41212604248,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41212604248,completed,success,2026-10-31T23:58:41,2026-11-01T00:59:41
+tracking_kpi_b -n 10 --label main,1,a,41217478031,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41217478031,dispatched,,2026-11-01T00:59:49,
+tracking_kpi_b -n 10 --label main,1,a,41217478031,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41217478031,completed,success,2026-11-01T00:59:49,2026-11-01T02:02:51
+tracking_kpi_c05 -n 10 --label main,1,a,41222597223,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41222597223,dispatched,,2026-11-01T02:02:59,
+tracking_kpi_c05 -n 10 --label main,1,a,41222597223,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41222597223,completed,success,2026-11-01T02:02:59,2026-11-01T02:21:22
+tracking_kpi_d -n 10 --label main,1,a,41224134087,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41224134087,dispatched,,2026-11-01T02:21:30,
+tracking_kpi_d -n 10 --label main,1,a,41224134087,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41224134087,completed,success,2026-11-01T02:21:30,2026-11-01T03:33:51
+tracking_kpi_e -n 10 --label main,1,a,41230033325,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41230033325,dispatched,,2026-11-01T03:33:59,
+tracking_kpi_e -n 10 --label main,1,a,41230033325,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41230033325,completed,success,2026-11-01T03:33:59,2026-11-01T04:22:14

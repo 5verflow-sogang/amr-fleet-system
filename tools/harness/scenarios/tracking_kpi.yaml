@@ -29,6 +29,10 @@ params:
   wait_s: "315.0"
   # 녹화 (rosbag/). 스캔·트랙·마커·TF·로봇과 장애물 GT. Foxglove·Lichtblick으로 열어 본다
   record: "true"
+  # 장애물 시드 = 하네스 seed + seed_offset. 본 측정은 0(시드 1~N). 추적기 개발·비교용 녹화는 1000(시드 1001~)으로
+  # 본 측정 시드와 겹치지 않게 한다(하네스 README seed 규칙). GCP 러너는 --seed-base를 넘기지 못해 장면 값으로 민다.
+  # 장면 C는 작업자 속력이 고정이라 시드가 장면을 바꾸지 않는다
+  seed_offset: "0"
 processes:
   - name: sim
     cmd: >-
@@ -70,7 +74,8 @@ processes:
   # 맨 마지막: 장애물이 기록 도중에 나타나게 한다
   - name: obstacles
     cmd: >-
-      ros2 launch amr_gazebo dynamic_obstacles.launch.py config:={obstacles_config} seed:={seed} use_sim_time:=true
+      ros2 launch amr_gazebo dynamic_obstacles.launch.py config:={obstacles_config} seed:=$(( {seed} + {seed_offset} ))
+      use_sim_time:=true
     ready_topic: "{obstacle_ready_topic}"
 driver:
   mode: wait
