@@ -166,6 +166,8 @@ amr_01/odom                         (발행: Gazebo DiffDrive 기본, EKF를 띄
 
 - `config/sensors.yaml`: 센서 사양·노이즈. `sensors.xacro`가 xacro 처리 때 읽으므로 값을 바꾸면 launch만 다시 하면 된다. 바꿀 때는 민지에게 알린다 (명세서 8-2절)
 - `config/extrinsics.yaml`: 센서 외부 파라미터 (LiDAR·카메라·IMU 링크의 `base_link` 기준 xyz·rpy). 위와 같이 xacro가 읽어 `/tf_static`과 Gazebo 센서 위치가 같이 바뀐다. 바꿀 때는 민지·연우에게 알린다
+  - 숫자가 필요한 Python 코드는 `amr_description.extrinsics`로 이 파일을 읽는다 (`lidar_height()` = base_link 0.18 + lidar z). 화물 상자(`amr_gazebo` `cargo.py`)·도킹 마커판(`amr_docking` `markers.py`)의 스캔 평면 비키기 확인이 이 값을 쓴다
+  - LiDAR roll·pitch는 0이어야 한다. 인지·안전 노드가 스캔을 2D로 옮기며 TF의 yaw·x·y만 쓴다 (`test_extrinsics.py`가 본다)
 
 ### 센서 검증 (정지 상태, 월드 v0 스폰 위치 (0, 1.5))
 
@@ -192,7 +194,7 @@ amr_01/odom                         (발행: Gazebo DiffDrive 기본, EKF를 띄
 
 | 대상 | 값이 있는 곳 | 절차 | 합격 기준 |
 | --- | --- | --- | --- |
-| ① extrinsic: 파일 = URDF | `config/extrinsics.yaml` | `colcon test --packages-select amr_description` (`test_extrinsics.py`: xacro 결과의 센서 조인트 부모·xyz·rpy를 파일과 비교) | 통과 |
+| ① extrinsic: 파일 = URDF | `config/extrinsics.yaml` | `colcon test --packages-select amr_description` (`test_extrinsics.py`: xacro 결과의 센서 조인트 부모·xyz·rpy를 파일과 비교, base_link 높이, LiDAR 수평) | 통과 |
 | ② extrinsic: URDF = 실행 중 TF | 같음 | sim을 띄우고 `ros2 run tf2_ros tf2_echo amr_01/base_link amr_01/lidar_link` (`camera_link`, `imu_link`도). 센서 메시지 `frame_id`가 링크 이름인지 `ros2 topic echo --once <토픽> --field header.frame_id` | 파일 값과 같음. `frame_id` = `amr_01/lidar_link`, `amr_01/camera_optical_frame`, `amr_01/imu_link` |
 | ③ extrinsic: 센서가 그 자리에서 본다 | 같음 | 스폰 (0, 1.5, 0)에 세우고 LiDAR 남·북 빔 100스캔 평균을 월드 SDF로 계산한 거리와 비교. 카메라는 yaw −90°로 스폰해 정면 `rack_lane_divider`까지 Depth 중앙 80×80 px 평균 | LiDAR ±1 cm (σ 3 cm를 100번 평균하면 0.3 cm), Depth ±1 cm. 위치가 틀리면 그만큼 거리가 어긋난다 |
 | ④ 카메라 내부 파라미터 | `config/sensors.yaml` (`width`, `height`, `horizontal_fov`) | `ros2 topic echo --once /amr_01/camera/camera_info --field k` | fx = fy = (width/2) / tan(fov/2) = 337.2, cx 320, cy 240 |

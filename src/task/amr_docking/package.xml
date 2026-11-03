@@ -13,6 +13,7 @@
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>tf2_ros_py</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>amr_description</exec_depend>  <!-- markers.py: LiDAR 높이 (amr_description.extrinsics) -->
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
