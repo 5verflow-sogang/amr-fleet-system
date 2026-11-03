@@ -1,6 +1,7 @@
 """Dispatcher 장부·재전송 로직. rclpy 없이 돈다."""
 
 import csv
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -467,3 +468,42 @@ def test_decentral_robot_not_assigned_and_pending_withdrawn():
     d.set_robot_mode('amr_01', False)
     [third], _ = d.assign(0.7)
     assert third.robot_id == 'amr_01'
+
+
+def test_station_reserved_until_task_finishes():
+    # task()는 하역이 모두 (50, 50)이라 같은 도크로 가는 작업이다 (11/2 dock_a 교착)
+    d = make(station_clearance_m=1.0)
+    d.update_robot(robot('amr_01', (0.0, 0.0)), '', 0.0)
+    d.update_robot(robot('amr_02', (10.0, 0.0)), '', 0.0)
+    d.add_task(task('t1', (1.0, 0.0)))
+    d.add_task(task('t2', (9.0, 0.0), created=1.0))
+    commands, _ = d.assign(0.0)
+    assert [c.task_id for c in commands] == ['t1']
+    assert d.tasks['t2'].assignee == ''
+    d.on_status('t1', commands[0].robot_id, STATE_IN_PROGRESS)
+    assert d.assign(0.5) == ([], [])               # 진행 중이면 계속 잡혀 있다
+    d.on_status('t1', commands[0].robot_id, STATE_COMPLETED)
+    [cmd], _ = d.assign(1.0)
+    assert cmd.task_id == 't2'
+
+
+def test_station_conflict_in_queue_keeps_higher_priority():
+    d = make(station_clearance_m=1.0)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.update_robot(robot('amr_02'), '', 0.0)
+    d.add_task(task('low', (1.0, 0.0), priority=1))
+    d.add_task(task('high', (2.0, 0.0), priority=9))
+    commands, _ = d.assign(0.0)
+    assert [c.task_id for c in commands] == ['high']
+
+
+def test_different_stations_all_assigned():
+    d = make(station_clearance_m=1.0)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.update_robot(robot('amr_02'), '', 0.0)
+    d.add_task(task('t1', (1.0, 0.0)))
+    d.add_task(replace(task('t2', (6.0, 0.0)), dropoff_xy=(55.0, 50.0)))   # 픽업·하역 모두 5 m 떨어짐
+    commands, _ = d.assign(0.0)
+    assert sorted(c.task_id for c in commands) == ['t1', 't2']
+    with pytest.raises(ValueError):
+        make(station_clearance_m=-1.0)
