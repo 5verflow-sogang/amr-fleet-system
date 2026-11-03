@@ -2,6 +2,10 @@
 
     ros2 launch amr_fleet_manager task_generator.launch.py seed:=3 schedule_out:=/tmp/run1/tasks.json
     ros2 launch amr_fleet_manager task_generator.launch.py tasks_file:=/tmp/run1/tasks.json   # 같은 일정 다시 돌리기
+
+Gazebo와 함께 돌릴 때는 use_sim_time:=true로 시뮬레이션 시간 일정을 쓴다 (로봇·서버와 같은 시계). 전에는 이 인자가
+없어 노드 주석과 달리 실제 시간으로 돌았고, Gazebo가 느리면(RTF 0.42, 11/2 fleet_stack) 시뮬레이션 안에서는 작업이
+2.4배 빠르게 몰려 들어왔다. 가짜 로봇 시나리오(fleet_fake)는 /clock이 없어 false(기본)로 둔다.
 """
 
 import os
@@ -39,6 +43,9 @@ def generate_launch_description():
             'server_count', default_value='1',
             description='server_node 이름의 구독 노드가 이만큼 있어야 시작한다. 분산 모드: server_node:=task_auction server_count:=<로봇 수>'),
         DeclareLaunchArgument(
+            'use_sim_time', default_value='false',
+            description='true면 시뮬레이션 시간(/clock)으로 일정을 잰다. Gazebo 스택과 함께 돌릴 때. /clock이 없으면 시작하지 않는다'),
+        DeclareLaunchArgument(
             'schedule_out', default_value='',
             description='만든 일정을 JSON Task 파일로 남길 경로. 하네스 실행 폴더의 tasks.json'),
         Node(
@@ -53,6 +60,7 @@ def generate_launch_description():
                 'map_origin_in_world': ParameterValue(LaunchConfiguration('map_origin_in_world'), value_type=List[float]),
                 'server_node': ParameterValue(LaunchConfiguration('server_node'), value_type=str),
                 'server_count': ParameterValue(LaunchConfiguration('server_count'), value_type=int),
+                'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool),
             }],
             output='screen',
         ),

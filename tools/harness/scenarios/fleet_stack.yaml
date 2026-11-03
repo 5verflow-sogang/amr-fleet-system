@@ -17,14 +17,16 @@ packages: amr_bringup
 num_robots: 5
 use_sim_time: true
 seed_base: 1
-timeout_s: 2700
+# 주행(대기)은 시뮬레이션 시간이라 Gazebo가 느리면 실제 시간이 늘어난다. RTF 0.3까지 견디게 둔다
+# (duration_s 1500 / 0.3 = 5000 s + 기동). GitHub job 제한 240분 안에 들게 GCP는 -n 3 이하
+timeout_s: 5400
 params:
   num_robots: 5
   # 원 명세 "로봇 간 통신 지연(최대 100ms)을 시뮬레이션에 반영"
   delay_ms: 100
   loss_pct: 0
   algorithm: nearest
-  # 작업 생성기 basic.yaml은 600 s(실제 시간)에 60건을 넣는다. 로봇이 다 처리할 때까지 여유를 둔다
+  # 작업 생성기 basic.yaml은 600 s(시뮬레이션 시간)에 60건을 넣는다. 로봇이 다 처리할 때까지 여유를 둔다 (시뮬레이션 s)
   duration_s: 1500
   # 지도: 0.05 m(warehouse_v2, #242)와 그 정렬 원점(B안). 기본 0.025 m는 5대에서 NavFn(Dijkstra)이 전체 지도
   # 2400x1600칸을 훑느라 경로를 끝내 못 냈다(GCP 스모크 10/14: planner "missed deadline" 475회, 로봇 정지).
@@ -60,13 +62,13 @@ processes:
     settle_s: 3
   - name: task_generator
     cmd: >-
-      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json
+      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json use_sim_time:=true
       map_origin_in_world:="{map_origin}"
       scenario_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/scenarios/{task_scenario}.yaml
 driver:
   mode: wait
-  # 작업 일정이 실제 시간이라 실제 시간으로 기다린다
-  use_sim_time: false
+  # 작업 일정(task_generator use_sim_time:=true)과 같은 시뮬레이션 시간으로 기다린다 (11/3 결정: 시간 KPI는 시뮬레이션 시간)
+  use_sim_time: true
   duration_s: "{duration_s}"
 postprocess:
   - name: fleet_metrics

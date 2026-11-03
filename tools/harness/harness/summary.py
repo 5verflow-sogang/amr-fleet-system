@@ -142,8 +142,11 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
             out['fleet.task_time_s.mean'] = sum(times) / len(times)
         # 처리량(완료 작업/분): 첫 요청부터 마지막 완료까지. 투입이 로봇 처리 능력보다 느리면 투입 속도에 묶인다
         # (통계 설계 5절). 실행 끝까지가 아니라 마지막 완료까지라 꼬리의 미완료 작업 시간은 빠진다
-        requested = _floats(tasks, 'request_time')
-        ends = _floats(completed, 'end_time')
+        # 시뮬레이션 시각 열(request_sim·end_sim, fleet_metrics SimClock)이 있으면 그 시계로 낸다 (11/3 결정: 시간 KPI는
+        # 시뮬레이션 시간). 열이 없는 예전 결과는 수신 시각(실제 시간)
+        sim = 'end_sim' in tasks[0]
+        requested = _floats(tasks, 'request_sim' if sim else 'request_time')
+        ends = _floats(completed, 'end_sim' if sim else 'end_time')
         if requested and ends and max(ends) > min(requested):
             out['fleet.throughput_per_min'] = len(ends) / ((max(ends) - min(requested)) / 60.0)
         dist = _floats(completed, 'distance_m')

@@ -6,6 +6,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
+from amr_fleet_manager.fleet_metrics import SimClock
 from amr_fleet_manager.fleet_metrics import (robot_ids, FLEET_LATENCY_HEADER, RECOVERY_HEADER, RESPONSE_TIME_HEADER,
                                              ROBOT_STATES_HEADER, STALLS_HEADER, TASK_OUTCOMES_HEADER, ZONE_WAITS_HEADER,
                                              Cutoff, Record, convert, fleet_latency, observation_start, read_kill_events,
@@ -223,9 +224,11 @@ def test_task_outcomes():
     rows = task_outcomes(kill_scenario())
     assert [r[0] for r in rows] == ['t1', 't2', 't3']
     # 작업 시간 = 요청 → 끝 보고, 이동 거리 = 끝 보고의 distance_traveled (최적성 지표)
-    assert rows[0][3:] == ['amr_01', 'COMPLETED', '8.000000', '7.500', '12.500', '', '']
-    assert rows[1][2:] == ['11.000000', 'amr_01 amr_02', 'COMPLETED', '40.000000', '29.500', '30.000', '', 'amr_01']
-    assert rows[2][2:] == ['', '', '', '', '', '', '', '']
+    assert rows[0][3:10] == ['amr_01', 'COMPLETED', '8.000000', '7.500', '12.500', '', '']
+    assert rows[1][2:10] == ['11.000000', 'amr_01 amr_02', 'COMPLETED', '40.000000', '29.500', '30.000', '', 'amr_01']
+    assert rows[2][2:10] == ['', '', '', '', '', '', '', '']
+    # odom이 없으면(가짜 로봇) 시뮬레이션 시각 열은 수신 시각 그대로
+    assert rows[1][10:] == [rows[1][1], rows[1][5]]
 
 
 def test_task_outcome_failed_keeps_error_code():
@@ -252,7 +255,7 @@ def test_task_outcome_hybrid_owner_completes():
                rec('/fleet/task_status', 1.7, status('t1', 'amr_02', FAILED, error_code=104)),
                rec('/fleet/task_status', 9.0, status('t1', 'amr_03', COMPLETED, distance=7.0))]
     row = task_outcomes(records)[0]
-    assert row[3:] == ['amr_02', 'COMPLETED', '9.000000', '8.500', '7.000', '', 'amr_03 amr_02']
+    assert row[3:10] == ['amr_02', 'COMPLETED', '9.000000', '8.500', '7.000', '', 'amr_03 amr_02']
     # 주인이 아직 하는 중이면 물러난 로봇의 FAILED를 끝으로 보지 않는다
     assert task_outcomes(records[:5])[0][4] == ''
 
@@ -410,3 +413,45 @@ def test_fleet_modes_segments():
         ['amr_03', 'decentral', '40.500000', '75.000000', '34.500'],
         ['amr_03', 'central', '75.000000', '100.000000', '25.000'],
     ]
+
+
+def slow_sim_odom(robot='amr_01', rtf=0.5, until=200, vx=0.5, stopped=()):
+    """Gazebo가 실제 시간의 rtf배로 도는 기록: 수신 시각 t(실제)마다 header.stamp = t × rtf (시뮬레이션)."""
+    records = []
+    for t in range(until + 1):
+        sim = t * rtf
+        msg = odom(0.0 if any(a <= t < b for a, b in stopped) else vx, 0)
+        msg.header.stamp = stamp(int(sim), round(sim % 1 * 1e9))
+        records.append(rec(f'/{robot}/odom', float(t), msg))
+    return records
+
+
+def test_sim_clock_maps_receive_time_to_sim_time():
+    clock = SimClock(slow_sim_odom(rtf=0.42, until=100))
+    assert clock.active and clock.rtf == pytest.approx(0.42, abs=1e-3)
+    assert clock(50.0) == pytest.approx(21.0, abs=0.01) and clock.span(10.0, 60.0) == pytest.approx(21.0, abs=0.01)
+    # 기록 범위 밖은 전체 RTF로 늘린다
+    assert clock.span(100.0, 110.0) == pytest.approx(4.2, abs=0.01)
+    # odom이 없으면 실제 시간 그대로
+    wall = SimClock([rec('/fleet/heartbeat', 1.0, heartbeat(1))])
+    assert not wall.active and wall(5.0) == 5.0 and wall.meta() == {'durations': 'wall', 'rtf': None}
+
+
+def test_durations_in_sim_time_when_gazebo_is_slow(tmp_path):
+    """RTF 0.5: 실제 40 s 걸린 작업은 시뮬레이션 20 s, 실제 100 s 정지는 시뮬레이션 50 s라 정체(60 s)가 아니다."""
+    records = slow_sim_odom(rtf=0.5, until=200, stopped=[(50, 150)])
+    records += [rec('/fleet/task_requests', 10.0, request('t1')),
+                rec('/fleet/task_assignments', 11.0, assignment(1, 'amr_01', 5, 't1')),
+                rec('/fleet/task_status', 12.0, status('t1', 'amr_01', IN_PROGRESS, 'move_to_pickup')),
+                rec('/fleet/task_status', 50.0, status('t1', 'amr_01', COMPLETED, distance=5.0)),
+                rec('/fleet/task_status', 49.0, status('t2', 'amr_01', IN_PROGRESS, 'move_to_pickup'))]
+    convert(records, tmp_path, delay_ms=0.0)
+    with (tmp_path / 'task_outcomes.csv').open() as f:
+        row = next(r for r in csv.DictReader(f) if r['task_id'] == 't1')
+    assert row['request_time'] == '10.000000' and row['end_time'] == '50.000000'   # 시각 열은 수신 시각
+    assert float(row['task_time_s']) == pytest.approx(20.0, abs=0.01)
+    assert float(row['end_sim']) - float(row['request_sim']) == pytest.approx(20.0, abs=0.01)
+    with (tmp_path / 'stalls.csv').open() as f:
+        assert list(csv.DictReader(f)) == []
+    meta = json.loads((tmp_path / 'meta.json').read_text())
+    assert meta['fleet_clock'] == {'durations': 'sim', 'rtf': 0.5}
