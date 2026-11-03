@@ -83,6 +83,20 @@ def _floats(rows: Iterable[dict], key: str) -> list[float]:
     return [float(r[key]) for r in rows if r.get(key) not in (None, '')]
 
 
+def _put_dist(out: dict, prefix: str, values: list[float], *stats: str) -> None:
+    """values의 통계(mean·p95·p99·max·n)를 out[f'{prefix}.{통계}']에 넣는다. 비어 있으면 아무것도 넣지 않는다.
+
+    평균은 받은 순서대로 더한다 (부동소수점 합은 순서에 따라 끝자리가 달라져, 예전 요약 값과 같게 둔다).
+    """
+    if not values:
+        return
+    ordered = sorted(values)
+    calc = {'mean': lambda: sum(values) / len(values), 'p95': lambda: percentile(ordered, 0.95),
+            'p99': lambda: percentile(ordered, 0.99), 'max': lambda: ordered[-1], 'n': lambda: len(values)}
+    for stat in stats:
+        out[f'{prefix}.{stat}'] = calc[stat]()
+
+
 def fleet_metrics(run_dir: Path) -> dict[str, float]:
     """fleet_latency.csv, response_time.csv, task_outcomes.csv, recovery.csv → 실행 하나의 요약 값."""
     out = {}
@@ -91,37 +105,20 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
     if judged:
         out['fleet.loss_rate'] = sum(r['delivered'] == '0' for r in judged) / len(judged)
         lat = sorted(_floats((r for r in judged if r['delivered'] == '1'), 'latency_ms'))
-        if lat:
-            out['fleet.latency_ms.mean'] = sum(lat) / len(lat)
-            out['fleet.latency_ms.p95'] = percentile(lat, 0.95)
-            out['fleet.latency_ms.p99'] = percentile(lat, 0.99)
-            out['fleet.latency_ms.max'] = lat[-1]
+        _put_dist(out, 'fleet.latency_ms', lat, 'mean', 'p95', 'p99', 'max')
     resp_rows = _read_csv(run_dir / 'response_time.csv')
     if resp_rows:
         out['fleet.commands'] = len(resp_rows)
         acked = sorted(_floats(resp_rows, 'ack_rtt_ms'))
         out['fleet.ack_rate'] = len(acked) / len(resp_rows)
-        if acked:
-            out['fleet.ack_rtt_ms.mean'] = sum(acked) / len(acked)
-            out['fleet.ack_rtt_ms.p95'] = percentile(acked, 0.95)
-            out['fleet.ack_rtt_ms.max'] = acked[-1]
+        _put_dist(out, 'fleet.ack_rtt_ms', acked, 'mean', 'p95', 'max')
         out['fleet.resends.mean'] = sum(_floats(resp_rows, 'resends')) / len(resp_rows)
         resp = sorted(_floats(resp_rows, 'latency_ms'))
-        if resp:
-            out['fleet.response_ms.mean'] = sum(resp) / len(resp)
-            out['fleet.response_ms.max'] = resp[-1]
-            out['fleet.response_ms.n'] = len(resp)
+        _put_dist(out, 'fleet.response_ms', resp, 'mean', 'max', 'n')
         # 수신 기준 (로봇이 받은 시각 → 첫 움직임). 원 명세 성능 요구사항 "명령 수신 ~ 로봇 반응"
-        recv = sorted(_floats(resp_rows, 'latency_recv_ms'))
-        if recv:
-            out['fleet.response_recv_ms.mean'] = sum(recv) / len(recv)
-            out['fleet.response_recv_ms.max'] = recv[-1]
-            out['fleet.response_recv_ms.n'] = len(recv)
+        _put_dist(out, 'fleet.response_recv_ms', sorted(_floats(resp_rows, 'latency_recv_ms')), 'mean', 'max', 'n')
         # 시뮬레이션 시간 기준 (발행 → 움직임). RTF < 1이면 실제 시간 값이 부푼다. KPI 시계는 회의에서 정한다 (#171 리뷰 2)
-        sim = sorted(_floats(resp_rows, 'latency_sim_ms'))
-        if sim:
-            out['fleet.response_sim_ms.mean'] = sum(sim) / len(sim)
-            out['fleet.response_sim_ms.max'] = sim[-1]
+        _put_dist(out, 'fleet.response_sim_ms', sorted(_floats(resp_rows, 'latency_sim_ms')), 'mean', 'max')
         if resp:
             # 움직임을 찾은 명령의 비율. 못 찾은 명령은 평균에서 조용히 빠지므로 같이 본다 (#171 리뷰 3)
             out['fleet.response_coverage'] = len(resp) / len(resp_rows)
@@ -173,9 +170,7 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
             float(r['wait_s']) > ZONE_LONG_WAIT_S for r in zones if r['outcome'] in ('granted', 'waiting'))
         out['fleet.deadlock_revokes'] = sum(r['outcome'] == 'revoked' for r in zones)
         out['fleet.deadlock_rejects'] = sum(r['outcome'] == 'rejected' for r in zones)
-        if waits:
-            out['fleet.zone_wait_s.mean'] = sum(waits) / len(waits)
-            out['fleet.zone_wait_s.max'] = max(waits)
+        _put_dist(out, 'fleet.zone_wait_s', waits, 'mean', 'max')
     # 이동 중 정체 (로봇 odom을 녹화한 시나리오만 파일이 있다)
     if (run_dir / 'stalls.csv').exists():
         stalled = _read_csv(run_dir / 'stalls.csv')
@@ -186,10 +181,7 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
     reclaimed = [r for r in _read_csv(run_dir / 'recovery.csv') if r.get('task_id')]
     if (run_dir / 'recovery.csv').exists():
         out['fleet.reclaimed_tasks'] = len(reclaimed)
-        recov = _floats(reclaimed, 'recovery_s')
-        if recov:
-            out['fleet.recovery_s.mean'] = sum(recov) / len(recov)
-            out['fleet.recovery_s.max'] = max(recov)
+        _put_dist(out, 'fleet.recovery_s', _floats(reclaimed, 'recovery_s'), 'mean', 'max')
         if reclaimed:
             out['fleet.reclaimed_completed_rate'] = sum(r['completed'] == '1' for r in reclaimed) / len(reclaimed)
     return out
@@ -206,14 +198,9 @@ def cpu_metrics(run_dir: Path) -> dict[str, float]:
     cores = sorted(_floats(rows, 'cores'))
     if not cores:
         return out
-    out['sys.cpu_cores.mean'] = sum(cores) / len(cores)
-    out['sys.cpu_cores.p95'] = percentile(cores, 0.95)
-    out['sys.cpu_cores.max'] = cores[-1]
-    pct = sorted(_floats(rows, 'cpu_pct'))
-    out['sys.cpu_pct.mean'] = sum(pct) / len(pct)
+    _put_dist(out, 'sys.cpu_cores', cores, 'mean', 'p95', 'max')
     # 작업이 끝난 뒤 쉬는 구간도 평균에 들어가 낮아지므로 P95도 같이 본다 (#171 리뷰 5)
-    out['sys.cpu_pct.p95'] = percentile(pct, 0.95)
-    out['sys.cpu_pct.max'] = pct[-1]
+    _put_dist(out, 'sys.cpu_pct', sorted(_floats(rows, 'cpu_pct')), 'mean', 'p95', 'max')
     allowed = _floats(rows, 'allowed_cores')
     out['sys.allowed_cores'] = allowed[-1]
     host = _floats(rows, 'host_cpu_pct')
@@ -234,8 +221,7 @@ def cpu_metrics(run_dir: Path) -> dict[str, float]:
     for key in ('server', 'tool', 'robot_max', 'robot_mean'):
         values = sorted(_floats(rows, f'cores_{key}'))
         if values:
-            out[f'sys.cpu_cores.{key}.mean'] = sum(values) / len(values)
-            out[f'sys.cpu_cores.{key}.p95'] = percentile(values, 0.95)
+            _put_dist(out, f'sys.cpu_cores.{key}', values, 'mean', 'p95')
             out[f'sys.cpu_pct.{key}.mean'] = 100.0 * out[f'sys.cpu_cores.{key}.mean'] / allowed[-1]
             if key in ('server', 'robot_max'):
                 # 판정 기준: 서버·로봇 1대를 각각 REF_CORES 코어 컴퓨터로 본 사용률 (명세에 기준 기기가 없어 팀 가정)
@@ -431,34 +417,35 @@ def kpi_verdict(metric: str, mean: float, ci_high: Optional[float], ci_low: Opti
     """
     if metric in NO_VERDICT.get(scenario, ()):
         return None
-    threshold = None
+    rule = kpi_rule(metric, scenario)
+    if rule is None:
+        return None
+    threshold, kind = rule
+    # 기준을 만족하는지와 그때 볼 CI 끝: max는 상한, min·gt는 하한. P1(gt)은 기준과 같아도 안 된다
+    meets = {'max': lambda v: v <= threshold, 'min': lambda v: v >= threshold, 'gt': lambda v: v > threshold}[kind]
+    bound = ci_high if kind == 'max' else ci_low
+    if bound is not None and meets(bound):
+        return 'PASS'
+    return 'MARGINAL' if meets(mean) else 'FAIL'
+
+
+def kpi_rule(metric: str, scenario: str = '') -> Optional[tuple[float, str]]:
+    """지표의 KPI (기준, 방향). 방향: max = 작을수록 좋음, min = 클수록 좋음, gt = 기준보다 커야 함. 없으면 None."""
     parts = metric.split('.')
     if parts[0] == 'loc' and parts[-1] == 'rmse':
         threshold = LOCALIZATION_KPI.get(parts[-2])
-    elif metric in RESPONSE_KPI:
-        threshold = RESPONSE_KPI_MS
-    elif metric in COUNT_ZERO_KPI:
-        threshold = 0.0
-    elif metric == 'sys.cpu_pct.mean':
-        threshold = CPU_KPI_PCT
-    elif metric in NAV_KPI:
-        threshold, kind = NAV_KPI[metric]
-        if kind == 'min':
-            if ci_low is not None and ci_low >= threshold:
-                return 'PASS'
-            return 'MARGINAL' if mean >= threshold else 'FAIL'
-    elif metric in TRACK_KPI and scenario in TRACK_KPI_SCENARIOS:
-        threshold, kind = TRACK_KPI[metric]
-        if kind == 'gt':
-            # P1: CI 하한이 기준보다 커야 PASS (같아도 안 된다). P2(max)는 아래 공통 판정
-            if ci_low is not None and ci_low > threshold:
-                return 'PASS'
-            return 'MARGINAL' if mean > threshold else 'FAIL'
-    if threshold is None:
-        return None
-    if ci_high is not None and ci_high <= threshold:
-        return 'PASS'
-    return 'MARGINAL' if mean <= threshold else 'FAIL'
+        return None if threshold is None else (threshold, 'max')
+    if metric in RESPONSE_KPI:
+        return RESPONSE_KPI_MS, 'max'
+    if metric in COUNT_ZERO_KPI:
+        return 0.0, 'max'
+    if metric == 'sys.cpu_pct.mean':
+        return CPU_KPI_PCT, 'max'
+    if metric in NAV_KPI:
+        return NAV_KPI[metric]
+    if metric in TRACK_KPI and scenario in TRACK_KPI_SCENARIOS:
+        return TRACK_KPI[metric]
+    return None
 
 
 def worst_kpi_verdict(metric: str, iv: Interval, scenario: str, runs: int,
