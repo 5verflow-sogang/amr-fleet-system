@@ -122,6 +122,75 @@ jobs:
           name: colcon-logs
           path: log/
 
+  # 커버리지 (원 명세 "주요 모듈 70% 이상, 모듈별 분리 보고", docs/test-plan.md 3절). 컴파일 옵션(--coverage)이 달라
+  # build-test의 ccache와 섞지 않으려고 따로 빌드한다. CI 시간이 두 배가 되지 않게 dev push에서만 돈다.
+  # 표는 실행 요약(Summary)과 아티팩트 coverage.md에 남고, 아직 실패로 치지 않는다 (70% 판정은 P4에 --fail-under로 켠다).
+  # 테스트 실패는 build-test가 잡으므로 여기서는 결과만 모은다
+  coverage:
+    name: coverage report
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.ros == 'true'
+    runs-on: ubuntu-22.04
+    container: ros:humble
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONWARNINGS: "ignore:setup.py install is deprecated::setuptools.command.install,ignore:easy_install command is deprecated::setuptools.command.easy_install"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3-pip python3-pytest-cov
+          pip3 install gcovr==8.3
+          rosdep update --rosdistro humble
+          rosdep install --from-paths src --ignore-src -y --rosdistro humble \
+            -t build -t buildtool -t build_export -t buildtool_export -t test
+
+      - name: Build with coverage
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --event-handlers console_cohesion+ --cmake-args -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS=--coverage -DCMAKE_CXX_FLAGS=--coverage \
+            -DCMAKE_EXE_LINKER_FLAGS=--coverage -DCMAKE_SHARED_LINKER_FLAGS=--coverage
+
+      - name: Test with coverage
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          colcon test --event-handlers console_cohesion+ --pytest-with-coverage || true
+          colcon test-result || true
+
+      # C++: 테스트가 .gcda를 남긴 패키지마다 그 패키지 소스 기준 Cobertura XML (build/<패키지>/coverage_cpp.xml).
+      # no_working_dir_found: CMake가 컴파일러를 확인하며 만든 파일. suspicious_hits: A* 탐색 루프처럼 실제로 수십억 번
+      # 도는 줄을 gcov 버그로 의심한다
+      - name: C++ coverage
+        run: |
+          colcon list | while read -r name path _; do
+            if find "build/$name" -name '*.gcda' -print -quit | grep -q .; then
+              gcovr --gcov-ignore-errors=no_working_dir_found \
+                --gcov-ignore-parse-errors=suspicious_hits.warn_once_per_file \
+                --root "$path" --object-directory "build/$name" --xml "build/$name/coverage_cpp.xml" "build/$name"
+            fi
+          done
+
+      - name: Coverage table
+        run: |
+          python3 tools/dev/coverage_table.py --build build --src src | tee coverage.md
+          cat coverage.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: |
+            coverage.md
+            build/*/coverage.xml
+            build/*/coverage_cpp.xml
+
   # 하네스(tools/harness)·개발 도구(tools/dev)는 colcon 패키지가 아니라 따로 돈다. ROS 없이 도는 테스트만이라
   # ROS 컨테이너·빌드 없이 돌린다
   tools-test:

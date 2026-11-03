@@ -60,16 +60,41 @@
 
 ## 3. 커버리지
 
-**지금 상태 (10/6 `amr_localization`, 단위 테스트만)**
+**지금 상태 (11/3, 전체 패키지, CI `coverage` 작업과 같은 명령을 로컬 컨테이너에서)**
 
-| 모듈 | 커버리지 |
+Python은 `colcon test --pytest-with-coverage`, C++는 `--coverage` 빌드 + gcovr. 표는 `tools/dev/coverage_table.py`가 만든다.
+노드 파일 = rclpy·rclcpp를 쓰거나 Nav2·pluginlib 플러그인으로 ROS에 붙는 파일, 로직 모듈 = 그 밖. 테스트 코드·setup.py·launch는 뺀다.
+
+| 패키지 | 전체 | 로직 모듈 | 노드 파일 | 판정 (로직 ≥ 70%) |
+| --- | --- | --- | --- | --- |
+| `amr_bringup` | 99.1% | 99.1% | — | ✅ |
+| `amr_bt` | 87.3% | 94.6% | 79.6% | ✅ |
+| `amr_control` | 57.2% | 94.0% | 0.0% | ✅ |
+| `amr_detection` | 25.1% | 88.1% | 0.0% | ✅ |
+| `amr_docking` | 54.1% | 96.6% | 0.0% | ✅ |
+| `amr_fault_injector` | 56.3% | 98.9% | 0.0% | ✅ |
+| `amr_fleet_core` | 99.2% | 99.2% | — | ✅ |
+| `amr_fleet_decentralized` | 92.5% | 98.7% | 90.3% | ✅ |
+| `amr_fleet_manager` | 68.9% | 98.1% | 9.0% | ✅ |
+| `amr_gazebo` | 16.7% | 100.0% | 0.0% | ✅ |
+| `amr_localization` | 53.7% | 98.6% | 0.0% | ✅ |
+| `amr_mapping` | 61.3% | 81.8% | 0.0% | ✅ |
+| `amr_nav2_plugins` | 26.3% | 97.1% | 2.0% | ✅ |
+| `amr_odometry` | 52.1% | 100.0% | 0.0% | ✅ |
+| `amr_perception_core` | 98.1% | 98.1% | — | ✅ |
+| `amr_planning_core` | 97.7% | 97.7% | — | ✅ |
+| `amr_safety` | 63.3% | 90.3% | 13.4% | ✅ |
+| `amr_tracking` | 20.7% | 100.0% | 14.6% | ✅ |
+| `amr_zone_client` | 89.5% | 98.4% | 73.8% | ✅ |
+| 파일 | 커버리지 |
 | --- | --- |
-| `eval/` (오차 계산) | 96~100% |
-| `kidnap/` (감지·복구 로직) | 99~100% |
-| `eval_node.py`, `kidnap_recovery_node.py` (ROS 노드) | 0% |
-| 패키지 전체 | 62% |
+| `navigation/amr_control/include/amr_control/core/path_tracker.hpp` | 33.3% (1/3) |
+| `perception/amr_safety/amr_safety/avoidance_eval/cli.py` | 56.5% (48/85) |
+| `perception/amr_safety/amr_safety/avoidance_eval/obstacles.py` | 65.6% (21/32) |
+| `perception/amr_detection/amr_detection/detector.py` | 67.4% (29/43) |
 
-로직은 ROS 없는 모듈로 나눠 단위 테스트하고, 노드 파일은 구독·발행 연결만 한다. 노드 파일은 단위 테스트가 닿지 않아 패키지 전체가 70% 아래로 내려간다. 다른 패키지도 같은 구조라 아래를 정해야 한다.
+**로직 모듈 전체 96.3%** (7253/7532줄). 모든 패키지가 로직 모듈 70% 이상이다. 노드 파일은 launch 테스트가
+하위 프로세스로 띄워 단위 커버리지에 잡히지 않는다(아래). 10/6에는 `amr_localization` 패키지 전체 62%만 쟀다.
 
 **보고와 판정을 나눈다** (#86 하연 리뷰)
 
@@ -77,7 +102,7 @@
 - **70% 판정**: ROS 없는 로직 모듈(예: `amr_localization.eval`·`kidnap`, `amr_fleet_core`, `amr_planning_core`, `amr_perception_core`) 기준으로 한다. 근거는 원 명세 체크리스트 "핵심 알고리즘(DWA, A*, EKF 등)이 독립 모듈로 구현되어 테스트 가능한가?"다. 노드 연결은 통합 테스트(2절)가 확인한다.
 - 노드 파일까지 커버리지에 넣으려면 launch 테스트가 띄우는 하위 프로세스의 커버리지를 모아야 한다(`COVERAGE_PROCESS_START`). 여유가 생기면 추가한다.
 
-측정: Python은 `colcon test --pytest-args --cov=<모듈> --cov-report=xml`, C++는 `--mixin coverage-gcc` + lcov. CI(`ci.yml`)에 모듈별 커버리지 표를 출력하는 단계를 추가하고, 70% 판정(실패)은 P4에 켠다.
+측정: CI `coverage` 작업(dev push마다, `ci.yml`)이 위 표를 실행 요약과 아티팩트(`coverage.md`, 패키지별 XML)로 남긴다. 70% 판정(실패)은 P4에 `coverage_table.py --fail-under 70`으로 켠다.
 
 ## 4. 정해야 할 것 (10/12 회의)
 
