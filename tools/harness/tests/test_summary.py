@@ -425,6 +425,32 @@ def test_tracking_p1_p2_verdict_only_in_scenes_abde(tmp_path):
     assert kpi_verdict('track.vel.rmse', 0.1, 0.12, 0.08, 'tracking_kpi') is None   # 공통 틀
 
 
+def test_kpi_holds_when_some_runs_have_no_value(tmp_path):
+    # AMCL은 서 있으면 갱신하지 않아 정지 구간이 비는 실행이 있다. 잰 실행만으로 PASS를 주지 않는다
+    runs = [make_run(tmp_path, f'a{i}') for i in range(3)]
+    for run in runs[1:]:
+        path = run / 'eval_ekf' / 'localization_summary.json'
+        s = json.loads(path.read_text())
+        s['segments']['stationary'] = None
+        path.write_text(json.dumps(s))
+    m = summarize(runs)['loc_basic']['metrics']
+    assert 'kpi' not in m['loc.amr_01.eval_ekf.stationary.rmse']
+    assert m['loc.amr_01.eval_ekf.stationary.rmse']['kpi_note'] == '보류 (값 없는 실행 2회)'
+    assert m['loc.amr_01.eval_ekf.straight.rmse']['kpi'] == 'PASS'
+    # 잰 실행만으로도 기준을 넘으면 FAIL은 그대로
+    bad = [make_run(tmp_path / 'b', f'b{i}', rmse=0.05) for i in range(2)]
+    (bad[1] / 'eval_ekf' / 'localization_summary.json').write_text(json.dumps({'robot': 'amr_01', 'segments': {}}))
+    assert summarize(bad)['loc_basic']['metrics']['loc.amr_01.eval_ekf.stationary.rmse']['kpi'] == 'FAIL'
+
+
+def test_tracking_p1_p2_hold_below_ten_runs(tmp_path):
+    a = [make_track_run(tmp_path, f'a{i}', 'tracking_kpi_a', hold=0.6 + 0.01 * i, vel=0.1 + 0.01 * i)
+         for i in range(9)]
+    m = summarize(a)['tracking_kpi_a/main']['metrics']
+    for metric in ('track.pred_gain_1s', 'track.vel.rmse'):
+        assert 'kpi' not in m[metric] and m[metric]['kpi_note'] == '보류 (n=9<10)'
+
+
 def test_tracking_d1_worst_case_verdict(tmp_path):
     def d1(name, ttcs, scenario='tracking_kpi_c10', failed=0):
         root = tmp_path / name

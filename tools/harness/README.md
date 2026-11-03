@@ -109,7 +109,7 @@ seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도
 
 **작업·로봇 장애 지표** (`fleet_fake`): `fleet.tasks_requested`·`tasks_completed`·`task_completion_rate`(`task_outcomes.csv`), 완료한 작업의 `fleet.task_time_s.mean`(요청~완료)·`distance_m.total`·`distance_m.mean`, `fleet.throughput_per_min`(완료 작업 수 / 첫 요청~마지막 완료 분), `fleet.duplicate_tasks`(같은 작업을 둘 이상의 로봇이 움직이며 한 수, `runners` 열. 하이브리드 중복 실행), 하이브리드 실행이면 `fleet.fallbacks`(분산 전환 횟수)·`fleet.decentral_s`(분산 모드 시간 합, `fleet_modes.csv`), 로봇 장애 실행이면 `fleet.reclaimed_tasks`·`recovery_s.mean`·`recovery_s.max`·`reclaimed_completed_rate`(`recovery.csv`). 실행 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로 완료율은 같은 seed(같은 작업 일정)의 장애 있음·없음끼리 비교한다.
 
-**요약** (`summary_<시나리오>-<라벨>_<시각>.md`): 지표마다 실행별 값의 평균·표준편차·범위와 95% 신뢰구간. KPI가 있는 지표는 CI 상한까지 기준 안이면 PASS, 평균만 기준 안이면 MARGINAL, 아니면 FAIL이다.
+**요약** (`summary_<시나리오>-<라벨>_<시각>.md`): 지표마다 실행별 값의 평균·표준편차·범위와 95% 신뢰구간. KPI가 있는 지표는 CI 상한까지 기준 안이면 PASS, 평균만 기준 안이면 MARGINAL, 아니면 FAIL이다. 완료한 실행 중 그 지표 값이 없는 실행이 있으면 PASS·MARGINAL 대신 "보류 (값 없는 실행 k회)"로 적는다 (잰 실행만 골라 통과시키지 않게. 잰 실행만으로 FAIL이면 FAIL). 추적 P1·P2는 장면마다 10회 미만이면 "보류 (n=…<10)"
 
 `nav_kpi`는 `navkpi.*`로 요약한다: 경로 계획 성공률(≥ 98 %, 클수록 좋아 CI **하한**으로 판정), 재계획 P95(≤ 500 ms), 주행시간 예측 오차 평균(≤ 15 %), CTE 직선·곡선(≤ 5·10 cm). CTE는 `controller=pp`(path_tracker) 실행만 KPI로 판정하고 DWA로 잰 값은 `navkpi.ref_cte_*`(참고)로 남는다. 실행 1회면 CI가 없어 기준 안이어도 MARGINAL로 나온다.
 
@@ -313,6 +313,7 @@ tools/harness/results/<run_id>/
 | `response_time.csv` Ack 컬럼 | `assignment_id`, `ack_time`, `ack_rtt_ms`, `resends`. 첫 발송 기준이라 재전송 시간 포함 | 하연·민지, #33 |
 | 응답 시간 두 기준 (10/13) | `latency_ms`는 서버 발행 → 첫 움직임(원 명세 측정 표 "작업 명령 발행", 통신 지연 포함), `latency_recv_ms`는 로봇이 받은 중계본 도착 → 첫 움직임(성능 요구사항 "명령 수신 ~ 로봇 반응"). 둘 다 보고하고 판정 기준은 측정 뒤 회의에서 | 하연 |
 | 응답 시간 보조 지표 (10/15, #171 리뷰) | 판정 기준은 10/19 회의에서 정하고, 그 전에 볼 값만 더한다. `fleet.response_sim_ms`(시뮬레이션 시간, RTF < 1이면 실제 시간 값이 부푼다), `fleet.response_coverage`(움직임을 찾은 명령 ÷ 명령. 못 찾은 명령은 평균에서 빠진다), `fleet.response_moving_at_cmd`(명령 순간 이미 움직이던 경우 수. 지연이 0에 가깝고 `latency_recv_ms`는 음수도 나온다. 빼지 않고 표시만). 실행을 모두 합쳐 움직임을 찾은 명령이 50건 미만이면 응답 시간 판정을 비우고 "보류 (n=…<50)"로 적는다 | 하연·민지 |
+| 값 없는 실행 보류 (11/3) | 평균·CI로 판정하는 KPI도 최악값 KPI(D1)처럼, 완료했는데 값이 없는 실행이 있으면 PASS·MARGINAL을 보류로 바꾼다(FAIL은 유지). 예: AMCL 정지 구간은 로봇이 서 있으면 갱신이 없어 10회 중 3회 값으로 PASS가 났다. P1·P2는 미리 정한 실행 수(장면마다 10회) 미만이면 보류 | 민지 |
 | 교착 판정 (10/13) | 구역 허가를 30 s(서버 `release_timeout_s`) 넘게 못 받은 요청 0건(`fleet.zone_long_waits`)과 이동 단계 60 s 넘는 정체 0건(`fleet.stalls`). 정체는 구역 밖 교착도 잡는다. 수치는 측정 뒤 조정 가능 | 하연 |
 | CPU 판정 (10/13) | `sys.cpu_pct.mean` ≤ 80. 컨테이너가 쓸 수 있는 코어 기준이라 기준 기기는 `docker --cpus`로 맞춘다. 기기와 덜 상관있는 `sys.cpu_cores`(사용 코어 수)와 시뮬레이터를 뺀 `sys.cpu_cores_no_sim`을 같이 보고. 작업이 끝난 뒤 쉬는 구간도 평균에 들어가므로 `sys.cpu_pct.p95`도 본다. 작업 구간만 자를지와 기준 기기는 10/19 회의. 10/28: 역할별 코어 수 `sys.cpu_cores.server`(Fleet 서버), `.robot_max`(구간마다 가장 많이 쓴 로봇 1대), `.robot_mean`, `.tool`(장애 주입기·작업 생성기·녹화 등 실험 도구)을 추가. 시뮬레이터·실험 도구를 빼고 서버와 로봇 1대를 따로 판정하려는 것. 비율은 두 가지: `sys.cpu_pct.<묶음·역할>.mean`(실행한 컴퓨터 대비), `sys.cpu_ref_pct.{server,robot_max}`(각각 4코어 컴퓨터로 본 사용률, `summary.REF_CORES`, 팀 합의 전 가정) | 하연 |
 | 판정하지 않는 지표 | `fleet_deadlock`은 교착을 일부러 만드는 시나리오라 `fleet.zone_long_waits`·`fleet.stalls`를 판정하지 않는다(값만 보고). 이 시나리오의 기준("유도된 교착이 풀린 시간" 등)은 회의에서 | 하연·민지 |
