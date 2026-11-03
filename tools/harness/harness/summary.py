@@ -43,6 +43,8 @@ NAV_KPI = {'navkpi.plan_success_rate': (0.98, 'min'), 'navkpi.replan_p95_ms': (5
 # P1은 0과 같아도 불합격이다 (추정 속도가 0이면 예측과 정지 가정이 같아진다). 장면 A·B·D·E에서만 판정한다
 TRACK_KPI = {'track.pred_gain_1s': (0.0, 'gt'), 'track.vel.rmse': (0.2, 'max')}
 TRACK_KPI_SCENARIOS = {'tracking_kpi_a', 'tracking_kpi_b', 'tracking_kpi_d', 'tracking_kpi_e'}
+# 평균·CI로 판정하는 KPI의 최소 실행 수. 모자라면 보류다 (P1·P2는 장면마다 10회로 미리 정했다, perception.md 1-7)
+KPI_MIN_RUNS = {'track.pred_gain_1s': 10, 'track.vel.rmse': 10}
 # 최악값으로 판정하는 KPI: 지표 → (기준 하한, 최소 실행 수, 판정할 시나리오). 안전 기준이라 평균·CI가 아니라
 # 모든 실행이 기준 이상이어야 한다 (D1, perception.md 1-7)
 WORST_KPI = {'track.d1_ttc_s': (3.0, 10, {'tracking_kpi_c10', 'tracking_kpi_c15'})}
@@ -511,7 +513,14 @@ def summarize(run_dirs: Iterable[Path]) -> dict:
             verdict = kpi_verdict(metric, iv.mean, iv.ci_high, iv.ci_low, g.get('scenario', ''))
             n_key = RESPONSE_KPI.get(metric)
             samples = int(sum(g['values'].get(n_key, []))) if n_key else 0
-            if verdict and n_key and samples < RESPONSE_MIN_N:
+            min_runs = KPI_MIN_RUNS.get(metric, 0)
+            if verdict in ('PASS', 'MARGINAL') and iv.n < len(g['runs']):
+                # 값이 없는 실행을 빼고 통과시키면 잰 실행만 고르는 셈이다. 잰 실행만으로도 FAIL이면 FAIL로 둔다
+                # (worst_kpi_verdict와 같은 원칙)
+                d['kpi_note'] = f"보류 (값 없는 실행 {len(g['runs']) - iv.n}회)"
+            elif verdict and iv.n < min_runs:
+                d['kpi_note'] = f'보류 (n={iv.n}<{min_runs})'
+            elif verdict and n_key and samples < RESPONSE_MIN_N:
                 # 명세서 "50회 이상": 실행을 모두 합쳐 움직임을 찾은 명령이 모자라면 판정하지 않는다
                 d['kpi_note'] = f'보류 (n={samples}<{RESPONSE_MIN_N})'
             elif verdict:
