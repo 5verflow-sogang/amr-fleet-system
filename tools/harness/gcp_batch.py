@@ -25,8 +25,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness.batch import (append_log, free_slots, parse_conditions, parse_slots, pending,  # noqa: E402
-                           read_log, running, with_ref)
+from harness.batch import (append_log, attempts, free_slots, latest, parse_conditions, parse_slots,  # noqa: E402
+                           pending, read_log, running, with_ref)
 
 GCP_RUN = Path(__file__).resolve().parent / 'gcp_run.sh'
 RUN_URL = re.compile(r'https://github\.com/\S+/actions/runs/(\d+)')
@@ -107,7 +107,7 @@ def main(argv=None) -> int:
             if not todo:
                 break
             cond = todo.pop(0)
-            attempt = sum(1 for r in log if r['key'] == cond.key and r['status'] == 'dispatched') + 1
+            attempt = attempts(log, cond.key) + 1
             run_id, url = dispatch(with_ref(cond.args, args.ref, args.pr), slot)
             base = {'key': cond.key, 'attempt': attempt, 'slot': slot, 'run_id': run_id, 'url': url,
                     'started': now()}
@@ -123,9 +123,7 @@ def main(argv=None) -> int:
             time.sleep(5)  # gcp_run.sh가 방금 넣은 실행을 '가장 최근 실행'으로 찾으므로 다음 넣기와 간격을 둔다
         time.sleep(args.poll)
 
-    last = {}
-    for row in read_log(log_path):
-        last[row['key']] = row
+    last = latest(read_log(log_path))
     ok = sum(1 for r in last.values() if r['conclusion'] == 'success')
     print(f'끝: 성공 {ok} / 전체 {len(conditions)}. 기록 {log_path}')
     for r in last.values():

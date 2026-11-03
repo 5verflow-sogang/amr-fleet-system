@@ -55,6 +55,17 @@ def test_context_line_shows_gcp_runner(tmp_path):
                                    ' · 지연 100 ms · 손실 5% · seed 1~1')
 
 
+def test_context_line_shows_seed_actually_passed(tmp_path):
+    """seed_offset으로 옮긴 개발용 녹화는 실제로 넘긴 seed(scene_seed)를 보인다. 없는 예전 실행은 seed 그대로."""
+    runs = [make_run(tmp_path, f'r{i}', seed=i + 1) for i in range(3)]
+    for i, run in enumerate(runs[:2]):
+        meta = json.loads((run / 'meta.json').read_text())
+        meta['scene_seed'] = 1001 + i
+        (run / 'meta.json').write_text(json.dumps(meta))
+    assert context_line(runs[:2]).endswith(' · seed 1001~1002')
+    assert context_line(runs[2:]).endswith(' · seed 3~3')
+
+
 def test_host_info_records_runner(monkeypatch):
     from harness.runner import host_info
     monkeypatch.delenv('HARNESS_RUNNER_MACHINE', raising=False)

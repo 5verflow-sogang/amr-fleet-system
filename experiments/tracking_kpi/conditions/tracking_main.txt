@@ -1,0 +1,10 @@
+# 추적 KPI 본 측정 (perception.md 1-7 측정 조건). 장면마다 10회, 시드 1~10 (장면 기본값 그대로: A·B·D 300 s, C 40 s, E 주행 끝까지)
+# 판정: P1·P2는 A·B·D·E, D1(최악값)은 C10·C15. 라벨 main은 짧은 시험(smoke)과 요약이 섞이지 않게
+# 순서: 짧은 C10을 맨 앞에 둬서 10회 연속 실행이 괜찮은지 약 25분 만에 본다 (결과는 장면이 끝나야 버킷에 올라온다)
+tracking_kpi_c10 -n 10 --label main
+tracking_kpi_c15 -n 10 --label main
+tracking_kpi_a   -n 10 --label main
+tracking_kpi_b   -n 10 --label main
+tracking_kpi_c05 -n 10 --label main
+tracking_kpi_d   -n 10 --label main
+tracking_kpi_e   -n 10 --label main

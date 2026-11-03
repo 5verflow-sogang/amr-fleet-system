@@ -23,6 +23,14 @@ inline bool operator!=(const Cell & lhs, const Cell & rhs)
   return !(lhs == rhs);
 }
 
+// 평면 위의 점. 좌표계는 쓰는 곳이 정한다 - DWA는 Grid 로컬 좌표(미터, 셀 (0,0)의 모서리가 원점,
+// dwa.hpp RobotState 참고), 경로 평활화는 셀 단위(셀 (x, y)의 중심이 (x, y), path_smoothing.hpp 참고).
+struct Point2D
+{
+  double x = 0.0;
+  double y = 0.0;
+};
+
 // 2D 점유 격자의 읽기 전용 뷰. 비용 버퍼는 소유하지 않는다.
 // 2주차에 nav2_core 플러그인에서 costmap의 getCharMap() 버퍼를 복사 없이
 // 그대로 감싸기 위한 설계다. 따라서 plan() 호출이 끝날 때까지 버퍼는

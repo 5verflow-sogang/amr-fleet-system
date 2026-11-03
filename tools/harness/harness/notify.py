@@ -70,7 +70,8 @@ def context_line(run_dirs: Iterable[Path]) -> str:
     fault = first.get('fault')
     if fault:
         parts.append(f"지연 {fault['delay_ms']:g} ms · 손실 {fault['loss_pct']:g}%")
-    seeds = sorted(m['seed'] for m in metas if isinstance(m.get('seed'), int))
+    # 실제로 넘긴 seed (seed_offset 반영). scene_seed가 생기기 전 실행은 seed 그대로
+    seeds = sorted(m.get('scene_seed', m['seed']) for m in metas if isinstance(m.get('seed'), int))
     if seeds:
         parts.append(f'seed {seeds[0]}~{seeds[-1]}')
     return '하네스 결과 · ' + ' · '.join(parts)

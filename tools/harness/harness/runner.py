@@ -249,11 +249,9 @@ class ConfigOverrides:
         self.items = []
         for spec in specs:
             target, _, source = spec.partition('=')
-            pkg, _, rel = target.partition('/')
-            prefix = subprocess.run(['ros2', 'pkg', 'prefix', pkg], capture_output=True, text=True).stdout.strip()
-            if not prefix or not source:
+            if '/' not in target or not source:
                 raise ValueError(f'--config 형식: <패키지>/<경로>=<파일> (지금 {spec!r})')
-            self.items.append((target, Path(prefix) / 'share' / pkg / rel, Path(source).resolve()))
+            self.items.append((target, installed_path(target), Path(source).resolve()))
 
     def __enter__(self):
         for _, dest, source in self.items:
@@ -336,6 +334,21 @@ def git_sha() -> str:
         return 'unknown'
 
 
+def scene_seed(params: dict) -> int:
+    """시나리오가 실제로 넘기는 seed = 하네스 seed + params seed_offset (없으면 0, README "seed 규칙" 5).
+
+    GCP에서는 --seed-base를 바꿀 수 없어, 개발용 녹화는 seed_offset으로 시드를 옮긴다(tracking_kpi, nav_avoidance).
+    """
+    offset = params.get('seed_offset', 0)
+    try:
+        value = params['seed'] + int(offset)
+    except (TypeError, ValueError):
+        raise ValueError(f'seed_offset은 정수여야 한다: {offset!r}') from None
+    if value < 1:
+        raise ValueError(f'seed + seed_offset = {value}: 하네스는 1 이상만 넘긴다 (README "seed 규칙" 1)')
+    return value
+
+
 def fault_meta(params: dict) -> Optional[dict]:
     """연구 1 장애 조건 (README meta.json `fault`). 시나리오가 delay_ms를 쓰지 않으면 None."""
     if 'delay_ms' not in params:
@@ -385,7 +398,7 @@ def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[Co
     params = {**params, 'run_dir': str(run_dir)}
     meta = {
         'run_id': run_dir.name, 'scenario': scenario['name'], 'label': params.get('label', ''),
-        'repeat': params['repeat'], 'seed': params['seed'], 'git_sha': git_sha(),
+        'repeat': params['repeat'], 'seed': params['seed'], 'scene_seed': scene_seed(params), 'git_sha': git_sha(),
         'params': {k: v for k, v in params.items() if k not in ('run_dir',)},
         # --set num_robots로 대수를 바꾸는 시나리오(fleet_fake)는 params 값이 실제 대수다
         'num_robots': int(params.get('num_robots', scenario.get('num_robots', 1))),

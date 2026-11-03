@@ -44,6 +44,16 @@ resource "google_artifact_registry_repository" "docker" {
   format        = "DOCKER"
   description   = "러너용 Docker 이미지·빌드 캐시"
 
+  # KEEP 규칙은 DELETE 규칙의 예외일 뿐이라, DELETE 규칙이 없으면 아무것도 지우지 않는다.
+  # 처음엔 KEEP만 있어서 실행마다 올린 빌드 캐시가 쌓였다 (11/2 66개, 약 40 GB, 월 약 5,000원)
+  cleanup_policies {
+    id     = "delete-old"
+    action = "DELETE"
+    condition {
+      older_than = "604800s" # 7일
+    }
+  }
+
   cleanup_policies {
     id     = "keep-recent"
     action = "KEEP"

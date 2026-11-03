@@ -14,13 +14,13 @@ timeout_s: 400
 params:
   # near: 같은 통로 안 1~2.5 m·±0.6 rad / far: 다른 통로(B–C) 무작위 위치·방향
   mode: near
-  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v1_0025.yaml
-  # 지도↔월드 정합값(#98, v1 0.025 m). 옆 방향 기준(0.1 m)이 작아 지도 밀림(약 6 cm)을 빼고 잰다.
-  # 0.05 m로 재려면 map=…/warehouse_v1.yaml map_origin=[-0.0571,1.5167,0.00013] initial_x=0.0571 initial_y=-0.0167
-  map_origin: "[-0.0562, 1.5317, 0.00009]"
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v2_0025.yaml
+  # 지도↔월드 정합값(v2 0.025 m, #242). 옆 방향 기준(0.1 m)이 작아 지도 밀림(약 5 cm)을 빼고 잰다.
+  # 0.05 m로 재려면 map=…/warehouse_v2.yaml map_origin=[0.0173,1.4556,0.00026] initial_x=-0.0173 initial_y=0.0444
+  map_origin: "[-0.0439, 1.4712, -0.00088]"
   # 스폰 자세 world (0, 1.5, 0)을 위 원점 기준 map 좌표로 바꾼 AMCL 초기 위치
-  initial_x: "0.0562"
-  initial_y: "-0.0317"
+  initial_x: "0.0439"
+  initial_y: "0.0288"
 processes:
   - name: sim
     cmd: >-

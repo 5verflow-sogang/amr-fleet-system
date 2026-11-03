@@ -3,13 +3,13 @@
     ros2 run amr_mapping gt_map $(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/worlds/warehouse.sdf \\
         maps/warehouse_gt.yaml
 
-지도 v1의 휨(#183, 서쪽·북쪽 끝 14~22 cm) 없이 내비·Fleet 실험을 하려고 만든다. 위치추정 KPI(맵 품질)는
-SLAM 지도 v1로 그대로 잰다.
+SLAM 지도의 휨(#183, v1 서쪽·북쪽 끝 14~22 cm)과 벽 띠 두께(좁은 통로가 22칸으로 좁아짐) 없이 내비·Fleet 실험을
+하려고 만든다. 위치추정 KPI(맵 품질)는 SLAM 지도(기본 v2)로 잰다.
 
 - 좌표는 map이다. 물체를 TF world → map(`map_origin_in_world`, system.launch.py 기본
-  [−0.0562, 1.5317, 0.00009])으로 옮겨 그리므로, launch에서 `map:=`만 바꿔 끼우면 구역 파일·측정 구역(map
+  [−0.0439, 1.4712, −0.00088])으로 옮겨 그리므로, launch에서 `map:=`만 바꿔 끼우면 구역 파일·측정 구역(map
   x −10~15, y −15~5) 좌표가 그대로 맞는다.
-- 칸 크기·원점·칸 수는 지도 v1 0.025 m(`warehouse_v1_0025`)와 같다.
+- 칸 크기·원점·칸 수는 기본 지도 v2 0.025 m(`warehouse_v2_0025`)와 같다 (#242 전에는 v1 칸).
 - 칸 중심이 물체 안이면 점유(0)다. 경계가 칸 중간에 걸려도 0.6 m 통로는 0.025 m 칸 24개로 남는다.
 - 외벽 안쪽 바닥은 빈 칸(254), 외벽 바깥은 미관측(205). 물체 속도 점유로 채운다 (SLAM 지도는 속이 미관측).
 - 스캔 평면(지면 약 0.38 m, #92)에 걸리는 것만 그린다: 랙·기둥·도크 플랫폼·충전기 본체·외벽
@@ -27,10 +27,10 @@ import numpy as np
 
 from amr_mapping.map_quality import NARROW_PASSAGES, Box, load_objects, signed_boundary_distance, write_png
 
-MAP_ORIGIN_IN_WORLD = (-0.0562, 1.5317, 0.00009)   # system.launch.py 기본 (#157, 지도 v1 0.025 m 정렬값)
+MAP_ORIGIN_IN_WORLD = (-0.0439, 1.4712, -0.00088)   # system.launch.py 기본 (지도 v2 0.025 m 정렬값, #242)
 RESOLUTION = 0.025
-ORIGIN = (-30.2, -21.8)    # 지도 왼쪽 아래 칸 모서리 (map), v1과 같다
-SIZE = (2417, 1616)        # 칸 수 (가로, 세로), v1 0.025 m와 같다
+ORIGIN = (-30.1, -21.6)    # 지도 왼쪽 아래 칸 모서리 (map), v2 0.025 m와 같다
+SIZE = (2411, 1609)        # 칸 수 (가로, 세로), v2 0.025 m와 같다
 INSIDE = (30.0, 20.0)      # 외벽 안쪽 면 |x|, |y| (world)
 
 OCCUPIED, FREE, UNKNOWN = 0, 254, 205

@@ -27,6 +27,11 @@
     dynamic_warning_distance: 1.5
     # WARNING 선속도 상한 [m/s] (SafetyStatus.msg: 반응 0.2 s + 1.0 m/s²로 0.3 m 안에 서는 최대 속도)
     warning_speed_limit: 0.6
+    # 움직이는 트랙이 차체에서 이 거리 [m] 안이면 방향과 상관없이 이 선속도 [m/s]까지 (거리 0이면 끔).
+    # 바로 옆에서 멀어지던 사람이 돌아서면 추적 속도가 따라오는 약 0.5 s 동안 TTC가 무한이라, 그 사이 출발·가속한
+    # 로봇에 부딪혔다(I17 시드 1019·1029). 0.15면 0.5 s + 반응 0.2 s + 1.0 m/s² 정지 동안 약 0.12 m만 간다
+    dynamic_slow_distance: 0.5
+    dynamic_slow_speed_limit: 0.15
     # 단계를 내릴 때 조건이 풀린 채 유지돼야 하는 시간 [s] (깜빡임 방지). 올릴 때는 바로
     release_hold_s: 0.5
 

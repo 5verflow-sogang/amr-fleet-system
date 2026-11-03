@@ -1,4 +1,5 @@
 note: make_waypoints.py가 만든다. world 좌표 [x, y]. 첫 점은 스폰 자세이고 쌍 i = (점 i, 점 i+1)
+# 점은 지도 v1에서 뽑았다. world 좌표라 기본 지도가 v2가 돼도 다시 뽑지 않는다 (여유 0.7 m, 두 지도 차이 약 6 cm)
 map: warehouse_v1_0025.yaml
 seed: 1
 clearance_m: 0.7

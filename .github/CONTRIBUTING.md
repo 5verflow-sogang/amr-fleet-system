@@ -184,3 +184,7 @@ colcon test --packages-select amr_xxx
 ```
 
 `colcon build` 경고 0이 원 명세서 요구사항이다. CI가 경고를 에러로 처리한다.
+
+빌드 타입은 CI·하네스·dev 컨테이너 모두 `RelWithDebInfo`(-O2 -g)다. dev 컨테이너는 `docker/colcon_defaults.yaml`을
+`COLCON_DEFAULTS_FILE`로 받아 `colcon build`만 쳐도 이 타입으로 빌드한다. 타입을 안 주면 CMake가 최적화 없이 빌드해
+5대 Nav2 스택에서 DWA가 20 Hz 제어 주기를 놓친다(#265).

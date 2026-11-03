@@ -1,0 +1,3 @@
+key,attempt,slot,run_id,url,status,conclusion,started,finished
+tracking_kpi_b -n 10 --label main_rerun,1,a,41258783075,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41258783075,dispatched,,2026-11-01T09:54:22,
+tracking_kpi_b -n 10 --label main_rerun,1,a,41258783075,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41258783075,completed,success,2026-11-01T09:54:22,2026-11-01T10:57:47

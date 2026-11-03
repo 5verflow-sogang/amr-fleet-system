@@ -6,3 +6,11 @@
     </description>
   </class>
 </library>
+<library path="astar_planner">
+  <class type="amr_nav2_plugins::AStarGlobalPlanner" base_class_type="nav2_core::GlobalPlanner">
+    <description>
+      amr_planning_core::AStarPlanner(8방향 A*)와 smoothPath(지름길 + 경사 하강 평활화)를 감싸는
+      Nav2 Global Planner 플러그인.
+    </description>
+  </class>
+</library>

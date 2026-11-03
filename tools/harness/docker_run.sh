@@ -30,8 +30,9 @@ PACKAGES="${HARNESS_PACKAGES:-${SCENARIO_PACKAGES:-amr_gazebo amr_odometry amr_l
 run_container() {
   local extra="$1"; shift
   # --init: 부모가 먼저 끝난 프로세스(Gazebo 실행기 등)를 거둬 좀비가 쌓이지 않게 한다
+  # --shm-size: 기본 64 MB면 로봇 5대 스택이 1회차에 거의 다 써, 반복할수록 Fast DDS가 공유 메모리를 못 잡고 UDP로 돌아가 CPU가 포화된다 (11/1 fleet_stack-kpi)
   # shellcheck disable=SC2086
-  docker run --rm --init -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-}" -e HARNESS_DISCORD_WEBHOOK \
+  docker run --rm --init --shm-size=1g -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-}" -e HARNESS_DISCORD_WEBHOOK \
     -e HARNESS_RUNNER_MACHINE -e HARNESS_RUNNER_SLOT -e HARNESS_TRIGGERED_BY $extra \
     -v "$REPO:/repo" -w /repo "$IMAGE" bash -c "
       set -e
@@ -43,8 +44,11 @@ run_container() {
       # 레포 주인(호스트 사용자)과 컨테이너 사용자(root)가 달라 git이 거부하면 meta.json git_sha가 unknown이 된다
       git config --global --add safe.directory /repo 2>/dev/null || true
       if [ -n \"\$HARNESS_PREP\" ]; then bash -c \"\$HARNESS_PREP\"; fi
+      # 빌드 타입을 안 주면 최적화 없이(-O0) 빌드돼 5대 Nav2 스택에서 DWA가 20 Hz 제어 주기를 놓친다(#265).
+      # CI(ci.yml)와 같은 RelWithDebInfo로 맞춘다
       colcon build --base-paths src --build-base /tmp/harness_ws/build --install-base /tmp/harness_ws/install \
-        --packages-up-to $PACKAGES > /tmp/harness_build.log 2>&1 || { tail -30 /tmp/harness_build.log; exit 1; }
+        --packages-up-to $PACKAGES --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        > /tmp/harness_build.log 2>&1 || { tail -30 /tmp/harness_build.log; exit 1; }
       source /tmp/harness_ws/install/setup.bash
       python3 tools/harness/run.py $(printf '%q ' "$@")"
 }
