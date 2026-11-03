@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,19 @@ Path arcPath(double radius, double angle, double spacing = 0.05)
   for (int i = 0; i <= n; ++i) {
     const double a = angle * i / n;
     path.push_back(PathPoint{radius * std::sin(a), radius - radius * std::cos(a)});
+  }
+  return path;
+}
+
+// 직선(straight_len) 뒤에 이어지는 원호(반지름 radius, 각도 angle, 왼쪽으로). 커브 진입 때
+// 각속도 한계가 v를 깎는 상황을 재현하려고(#279 리뷰) 순항 속도까지 올린 뒤 커브에 들어가게 한다
+Path straightThenArc(double straight_len, double radius, double angle, double spacing = 0.05)
+{
+  Path path = straightPath(straight_len, spacing);
+  const int n = static_cast<int>(std::ceil(radius * angle / spacing));
+  for (int i = 1; i <= n; ++i) {
+    const double a = angle * i / n;
+    path.push_back(PathPoint{straight_len + radius * std::sin(a), radius - radius * std::cos(a)});
   }
   return path;
 }
@@ -287,6 +301,52 @@ TEST(PathTracker, JerkLimitDoesNotBreakStopAccuracy)
   EXPECT_LT(dist_to_end, tol + 0.03);
   EXPECT_LT(sim.final_pose.x, 3.0 + 0.03);
   EXPECT_NEAR(sim.final_v, 0.0, 1e-3);
+}
+
+// #279 민지 리뷰 재현: 커브 진입 때 각속도 한계가 v를 깎으면(순항 → 곡률 상한), 저크가 그
+// 감속을 "가속도 이력"으로 들고 가서 다음 틱부터 회복을 계속 느리게 묶어 거의 멈춰 섰다
+// (κ=5에서 0.5 → 0.3 → 0.11 → 0). 고친 뒤에는 원호 구간 내내 v가 max_angular_speed/κ
+// (곡률이 요구하는 값) 근처에 머물러야 한다 - 그보다 크게 더 떨어지면 버그가 재발한 것
+TEST(PathTracker, JerkLimitDoesNotStallOnCurveEntry)
+{
+  for (const double kappa : {4.0, 5.0}) {
+    SCOPED_TRACE("kappa " + std::to_string(kappa));
+    const double radius = 1.0 / kappa;
+
+    PathTrackerConfig config;
+    config.max_linear_jerk = 2.5;
+    PathTracker tracker(config);
+    tracker.setPath(straightThenArc(3.0, radius, M_PI));
+
+    const double v_floor = config.max_angular_speed / kappa;
+    double min_v_in_curve = std::numeric_limits<double>::infinity();
+    bool entered_curve = false;
+    double v = 0.0;
+    double w = 0.0;
+    Pose2D pose{0.0, 0.0, 0.0};
+    for (int i = 0; i < static_cast<int>(20.0 / kDt); ++i) {
+      const auto result = tracker.compute(pose, v, kDt);
+      if (result.status == TrackingStatus::kGoalReached) {
+        break;
+      }
+      // 곡률이 커브 값(kappa)에 가까워지면 원호 구간으로 본다(직선 구간은 곡률 0)
+      if (result.path_curvature > kappa * 0.5) {
+        entered_curve = true;
+        min_v_in_curve = std::min(min_v_in_curve, result.v);
+      }
+      v = result.v;
+      w = result.w;
+      pose.x += v * std::cos(pose.yaw) * kDt;
+      pose.y += v * std::sin(pose.yaw) * kDt;
+      pose.yaw = normalizeAngle(pose.yaw + w * kDt);
+    }
+    ASSERT_TRUE(entered_curve);
+    // Pure Pursuit lookahead가 직선→원호 전환 구간에 걸쳐 있는 한두 틱은 곡률 추정이 더 커져
+    // v_floor보다 살짝 더 떨어질 수 있다(정상) - 고치기 전 버그는 그 틱들에서 0까지 주저앉고
+    // 거기서 회복을 못 해 0.6 s 가까이 멈췄다. 상대 여유(절반)로 "약간의 전환 지연"과
+    // "거의 멈춰 선 버그"를 가른다
+    EXPECT_GT(min_v_in_curve, v_floor * 0.5);
+  }
 }
 
 TEST(PathTracker, ControllerTypeNames)

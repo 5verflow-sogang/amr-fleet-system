@@ -87,12 +87,19 @@ def analyze(samples, target):
     peak_v = max(v for _, v in samples)
     overshoot_pct = max(0.0, (peak_v - target) / target * 100.0) if target > 0 else 0.0
 
+    # 정착 시간은 "경로를 publish한 시점(t=0)"이 아니라 "실제로 움직이기 시작한 시점"부터 잰다 -
+    # t=0부터 path_tracker_node가 실제로 cmd_vel을 내기까지 ROS 그래프 전달 지연(최대 1 s 가까이
+    # 들쭉날쭉했다, #279 재측정 때 발견)이 껴서, 그 지연이 그대로 "정착이 늦다"로 보이면 계단
+    # 응답 자체와 측정 잡음을 못 가른다.
+    onset_t = next((t for t, v in samples if v > 0.01), None)
+    settled_samples = [(t, v) for t, v in samples if onset_t is None or t >= onset_t]
+
     band = SETTLE_BAND * target
     settling_time_s = -1.0
-    for i, (t, v) in enumerate(samples):
+    for i, (t, v) in enumerate(settled_samples):
         if abs(v - target) <= band:
-            if all(abs(v2 - target) <= band for _, v2 in samples[i:]):
-                settling_time_s = t
+            if all(abs(v2 - target) <= band for _, v2 in settled_samples[i:]):
+                settling_time_s = t - (onset_t or 0.0)
                 break
 
     t_end = samples[-1][0]

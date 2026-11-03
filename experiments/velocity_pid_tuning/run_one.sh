@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 속도 PID 계단 응답 1회: Gazebo 월드 v0 + 로봇 1대(payload_mass) + path_tracker_node(velocity_pid) +
 # 직선 경로. dev 컨테이너 안에서 워크스페이스를 빌드·source한 뒤 실행한다.
-#   bash experiments/velocity_pid_tuning/run_one.sh <결과 폴더> <적재질량kg> <라벨> <enabled true|false> <kp> <ki> <kd> [target_mps]
+#   bash experiments/velocity_pid_tuning/run_one.sh <결과 폴더> <적재질량kg> <라벨> <enabled true|false> <kp> <ki> <kd> [target_mps] [max_linear_accel]
 set -u
 OUT=${1:?결과 폴더}
 MASS=${2:?적재질량 kg}
@@ -11,6 +11,10 @@ KP=${5:?kp}
 KI=${6:?ki}
 KD=${7:?kd}
 TARGET=${8:-0.5}
+# 기본 50.0(사실상 한 틱 안에 목표 속도, "계단 입력") - #279 민지 리뷰: DiffDrive 자신의
+# max_linear_acceleration(1.0 m/s²) 램프와 어긋나는 입력이라 적분이 더 쌓이는 면이 있다.
+# max_linear_accel:=1.0(추종기도 같은 1.0 m/s² 램프)으로 다시 돌려 결론이 그대로인지 본다
+ACCEL=${9:-50.0}
 HERE=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
@@ -61,10 +65,10 @@ done
 ros2 run amr_control path_tracker_node --ros-args -r __ns:=/amr_01 -r __node:=path_tracker \
   --params-file "$(ros2 pkg prefix amr_control)/share/amr_control/config/path_tracker.yaml" \
   -r odom:=diff_drive/odom -r cmd_vel_nav:=cmd_vel -p use_sim_time:=true \
-  -p desired_speed:="${TARGET}" -p max_linear_accel:=50.0 -p max_linear_jerk:=0.0 \
+  -p desired_speed:="${TARGET}" -p max_linear_accel:="${ACCEL}" -p max_linear_jerk:=0.0 \
   -p "velocity_pid.enabled:=${ENABLED}" -p "velocity_pid.kp:=${KP}" \
   -p "velocity_pid.ki:=${KI}" -p "velocity_pid.kd:=${KD}" -p robot_id:=amr_01 \
-  > "$OUT/tracker_${LABEL}_${MASS}kg.log" 2>&1 &
+  > "$OUT/tracker_${LABEL}_${MASS}kg_accel${ACCEL}.log" 2>&1 &
 TRACKER_PID=$!
 sleep 3
 

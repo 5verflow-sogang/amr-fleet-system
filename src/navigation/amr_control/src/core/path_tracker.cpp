@@ -126,6 +126,13 @@ TrackingResult PathTracker::compute(const Pose2D & pose, double measured_speed, 
     v = std::clamp(last_v_ + a_cmd * dt, 0.0, v_cap);
   }
 
+  // 저크의 "직전 가속도" 기준(last_a_)은 여기(각속도 한계로 v가 더 깎이기 전)에서 정한다 - 커브에
+  // 들어가며 각속도 한계가 v를 갑자기 줄여도(예: 0.5 → 0.3) 그 감속을 가속도 이력으로 들고 가면,
+  // 커브를 빠져나와도 "아직 브레이크 거는 중"으로 오인해 저크가 회복을 계속 느리게 묶는다(#279
+  // 민지 리뷰 - κ=5에서 0.5 → 0.3 → 0.11 → 0으로 주저앉는 버그 재현됨). 각속도 한계는 그 틱만의
+  // 기하 제약(곡선을 벗어나지 않으려는 순간 클램프)이라 가속도 "이력"에는 넣지 않는다.
+  const double v_before_curvature_limit = v;
+
   double curvature = 0.0;
   if (config_.controller == ControllerType::kPurePursuit) {
     const double lookahead = purePursuitLookahead(config_.pure_pursuit, measured_speed);
@@ -150,7 +157,7 @@ TrackingResult PathTracker::compute(const Pose2D & pose, double measured_speed, 
   }
 
   if (dt > 0.0) {
-    last_a_ = (v - last_v_) / dt;
+    last_a_ = (v_before_curvature_limit - last_v_) / dt;
   }
   last_v_ = v;
   result.status = TrackingStatus::kTracking;
