@@ -101,7 +101,9 @@ seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도
 **추적 지표** (`tracking_kpi_*`, 판정 기준은 [perception.md](../../docs/algorithms/perception.md) 1-7): `track.*`(`tracking/summary.json`, `amr_tracking` `tracking_eval`). 판정하는 지표는 셋이다.
 
 - `track.pred_gain_1s` = 정지 가정 RMSE − 등속 예측 RMSE(+1 s, 움직이는 GT). P1: CI 하한이 0보다 크면 PASS. 0과 같아도 FAIL이다(추정 속도가 0이면 두 값이 같다)
-- `track.vel_in_range.rmse` = 센서 범위(12 m) 안 짝의 속도 벡터 RMSE. P2: CI 상한 ≤ 0.2 m/s. 3막 재측정부터다(결과 전 등록). 그 밖은 LiDAR 점이 적고 DWA·안전 노드가 쓰지 않는 거리다. 전체 거리 `track.vel.rmse`는 참고 지표로 남긴다(1차 본측정 판정은 이 값)
+- `track.vel_in_range.rmse` = 센서 범위(12 m) 안 짝의 속도 벡터 RMSE. P2: CI 상한 ≤ 0.2 m/s. 3막 재측정부터다(1차 결과 후·재측정 전 등록, perception.md 1-7 "P2 보완"). 그 밖은 LiDAR 점이 적고 DWA·안전 노드가 쓰지 않는 거리다. 전체 거리 `track.vel.rmse`는 참고 지표로 남긴다(1차 본측정 판정은 이 값)
+  - 1차 본 측정 결과는 그때의 요약(#258) 기준이다. 그때 평가 결과에는 `vel_in_range`가 없어, 1차 폴더를 지금 코드로 다시 요약하면 P2 판정이 나오지 않는다
+  - 12 m 안 짝이 하나도 없는 실행은 P2 평균에서 빠진다(값 없음). 1차 본 측정 녹화로 세면 실행마다 12 m 안 짝이 A·B·D 1,466개 이상, E 313개 이상이라 지금 장면에서는 생기기 어렵다
 - P1·P2는 장면 A·B·D·E(`tracking_kpi_a·b·d·e`)에서만 판정한다. 장면 C는 정면 접근 하나라 판정 열을 비운다
 - `track.d1_ttc_s` = 접근 판정 TTC(GT 물체가 하나인 기록의 첫 판정, 판정 없이 최근접까지 오면 0). D1은 안전 기준이라 평균·CI가 아니라 **최악값**으로 `tracking_kpi_c10·c15`에서 판정한다. 가장 나쁜 실행이 3 s 미만이면 FAIL, 아니면 하네스 실패 실행이나 값이 없는 실행이 있거나 10회 미만이면 보류(이유를 KPI 열에), 그 외 PASS. Discord 알림에는 평균 대신 최솟값이 나간다
 - 나머지(`match_rate`, `pos.rmse`, `radial.mean` 센서 방향 편향, `speed.mean`, `heading.mean`, +1·+2 s 예측·정지 가정 RMSE, NEES, `id_switches`, 판정 지연, 가짜·중복 동적, `d1_dist_m`·`d1_latency_s`)는 참고 지표다. P1·P2 표본 수는 `track.pred_1s.n`·`track.vel_in_range.n`(전체 거리는 `track.vel.n`). `match_rate`는 센서 범위 안 GT 프레임 중 짝지어진 비율이다(전에는 분자에 범위 밖 짝이 섞여 1을 넘을 수 있었다)
