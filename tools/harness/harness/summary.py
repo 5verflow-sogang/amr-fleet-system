@@ -403,14 +403,15 @@ def tracking_metrics(run_dir: Path) -> dict[str, float]:
 
 def i12_metrics(meta: dict, fleet: dict[str, float]) -> dict[str, float]:
     """I12: 주입값과 측정값의 차이. 지연은 중앙값으로 본다 (재전송으로 늦게 닿은 메시지가 평균을 끌어올린다)."""
-    if meta.get('scenario') != 'fleet_i12' or 'fleet.loss_rate' not in fleet:
+    if meta.get('scenario') != 'fleet_i12':
         return {}
-    params = meta.get('params') or {}
-    out = {'i12.loss_err_pp': abs(fleet['fleet.loss_rate'] * 100 - float(params.get('loss_pct', 0)))}
+    fault = meta.get('fault') or {}
+    # 명령이 0건이면 Ack 비율 0 (FAIL). 손실·지연은 잴 메시지가 없으면 비워 두고 summarize가 보류로 드러낸다
+    out = {'i12.ack_rate': fleet.get('fleet.ack_rate', 0.0)}
+    if 'fleet.loss_rate' in fleet:
+        out['i12.loss_err_pp'] = abs(fleet['fleet.loss_rate'] * 100 - float(fault.get('loss_pct', 0)))
     if 'fleet.latency_ms.p50' in fleet:
-        out['i12.latency_err_ms'] = abs(fleet['fleet.latency_ms.p50'] - float(params.get('delay_ms', 0)))
-    if 'fleet.ack_rate' in fleet:
-        out['i12.ack_rate'] = fleet['fleet.ack_rate']
+        out['i12.latency_err_ms'] = abs(fleet['fleet.latency_ms.p50'] - float(fault.get('delay_ms', 0)))
     return out
 
 
@@ -541,6 +542,11 @@ def summarize(run_dirs: Iterable[Path]) -> dict:
             elif note:
                 d['kpi_note'] = note
             metrics[metric] = d
+        if g.get('scenario') == 'fleet_i12' and g['runs']:
+            # 모든 실행에서 못 잰 I12 지표도 보류로 남긴다 (빠지면 나머지 지표만으로 PASS가 된다)
+            for metric in sorted(set(I12_KPI) - set(metrics)):
+                metrics[metric] = {**dict.fromkeys(('mean', 'std', 'min', 'max', 'ci_low', 'ci_high')), 'n': 0,
+                                   'kpi_note': f"보류 (값 없는 실행 {len(g['runs'])}회)"}
         result[name] = {'runs': g['runs'], 'failed': g['failed'], 'metrics': metrics}
     return result
 

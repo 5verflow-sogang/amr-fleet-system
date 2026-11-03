@@ -127,7 +127,7 @@ tools/harness/docker_run.sh fleet_fake -n 10 --label d100      # 컨테이너에
 python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --notify   # 지난 결과 다시 보내기
 ```
 
-- 조건 묶음마다 embed 하나: ✅ KPI 모두 PASS, ⚠️ MARGINAL 또는 실패한 반복 있음, ❌ KPI FAIL 또는 완료 0회, ℹ️ KPI 없음. KPI 지표와 Fleet 주요 지표(지연·손실률·Ack)의 평균·95% CI를 싣고 `summary.md`를 첨부한다.
+- 조건 묶음마다 embed 하나: ✅ KPI 모두 PASS, ⚠️ MARGINAL 또는 실패한 반복 있음, ❌ KPI FAIL 또는 완료 0회, ℹ️ KPI 없음 또는 보류한 KPI 있음(나머지가 PASS여도). KPI 지표와 Fleet 주요 지표(지연·손실률·Ack)의 평균·95% CI를 싣고 `summary.md`를 첨부한다.
 - 첫 줄에 git SHA, 호스트, 장애 조건, seed 범위를 적는다.
 - 실행 폴더에 `plots/timeline.png`(Fleet 시나리오, `fleet_plot`)가 있으면 **작업 완료율이 가장 낮은 실행의 그림 한 장**을 그 조건의 embed 안에 붙이고, 어느 실행인지 적는다. 반복마다 다 보내면 채널이 그림으로 덮이므로 "어디를 열어 볼지"만 알린다. 나머지 그림은 각 실행 폴더에 있다. 그림을 붙인 전송이 실패하면(413 크기 초과 등) 그림 없이 한 번 더 보낸다.
 - 보내기가 실패해도 실험 결과에는 영향이 없다 (경고만 출력).
@@ -317,7 +317,7 @@ tools/harness/results/<run_id>/
 | 값 없는 실행 보류 (11/3) | 평균·CI로 판정하는 KPI도 최악값 KPI(D1)처럼, 완료했는데 값이 없는 실행이 있으면 PASS·MARGINAL을 보류로 바꾼다(FAIL은 유지). 예: AMCL 정지 구간은 로봇이 서 있으면 갱신이 없어 10회 중 3회 값으로 PASS가 났다. P1·P2는 미리 정한 실행 수(장면마다 10회) 미만이면 보류 | 민지 |
 | 교착 판정 (10/13) | 구역 허가를 30 s(서버 `release_timeout_s`) 넘게 못 받은 요청 0건(`fleet.zone_long_waits`)과 이동 단계 60 s 넘는 정체 0건(`fleet.stalls`). 정체는 구역 밖 교착도 잡는다. 수치는 측정 뒤 조정 가능 | 하연 |
 | CPU 판정 (10/13) | `sys.cpu_pct.mean` ≤ 80. 컨테이너가 쓸 수 있는 코어 기준이라 기준 기기는 `docker --cpus`로 맞춘다. 기기와 덜 상관있는 `sys.cpu_cores`(사용 코어 수)와 시뮬레이터를 뺀 `sys.cpu_cores_no_sim`을 같이 보고. 작업이 끝난 뒤 쉬는 구간도 평균에 들어가므로 `sys.cpu_pct.p95`도 본다. 작업 구간만 자를지와 기준 기기는 10/19 회의. 10/28: 역할별 코어 수 `sys.cpu_cores.server`(Fleet 서버), `.robot_max`(구간마다 가장 많이 쓴 로봇 1대), `.robot_mean`, `.tool`(장애 주입기·작업 생성기·녹화 등 실험 도구)을 추가. 시뮬레이터·실험 도구를 빼고 서버와 로봇 1대를 따로 판정하려는 것. 비율은 두 가지: `sys.cpu_pct.<묶음·역할>.mean`(실행한 컴퓨터 대비), `sys.cpu_ref_pct.{server,robot_max}`(각각 4코어 컴퓨터로 본 사용률, `summary.REF_CORES`, 팀 합의 전 가정) | 하연 |
-| I12 판정 (11/1) | `fleet_i12`만. `i12.loss_err_pp`(측정 손실률과 `loss_pct`의 차이, %p) ≤ 1, `i12.latency_err_ms`(지연 중앙값과 `delay_ms`의 차이) ≤ 5, `i12.ack_rate` = 1. 지연은 재전송으로 늦게 닿은 메시지가 평균을 끌어올려 중앙값(`fleet.latency_ms.p50`)으로 본다. 기준은 10/16 손실 30% 10회(29.1~30.5%)와 지연 100 ms 10회(평균 101 ms) | 하연 |
+| I12 판정 (11/1) | `fleet_i12`만. `i12.loss_err_pp`(측정 손실률과 `loss_pct`의 차이, %p) ≤ 1, `i12.latency_err_ms`(지연 중앙값과 `delay_ms`의 차이) ≤ 5, `i12.ack_rate` = 1. 명령이 0건이면 Ack 비율 0(FAIL), 손실·지연을 못 잰 실행이 있으면 보류(빼고 PASS를 주지 않는다). 지연은 재전송으로 늦게 닿은 메시지가 평균을 끌어올려 중앙값(`fleet.latency_ms.p50`)으로 본다. 기준은 10/16 손실 30% 10회(29.1~30.5%)와 지연 100 ms 10회(평균 101 ms) | 하연 |
 | 판정하지 않는 지표 | `fleet_deadlock`은 교착을 일부러 만드는 시나리오라 `fleet.zone_long_waits`·`fleet.stalls`를 판정하지 않는다(값만 보고). 이 시나리오의 기준("유도된 교착이 풀린 시간" 등)은 회의에서 | 하연·민지 |
 | 연구 1 지연 파일 | `fleet_latency.csv`(끝에서 끝, 손실 포함), `hop_latency.csv`(구간별, `trace/`에서 변환) | 하연·민지, #33 |
 | Fleet 지연 기록 방법 | rclpy 기록 노드 대신 rosbag2로 녹화 후 오프라인 변환 (Python 수신 시각 지연 방지) | 하연·민지, #33 |
