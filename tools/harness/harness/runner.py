@@ -249,11 +249,9 @@ class ConfigOverrides:
         self.items = []
         for spec in specs:
             target, _, source = spec.partition('=')
-            pkg, _, rel = target.partition('/')
-            prefix = subprocess.run(['ros2', 'pkg', 'prefix', pkg], capture_output=True, text=True).stdout.strip()
-            if not prefix or not source:
+            if '/' not in target or not source:
                 raise ValueError(f'--config 형식: <패키지>/<경로>=<파일> (지금 {spec!r})')
-            self.items.append((target, Path(prefix) / 'share' / pkg / rel, Path(source).resolve()))
+            self.items.append((target, installed_path(target), Path(source).resolve()))
 
     def __enter__(self):
         for _, dest, source in self.items:
