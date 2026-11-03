@@ -1,0 +1,12 @@
+# 추적 KPI 3막 재측정 (perception.md 1-7-1, 결과 전 등록). 장면마다 10회, 시드 2001~2010 (--seed-base 2001, #283).
+# 판정: P1·P2(12 m 안)는 A·B·D·E, D1(최악값)은 C10·C15. C는 시드로 장면이 안 바뀌지만 같은 시드 범위로 둔다
+# 러너: 슬롯 a (n2d-standard-16, 본 측정과 같은 종류). 실행:
+#   caffeinate -i python3 tools/harness/gcp_batch.py experiments/tracking_kpi/conditions/tracking_act3.txt --slots a --pr 260
+# 검사: python3 -I experiments/tracking_kpi/check_main.py --first-seed 2001 <장면 폴더…>
+# 순서: 짧은 C10을 맨 앞에 둬서 연속 실행이 괜찮은지 먼저 본다
+tracking_kpi_c10 -n 10 --seed-base 2001 --label act3
+tracking_kpi_c15 -n 10 --seed-base 2001 --label act3
+tracking_kpi_a   -n 10 --seed-base 2001 --label act3
+tracking_kpi_b   -n 10 --seed-base 2001 --label act3
+tracking_kpi_d   -n 10 --seed-base 2001 --label act3
+tracking_kpi_e   -n 10 --seed-base 2001 --label act3
