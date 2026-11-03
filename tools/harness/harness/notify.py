@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Iterable, Optional
 
-from .summary import _fmt, fleet_metrics, load_meta
+from .summary import WORST_KPI, _fmt, fleet_metrics, load_meta
 
 ENV = 'HARNESS_DISCORD_WEBHOOK'
 
@@ -70,7 +70,8 @@ def context_line(run_dirs: Iterable[Path]) -> str:
     fault = first.get('fault')
     if fault:
         parts.append(f"지연 {fault['delay_ms']:g} ms · 손실 {fault['loss_pct']:g}%")
-    seeds = sorted(m['seed'] for m in metas if isinstance(m.get('seed'), int))
+    # 실제로 넘긴 seed (seed_offset 반영). scene_seed가 생기기 전 실행은 seed 그대로
+    seeds = sorted(m.get('scene_seed', m['seed']) for m in metas if isinstance(m.get('seed'), int))
     if seeds:
         parts.append(f'seed {seeds[0]}~{seeds[-1]}')
     return '하네스 결과 · ' + ' · '.join(parts)
@@ -103,11 +104,18 @@ def build_payload(summary: dict, context: str = '', plot: Optional[tuple[str, st
         status = group_status(group)
         fields = []
         for metric, d in group['metrics'].items():
-            if not d.get('kpi') and metric not in HEADLINE:
+            if not d.get('kpi') and metric not in HEADLINE and metric not in WORST_KPI:
                 continue
-            ci = '' if d['ci_low'] is None else f" (95% CI {_fmt(d['ci_low'], metric)} ~ {_fmt(d['ci_high'], metric)})"
-            label = f"{metric} · {d['kpi']}" if d.get('kpi') else metric
-            fields.append({'name': label[:256], 'value': f"{_fmt(d['mean'], metric)}{ci}"[:1024], 'inline': True})
+            if metric in WORST_KPI:
+                # 최악값 판정이라 평균·CI가 아니라 가장 나쁜 실행을 보여 준다. 보류 사유도 붙인다
+                value = f"최소 {_fmt(d['min'], metric)} ({d['n']}회, 최악값 판정)"
+            else:
+                ci = ('' if d['ci_low'] is None
+                      else f" (95% CI {_fmt(d['ci_low'], metric)} ~ {_fmt(d['ci_high'], metric)})")
+                value = f"{_fmt(d['mean'], metric)}{ci}"
+            verdict = d.get('kpi') or (d.get('kpi_note') if metric in WORST_KPI else None)
+            label = f"{metric} · {verdict}" if verdict else metric
+            fields.append({'name': label[:256], 'value': value[:1024], 'inline': True})
         description = f"완료 {len(group['runs'])}회, 실패 {len(group['failed'])}회"
         if group['failed']:
             description += ' (' + ', '.join(f"{f['run_id']}: {f['outcome']}" for f in group['failed'][:5]) + ')'

@@ -247,7 +247,7 @@ TODO(검증 후, 학교 GPU 서버 확보 뒤): 예측(운동 모델로 상태·
 ![위치 KPI 측정 구역](../../src/localization/amr_mapping/maps/warehouse_v1_kpi_zone.png)
 
 (지도 v1 0.05 m 위에 측정 구역(파란 사각형)과 위 5 m 칸별 중앙값. 초록 ≤ 8 cm, 주황 8–14 cm, 빨강 > 14 cm. `amr_mapping/tools/draw_kpi_zone.py`)
-- 같은 투어에서 직선 CTE(GT 기준)는 구역 안 4.2 cm(추종 2.0 cm), 구역 밖 7.9 cm였다 (참고. Nav KPI 판정은 전체 6.3 cm 미달로 적고 원인을 나눠 적는다, 이진).
+- 같은 투어에서 직선 CTE(GT 기준)는 구역 안 4.2 cm(추종 2.0 cm), 구역 밖 7.9 cm였다 (참고. Nav KPI 판정은 측정 구역 기준 직선 3.71 cm·곡선 3.18 cm로 기준을 충족한다, navigation.md 8-3절).
 - **한계**: 창고 서쪽·북쪽 끝은 지도 휨으로 위치 오차 14~22 cm. 재매핑(지수, 5주차, 해상도 0.025 m 유지)으로 개선하고 위치·Nav KPI를 다시 재서 Before/After로 더한다.
 - 다른 통로 Kidnapped 0/10은 통로가 같은 모양이라 생기는 문제라 재매핑과 무관하다 (4-7절 ArUco).
 

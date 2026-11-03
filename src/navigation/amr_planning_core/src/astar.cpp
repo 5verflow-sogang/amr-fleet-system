@@ -3,9 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <queue>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace amr_planning_core
@@ -31,21 +30,27 @@ const std::vector<Move> kMoves = {
 struct OpenNode
 {
   double f_score;
+  double g_score;
   Cell cell;
 };
 
+// f가 같으면 g가 큰(목표에 더 가까이 간) 노드를 먼저 꺼낸다. 8방향 격자의 빈 공간에는 f가 같은
+// 노드가 아주 많아서, 동점을 아무렇게나 풀면 최적 경로 둘레의 셀을 거의 다 펼친다. 이 순서는
+// 어느 최적 경로를 고르는지만 바꾸고 경로 비용(최적성)은 그대로다.
 struct OpenNodeCompare
 {
   bool operator()(const OpenNode & a, const OpenNode & b) const
   {
-    return a.f_score > b.f_score;
+    if (a.f_score != b.f_score) {
+      return a.f_score > b.f_score;
+    }
+    return a.g_score < b.g_score;
   }
 };
 
-int64_t encode(const Cell & cell, std::size_t width)
+std::size_t encode(const Cell & cell, std::size_t width)
 {
-  return static_cast<int64_t>(cell.y) * static_cast<int64_t>(width) +
-         static_cast<int64_t>(cell.x);
+  return static_cast<std::size_t>(cell.y) * width + static_cast<std::size_t>(cell.x);
 }
 
 }  // namespace
@@ -108,33 +113,45 @@ PlanResult AStarPlanner::plan(const Grid & grid, const Cell & start, const Cell 
     return result;
   }
 
+  // 셀마다 g·부모·닫힘을 격자 크기 배열(작업 버퍼, astar.hpp)로 둔다. 해시 맵은 창고 지도(0.025 m,
+  // 2408 x 1728 셀)에서 펼친 셀이 수십만 개가 되면 해싱·재할당이 탐색 시간의 대부분을 차지했다.
+  const std::size_t width = grid.width();
+  const std::size_t cell_count = width * grid.height();
+  if (g_.size() != cell_count || generation_ == std::numeric_limits<uint32_t>::max()) {
+    g_.assign(cell_count, 0.0);
+    parent_.assign(cell_count, 0);
+    seen_.assign(cell_count, 0);
+    closed_.assign(cell_count, 0);
+    generation_ = 0;
+  }
+  const uint32_t generation = ++generation_;
   std::priority_queue<OpenNode, std::vector<OpenNode>, OpenNodeCompare> open;
-  std::unordered_map<int64_t, double> g_score;
-  std::unordered_map<int64_t, Cell> came_from;
-  std::unordered_set<int64_t> closed;
 
-  const int64_t start_key = encode(start, grid.width());
-  g_score[start_key] = 0.0;
-  open.push({heuristic(start, goal), start});
+  const std::size_t start_key = encode(start, width);
+  g_[start_key] = 0.0;
+  parent_[start_key] = static_cast<uint32_t>(start_key);
+  seen_[start_key] = generation;
+  open.push({heuristic(start, goal), 0.0, start});
 
   while (!open.empty()) {
     const Cell current = open.top().cell;
     open.pop();
-    const int64_t current_key = encode(current, grid.width());
+    const std::size_t current_key = encode(current, width);
 
-    if (closed.count(current_key) > 0) {
+    if (closed_[current_key] == generation) {
       continue;
     }
-    closed.insert(current_key);
+    closed_[current_key] = generation;
 
     if (current == goal) {
       std::vector<Cell> path;
-      int64_t key = current_key;
-      path.push_back(current);
-      while (key != start_key) {
-        const Cell prev = came_from.at(key);
-        path.push_back(prev);
-        key = encode(prev, grid.width());
+      std::size_t key = current_key;
+      while (true) {
+        path.push_back(Cell{static_cast<int>(key % width), static_cast<int>(key / width)});
+        if (key == start_key) {
+          break;
+        }
+        key = parent_[key];
       }
       std::reverse(path.begin(), path.end());
       result.status = PlanStatus::kSuccess;
@@ -142,7 +159,7 @@ PlanResult AStarPlanner::plan(const Grid & grid, const Cell & start, const Cell 
       return result;
     }
 
-    const double current_g = g_score.at(current_key);
+    const double current_g = g_[current_key];
 
     for (const Move & move : kMoves) {
       const Cell neighbor{current.x + move.dx, current.y + move.dy};
@@ -159,18 +176,18 @@ PlanResult AStarPlanner::plan(const Grid & grid, const Cell & start, const Cell 
         }
       }
 
-      const int64_t neighbor_key = encode(neighbor, grid.width());
-      if (closed.count(neighbor_key) > 0) {
+      const std::size_t neighbor_key = encode(neighbor, width);
+      if (closed_[neighbor_key] == generation) {
         continue;
       }
 
       const double tentative_g = current_g + moveCost(move.distance, grid.cost(neighbor));
 
-      const auto it = g_score.find(neighbor_key);
-      if (it == g_score.end() || tentative_g < it->second) {
-        g_score[neighbor_key] = tentative_g;
-        came_from[neighbor_key] = current;
-        open.push({tentative_g + heuristic(neighbor, goal), neighbor});
+      if (seen_[neighbor_key] != generation || tentative_g < g_[neighbor_key]) {
+        seen_[neighbor_key] = generation;
+        g_[neighbor_key] = tentative_g;
+        parent_[neighbor_key] = static_cast<uint32_t>(current_key);
+        open.push({tentative_g + heuristic(neighbor, goal), tentative_g, neighbor});
       }
     }
   }

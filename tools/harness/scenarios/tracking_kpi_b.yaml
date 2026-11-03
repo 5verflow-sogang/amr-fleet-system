@@ -1,0 +1,13 @@
+# 추적 정확도 KPI 장면 B: B–C 통로, 로봇 (−3, −4) 정지, forklift_1(0.8~1.5 m/s)이 2.5 m 옆을 왕복 (perception.md 1-7)
+#   tools/harness/docker_run.sh tracking_kpi_b -n 10
+name: tracking_kpi_b
+extends: tracking_kpi
+packages: amr_gazebo amr_odometry amr_tracking
+params:
+  robot_x: "-3.0"
+  robot_y: "-4.0"
+  duration_s: "300.0"
+  wait_s: "315.0"
+  # 장애물 시드 오프셋 (tracking_kpi.yaml과 같은 기본값). GCP 워크플로는 이 파일의 params만 읽어 --set을 허용하므로
+  # 여기에도 둔다. 추적기 개발용 녹화는 --set seed_offset=1000
+  seed_offset: "0"

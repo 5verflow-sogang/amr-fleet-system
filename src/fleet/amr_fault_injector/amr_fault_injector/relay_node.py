@@ -2,6 +2,8 @@
 
 /fleet/<topic> 을 구독해 /<robot_id>/fleet/<topic> 으로 다시 발행한다.
 기본은 서버 → 로봇 토픽이다(D8). relay_auction이면 분산 경매 토픽(로봇 → 로봇)도 중계한다.
+relay_uplink이면 로봇 → 서버 토픽(/<robot_id>/uplink/<topic> → /fleet/<topic>)도 중계하며 연속 끊김만 같은 일정으로
+건다 (지연·손실은 걸지 않는다). 음영 지역처럼 링크가 양방향으로 끊기는 경우를 흉내 낸다.
 분산·하이브리드 비교군이 중앙집중과 같은 지연·손실을 겪어야 비교가 공정하기 때문이다.
 메시지를 직렬화된 바이트 그대로 넘기므로 header.stamp와 번호 필드가 바뀌지 않는다 (api.md 4-3절).
 """
@@ -12,7 +14,8 @@ import time
 from functools import partial
 
 import rclpy
-from amr_msgs.msg import FleetHeartbeat, FleetTaskTable, TaskAssignment, TaskAuction, TaskBid, ZoneGrant
+from amr_msgs.msg import (FleetHeartbeat, FleetTaskTable, RobotState, TaskAssignment, TaskAssignmentAck,
+                          TaskAuction, TaskBid, TaskStatus, ZoneGrant)
 from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -33,6 +36,12 @@ AUCTION_TOPICS = {
     'task_bids': TaskBid,
 }
 TOPIC_TYPES = {**SERVER_TOPICS, **AUCTION_TOPICS}
+# 로봇 → 서버 (relay_uplink). 로봇은 /<robot_id>/uplink/<topic>에 내고, 주입기가 /fleet/<topic>으로 옮긴다
+UPLINK_TOPICS = {
+    'robot_states': RobotState,
+    'task_status': TaskStatus,
+    'task_assignment_acks': TaskAssignmentAck,
+}
 
 
 class FaultInjector(Node):
@@ -91,13 +100,28 @@ class FaultInjector(Node):
             self.create_subscription(
                 msg_type, f'/fleet/{topic}', partial(self._on_message, links), qos, raw=True)
 
+        # 양방향 끊김: 로봇 → 서버도 같은 끊김 일정으로 (지연·손실 없음). 가짜 로봇이 uplink_relayed:=true여야 한다
+        relay_uplink = self.declare_parameter('relay_uplink', False).value
+        if relay_uplink:
+            up_config = FaultConfig(allow_out_of_spec=config.allow_out_of_spec, blackout=blackout,
+                                    blackout_mode=config.blackout_mode)
+            for topic, msg_type in UPLINK_TOPICS.items():
+                publisher = self.create_publisher(msg_type, f'/fleet/{topic}', qos)
+                for robot_id in robot_ids:
+                    link = (DelayLine(up_config, link_rng(seed, robot_id, 'up_' + topic), start=start,
+                                      blackout=blackout_robot in ('all', robot_id)), publisher)
+                    self._links.append(link)
+                    self.create_subscription(msg_type, f'/{robot_id}/uplink/{topic}',
+                                             partial(self._on_message, [link]), qos, raw=True)
+
         # 지연은 네트워크를 흉내 내므로 use_sim_time과 상관없이 실제 시간(단조 시계)으로 잰다
         self.create_timer(tick_ms / 1000.0, self._flush, clock=Clock(clock_type=ClockType.STEADY_TIME))
         self.get_logger().info(
             f'중계 시작: topics={topics}, robots={robot_ids}, '
             f'delay_ms={config.delay_ms}, loss_pct={config.loss_pct}, seed={seed}'
             + (' (명세 밖 조건 허용)' if config.allow_out_of_spec else '')
-            + (f', 끊김 {blackout_robot} {blackout} ({config.blackout_mode})' if blackout else ''))
+            + (f', 끊김 {blackout_robot} {blackout} ({config.blackout_mode})' if blackout else '')
+            + (', 로봇 → 서버도 끊김 (relay_uplink)' if relay_uplink else ''))
 
     def _on_message(self, links, data: bytes):
         now = time.monotonic()

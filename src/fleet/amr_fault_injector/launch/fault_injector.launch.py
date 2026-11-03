@@ -32,6 +32,7 @@ def _injector(context):
         'loss_pct': ParameterValue(LaunchConfiguration('loss_pct'), value_type=float),
         'seed': ParameterValue(LaunchConfiguration('seed'), value_type=int),
         'relay_auction': ParameterValue(LaunchConfiguration('relay_auction'), value_type=bool),
+        'relay_uplink': ParameterValue(LaunchConfiguration('relay_uplink'), value_type=bool),
         'allow_out_of_spec': ParameterValue(LaunchConfiguration('allow_out_of_spec'), value_type=bool),
         'blackout_at_s': ParameterValue(LaunchConfiguration('blackout_at_s'), value_type=float),
         'blackout_s': ParameterValue(LaunchConfiguration('blackout_s'), value_type=float),
@@ -68,6 +69,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'relay_auction', default_value='false',
             description='true면 분산 경매 토픽(task_auctions, task_bids, 로봇 → 로봇)도 중계한다. 분산·하이브리드 비교군에서 켠다'),
+        DeclareLaunchArgument(
+            'relay_uplink', default_value='false',
+            description='true면 로봇 → 서버 토픽(/<robot_id>/uplink/*)도 중계하며 연속 끊김을 같은 일정으로 건다 (양방향 끊김). '
+                        '가짜 로봇 uplink_relayed:=true와 같이 쓴다'),
         DeclareLaunchArgument(
             'num_robots', default_value='',
             description='중계할 로봇 수 (amr_01~). 비우면 fault_injector.yaml의 robot_ids (5대)'),

@@ -1,8 +1,14 @@
 #ifndef AMR_NAV2_PLUGINS__OBSTACLES_HPP_
 #define AMR_NAV2_PLUGINS__OBSTACLES_HPP_
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <unordered_set>
 #include <vector>
 
+#include "amr_msgs/msg/collision_risk_array.hpp"
 #include "amr_msgs/msg/tracked_obstacle_array.hpp"
 #include "amr_planning_core/dwa.hpp"
 
@@ -33,6 +39,34 @@ inline std::vector<amr_planning_core::DynamicObstacle> toDynamicObstacles(
     obstacles.push_back(obstacle);
   }
   return obstacles;
+}
+
+// 움직이는 트랙(is_dynamic)의 track_id. CollisionRisk에는 is_dynamic이 없어서 같은 추적 결과
+// (perception/obstacles)의 track_id로 짝짓는다 - toDynamicObstacles와 같은 기준이다.
+inline std::unordered_set<int32_t> dynamicTrackIds(const amr_msgs::msg::TrackedObstacleArray & msg)
+{
+  std::unordered_set<int32_t> ids;
+  for (const amr_msgs::msg::TrackedObstacle & tracked : msg.obstacles) {
+    if (tracked.is_dynamic) {
+      ids.insert(tracked.track_id);
+    }
+  }
+  return ids;
+}
+
+// 움직이는 트랙의 최소 TTC(s). 없거나 전부 충돌 경로가 아니면 inf. 정적 트랙(랙 면 등)은 이미 costmap에 있어
+// 회피 모드 판단에서 뺀다(안전 노드도 정적 트랙은 TTC로 막지 않는다). NaN은 건너뛴다.
+inline double minDynamicTtc(
+  const amr_msgs::msg::CollisionRiskArray & risks, const std::unordered_set<int32_t> & dynamic_ids)
+{
+  double min_ttc = std::numeric_limits<double>::infinity();
+  for (const amr_msgs::msg::CollisionRisk & risk : risks.risks) {
+    if (dynamic_ids.count(risk.track_id) == 0 || std::isnan(risk.ttc)) {
+      continue;
+    }
+    min_ttc = std::min(min_ttc, static_cast<double>(risk.ttc));
+  }
+  return min_ttc;
 }
 
 }  // namespace amr_nav2_plugins

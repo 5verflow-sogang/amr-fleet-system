@@ -59,6 +59,10 @@ def _server(context):
                 'use_sim_time': arg('use_sim_time').lower() == 'true',
                 # 할당 명령 재전송 한도 (연구 1 재전송 비교). 정수 파라미터라 문자열 묶음(SERVER_ARGS)과 따로 넘긴다
                 'resend.max_resends': int(arg('max_resends')),
+                # 재전송 간격 (연구 1 재시도 간격 비교). 실수 파라미터라 따로 넘긴다
+                'resend.interval_s': float(arg('resend_interval_s')),
+                # 상태 보고가 이 시간 끊긴 로봇의 작업을 회수 (연구 1 회수 기준 비교, robot_timeout_s 이상이어야 한다)
+                'assignment.reclaim_timeout_s': float(arg('reclaim_timeout_s')),
             }],
             output='screen',
         )
@@ -105,6 +109,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_sim_time', default_value='false',
             description='시뮬레이션 시간을 쓸지. 구역 lease를 로봇과 같은 시계로 재야 하므로 Gazebo와 같이 돌리면 true'),
+        DeclareLaunchArgument(
+            'resend_interval_s', default_value='1.0',
+            description='Ack가 없을 때 할당 명령을 다시 보내는 간격 (s, config 기본 1.0)'),
+        DeclareLaunchArgument(
+            'reclaim_timeout_s', default_value='5.0',
+            description='RobotState가 이 시간(s) 끊기면 그 로봇의 작업을 회수해 다시 할당한다 (config 기본 5.0)'),
         DeclareLaunchArgument(
             'max_resends', default_value='5',
             description='Ack가 없을 때 할당 명령 재전송 한도. 넘으면 작업을 큐로 되돌려 다른 로봇에 맡긴다 (config 기본 5)'),

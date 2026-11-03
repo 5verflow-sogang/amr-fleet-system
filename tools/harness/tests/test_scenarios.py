@@ -58,9 +58,26 @@ def test_resend_and_link_loss_policy_reach_processes():
     assert 'pause_on_link_loss_s:=0' in procs['fake_robots']['cmd']
     procs = _fleet_fake_procs(max_resends='0', pause_on_link_loss_s='2', robot_speed_mps='3')
     assert 'max_resends:=0' in procs['fleet_manager']['cmd']
+    assert 'resend_interval_s:=1.0' in procs['fleet_manager']['cmd']
+    assert 'resend_interval_s:=3' in _fleet_fake_procs(resend_interval_s='3')['fleet_manager']['cmd']
     assert 'pause_on_link_loss_s:=2' in procs['fake_robots']['cmd']
     assert 'speed_mps:=3' in procs['fake_robots']['cmd']
     assert 'speed_mps:=1.0' in _fleet_fake_procs()['fake_robots']['cmd']
+    assert 'pause_mode:=stop' in _fleet_fake_procs()['fake_robots']['cmd']
+    assert 'pause_mode:=leg' in _fleet_fake_procs(pause_mode='leg')['fake_robots']['cmd']
+    up = _fleet_fake_procs(relay_uplink='true')
+    assert 'relay_uplink:=true' in up['fault_injector']['cmd'] and 'uplink_relayed:=true' in up['fake_robots']['cmd']
+    assert 'uplink_relayed:=false' in _fleet_fake_procs()['fake_robots']['cmd']
+
+
+def test_reclaim_and_fallback_timeouts_reach_processes():
+    # 연구 1 회수 기준·하이브리드 전환 기준 비교. 기본은 지금 동작(회수 5초, 전환 2초)
+    base = _fleet_fake_procs(fleet_mode='hybrid')
+    assert 'reclaim_timeout_s:=5.0' in base['fleet_manager']['cmd']
+    assert 'fallback_timeout_s:=2.0' in base['task_auctions']['cmd']
+    sets = _fleet_fake_procs(fleet_mode='hybrid', reclaim_timeout_s='40', fallback_timeout_s='6')
+    assert 'reclaim_timeout_s:=40' in sets['fleet_manager']['cmd']
+    assert 'fallback_timeout_s:=6' in sets['task_auctions']['cmd']
 
 
 def test_fleet_mode_processes():

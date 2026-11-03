@@ -93,17 +93,126 @@ A*·DWA 직접 구현과 비교할 baseline으로 Nav2 내장 플러그인을 �
 
 | 서버 | 플러그인 | 역할 |
 | --- | --- | --- |
-| `planner_server` | `nav2_navfn_planner/NavfnPlanner` | 원 명세서가 요구하는 "A* vs NavFn" 비교의 NavFn 쪽. `use_astar: false`로 Dijkstra 모드를 쓴다 |
+| `planner_server` | `nav2_navfn_planner/NavfnPlanner` | 원 명세서가 요구하는 "A* vs NavFn" 비교의 NavFn 쪽. yaml은 `use_astar: false`(Dijkstra)지만 `nav2.launch.py`가 `use_astar: true`로 덮어써, 스택은 NavFn의 A* 모드로 돈다(3-7절 표에 둘 다 있다) |
 | `controller_server` | `dwb_core::DWBLocalPlanner` | "DWA 직접구현 vs TEB" 비교의 대조군 자리에 임시로 둔 것. 속도·가속 한계만 로봇 스펙(2.0m/s, 1.0m/s², 1.5rad/s)에 맞췄고 critic 가중치는 Nav2 공식 튜토리얼 기본값이다 |
 
-TODO(2주차): `amr_planning_core`의 A*를 `amr_nav2_plugins`로 감싸 `planner_plugins`에
-추가하고, NavFn과 경로 길이·계획 소요 시간·장애물 여유 거리를 비교한다. DWA 직접구현도
-같은 방식으로 `controller_plugins`에 추가해 DWB와 비교한다.
+A* 직접 구현과 NavFn·Smac 비교는 3절, DWA 직접 구현은 4절, DWA와 TEB 비교는 7절.
 
-## 3. A* (예정)
+## 3. A* 전역 경로 계획
 
-TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방향 이동, 휴리스틱
-선택 근거, 셀 비용 가중치), 경로 평활화 방법을 여기에 작성한다.
+코어는 `amr_planning_core`(ROS 비의존)의 `AStarPlanner`(`astar.hpp`)와 `smoothPath`(`path_smoothing.hpp`)이고,
+`amr_nav2_plugins::AStarGlobalPlanner`가 Nav2 전역 planner(`nav2_core::GlobalPlanner`)로 감싼다. DWA 플러그인과 같이
+플러그인은 costmap → `Grid` 변환, world ↔ 셀 좌표 변환, `nav_msgs/Path` 만들기만 하고 탐색·평활화는 코어에 맡긴다.
+기본 planner는 NavFn 그대로이고, A*는 비교용으로 고를 때만 쓴다(3-6절).
+
+### 3-1. 격자 표현
+
+- Nav2 전역 costmap의 셀 버퍼(`getCharMap()`)를 복사하지 않고 `Grid`(폭·높이·해상도 + 비용 포인터)로 감싼다. 셀 인덱스는
+  `y * 폭 + x`로 costmap과 같다. 기본 지도 v2 0.025 m에서 전역 costmap은 2411 × 1609셀(약 390만 셀)이다
+  (static layer가 지도 해상도로 맞춘다).
+- 셀 비용은 Nav2 값 그대로다: 0 빈 곳, 1~252 inflation(장애물까지 거리의 지수 감소), 253 내접(로봇 중심이 여기면
+  풋프린트가 장애물에 닿음), 254 장애물, 255 미지.
+- `lethal_cost_threshold` 253 이상은 지나갈 수 없다. NavFn도 253 이상을 장애물로 본다. 미지(255)도 막힌 것으로 본다
+  (NavFn은 `allow_unknown: true` - 창고 안에는 미지 셀이 없어 비교에는 영향 없음).
+- 탐색 상태(g·부모·닫힘)는 셀 수만큼의 배열에 두고 호출 사이에 재사용한다. 처음 구현은 해시 맵이었고, 배열로 바꾼 뒤에도
+  호출마다 약 70 MB를 새로 잡고 채우는 것만으로 4 m짜리 경로가 34 ms 걸렸다. 지금은 탐색마다 세대 번호만 올려 지우지 않는다.
+
+### 3-2. 이동 방향
+
+8방향(상하좌우 1, 대각선 √2). 4방향은 대각선으로 가는 통로에서 계단 경로가 √2배까지 길어진다. 대각선 이동은 양옆 두 셀이
+모두 지나갈 수 있을 때만 허용한다(`prevent_corner_cutting`) - 장애물 모서리를 대각선으로 뚫고 지나가지 않게 한다.
+
+8방향 격자 경로는 방향이 0°/45°뿐이라 비스듬한 길을 지그재그로 가고, 같은 길이의 최적 경로가 여럿이다. 그래서 평활화가
+필요하다(3-5절, 비교 표의 "평활화 전" 줄).
+
+### 3-3. 휴리스틱
+
+옥타일 거리 `√2 · min(dx, dy) + (max(dx, dy) − min(dx, dy))`(`heuristic: "octile"`). 8방향에서 장애물이 없을 때의 실제
+최단 거리라 허용적(admissible)이면서 가장 팽팽하다. 유클리드도 허용적이지만 더 작게 추정해 더 많이 펼친다(`euclidean`으로
+고를 수 있다). 셀 비용 가중치(3-4절)는 이동 비용을 거리보다 크게만 만들므로 휴리스틱은 그대로 허용적이다.
+
+f가 같은 노드는 g가 큰(목표에 더 가까이 간) 쪽을 먼저 꺼낸다. 빈 공간에서는 f가 같은 노드가 아주 많아, 동점을 아무렇게나
+풀면 최적 경로 둘레를 거의 다 펼친다. 어느 최적 경로를 고르는지만 바뀌고 경로 비용은 그대로다.
+
+### 3-4. 셀 비용
+
+이동 비용 = 거리 × (1 + `cost_weight` × 셀 비용 / 255). `cost_weight` 0이면 순수 최단 거리라 inflation 가장자리(내접 바로
+밖)를 바짝 돈다. NavFn은 셀 비용을 `COST_NEUTRAL(50) + COST_FACTOR(0.8) × 비용`으로 쓰므로 빈 셀 대비 비율이
+1 + 0.016 × 비용이고, 같은 꼴로 쓰면 0.016 × 255 ≈ 4.1이다. 그래서 `cost_weight: 4.0`으로 두어 NavFn과 같은 정도로
+장애물을 피하게 했다 - 비교(3-7절)가 탐색 방식과 평활화의 차이만 보게 한다.
+
+### 3-5. 경로 평활화 (`smoothPath`)
+
+두 단계다. 둘 다 끄고 켤 수 있다(`smoothing_shortcut`·`smoothing_gradient`, `smooth_path: false`면 둘 다 안 함).
+
+1. **지름길**: 경로의 한 점에서 직선으로 보이는 가장 먼 점까지 바로 잇는다(앞에서부터, 처음 막히는 점에서 멈춤). 8방향의
+   지그재그와 0°/45° 꺾임을 없애 길이를 줄인다.
+2. **경사 하강(Thrun)**: 지름길 선분을 `smoothing_point_spacing_m`(0.1 m) 간격으로 나눈 점들을
+   `y ← y + w_data(x − y) + w_smooth(y_prev + y_next − 2y)`로 반복해 편다(`w_data` 0.1, `w_smooth` 0.3, 최대 200회).
+   꺾인 곳이 둥글어지는 길이는 대략 점 간격 × √(w_smooth / w_data) ≈ 0.17 m다. 1셀(0.025 m) 간격으로 하면 둥글어지는
+   길이도 1~2셀이라 거의 안 펴져서 간격을 따로 둔다. Smac planner의 smoother도 같은 식이다.
+3. 끝으로 1셀 간격으로 다시 나눈다 - DWA가 경로 점을 따라 누적 거리로 기준점을 고르므로 촘촘해야 한다.
+
+**안전 규칙: 평활화는 경로를 원래 A* 경로보다 비용이 큰 셀로 옮기지 않는다.**
+
+- 지름길 i → j는 그 선분이 지나는 모든 셀(0.1셀 간격으로 짚음)의 비용이 원래 경로 i..j 구간의 최대 비용 이하일 때만 쓴다.
+- 경사 하강은 옮긴 점의 셀 비용이 지름길 경로에서 그 점이 있던 셀의 비용 이하이고, 이웃 점과 잇는 선분도 두 점 상한 중 큰
+  쪽 이하일 때만 옮긴다.
+
+경로를 펴면 꺾인 곳이 안쪽(장애물 모서리 쪽)으로 당겨지는데, inflation 비용은 장애물까지 거리의 감소 함수라 비용이 늘지
+않으면 여유 거리도 줄지 않는다. 비용이 0인 곳(inflation 반경 0.55 m 밖)에서는 자유롭게 펴진다 - 비교에서 평활화가 여유를
+줄인 쌍 3개는 모두 결과가 0.55 m 근처에서 멈췄다(가장 작은 값 0.551 m). 단위 테스트(`test_path_smoothing.cpp`)가 이
+규칙(평활화 뒤 경로 위 최대 비용 ≤ 원래 최대 비용), 처음·끝 점 유지, 벽의 틈으로만 지나가기, 점 간격 1셀 이하를 확인한다.
+
+### 3-6. Nav2 연결
+
+- 플러그인: `amr_nav2_plugins::AStarGlobalPlanner`. 파라미터는 `nav2_params.yaml`의 `planner_server.AStar` 블록이다.
+- 고르는 법: `ros2 launch amr_bringup nav2.launch.py planner:=astar`(기본 `navfn`). `AStar` 블록을 `GridBased` 이름에 얹어
+  bt_navigator 기본 트리와 측정 스크립트의 `planner_id`("GridBased")를 그대로 쓴다 - DWA를 `FollowPath` 이름으로 등록하는
+  것과 같은 방식(`amr_bringup/planner.py`). `planner_plugins`에 둘을 같이 넣으면 `planner_id`가 비어 있는 요청이 실패하므로
+  넣지 않았다. `system.launch.py`에는 아직 인자를 두지 않았다(비교 실험은 3-7절의 별도 launch를 쓴다).
+- 출력: 경로 점마다 다음 점을 향하는 방향을 넣고, 마지막 점은 요청한 목표 자세 그대로다(`plan_path.hpp`, NavFn처럼).
+- NavFn과 다른 점: 목표 셀이 막혔을 때 근처로 옮기는 허용 오차(NavFn `tolerance` 0.5 m)가 없다 - 실패로 돌려준다.
+  실패(지도 밖, 출발·목표 셀 막힘, 경로 없음)면 빈 경로를 돌려주고 planner_server가 실패로 처리한다.
+
+### 3-7. 비교: A*(평활화 전·후) vs NavFn vs Smac 2D
+
+**조건 (11/3, 1회):** nav_kpi와 같은 출발·목표 50쌍(`experiments/nav_kpi/waypoints.yaml`, 쌍 i = 점 i → 점 i+1), 기본 지도 v2
+0.025 m. Gazebo·위치추정 없이 map_server + planner_server만 띄우고(`experiments/planner_compare/planner_compare.launch.py`),
+`ComputePathToPose`(`use_start: true`)로 planner마다 같은 쌍을 3번씩 계획했다(`compare.py`). 전역 costmap은 `nav2_params.yaml`
+값 그대로에서 obstacle layer만 뺐다(센서 없음). Smac 2D는 Nav2 기본값. 노트북 Docker(Intel Core Ultra 7 355, 8코어).
+
+```bash
+ros2 launch experiments/planner_compare/planner_compare.launch.py
+python3 experiments/planner_compare/compare.py --out /tmp/planner_compare   # pairs.csv, summary.md, summary.json
+```
+
+**지표:**
+- 경로 길이: 경로 점을 이은 길이.
+- 계획 시간: Nav2가 돌려준 `planning_time`(planner_server 안에서 잰 `createPlan` 시간, costmap 잠금·변환 포함). 150회(50쌍 × 3).
+- 최소 여유 거리: 경로를 0.0125 m 간격으로 짚어 지도의 가장 가까운 점유 셀까지 거리(로봇 중심 기준)의 최솟값. 쌍마다 하나.
+- 총 회전각: 경로를 0.1 m 간격으로 다시 나눠 방향 변화의 절댓값을 더한 것. 지그재그가 많을수록 크다.
+
+| planner | 성공 | 경로 길이 평균 (m) | NavFn 대비 | 계획 시간 평균 / p95 / 최대 (ms) | 최소 여유 거리 쌍 평균 / 전체 최소 (m) | 총 회전각 평균 (°) |
+|---|---|---|---|---|---|---|
+| NavFn (Dijkstra, yaml 값) | 50/50 | 10.05 | 1.000 | 20.6 / 35.2 / 54.0 | 1.599 / 0.214 | 160 |
+| NavFn A* 모드 (스택이 실제로 쓰는 값) | 50/50 | 9.93 | 0.994 | 11.4 / 14.0 / 37.5 | 1.581 / 0.214 | 134 |
+| Smac 2D | 50/50 | 10.05 | 1.005 | 11.8 / 34.6 / 61.2 | 1.577 / 0.250 | 132 |
+| **A* 평활화 전** | 50/50 | 10.48 | 1.042 | 6.7 / 25.8 / 41.0 | 1.589 / 0.250 | 234 |
+| **A* 평활화 후** (`AStar` 기본) | 50/50 | 10.01 | 0.996 | 11.5 / 34.4 / 43.1 | 1.585 / 0.250 | 47 |
+
+- **경로 길이:** 평활화 전 A*는 NavFn보다 4.2 % 길다. 8방향 격자 경로는 0°/45°로만 가지만, NavFn은 포텐셜의 경사를 따라
+  아무 방향으로나 내려온다. 평활화가 쌍마다 평균 0.47 m(최대 1.08 m)를 줄여 NavFn보다 0.4 % 짧아졌다.
+- **계획 시간:** 다섯 다 재계획 KPI(500 ms)보다 한참 작다. 평활화 전 A*가 평균으로 가장 빠르고(6.7 ms), 평활화가 평균
+  약 5 ms를 더한다. A* 최대 43 ms는 NavFn Dijkstra(54 ms)·Smac 2D(61 ms)보다 작다.
+- **장애물 여유:** 쌍 평균은 다섯 다 1.58~1.60 m로 같은 수준이다(`cost_weight`를 NavFn에 맞춘 효과). 차이는 좁은 통로(폭
+  0.6 m, 쌍 11·31)에서 난다 - A*·Smac은 통로 가운데(0.250 m, 가능한 최대 0.3 m 근처)를 지나고, NavFn은 0.214~0.225 m다.
+  평활화 후 A*는 여유가 0.55 m 아래로 내려간 쌍이 8개로 NavFn(5개)보다 많다 - 빈 곳에서 직선으로 펴면서 inflation 반경
+  (0.55 m) 경계를 따라가기 때문이다. 그 안쪽(비용이 붙는 곳)으로는 들어가지 않는다(3-5절).
+- **매끄러움:** 평활화 후 총 회전각은 47°로 NavFn(160°)의 3분의 1이다. 평활화 전 A*(234°)는 격자 지그재그 때문에 가장 크다.
+
+**한계:** 1회·노트북 측정이라 계획 시간은 절대값보다 순서로 본다. 정적 지도 기준이다(장애물 레이어 없음). 경로를 실제로
+따라간 주행 시간·CTE는 이 비교에 없다 - 필요하면 nav_kpi를 `planner:=astar`로 돌린다(시나리오에 인자를 넘기는 변경 필요).
 
 ## 4. DWA (Dynamic Window Approach)
 
@@ -113,7 +222,9 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
 ### 4-1. 4단계
 
 1. **동적 윈도우 계산** (`computeDynamicWindow`): 현재 속도 (v, w)에서 가속 한계×dt만큼만
-   벗어날 수 있다고 보고, 그 범위를 다시 로봇 최대 속도로 자른다.
+   벗어날 수 있다고 보고, 그 범위를 다시 로봇 최대 속도로 자른다. 지금 속도가 한계 밖으로 한 주기 변화
+   이상 벗어나 있으면(처음 속도가 `max_v`보다 높음, w가 `-max_w`보다 낮음 등) 창이 뒤집히므로, 한계 쪽으로
+   최대로 줄인 값(위로 벗어났으면 지금 − acc·dt, 아래로 벗어났으면 지금 + acc·dt) 하나만 남긴다.
 2. **속도 샘플링 + 궤적 시뮬레이션** (`simulateTrajectory`): 윈도우 안의 (v, w) 조합마다
    차동구동 전진 운동학으로 `sim_time` 동안 `dt` 간격으로 궤적을 찍는다.
 3. **비용 함수** (`evaluateCost`): heading(목표 방향) + clearance(장애물 거리) +
@@ -132,8 +243,8 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
 | `acc_w` | 3.2 rad/s² | `FollowPath.acc_lim_theta`와 동일 |
 | `dt` | 0.1 s | 제어 주기 |
 | `sim_time` | 2.0 s | 궤적 예측 길이. 짧게 잡으면 장애물을 더 가까이 와서야 "미래 충돌"로 감지해서 막판에야 급히 피하려다, 동적 윈도우(한 스텝에 꺾을 수 있는 각속도, `acc_w*dt`뿐)가 모자라 못 피하는 상황이 생긴다 — 테스트 중 실제로 발견해서 `sim_time`은 줄이지 않기로 했다(계산량은 샘플 개수로 조절) |
-| `v_samples` | 20 | `nav2_params.yaml` `FollowPath.vx_samples`와 동일 |
-| `w_samples` | 30 | `FollowPath.vtheta_samples`(20)보다 많다 — 회전 각속도 해상도가 좁은 통로 회피 성공률에 더 민감하다고 보고 촘촘히 샘플링했다. TODO(3주차): 실측 KPI로 `nav2_params.yaml`과 맞출지 재검토 |
+| `v_samples` | 20 (스택 10) | `DwaConfig` 기본은 `FollowPath.vx_samples`와 같은 20. 창고 스택(`nav2_params.yaml`)은 10 — 아래 "샘플 수" |
+| `w_samples` | 30 (스택 15) | `DwaConfig` 기본 30. 창고 스택은 15 — 아래 "샘플 수". 연구 2는 20 x 30 그대로 |
 | `footprint_half_length` / `half_width` | 0.3 / 0.2 m | 로봇 스펙(600×400mm)과 동일. **외접원이 아니라 사각형으로 충돌 검사**한다 — 외접원 지름(0.72m)으로 하면 0.6m 좁은 통로(1-1절)를 항상 "막힘"으로 오판한다 |
 | `lethal_cost_threshold` | 253 | `AStarConfig`와 동일한 nav2 costmap 관례 |
 | `heading_weight` / `clearance_weight` / `velocity_weight` | 0.8 / 0.1 / 0.1 | 4-3절 |
@@ -141,6 +252,28 @@ TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방
 | `use_admissible_velocity` | true | 4-7절. false면 이전 동작(호라이즌 안 충돌 궤적 전부 제외)과 같다 |
 | `use_goal_slowdown` | true | 4-7절. 최종 목표까지 직선 거리로 `v <= sqrt(2·acc_v·d_goal)` |
 | `lookahead_distance` / `adaptive_lookahead` | 0.5 m / true | 4-8절. 경로 버전의 heading 기준점 |
+| `rotate_in_place_min_angle` / `rotate_in_place_exit_angle` | 0.785 / 0.524 rad (45° / 30°) | 4-9절. 제자리 회전 모드 들어가기·나오기(경로 버전). exit > min이면 min으로 줄인다 |
+| `rotate_in_place_clearance` | 0.05 m | 4-9절. 회전 모드의 제자리 회전 샘플 풋프린트 여유. 안전 노드 `side_margin`과 같아야 한다 |
+| `avoid_mode_enabled` | false (창고 스택 yaml true) | 4-10절. TTC 회피 모드 전체. 연구 2는 false 고정 |
+| `avoid_margin_add` / `avoid_weight_scale` / `avoid_rollout_time` | 0.4 m / 2.0 / 3.0 s | 4-10절. 회피 모드에서 안전 여유 더하기, 동적 가중치 곱, 궤적 시뮬레이션 길이 |
+| `avoid_ttc_enter_s` / `avoid_exit_hold_s` / `avoid_risk_timeout_s` (플러그인) | 3.0 / 0.5 / 0.3 s | 4-10절. 켜기 TTC, 끄기 전 유지 시간, collision_risks 끊김 판정 |
+
+**샘플 수 (10/27, 창고 스택 `nav2_params.yaml` 10 x 15):** `computeVelocityCommand` 한 번 계산 시간을 재고
+(x86 8코어, 다른 부하 없음, 3 x 3 m local costmap + 통로 벽·inflation, 90° 꺾이는 경로, max_v 0.5, 300회 중앙값),
+Gazebo에서 통로 ①(목표 yaw +90°)을 설정마다 3번씩 돌렸다(실행 전마다 `fastdds shm clean`).
+
+| v x w | 순항, 지금 빌드(최적화 없음) | 순항, `-O2` | 동적 장애물 2개 (없음 / `-O2`) | 제자리 회전 (없음 / `-O2`) | 통로 ① 3회 (시간, 복구) |
+| --- | --- | --- | --- | --- | --- |
+| 20 x 30 = 600 | 66 ms (p95 87) | 25 ms (p95 42) | 67 / 25 ms | 3.4 / 1.3 ms | 3/3 성공, 111·109·131 s, 복구 3·3·6 |
+| 15 x 20 = 300 | 32 ms (p95 37) | 12 ms (p95 14) | 39 / 12 ms | 2.3 / 0.9 ms | — |
+| 10 x 15 = 150 | 17 ms (p95 22) | 6 ms (p95 6.5) | 17 / 6 ms | 1.7 / 0.7 ms | 3/3 성공, 97·106·89 s, 복구 1·3·0 |
+
+- 계산 시간은 샘플 수에 거의 비례한다. 지금 빌드(`CMAKE_BUILD_TYPE` 없음, 최적화 없음)에서 20 x 30은 20 Hz 제어 주기
+  (50 ms)를 넘어 Gazebo에서 "Control loop missed its desired rate" 경고가 실행마다 1,000번 넘게 났다.
+- 10 x 15는 통로 ①에서 20 x 30보다 나쁘지 않았다(평균 97 s / 117 s, 복구 1.3 / 4회). 직선 5 m·출발 방향 180°도 둘 다
+  모두 성공했다. 실물(라즈베리파이)에서도 돌아야 해 작은 쪽으로 정했다.
+- `w_samples`가 홀수면 [min_w, max_w]를 고르게 나눌 때 가운데(지금 각속도, 흔히 0)가 샘플에 들어간다.
+- Release 빌드(`-O2`)면 2.6배 빨라진다 - 팀 빌드 설정이라 이번에는 바꾸지 않았다(위 표에 결과만 남긴다).
 
 ### 4-3. 비용 함수 가중치 근거와 "제자리 정지" 함정
 
@@ -272,6 +405,103 @@ heading을 끝점 앞에서 재므로 이 가림이 없어진다(4-8절).
 `lookahead_distance` 앞인 궤적 점에서 heading을 잰다(전에는 끝점을 지나치는 궤적만 `goal_tolerance`
 앞에서 쟀다) - 같은 이유로 목표 앞 몇 m에서 다시 기어가던 것을 막는다. 정지(v=0)에서는 기준점이 전과
 같이 `lookahead_distance` 앞이다. 로봇에 가장 가까운 경로 점 찾기는 경로 전체를 보므로 원인이 아니었다.
+
+### 4-9. 제자리 회전 (`rotate_in_place_min_angle`·`rotate_in_place_exit_angle`)
+
+**원인 (10/14 하연 정리):** v≈0 샘플은 정지 함정(4-3절) 때문에 heading 비용을 1.0으로 고정했다. 그래서
+제자리 회전(v=0, w≠0)은 어느 쪽으로 돌든 0.8(heading)+0.1(속도) = 0.9라, 안 닿는 전진 샘플이 하나라도
+있으면 졌다. 목표가 뒤(180°)면 v=0.1, w=0.32 호(2초 뒤 0.64 rad 돎)가 0.8·(π−0.64)/π + 0.095 ≈ 0.73으로
+이겨, 제자리에서 돌지 않고 목표 반대쪽으로 크게 돌며 나갔다. 전진이 전부 막힌 좁은 통로에서만 회전을
+골랐고, 그때는 회전 샘플끼리 heading이 같아 도는 방향이 샘플 순서·clearance로 정해졌다.
+
+**바꾼 것:** 경로를 받는 `computeVelocityCommand`에서, 지금 자세에서 heading 기준점(`lookahead_distance`
+앞)까지 방향 오차가 `rotate_in_place_min_angle`(기본 45°, Nav2 RPP `rotate_to_heading_min_angle`과 같음)보다
+크면 **제자리 회전 모드**에 들어가고 `rotate_in_place_exit_angle`(기본 30°) 이하가 되면 나온다 - 경계
+근처에서 회전/전진이 매 주기 바뀌며 떨지 않게 하는 히스테리시스다(`RotateInPlaceModeHasHysteresis`). 모드
+상태는 플래너가 주기 사이에 들고 있다(`rotatingInPlace()`).
+
+- 모드에서는 v≈0 샘플도 **회전한 뒤 방향**(궤적 끝 yaw)으로 heading 비용을 매긴다. 정지(w=0)는 지금 오차
+  그대로라 유리하지 않다. 모드 밖(오차 ≤ 문턱)에서는 지금처럼 1.0이라 정지 함정 방지는 그대로다.
+- 먼저 최대 감속 속도(`window.min_v`, 서 있으면 0)만 샘플링해 돈다. 고른 회전 후보는 **궤적 끝 방향 오차가
+  지금보다 `acc_w·dt·sim_time/2`(기본 0.32 rad) 이상 줄 때만** 채택하고, 아니면(좁은 통로 안처럼 회전이 막힘)
+  전체 윈도우로 다시 고른다 - 못 도는데 서 버리지 않게. 기준은 서 있다가 한 주기 최대 각가속(`acc_w·dt`)으로
+  `sim_time` 동안 돌 때 줄어드는 오차의 절반이다. w 샘플은 지금 각속도 둘레라 `state.w`≠0이면 정확한 0이 없어,
+  양쪽이 막혀도 거의 안 도는 샘플(w≈0.01)이 "회전"으로 남는다 - |w|>0만 보면 그걸 채택해 그 자리에
+  섰다(#244 연우 리뷰, `BlockedRotationFallsBackWithoutStationaryHeadingTrap`). 전체 윈도우 최선과 비용으로
+  겨루는 안은 `velocity_weight` 때문에 전진 호가 이겨 출발 때 다시 1.6 m 호로 돌았다
+  (`RotatesInPlaceWhenStartingFarOffHeading`).
+- 다시 고르는 전체 윈도우 탐색은 평소와 같이 채점한다(정지 heading 1.0) - 회전 모드 채점이면 "목표 보고 서
+  있기"가 전진보다 싸진다.
+- v≈0 **회전**(|w|>0) 샘플이 궤적 중간에 닿으면 버린다. 사각 풋프린트는 v=0이어도 매 스텝 yaw가 바뀐 자세로
+  검사하지만, 허용 속도 조건(4-7절)은 v=0이면 늘 "설 수 있음"이라 회전 감속(`acc_w`)을 안 보고 닿는 회전을
+  [1] 후보로 남겼다. 대각선 0.72 m > 좁은 통로 0.6 m라 통로 안에서 크게 돌면 벽에 닿는다
+  (`RotationSamplesInsideNarrowCorridorAreFiltered`). 정지(w≈0)는 남긴다 - 사람이 서 있는 로봇 쪽으로 걸어오면
+  (예측 켬) 정지 궤적도 예측 궤적 중간에 닿는데, 그 자리에 서 있기는 후보여야 한다
+  (`StationarySampleSurvivesApproachingDynamicObstacle`).
+- 회전 모드의 회전 후보는 풋프린트 반길이·반폭을 `rotate_in_place_clearance`(0.05 m)만큼 키워 검사한다. 안전
+  노드(`collision.path_hazard`, `side_margin` 0.05 m)는 제자리 회전 중 모서리가 0.05 m 안으로 가까워지면 막는데,
+  DWA는 오차가 30° 아래로 내려가야 모드에서 나와 계속 회전을 내고 안전 노드는 계속 막아 progress_checker까지
+  멈춘다(`RotateInPlaceKeepsClearanceFromStaticObstacle`). 회전 모드 밖 v≈0 회전과 전체 윈도우 탐색에는 안 쓴다 -
+  전진은 장애물 0.05 m 앞까지 다가가므로 거기서 모든 회전을 키워 검사하면 정지만 남아 영영 못
+  돈다(`ClosedLoopReachesGoalWithOneObstacle`). 지금 자세에서 이미 여유 안이면 그 주기는 키우지 않는다.
+- 동적 장애물이 `safety_margin + influence_radius`(1.2 m) 안이면 회전 모드에 들어가지 않는다 - 사람을 피하느라
+  경로에서 벗어나 오차가 45°를 넘었을 때 서서 경로 쪽(사람이 오는 쪽)으로 돌지 않게(`NoRotateInPlaceNearDynamicObstacle`).
+- 점 하나로 부르는 버전(먼 목표)에는 안 쓴다 - 장애물을 돌아가는 동안 그 점까지 오차가 커져 회전이 회피와
+  싸웠다(`ClosedLoopReachesGoalWithOneObstacle`). 경로의 기준점은 전역 경로가 이미 장애물을 돌아간다.
+- 최종 접근(목표 도착 뒤 방향 맞추기)은 바뀌지 않았다. 플러그인이 `xy_goal_tolerance` 안이면 DWA 대신
+  `rotateToGoalYaw`로 돈다 - 도착 뒤 90° 돌아야 하는 목표에서 제자리로 돌아 허용오차 안에 서는 것을 테스트로
+  확인했다(`FinalApproachRotatesToGoalYawAfterArriving`).
+- 연구 2(`experiments/research2`)는 제자리 회전을 끄고(`rotate_in_place_min_angle` 0) 회전 샘플 여유도 0이다
+  (`DwaParams`, 논문 값). C API(`dwa_c_api.cpp`)는 호출마다 플래너를 새로 만들어, 켜더라도 히스테리시스 상태가
+  안 이어진다.
+
+### 4-10. TTC 회피 모드 (`avoid_mode_enabled`)
+
+I17(원 명세 7장 동적 장애물 회피) 측정용이다. 평소 DWA는 동적 장애물을 안전 여유 0.2 m·`sim_time` 2.0 s 안에서만
+본다. 사람이 빠르게 다가오는 짧은 동안만 더 멀리·더 크게 피하게 한다.
+
+**진입·해제 (플러그인 `AvoidModeSwitch`, `amr_nav2_plugins/avoid_mode.hpp`)**
+- `perception/collision_risks`(로봇 네임스페이스)의 TTC 중 **움직이는 트랙(`is_dynamic`)만** 본다. `CollisionRisk`에는
+  `is_dynamic`이 없어 같은 추적 결과(`perception/obstacles`)의 `track_id`로 짝짓는다(`toDynamicObstacles`와 같은
+  기준). 정적 트랙(랙 면 등)은 이미 costmap에 있다
+- 켜기: 최소 TTC < `avoid_ttc_enter_s`(3.0 s)
+- 끄기: TTC ≥ 3.0 s(또는 inf, 충돌 경로 아님)가 `avoid_exit_hold_s`(0.5 s) 동안 이어질 때. 그 사이 한 번이라도
+  위험하면 처음부터 다시 센다 - 문턱 근처에서 켜고 끄기가 떨지 않게
+- 상태는 `dwa/avoid_mode`(`std_msgs/Bool`, transient local)로 바뀔 때 발행하고(활성화 때 처음 상태 한 번), 켜고 꺼질
+  때 INFO 로그를 남긴다
+- 코어(`DwaPlanner::setAvoidMode`)는 "회피 모드 여부"만 받아 설정을 바꾼다. 토픽·시간은 플러그인이 맡는다
+
+**collision_risks가 끊기면 지금 상태를 유지한다** (`avoid_risk_timeout_s` 0.3 s, 경고 로그는 2 s 스로틀). 켜져 있으면
+끄지 않는다 - 끊긴 사이 위험이 왔는지 모르고, 회피 중에 추적이 잠깐 끊겼다고 여유를 줄이면 가장 가까울 때 덜 피한다.
+다시 오면 안전한 TTC가 0.5 s 동안 새로 이어져야 끈다. 꺼져 있으면 켜지 않는다 - 추적 노드를 안 띄우는 스택
+(fleet_stack 등)은 처음부터 collision_risks가 없어, 끊김을 위험으로 보면 늘 회피 모드가 된다. 그래서 한 번도 안 받았으면
+끊김으로 보지 않는다(경고도 없음).
+
+**회피 모드에서 바뀌는 것**
+- `dynamic_obstacle_safety_margin` += `avoid_margin_add` **0.4 m**: 정면 최악 기준. 통신 100 ms + 추적 100 ms = 0.2 s
+  지연 동안 상대속도 2.0 m/s(로봇 0.5 + 명세 동적 장애물 최대 1.5)로 다가오는 거리다. 옆으로 건너는 경우(상대속도 약
+  1.6 m/s)면 0.32 m라, 정면 기준이 더 크다
+- `dynamic_weight` *= `avoid_weight_scale` **2.0**: 초기값이다. 튜닝은 튜닝용 시드(1001~)로만 하고, I17 본 측정
+  (시드 1~30) 전에 고정한다
+- 궤적 시뮬레이션 길이 = `avoid_rollout_time` **3.0 s**: TTC 3 s 안의 장애물을 충돌 검사가 덮게 한다(평소 2.0 s면
+  2~3 s 뒤 만날 장애물은 궤적 밖이다). **궤적 길이만** 바꾼다 - heading 기준점 거리(|v|·`sim_time`, 4-8절), 비용을
+  매기는 궤적 끝(`sim_time` 시점), 제자리 회전 채택 기준(`acc_w·dt·sim_time/2`, 4-9절)은 평소 `sim_time` 2.0 s
+  그대로다. `sim_time` 자체를 3.0으로 바꾸면 기준점이 1.5배 멀어져 모드가 바뀌는 순간 목표 방향이 튄다
+  (`AvoidModeKeepsHeadingTargetWithoutObstacles`: 장애물이 없으면 모드와 상관없이 명령이 같다)
+
+**계산 시간** (창고 스택 10×15, `computeVelocityCommand` 1회, 평균 ms (최대 ms), 3회 실행의 범위. x86 8코어, 3×3 m local
+costmap, max_v 0.5, 300회씩. 최악은 회전 모드에서 회전이 거부돼 전체 윈도우를 다시 탐색하는 경우, 4-9절)
+
+| 경우 | 평소 (최적화 없음) | 회피 모드 (최적화 없음) | 평소 (-O2) | 회피 모드 (-O2) |
+| --- | --- | --- | --- | --- |
+| 순항 | 14.9–15.9 (21–24) | 16.1–16.7 (23–29) | 5.6–6.0 (6.7–12) | 6.1–6.4 (7.4–14) |
+| 동적 장애물 2개 | 15.3–16.2 (19–26) | 16.3–17.2 (18–29) | 5.8–6.0 (9.2–10) | 6.2–6.6 (7.9–16) |
+| 최악 (회전 거부) | 12.1–12.7 (16–19) | 14.5–15.3 (18–21) | 4.5–4.7 (6.4–14) | 5.5–5.8 (10–16) |
+
+회피 모드는 궤적이 1.5배(20 → 30점)지만 평균 5~25%만 는다 - 늘어난 점은 대부분 3×3 m local costmap 밖이라(순항 0.5 m/s ×
+3 s = 1.5 m) 칸을 안 본다. 최악도 최적화 없는 빌드 최대 29 ms로 20 Hz 제어 주기(50 ms) 안이다.
+
+**연구 2**는 `avoid_mode_enabled`를 false로 고정한다(`DwaParams`, C API로 넘김, `test_avoid_mode_is_off_paper_value`).
 
 ## 5. Pure Pursuit · Stanley · PID
 
@@ -557,7 +787,7 @@ GT 직선이 큰 이유를 경로 순서별로 나눠 보면 추종기가 아니
 리뷰 지적). margin을 키울지 BT가 옆으로 비켜서게 할지는 10/12 회의에서 정한다 - 아직
 `backing_margin_m` 자체는 그대로 뒀다.
 
-### 6-2. 경로에서 잠깐 빠진 구역 (10/15 하연·이진)
+### 6-2. 경로에서 잠깐 빠진 구역 (10/15 하연·이진, 10/18 하연 수정)
 
 #66에서 정한 "경로에서 빠지면 즉시 반납"을 바꿨다. 교착 유도 실험(fleet_deadlock, 통로 ②를 서쪽·동쪽 구역으로
 나눔)에서 상대 로봇이 동쪽 구역을 막자 Nav2가 잠깐 북쪽으로 돌아가는 경로를 냈고, 존 클라이언트가 동쪽 구역을
@@ -569,7 +799,18 @@ GT 직선이 큰 이유를 경로 순서별로 나눠 보면 추종기가 아니
   상한은 로봇 → 구역 사각형 직선 거리로 건다(경로 거리보다 짧거나 같아 보수적이다).
 - `drop_grace_s`(기본 3 s, `zone_client.yaml`) 넘게 계속 빠져 있거나 로봇이 trigger 거리 밖으로 멀어지면 그때
   반납(`BLOCKED`는 쥔 자리가 없어 반납 없이)하고 `IDLE`로 돌아간다.
-- 그 전에 경로가 다시 그 구역을 지나면 그대로 이어간다(새 `request_id` 없음). `INSIDE` 구역은 바뀌지 않는다.
+- 그 전에 경로가 `lookahead_m`(기본 `trigger_distance_m + 2 m`) 안에서 다시 그 구역을 지나면 그대로
+  이어간다(새 `request_id` 없음). `INSIDE` 구역은 바뀌지 않는다(`lookahead_m`과 무관하게 경계를 벗어나면
+  반납).
+- **"경로에 있음/없음" 판정 자체를 `lookahead_m`까지만 본다(10/18 하연 수정)**: 처음엔 #66 원래 결정대로
+  `APPROACHING`·`BLOCKED`도 경로 전체(끝까지)에서 구역을 찾았는데, 그러면 뒤쪽 경유점에서나 다시 지나는
+  먼 재방문까지 "경로에 있음"으로 잡혀 `drop_grace_s` 카운트가 영원히 시작되지 않거나(#189, "먼 재방문이
+  계속돼 반납 안 되는 문제") 이미 세고 있던 카운트가 그 먼 재방문 때문에 매번 취소되는 문제(#177 회귀)가
+  둘 다 있었다. `lookahead_m` 밖의 재방문은 "경로에 없음"으로 보게 좁히자 두 문제가 함께 풀렸다 -
+  `drop_grace_s`가 이미 "잠깐 벗어남"을 봐주므로, 판정 범위를 줄여도 #66→#177이 고치려던 문제(우회 중
+  반납)는 그대로 막힌다. 별도의 "다시 잡힌 뒤 일정 시간 유지돼야 카운트를 취소" 히스테리시스
+  (`on_path_confirm_s`, 10/16 임시 수정)는 이 수정으로 더는 필요 없어 뺐다 - 판정 자체가 가까운 거리로
+  좁혀져, 한 틱이라도 `lookahead_m` 안에서 잡히면 바로 신뢰할 수 있다.
 - 함께 고친 것: 속도 상한은 `cmd_vel_nav`가 들어올 때만 적용돼, Nav2가 0이 아닌 명령을 낸 뒤 발행을 멈추면
   상한이 0이 돼도 마지막 명령이 남았다. 상한이 0으로 바뀌는 순간 `cmd_vel_zone_limited`에 0을 한 번 낸다.
 
@@ -658,6 +899,11 @@ Nav2(DWA, `controller=nav2`)는 참고로만 본다 - CTE KPI(5장)는 애초에
 - seed 1, 지도 v1 0.025 m(`warehouse_v1_0025`), 위치추정 EKF + AMCL(map 프레임 경로)
 - 순항 속도 0.5 m/s(DWA도 `config_patch`로 같게 맞춤, `DWA.max_v: 0.5`), 가감속 1.0 m/s²
 - 원자료(GCP 버킷): `runs/nav_kpi-nav_pp/…_38607783484/`(PP), `runs/nav_kpi-nav_nav2/…_38612048525/`(DWA)
+- 측정 구역(map 기준, #207·10/16 합의): x −10~15 m, y −15~5 m —
+  `src/localization/amr_mapping/tools/draw_kpi_zone.py`의 `ZONE`(지도 휨이 작은 구역, 3-1절 그림과 같음).
+  `cte.csv`에는 위치가 없어, 같은 쌍의 `gt_track.csv`에서 시각이 가장 가까운 점으로 구역 안/밖을 가른다 -
+  `gt_track.csv`는 5 Hz, `cte.csv`는 10 Hz(`cte_hz`)라 최악 ~0.05 s 어긋나는데, 순항 0.5 m/s 기준 최대
+  ~2.5 cm 위치 오차다. 재계산 스크립트: `experiments/nav_kpi/recompute_zone_cte.py`
 
 ### 8-2. 정의 (10/13 하연·이진 합의, `experiments/nav_kpi/navkpi_core.py`·`nav_kpi.py` 구현)
 
@@ -666,29 +912,33 @@ Nav2(DWA, `controller=nav2`)는 참고로만 본다 - CTE KPI(5장)는 애초에
 | 계획 성공률 | 출발·목표 50쌍 중 `ComputePathToPose`가 경로를 낸 비율 |
 | 재계획 | 1초(`replan_period_s`)마다 로봇의 현재 위치에서 같은 목표로 `planner_server`(`ComputePathToPose`)를 다시 불러 걸린 시간(ms) - P95·최대로 본다 |
 | 예측 오차 | 사다리꼴(순항 속도까지 못 올라가는 짧은 경로는 삼각형) 속도 프로파일로 낸 예측 시간(경로 길이 ÷ 순항 속도 0.5 m/s + 가감속 1.0 m/s² 보정) 대비 \|실제 − 예측\| / 실제. 도착한 쌍만 평균·중앙을 낸다 |
-| CTE | GT 위치를 그 시각의 전역 경로(계획 순간 기준)에 투영한 수직 거리. 투영점의 경로 곡률이 0.2 1/m(`curve_kappa`) 넘으면 곡선, 아니면 직선으로 나눠 평균(5-0절 CTE 정의와 같음) |
+| CTE | GT 위치를 그 시각의 전역 경로에 투영한 수직 거리. 투영점의 경로 곡률이 0.2 1/m(`curve_kappa`) 넘으면 곡선, 아니면 직선으로 나눠 평균(5-0절 CTE 정의와 같음) |
 | 복구 제외 | `NavigateToPose` 복구 동작(spin·backup·wait)이 도는 중과 끝난 뒤 2초(`recovery_grace_s`)는 CTE·예측 오차 양쪽에서 뺀다 |
 
-### 8-3. 결과 (10/16, #158)
+### 8-3. 결과 (10/16, #158; 측정 구역 기준 재계산은 10/26)
 
-| 지표 | 기준 | PP (판정) | DWA (참고, 0.5 m/s 상한) |
-| --- | --- | --- | --- |
-| 계획 성공률 | ≥ 98% | 50/50 (100%) | 50/50 (100%) |
-| 도착 | — | 50/50 (100%) | 44/50 (88%) |
-| 재계획 P95 / 최대 | ≤ 500 ms | 15 / 20 ms | 15 / 935 ms |
-| 예측 오차 평균 / 중앙 | ≤ 15% | 5.3% / 4.5% | 58.5% / — |
-| CTE 직선 평균 | ≤ 5 cm | **6.3 cm** | 6.2 cm |
-| CTE 곡선 평균 | ≤ 10 cm | 6.7 cm | 6.5 cm |
+| 지표 | 기준 | PP (판정) | 측정 구역 기준 (PP) | DWA (참고, 0.5 m/s 상한) |
+| --- | --- | --- | --- | --- |
+| 계획 성공률 | ≥ 98% | 50/50 (100%) | — | 50/50 (100%) |
+| 도착 | — | 50/50 (100%) | — | 44/50 (88%) |
+| 재계획 P95 / 최대 | ≤ 500 ms | 15 / 20 ms | — | 15 / 935 ms |
+| 예측 오차 평균 / 중앙 | ≤ 15% | 5.3% / 4.5% | — | 58.5% / — |
+| CTE 직선 평균 | ≤ 5 cm | **6.3 cm** | **3.71 cm** (n=944/4359) | 6.2 cm |
+| CTE 곡선 평균 | ≤ 10 cm | 6.7 cm | 3.18 cm (n=1554/5962) | 6.5 cm |
 
-측정 구역을 명시한 재계산(10/16 결정, 8-5절 B안)은 GCP 버킷 원자료(`cte.csv`·`gt_track.csv`) 접근 권한이
-없어 이번 판정에는 못 넣었다 - 권한이 생기면 이 표에 "측정 구역 기준" 줄을 추가한다.
+측정 구역 기준 n은 "구역 안 샘플 수/도착한 쌍의 전체 샘플 수"(8-1절 정의, `pair_success`만). 50쌍 중 이
+구역을 지나는 쌍은 16개다. 계획 성공률·재계획·예측 오차는 구역을 나눌 대상이 아니라(위치가 아니라 쌍·시도
+단위 지표) "—"로 둔다.
+
+50쌍 1회, CI 없음(8-1절 한계와 같음).
 
 ### 8-4. 판정
 
-PP(판정 기준)로 5개 중 4개 통과, **CTE 직선만 미달**(6.3 cm > 5 cm 기준, 8-5절 원인). 계획 성공률·재계획·
-예측 오차는 여유 있게 통과하고(재계획 최대 20 ms는 기준의 1/25, 예측 오차 5.3%는 기준의 1/3), CTE 곡선도
-기준의 2/3 수준이다. **조건부 통과**로 본다 - 미달 원인이 추종기 오차가 아니라 지도 품질(#183)이고, 10/16
-결정대로 측정 구역을 명시하는 B안으로 가기 때문이다(8-5절).
+**측정 구역 기준(PP, 판정)으로 5개 모두 통과** - CTE 직선 3.71 cm·곡선 3.18 cm 둘 다 기준 안이다(10/16
+결정대로 측정 구역을 명시하는 B안, 8-5절). 구역 밖까지 포함한 전체 CTE 직선은 **6.3 cm로 기준(5 cm)을
+넘는다** - 원인은 추종기 오차가 아니라 구역 밖(창고 서쪽·북쪽 끝)의 지도 휨(#183, 8-5절)이라, 전체 값은
+참고로 남기고 구역 기준으로 판정한다. 계획 성공률·재계획·예측 오차는 여유 있게 통과하고(재계획 최대
+20 ms는 기준의 1/25, 예측 오차 5.3%는 기준의 1/3), 구역 기준 CTE 곡선(3.18 cm)도 기준의 1/3 수준이다.
 
 DWA(참고)는 예측 오차(58.5%, 기준의 약 4배)·도착률(88%, 기준이 요구하는 98%에 못 미침)·재계획
 최대(935 ms, 기준 초과)가 크게 벗어난다 - 10/13 합의대로 판정에는 쓰지 않지만, 원인은 8-5절에 남긴다.

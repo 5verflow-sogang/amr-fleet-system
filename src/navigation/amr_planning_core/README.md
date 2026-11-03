@@ -51,6 +51,21 @@ if (result.status == amr_planning_core::PlanStatus::kSuccess) {
 `PlanStatus`: `kSuccess`, `kStartOutOfBounds`, `kGoalOutOfBounds`, `kStartOccupied`,
 `kGoalOccupied`, `kNoPathFound`.
 
+셀마다의 탐색 상태는 호출 사이에 재사용하는 작업 버퍼에 둔다(큰 지도에서 매번 새로 잡지 않게). 그래서 같은
+`AStarPlanner` 객체로 여러 스레드에서 동시에 `plan()`을 부르면 안 된다.
+
+### `amr_planning_core::smoothPath` (`path_smoothing.hpp`)
+
+A* 경로(셀 목록)를 지름길 + 경사 하강으로 편다. 입력·출력은 셀 단위(셀 `(x, y)`의 중심이 `(x, y)`)이고,
+출력 점 간격은 1셀 이하, 처음·끝 점은 그대로다. 원래 경로보다 비용이 큰 셀로는 옮기지 않는다
+(근거·파라미터는 [docs/algorithms/navigation.md](../../../docs/algorithms/navigation.md) 3-5절).
+
+```cpp
+amr_planning_core::SmoothingConfig smoothing;  // shortcut, gradient, weight_data 0.1, weight_smooth 0.3, point_spacing 4셀
+const std::vector<amr_planning_core::Point2D> points =
+  amr_planning_core::smoothPath(grid, result.path, smoothing);
+```
+
 ### `amr_planning_core::DwaPlanner` (`dwa.hpp`)
 
 DWA(Dynamic Window Approach) 로컬 컨트롤러 코어. 정적 장애물(`Grid`)은 하드
@@ -106,8 +121,9 @@ planner.computeVelocityCommand(state, goal, grid, obstacles);
 
 ## 파라미터
 
-ROS 비의존 라이브러리이므로 파라미터는 `AStarConfig` 생성자 인자로 받는다. YAML 로딩은
-이 라이브러리를 쓰는 노드 패키지(`amr_nav2_plugins`)가 `amr_bringup/config`에서 담당한다.
+ROS 비의존 라이브러리이므로 파라미터는 `AStarConfig`·`SmoothingConfig`·`DwaConfig`로 받는다. YAML 로딩은
+이 라이브러리를 쓰는 노드 패키지(`amr_nav2_plugins`)가 `amr_bringup/config/nav2_params.yaml`에서 담당한다
+(`planner_server.AStar`, `controller_server.DWA`).
 
 ## 실행
 

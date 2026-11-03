@@ -27,6 +27,7 @@ def _task_auction(context):
     overrides = {
         'robot_id': LaunchConfiguration('robot_id').perform(context),
         'fleet_mode': LaunchConfiguration('fleet_mode').perform(context),
+        'fallback_timeout_s': float(LaunchConfiguration('fallback_timeout_s').perform(context)),
     }
     if relayed:
         overrides['auction_topic_prefix'] = 'fleet'
@@ -53,5 +54,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'fleet_mode', default_value='decentral',
             description='decentral(늘 분산) 또는 hybrid(평시 중앙, 서버 heartbeat가 끊기면 분산)'),
+        DeclareLaunchArgument(
+            'fallback_timeout_s', default_value='2.0',
+            description='하이브리드: heartbeat가 이 시간(s) 동안 안 오면 분산으로 전환 (config 기본 2.0)'),
         OpaqueFunction(function=_task_auction),
     ])

@@ -49,6 +49,7 @@ def _localization(context):
         'odom_frame': prefix + 'odom',
         'base_link_frame': prefix + 'base_footprint',
     }
+    initial = [float(LaunchConfiguration(k).perform(context)) for k in ('initial_x', 'initial_y', 'initial_yaw')]
     inputs = {'odom0': odom_topic}
     if _is_true(context, 'use_imu'):
         inputs['imu0'] = imu_topic
@@ -86,11 +87,11 @@ def _localization(context):
                 'use_sim_time': use_sim_time,
                 'base_frame_id': prefix + 'base_footprint',
                 'odom_frame_id': prefix + 'odom',
-                # 초기 위치는 map 기준. 기본값은 기본 스폰 위치 world (0, 1.5, 0)을 지도 v1 0.025 m의
-                # 정렬 원점 map_origin_in_world [-0.0562, 1.5317, 0.00009]로 바꾼 값이다 (10/12 회의 B안, #98)
-                'initial_pose.x': float(LaunchConfiguration('initial_x').perform(context)),
-                'initial_pose.y': float(LaunchConfiguration('initial_y').perform(context)),
-                'initial_pose.yaw': float(LaunchConfiguration('initial_yaw').perform(context)),
+                # 초기 위치는 map 기준. 기본값은 기본 스폰 위치 world (0, 1.5, 0)을 지도 v2 0.025 m의
+                # 정렬 원점 map_origin_in_world [-0.0439, 1.4712, -0.00088]로 바꾼 값이다 (10/12 회의 B안, #242)
+                'initial_pose.x': initial[0],
+                'initial_pose.y': initial[1],
+                'initial_pose.yaw': initial[2],
             }],
             output='screen',
         ),
@@ -124,6 +125,10 @@ def _localization(context):
                 'use_sim_time': use_sim_time,
                 'world_frame': frames['map_frame'],
                 'pose0': 'amcl_pose',
+                # AMCL 초기 위치에서 시작한다. 안 주면 (0, 0)에서 시작해 첫 amcl_pose와 반반 섞이고, AMCL은
+                # update_min_d(0.1 m)만큼 움직이기 전엔 다시 안 보내서 원점에서 먼 로봇이 절반 위치로 튄다
+                # (fleet_stack: 초기 (21.05, -20.52) → 첫 주행 (10.6, -10.4))
+                'initial_state': [initial[0], initial[1], 0.0, 0.0, 0.0, initial[2]] + [0.0] * 9,
             }],
             output='screen',
         ),
@@ -147,7 +152,7 @@ def _localization(context):
 
 def generate_launch_description():
     default_map = os.path.join(
-        get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v1_0025.yaml')
+        get_package_share_directory('amr_mapping'), 'maps', 'warehouse_v2_0025.yaml')
     return LaunchDescription([
         DeclareLaunchArgument('namespace', default_value='amr_01', description='로봇 네임스페이스'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
@@ -169,8 +174,8 @@ def generate_launch_description():
             'recovery_cmd_vel_topic', default_value='cmd_vel_recovery',
             description='복구 회전 속도 토픽 (상대 이름). 안전 노드 앞에서 내비보다 우선해 합친다'),
         DeclareLaunchArgument('recovery_events_file', default_value='', description='복구 이벤트 CSV (비우면 안 씀)'),
-        DeclareLaunchArgument('initial_x', default_value='0.0562', description='AMCL 초기 위치 x (map 기준) [m]'),
-        DeclareLaunchArgument('initial_y', default_value='-0.0317', description='AMCL 초기 위치 y (map 기준) [m]'),
-        DeclareLaunchArgument('initial_yaw', default_value='0.0', description='AMCL 초기 방향 (map 기준) [rad]'),
+        DeclareLaunchArgument('initial_x', default_value='0.0439', description='AMCL 초기 위치 x (map 기준) [m]'),
+        DeclareLaunchArgument('initial_y', default_value='0.0288', description='AMCL 초기 위치 y (map 기준) [m]'),
+        DeclareLaunchArgument('initial_yaw', default_value='0.00088', description='AMCL 초기 방향 (map 기준) [rad]'),
         OpaqueFunction(function=_localization),
     ])

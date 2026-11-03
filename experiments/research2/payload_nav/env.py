@@ -17,6 +17,9 @@
 
 돌발 장애물이 나타나면 그 순간부터 멈출 때까지 간 거리(실제 제동 거리)와 제동 거리 여유
 (나타날 때 간격 − 실제 제동 거리), 충돌했다면 충돌 순간 속도를 info에 남긴다 (명세서 4-5절).
+
+info['cost']는 제약 RL(v3, payload_nav/lagrangian.py)의 비용이다. 충돌로 끝난 스텝만 1이고 나머지는 0이다.
+보상과 따로 두며, 보상 계산에는 쓰지 않는다 (v3는 r_collision·w_impact를 0으로 두고 충돌을 이 비용으로만 다룬다).
 """
 
 from collections import deque
@@ -343,6 +346,7 @@ class PayloadNavEnv(gym.Env):
         return {
             'outcome': outcome,
             'is_success': outcome == 'success',
+            'cost': 1.0 if outcome == 'collision' else 0.0,   # 제약 RL 비용 (보상과 별개)
             'collision_with': self.collision_with,
             'impact_speed': self.impact_speed,
             'payload_kg': self.payload,

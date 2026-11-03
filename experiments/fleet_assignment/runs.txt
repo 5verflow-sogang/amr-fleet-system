@@ -1,0 +1,7 @@
+# 라벨, Actions run id, GCS 결과 경로, git sha, 기종. 조건마다 10회, seed 1~10 (10/25~26)
+alg_base_nearest, 40186983944, gs://amr-fleet-results/runs/fleet_fake-alg_base_nearest/20261025_40186983944/, 7a9b353, c2d-standard-8
+alg_base_load_balance, 40186994686, gs://amr-fleet-results/runs/fleet_fake-alg_base_load_balance/20261025_40186994686/, 7a9b353, c2d-standard-8
+alg_base_hungarian, 40187007105, gs://amr-fleet-results/runs/fleet_fake-alg_base_hungarian/20261025_40187007105/, 7a9b353, c2d-standard-8
+alg_batch_nearest, 40187020917, gs://amr-fleet-results/runs/fleet_fake-alg_batch_nearest/20261025_40187020917/, 7a9b353, c2d-standard-8
+alg_batch_load_balance, 40195827008, gs://amr-fleet-results/runs/fleet_fake-alg_batch_load_balance/20261025_40195827008/, 7a9b353, c2d-standard-8
+alg_batch_hungarian, 40196087562, gs://amr-fleet-results/runs/fleet_fake-alg_batch_hungarian/20261025_40196087562/, 7a9b353, c2d-standard-8

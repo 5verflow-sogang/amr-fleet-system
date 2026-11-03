@@ -5,13 +5,15 @@
 
 구독 (상대 이름은 로봇 네임스페이스 아래):
     perception/obstacles                       amr_msgs/TrackedObstacleArray  트랙 (odom 좌표계)
-    ground_truth/odom                          nav_msgs/Odometry  로봇 GT (world → base_footprint)
+    ground_truth/odom                          nav_msgs/Odometry  로봇 GT (world → base_footprint, twist는 몸체 기준)
     /dynamic_obstacles/<id>/ground_truth/odom  nav_msgs/Odometry  장애물 GT (world, twist는 몸체 기준)
     /tf                                         odom → base_footprint (트랙 시각 값)
 
 트랙은 odom, GT는 world 좌표계다. 프레임마다 같은 시각의 로봇 GT 자세(world → base)와
 TF(odom → base)로 world → odom을 구해 트랙을 world로 옮긴다: T_world_odom = T_world_base · T_odom_base⁻¹.
 odom이 world에서 천천히 미끄러져도(휠 오도메트리 누적 오차) 프레임마다 다시 구하므로 상쇄된다.
+로봇 GT 자세·속도와 트랙 반경도 넘겨, 가짜 동적 트랙 때문에 늘어난 감속·정지를 안전 노드 규칙으로 잰다.
+로봇 속도는 GT다 (추적 노드 TTC는 odom 속도를 쓰지만 시뮬레이터에서는 거의 같다).
 
 트랙 메시지를 바로 처리하지 않고 큐에 넣었다가, 그 시각 뒤의 로봇 GT가 들어오면(보간) 처리한다.
 duration_s가 지나거나(첫 트랙 프레임 기준, 시뮬레이션 시간) 종료(Ctrl+C)하면 out_dir에 저장한다:
@@ -83,7 +85,13 @@ def track_from_msg(obstacle) -> TrackObs:
     vc = np.asarray(obstacle.twist.covariance, dtype=float).reshape(6, 6)[:2, :2]
     return TrackObs(int(obstacle.track_id), float(p.x), float(p.y), float(v.x), float(v.y),
                     bool(obstacle.is_dynamic),
-                    pc if np.any(pc) else None, vc if np.any(vc) else None)
+                    pc if np.any(pc) else None, vc if np.any(vc) else None, float(obstacle.radius))
+
+
+def robot_velocity_in_world(sample) -> tuple:
+    """로봇 GT 샘플 (x, y, yaw, 몸체 vx, 몸체 vy) → world 축 속도 (vx, vy)."""
+    c, s = math.cos(sample[2]), math.sin(sample[2])
+    return (c * sample[3] - s * sample[4], s * sample[3] + c * sample[4])
 
 
 def write_csv(path: str, rows: list) -> None:
@@ -159,7 +167,8 @@ class TrackingEvalNode(Node):
     def on_robot_gt(self, msg: Odometry):
         pos = msg.pose.pose.position
         yaw = yaw_from_quaternion(msg.pose.pose.orientation)
-        self.robot_gt.add(stamp_to_sec(msg.header.stamp), (pos.x, pos.y, yaw))
+        v = msg.twist.twist.linear
+        self.robot_gt.add(stamp_to_sec(msg.header.stamp), (pos.x, pos.y, yaw, v.x, v.y))
 
     def on_obstacle_gt(self, gid: str, msg: Odometry):
         pose = msg.pose.pose
@@ -215,9 +224,10 @@ class TrackingEvalNode(Node):
                     self.counts['tf_fail'] += 1
                 return expired
             tr, q = tf.transform.translation, tf.transform.rotation
-            world_odom = world_from_odom(tuple(robot), (tr.x, tr.y, yaw_from_quaternion(q)))
+            world_odom = world_from_odom(tuple(robot[:3]), (tr.x, tr.y, yaw_from_quaternion(q)))
             tracks = [track.transformed(world_odom) for track in tracks]
-        self.evaluator.add_frame(t, tracks, robot_xy=(robot[0], robot[1]))
+        self.evaluator.add_frame(t, tracks, robot_xy=(robot[0], robot[1]), robot_yaw=robot[2],
+                                 robot_velocity=robot_velocity_in_world(robot))
         self.counts['frames'] += 1
         if self.first_t is None:
             self.first_t = t
