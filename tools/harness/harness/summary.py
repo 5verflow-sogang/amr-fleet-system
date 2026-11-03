@@ -31,8 +31,10 @@ ZONE_LONG_WAIT_S = 30.0
 COUNT_ZERO_KPI = ('fleet.zone_long_waits', 'fleet.stalls')
 # 시나리오가 일부러 만드는 상황이라 판정하면 오해되는 지표 (fleet_deadlock은 교착을 유도한다)
 NO_VERDICT = {'fleet_deadlock': set(COUNT_ZERO_KPI)}
-# 작업 실패 원인 묶음 (ErrorInfo.code 대역, docs/api.md). 위치(203)를 주행(201·202)과 나눠 센다 (#148 지수 합의)
-FAILURE_CAUSES = {'localization': {'203'}, 'nav': {'201', '202'}, 'traffic': {'301', '302', '303'},
+# 작업 실패 원인 묶음 (amr_msgs ErrorInfo.code, docs/api.md). 위치(203)를 주행(201·202)과 나눠 센다 (#148 지수 합의).
+# assign = 배터리 부족 거부(101, BT CheckBattery #253)·이미 수행 중(102), canceled = 서버 취소(103)·다른 로봇이 먼저
+# 수락(104). 어느 묶음에도 없는 코드(새 코드, 0 등)는 tasks_failed_other로 세어 실패가 조용히 빠지지 않게 한다
+FAILURE_CAUSES = {'assign': {'101', '102'}, 'canceled': {'103', '104'}, 'localization': {'203'}, 'nav': {'201', '202'}, 'traffic': {'301', '302', '303'},
                   'comm': {'401', '402'}, 'task_timeout': {'501'}, 'charge': {'502'},
                   'docking': {str(c) for c in range(900, 1000)}}
 # 원 명세 경로 계획(4장)·경로 추종(5장) KPI: (기준, 방향). min = 클수록 좋음 (CI 하한으로 판정), max = 작을수록 좋음
@@ -155,6 +157,8 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
             failed = [r for r in tasks if r['final_state'] == 'FAILED']
             for name, codes in FAILURE_CAUSES.items():
                 out[f'fleet.tasks_failed_{name}'] = sum(r['error_code'] in codes for r in failed)
+            known = set().union(*FAILURE_CAUSES.values())
+            out['fleet.tasks_failed_other'] = sum(r['error_code'] not in known for r in failed)
         # 같은 작업을 둘 이상의 로봇이 실제로 움직이며 한 수 (하이브리드 중복 실행, architecture.md 5-2절).
         # task_outcomes.csv에 runners 열이 있을 때만
         if 'runners' in tasks[0]:

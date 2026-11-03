@@ -298,10 +298,15 @@ def test_failure_causes_by_error_code(tmp_path):
         't1,0,1,amr_01,COMPLETED,10,0\n'
         't2,0,1,amr_01,FAILED,10,203\n'
         't3,0,1,amr_02,FAILED,10,202\n'
-        't4,0,1,amr_03,FAILED,10,904\n')
+        't4,0,1,amr_03,FAILED,10,904\n'
+        't5,0,1,amr_04,FAILED,10,101\n'
+        't6,0,1,amr_05,FAILED,10,0\n')
     m = fleet_metrics(run)
     assert m['fleet.tasks_failed_localization'] == 1 and m['fleet.tasks_failed_nav'] == 1
     assert m['fleet.tasks_failed_docking'] == 1 and m['fleet.tasks_failed_traffic'] == 0
+    # 배터리 부족 거부(101)는 할당, 묶음에 없는 코드는 other로 센다 (실패 수 합 = FAILED 수)
+    assert m['fleet.tasks_failed_assign'] == 1 and m['fleet.tasks_failed_other'] == 1
+    assert sum(v for k, v in m.items() if k.startswith('fleet.tasks_failed_')) == 5
     # 열이 없던 예전 결과는 원인 지표를 내지 않는다
     (run / 'task_outcomes.csv').write_text('task_id,request_time,first_assign_time,robots,final_state,end_time\n'
                                            't1,0,1,amr_01,FAILED,10\n')
