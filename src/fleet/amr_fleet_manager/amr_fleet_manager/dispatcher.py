@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Optional
 
-from amr_fleet_core.assignment import ALGORITHMS, RobotInfo, TaskInfo, euclidean_cost, filter_candidates
+from amr_fleet_core.assignment import (ALGORITHMS, RobotInfo, TaskInfo, euclidean_cost, filter_candidates,
+                                       sort_by_priority)
 
 from amr_fleet_core.claims import TaskClaims
 
@@ -42,6 +44,10 @@ class DispatcherConfig:
     # 작업을 맡은 로봇의 RobotState가 이 시간 동안 안 오면 로봇이 죽은 것으로 보고 작업을 회수해 다시 할당한다.
     # 0 이하면 회수하지 않는다. robot_timeout_s(후보 제외)보다 길게 둬 잠깐 끊긴 로봇의 작업을 뺏지 않는다
     reclaim_timeout_s: float = 5.0
+    # 스테이션 예약: 맡겨진 작업의 픽업·하역 위치에서 이 거리 [m] 안을 쓰는 작업은 그 작업이 끝날 때까지 맡기지 않는다.
+    # 같은 도크로 가는 두 작업을 동시에 내보내 두 로봇이 한 정차 자세로 들어가 막혔다 (11/2 fleet_stack-release_build,
+    # dock_a). 0이면 끈다 (기본. 노드 설정은 1.0, 연구 1 가짜 로봇 실험은 지난 조건대로 끈다)
+    station_clearance_m: float = 0.0
 
     def __post_init__(self):
         if self.algorithm not in ALGORITHMS:
@@ -52,6 +58,8 @@ class DispatcherConfig:
             raise ValueError(f'max_resends는 0 이상이어야 한다: {self.max_resends}')
         if self.failed_retries < 0:
             raise ValueError(f'failed_retries는 0 이상이어야 한다: {self.failed_retries}')
+        if not self.station_clearance_m >= 0:
+            raise ValueError(f'station_clearance_m는 0 이상이어야 한다: {self.station_clearance_m}')
         if 0 < self.reclaim_timeout_s < self.robot_timeout_s:
             raise ValueError(f'reclaim_timeout_s({self.reclaim_timeout_s})는 robot_timeout_s'
                              f'({self.robot_timeout_s}) 이상이어야 한다 (0 이하면 끈다)')
@@ -235,7 +243,8 @@ class Dispatcher:
                 if owner is not None:
                     self._hand_over(t, owner, STATE_COMPLETED if self.claims.completed(t.info.task_id, owner)
                                     else STATE_IN_PROGRESS)
-        queued = [t.info for t in self.tasks.values() if t.state == STATE_PENDING and not t.assignee]
+        queued = self._station_free(
+            [t.info for t in self.tasks.values() if t.state == STATE_PENDING and not t.assignee])
         free = [
             replace(r.info, load=r.load) for r in self.robots.values()
             if not r.task_id and not r.decentral and now - r.last_seen <= self.config.robot_timeout_s
@@ -345,6 +354,26 @@ class Dispatcher:
 
     # ---- 내부 ----
 
+    def _station_free(self, queued: list[TaskInfo]) -> list[TaskInfo]:
+        """스테이션 예약(DispatcherConfig.station_clearance_m)에 걸리지 않는 작업만 남긴다 (순서는 그대로).
+
+        맡겨진 작업의 스테이션은 끝날 때까지 잡혀 있다. 큐 안에서 같은 스테이션을 쓰는 작업끼리는 우선순위가 높은
+        하나만 이번에 남기고, 나머지는 큐에서 기다렸다가 다음 assign()에서 다시 본다.
+        """
+        clearance = self.config.station_clearance_m
+        if clearance <= 0:
+            return queued
+        taken = [xy for t in self.tasks.values() if t.assignee and t.state not in FINISHED
+                 for xy in _stations(t.info)]
+        allowed = set()
+        for info in sort_by_priority(queued):
+            mine = _stations(info)
+            if any(math.dist(a, b) <= clearance for a in mine for b in taken):
+                continue
+            allowed.add(info.task_id)
+            taken += mine
+        return [info for info in queued if info.task_id in allowed]
+
     def _confirm(self, robot_id: str, task_id: str) -> None:
         for assignment_id, pending in list(self._pending.items()):
             if pending.robot_id == robot_id and pending.task_id == task_id:
@@ -376,3 +405,8 @@ class Dispatcher:
         if robot is not None and robot.task_id == task_id:
             robot.task_id = ''
             robot.load = max(0, robot.load - 1)
+
+
+def _stations(info: TaskInfo) -> list:
+    """작업이 쓰는 스테이션 위치: 픽업(배송만)과 하역."""
+    return [xy for xy in (info.pickup_xy, info.dropoff_xy) if xy is not None]
