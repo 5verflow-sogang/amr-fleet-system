@@ -45,10 +45,17 @@ def metrics(run):
         elif b and idle_start is not None:
             gaps.append(float(s['time']) - idle_start)
             idle_start = None
+    # 논문 3.3의 작업 사이 대기: amr_03이 작업을 끝낸 시각 → 다음 명령의 Ack 시각 (a3_gap과 다른 정의)
+    a3_acks = sorted(float(r['ack_time']) for r in resp if r['robot'] == 'amr_03' and r['ack_time'])
+    a3_ends = [float(t['end_time']) for t in tasks if t['final_state'] == 'COMPLETED'
+               and (t.get('runners') or t['robots']).split()[-1:] == ['amr_03']]
+    waits = [min(x for x in a3_acks if x > e) - e for e in a3_ends if any(x > e for x in a3_acks)]
     modes = rows(run / 'fleet_modes.csv')
     return {
+        'a3_wait': np.mean(waits) if waits else 0.0,
         'seed': meta['seed'], 'completed': len(done), 'task_time': done,
-        'dup': sum(len((t.get('runners') or '').split()) > 1 for t in tasks),
+        # runners 열이 생기기 전 실행(central_d0·d100·d200·d500)은 중복을 셀 수 없어 nan으로 둔다 (0이 아님)
+        'dup': sum(len((t.get('runners') or '').split()) > 1 for t in tasks) if tasks and 'runners' in tasks[0] else np.nan,
         'a3_done': by.get('amr_03', 0),
         'a3_busy': busy['amr_03'][0] / max(busy['amr_03'][1], 1),
         'others_busy': np.mean([v[0] / v[1] for k, v in busy.items() if k != 'amr_03']),
@@ -72,7 +79,7 @@ def ci(x):
 a, b = load(A), load(B)
 seeds = sorted(set(a) & set(b))
 print(f'{A} vs {B} (seed {len(seeds)}개)')
-for key in ['completed', 'a3_done', 'a3_busy', 'others_busy', 'a3_gap', 'dup', 'fallbacks', 'decentral_s', 'ack_p95']:
+for key in ['completed', 'a3_done', 'a3_busy', 'others_busy', 'a3_wait', 'a3_gap', 'dup', 'fallbacks', 'decentral_s', 'ack_p95']:
     print(f'  {key:12s} {A}: {ci([a[s][key] for s in seeds])}   {B}: {ci([b[s][key] for s in seeds])}   '
           f'차이(B-A): {ci([b[s][key] - a[s][key] for s in seeds])}')
 ratio = []

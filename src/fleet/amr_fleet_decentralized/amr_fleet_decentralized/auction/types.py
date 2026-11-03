@@ -36,10 +36,19 @@ class RobotInfo:
 class TaskInfo:
     """경매에 부칠 작업 1건. amr_fleet_core.assignment.types.TaskInfo와 같은 패턴
     (pickup_xy 없으면 dropoff_xy를 시작점으로 본다 - CHARGE·RETURN처럼 pickup이 없는
-    작업)."""
+    작업).
+
+    priority·created·task_id는 amr_fleet_core.assignment.common.sort_by_priority가
+    그대로 읽는 이름이다(순서 키: priority 내림차순 → deadline 오름차순 → created
+    오름차순 → task_id) - 중앙과 같은 순서로 경매에 참여하려고 노드(task_auction_node)가
+    이 함수를 그대로 가져다 쓴다(#223 연구 1 처리 순서 수정). deadline과 달리 created는
+    "0이면 없음" 규칙이 없다(Task.msg - 항상 실제 요청 시각) - 그대로 변환한다.
+    """
 
     task_id: str
     dropoff_xy: Point
+    priority: int = 0
+    created: float = 0.0
     pickup_xy: Optional[Point] = None
     deadline: Optional[float] = None  # epoch 초. None이면 마감 없음
 

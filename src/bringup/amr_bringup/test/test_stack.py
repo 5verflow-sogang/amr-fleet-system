@@ -60,11 +60,12 @@ def test_cmd_vel_topics_follow_chain(zone_client, safety, nav_out, zone_out, saf
         assert args(items, 'safety.launch.py')['cmd_vel_in_topic'] == safety_in
 
 
-def test_zone_client_uses_prefixed_frame_and_server_zones():
+def test_zone_client_uses_server_zones():
     items = robot_stack(Options(nav2=True, zone_client=True, zones_file='/z.yaml'), 0, 'amr_02', POSE, MAP_POSE)
     zone = args(items, 'zone_client.launch.py')
-    assert (zone['robot_id'], zone['base_frame'], zone['zones_file']) == ('amr_02', 'amr_02/base_footprint', '/z.yaml')
-    # zones.yaml은 world 좌표라 TF map ← world로 바꿔 쓴다
+    assert (zone['robot_id'], zone['zones_file']) == ('amr_02', '/z.yaml')
+    # zones.yaml은 world 좌표라 TF map ← world로 바꿔 쓴다. 로봇 위치는 네임스페이스 안 상대
+    # 토픽(robot_pose_topic 기본값)이라 접두어를 따로 넘기지 않는다 (perf/zone-client-pose-topic)
     assert zone['zones_frame'] == 'world'
 
 

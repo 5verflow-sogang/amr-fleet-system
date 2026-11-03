@@ -31,7 +31,9 @@
       <odom_publish_frequency>50</odom_publish_frequency>
     </plugin>
 
-    <!-- 바퀴 조인트 각도 → joint_states (robot_state_publisher가 바퀴 TF를 계산) -->
+    <!-- 바퀴 조인트 각도 → joint_states (robot_state_publisher가 바퀴 TF를 계산).
+         Fortress 이 플러그인은 발행 주기 설정이 없어 물리 스텝마다(약 1000 Hz) 낸다 (<update_rate>를 넣어도 같다).
+         ROS 쪽에서 amr_gazebo joint_state_throttle이 50 Hz로 줄인다 (spawn_robot.launch.py) -->
     <plugin filename="ignition-gazebo-joint-state-publisher-system" name="ignition::gazebo::systems::JointStatePublisher">
       <topic>${topic_ns}/joint_states</topic>
       <joint_name>${prefix}left_wheel_joint</joint_name>

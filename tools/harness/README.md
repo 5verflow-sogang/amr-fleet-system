@@ -67,6 +67,7 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 | `fleet_fake` | 서버 + 장애주입기 + 가짜 로봇 5대 + 작업 생성기(60건) + rosbag. 약 11분. `kill_robot`으로 로봇 장애 | `fleet_latency.csv`, `response_time.csv`(Ack), `task_outcomes.csv`, `recovery.csv`(로봇 장애 시), `tasks.json`, `assignments.csv`, `fault_events.csv`, `robot_states.csv`, `plots/` |
 | `nav_compare` | 로봇 1대, 지도 v1, Nav2 데모 + 목표 1곳. `--set controller=dwa\|teb --set scenario=clear\|obstacle`. 약 1분. `HARNESS_PACKAGES="amr_bringup amr_nav2_plugins"` 필요 | `nav_result.json`(성공·도착 시간·최소 장애물 거리·경로 길이·CTE, GT), `nav_series.csv` ([experiments/teb_compare](../../experiments/teb_compare/README.md)) |
 | `nav_avoidance` (**초안, 미실행**) | 로봇 1대 DWA 데모 + 1.0 m/s로 경로를 가로지르는 작업자 1명 + 추적 노드. 약 1분. test-plan I17 | `avoidance/`의 `avoidance.csv`·`avoidance_summary.json`·GT 원자료 ([amr_safety README](../../src/perception/amr_safety/README.md#회피-평가-i17)) |
+| `tracking_kpi_a·b·c05·c10·c15·d·e` | 추적 정확도 KPI. 로봇 1대(화면·카메라 끔) + LiDAR 필터 + 추적 + `tracking_eval`, 장애물은 맨 마지막에 띄운다. A·B·D 로봇 정지 300 s, C 정면 접근 0.5·1.0·1.5 m/s 40 s, E 로봇 주행. 공통 틀 `tracking_kpi`는 직접 돌리지 않는다 ([perception.md](../../docs/algorithms/perception.md) 1-7) | `tracking/`의 `frames.csv`·`episodes.csv`·`summary.json`, `rosbag/`(world → `amr_01/odom` 고정 TF = 출발 자세가 있어 Foxglove에서 world 기준으로 GT·트랙이 겹친다. E는 휠 오도메트리가 어긋난 만큼 틀어진다). 요약 `track.*`(아래 "추적 지표") |
 
 `fleet_fake`는 Fleet 계층(지연·손실·Ack)만 잰다. 가짜 로봇은 `odom`을 내지 않아 응답 시간 KPI(200 ms)는 비어 있으므로, 그 Before 데이터는 실제 로봇 스택 시나리오가 따로 필요하다. 서버 강제종료 `kill_at_s`는 서버 launch 시작 기준이라 작업 시작보다 약 10초 빠르다.
 
@@ -96,6 +97,15 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도 위치 오차 RMSE가 최대 2 cm 달랐다(10/6, AMCL 파티클 필터·Gazebo 센서 노이즈·메시지 도착 순서 등). 그래서 같은 seed가 "같은 조건"은 보장하지만 "같은 결과"는 보장하지 않고, 판정은 N회 반복의 신뢰구간으로 한다.
 
 **회피 지표** (`nav_avoidance`, test-plan I17): `avoid.<로봇>.collisions`·`min_clearance`·`max_deviation`·`max_return_s`·`pass`(`avoidance_summary.json`). 원 명세 KPI는 "30회 모두 충돌 0건·이탈 1 m·복귀 5초"라 평균·CI가 아니라 최악값으로 판정해야 하므로 요약의 KPI 열은 비워 두고, 판정은 `ros2 run amr_safety avoidance_report <실행 폴더들>`로 한다.
+
+**추적 지표** (`tracking_kpi_*`, 판정 기준은 [perception.md](../../docs/algorithms/perception.md) 1-7): `track.*`(`tracking/summary.json`, `amr_tracking` `tracking_eval`). 판정하는 지표는 셋이다.
+
+- `track.pred_gain_1s` = 정지 가정 RMSE − 등속 예측 RMSE(+1 s, 움직이는 GT). P1: CI 하한이 0보다 크면 PASS. 0과 같아도 FAIL이다(추정 속도가 0이면 두 값이 같다)
+- `track.vel.rmse` = 속도 벡터 RMSE. P2: CI 상한 ≤ 0.2 m/s
+- P1·P2는 장면 A·B·D·E(`tracking_kpi_a·b·d·e`)에서만 판정한다. 장면 C는 정면 접근 하나라 판정 열을 비운다
+- `track.d1_ttc_s` = 접근 판정 TTC(GT 물체가 하나인 기록의 첫 판정, 판정 없이 최근접까지 오면 0). D1은 안전 기준이라 평균·CI가 아니라 **최악값**으로 `tracking_kpi_c10·c15`에서 판정한다. 가장 나쁜 실행이 3 s 미만이면 FAIL, 아니면 하네스 실패 실행이나 값이 없는 실행이 있거나 10회 미만이면 보류(이유를 KPI 열에), 그 외 PASS. Discord 알림에는 평균 대신 최솟값이 나간다
+- 나머지(`match_rate`, `pos.rmse`, `radial.mean` 센서 방향 편향, `speed.mean`, `heading.mean`, +1·+2 s 예측·정지 가정 RMSE, NEES, `id_switches`, 판정 지연, 가짜·중복 동적, `d1_dist_m`·`d1_latency_s`)는 참고 지표다. P1·P2 표본 수는 `track.pred_1s.n`·`track.vel.n`
+- 가짜 동적 트랙 때문에 늘어난 감속·정지(참고): 안전 노드 판정 규칙을 가짜를 넣고 한 번, 빼고 한 번 돌려 다른 시간을 잰다. `track.false_limited_frac`(감속 또는 정지인 시간 비율)·`false_stop_frac`(정지)·`false_stop_events`(정지 횟수)·`false_min_clearance`(가장 가까운 가짜의 차체 거리 [m])
 
 **작업·로봇 장애 지표** (`fleet_fake`): `fleet.tasks_requested`·`tasks_completed`·`task_completion_rate`(`task_outcomes.csv`), 완료한 작업의 `fleet.task_time_s.mean`(요청~완료)·`distance_m.total`·`distance_m.mean`, `fleet.throughput_per_min`(완료 작업 수 / 첫 요청~마지막 완료 분), `fleet.duplicate_tasks`(같은 작업을 둘 이상의 로봇이 움직이며 한 수, `runners` 열. 하이브리드 중복 실행), 하이브리드 실행이면 `fleet.fallbacks`(분산 전환 횟수)·`fleet.decentral_s`(분산 모드 시간 합, `fleet_modes.csv`), 로봇 장애 실행이면 `fleet.reclaimed_tasks`·`recovery_s.mean`·`recovery_s.max`·`reclaimed_completed_rate`(`recovery.csv`). 실행 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로 완료율은 같은 seed(같은 작업 일정)의 장애 있음·없음끼리 비교한다.
 
@@ -278,7 +288,7 @@ tools/harness/results/<run_id>/
 | `frame_alignment` | `fixed` | 좌표계 정렬 방식 |
 | `host` | CPU 모델·코어 수, 메모리, GPU 유무 | CPU 80%·응답 시간 KPI는 실행 컴퓨터에 따라 달라짐 |
 | `versions` | ROS 배포판, 시뮬레이터, Docker 이미지 태그 | 환경 차이 추적 |
-| `use_sim_time`, `real_time_factor` | `true`, `0.87` | 시뮬레이터가 실제보다 느리게 돌았는지 |
+| `use_sim_time`, `real_time_factor` | `true`, `0.87` | 시뮬레이터가 실제보다 느리게 돌았는지. 주행 구간의 `/clock` 진행 ÷ 실제 시간 (11/2부터. 그 전 실제 시간으로 기다리는 시나리오 `fleet_stack`·`task_cycle`은 늘 1.0으로 잘못 찍혔다). `/clock`이 없으면 `null` |
 | `rmw_implementation` | `rmw_cyclonedds_cpp` | 연구 1 After 측정의 DDS 벤더 비교 (하연, #33) |
 | `qos_profile` | `default` | 연구 1 After 측정의 QoS 튜닝 전후 구분. 값은 [api.md 6절](../../docs/api.md#6-qos-기본값) 프로파일 이름 (하연, #33) |
 | `observation_cutoff` | `{"end": 612.3, "grace_s": 1.0, "cutoff": 610.8, "start": 12.4}` | 연구 1 지연·손실·Ack에서 뺀 실행 끝 구간(하연·민지, #33)과 녹화 초반 구간(`start`) |
@@ -303,7 +313,7 @@ tools/harness/results/<run_id>/
 | 응답 시간 두 기준 (10/13) | `latency_ms`는 서버 발행 → 첫 움직임(원 명세 측정 표 "작업 명령 발행", 통신 지연 포함), `latency_recv_ms`는 로봇이 받은 중계본 도착 → 첫 움직임(성능 요구사항 "명령 수신 ~ 로봇 반응"). 둘 다 보고하고 판정 기준은 측정 뒤 회의에서 | 하연 |
 | 응답 시간 보조 지표 (10/15, #171 리뷰) | 판정 기준은 10/19 회의에서 정하고, 그 전에 볼 값만 더한다. `fleet.response_sim_ms`(시뮬레이션 시간, RTF < 1이면 실제 시간 값이 부푼다), `fleet.response_coverage`(움직임을 찾은 명령 ÷ 명령. 못 찾은 명령은 평균에서 빠진다), `fleet.response_moving_at_cmd`(명령 순간 이미 움직이던 경우 수. 지연이 0에 가깝고 `latency_recv_ms`는 음수도 나온다. 빼지 않고 표시만). 실행을 모두 합쳐 움직임을 찾은 명령이 50건 미만이면 응답 시간 판정을 비우고 "보류 (n=…<50)"로 적는다 | 하연·민지 |
 | 교착 판정 (10/13) | 구역 허가를 30 s(서버 `release_timeout_s`) 넘게 못 받은 요청 0건(`fleet.zone_long_waits`)과 이동 단계 60 s 넘는 정체 0건(`fleet.stalls`). 정체는 구역 밖 교착도 잡는다. 수치는 측정 뒤 조정 가능 | 하연 |
-| CPU 판정 (10/13) | `sys.cpu_pct.mean` ≤ 80. 컨테이너가 쓸 수 있는 코어 기준이라 기준 기기는 `docker --cpus`로 맞춘다. 기기와 덜 상관있는 `sys.cpu_cores`(사용 코어 수)와 시뮬레이터를 뺀 `sys.cpu_cores_no_sim`을 같이 보고. 작업이 끝난 뒤 쉬는 구간도 평균에 들어가므로 `sys.cpu_pct.p95`도 본다. 작업 구간만 자를지와 기준 기기는 10/19 회의 | 하연 |
+| CPU 판정 (10/13) | `sys.cpu_pct.mean` ≤ 80. 컨테이너가 쓸 수 있는 코어 기준이라 기준 기기는 `docker --cpus`로 맞춘다. 기기와 덜 상관있는 `sys.cpu_cores`(사용 코어 수)와 시뮬레이터를 뺀 `sys.cpu_cores_no_sim`을 같이 보고. 작업이 끝난 뒤 쉬는 구간도 평균에 들어가므로 `sys.cpu_pct.p95`도 본다. 작업 구간만 자를지와 기준 기기는 10/19 회의. 10/28: 역할별 코어 수 `sys.cpu_cores.server`(Fleet 서버), `.robot_max`(구간마다 가장 많이 쓴 로봇 1대), `.robot_mean`, `.tool`(장애 주입기·작업 생성기·녹화 등 실험 도구)을 추가. 시뮬레이터·실험 도구를 빼고 서버와 로봇 1대를 따로 판정하려는 것. 비율은 두 가지: `sys.cpu_pct.<묶음·역할>.mean`(실행한 컴퓨터 대비), `sys.cpu_ref_pct.{server,robot_max}`(각각 4코어 컴퓨터로 본 사용률, `summary.REF_CORES`, 팀 합의 전 가정) | 하연 |
 | 판정하지 않는 지표 | `fleet_deadlock`은 교착을 일부러 만드는 시나리오라 `fleet.zone_long_waits`·`fleet.stalls`를 판정하지 않는다(값만 보고). 이 시나리오의 기준("유도된 교착이 풀린 시간" 등)은 회의에서 | 하연·민지 |
 | 연구 1 지연 파일 | `fleet_latency.csv`(끝에서 끝, 손실 포함), `hop_latency.csv`(구간별, `trace/`에서 변환) | 하연·민지, #33 |
 | Fleet 지연 기록 방법 | rclpy 기록 노드 대신 rosbag2로 녹화 후 오프라인 변환 (Python 수신 시각 지연 방지) | 하연·민지, #33 |

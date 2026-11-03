@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'map_quality = amr_mapping.map_quality:main',
+            'gt_map = amr_mapping.gt_map:main',
             'map_route_driver = amr_mapping.route_driver:main',
         ],
     },

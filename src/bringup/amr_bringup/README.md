@@ -45,7 +45,7 @@ ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose \
 | `amr_localization localization` | AMCL + EKF 두 개 | 초기 위치(스폰 자세를 map 좌표로), 지도 서버는 첫 로봇에서 한 번 |
 | `amr_bt amr_bt` | Fleet 작업 수신 | `fleet:=true`면 `relayed:=true`(장애 주입기 중계본) |
 | `amr_bringup nav2` | planner·controller·behavior·bt_navigator | `nav2:=true`. 프레임 접두어, 스캔 절대 이름, 속도 출력 `cmd_vel_nav` |
-| `amr_zone_client` | 좁은 통로 진입 허가·속도 제한 | `zone_client:=true`. 서버와 같은 `zones.yaml`, `base_frame=<ns>/base_footprint`, `use_sim_time` |
+| `amr_zone_client` | 좁은 통로 진입 허가·속도 제한 | `zone_client:=true`. 서버와 같은 `zones.yaml`, `use_sim_time` |
 | `amr_tracking` | LiDAR 장애물 추적, TTC | `tracking:=true` |
 | `amr_detection` | YOLO 인식 | `detection:=true` (카메라 필요) |
 | `amr_docking` | ArUco 도킹 서버 (마커판은 월드에 한 번) | `docking:=true` (Nav2·카메라 필요). 속도는 Nav2와 같은 `cmd_vel_nav` 자리 |
@@ -82,8 +82,8 @@ Nav2는 `nav2_params.yaml`의 DWA를 `FollowPath` 이름으로 등록해 쓴다(
 | `payload_mass` | `0.0` | 모든 로봇의 적재물 질량 [kg] (연구 2 Gazebo 평가) |
 | `seed` | `0` | 실행 seed. 엔코더 노이즈(로봇마다 `seed × 100 + 번호`), 동적 장애물, 손실 난수. 하네스는 1부터 준다. 0이면 엔코더 노이즈는 매번 무작위 |
 | `localization` | `true` | 끄면 DiffDrive odom TF를 쓴다 |
-| `map` | `amr_mapping maps/warehouse_v1_0025.yaml` | 지도 v1 0.025 m (10/13 결정, #157). 정렬 원점과 함께 쓰면 0.05 m보다 정지 오차가 작다 (GCP 10회 2.09 vs 2.84 cm). Nav2 전역 costmap도 이 해상도를 따라가 칸이 4배다. 경로 계획이 느리면 Nav2만 0.05 m 지도로 나눈다 |
-| `map_origin_in_world` | `[-0.0562, 1.5317, 0.00009]` | world에서 본 map 원점. 지도↔월드 정렬값(B안, amr_mapping README "지도 정렬"). 지도를 바꾸면 그 지도의 정렬값 |
+| `map` | `amr_mapping maps/warehouse_v2_0025.yaml` | 지도 v2 0.025 m (#242 재매핑, 물체별 밀림 최대 4.0 cm). 0.025 m는 정렬 원점과 함께 쓰면 0.05 m보다 정지 오차가 작다 (v1 GCP 10회 2.09 vs 2.84 cm). Nav2 전역 costmap도 이 해상도를 따라가 칸이 4배다. 경로 계획이 느리면 Nav2만 0.05 m 지도(`warehouse_v2`, 원점 `[0.0173, 1.4556, 0.00026]`)로 나눈다 |
+| `map_origin_in_world` | `[-0.0439, 1.4712, -0.00088]` | world에서 본 map 원점. 지도 v2 0.025 m의 지도↔월드 정렬값(B안, amr_mapping README "지도 v2"). 지도를 바꾸면 그 지도의 정렬값 (v1 0.025 m: `[-0.0562, 1.5317, 0.00009]`) |
 | `use_imu` | `true` | EKF에 IMU |
 | `bt` | `true` | `amr_bt` |
 | `nav2` | `false` | Nav2. `localization:=true`가 필요하다 (map → odom TF) |

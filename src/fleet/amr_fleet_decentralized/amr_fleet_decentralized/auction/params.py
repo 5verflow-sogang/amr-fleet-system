@@ -29,3 +29,12 @@ class AuctionParams:
     # 맡은 작업 해제 안전장치(동시 낙찰 경합): ACCEPT 뒤 이 시간(실제 시간, s) 동안 내 RobotState가
     # 한 번도 BUSY가 안 되면(작업이 시작 안 됨) 맡은 작업을 풀고 다시 입찰한다. 0 이하면 끈다.
     commit_timeout_s: float = 30.0
+    # #227 민지 리뷰 2(가장 앞선 AWARD만 수락): AWARD를 받아도 더 급한(sort_by_priority로 앞선)
+    # 입찰 결과를 아직 모르면(마감 전이거나, 마감은 지났지만 그 입찰의 AWARD를 못 받음) 이
+    # 시간(실제 시간, s) 동안 수락을 미루고 기다린다. 다른 로봇이 그 작업을 맡은 걸 알면
+    # (_taken_by_other) 그 전에 바로 포기하고 수락한다.
+    # 경매인이 ACCEPT 없이 재경매하기까지 걸리는 최대 시간((award_max_attempts - 1) x
+    # award_resend_interval_s, 기본 4 x 1.0 = 4.0 s)보다 반드시 짧아야 한다 - 그보다 길면
+    # 기다리는 동안 경매인이 먼저 재경매해 버려, 다 기다리고 수락하려 할 때는 그 경매가 이미
+    # 무효일 수 있다. 1 s 여유를 두고 3.0으로 둔다.
+    award_wait_s: float = 3.0

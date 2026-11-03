@@ -20,7 +20,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 
 # BT 노드 (ROS 노드 없이 테스트할 수 있게 라이브러리로 분리)
-add_library(amr_bt_nodes src/bt_nodes.cpp)
+add_library(amr_bt_nodes src/bt_nodes.cpp src/check_battery.cpp)
 target_include_directories(amr_bt_nodes PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -51,6 +51,10 @@ if(BUILD_TESTING)
   ament_add_gtest(test_task_cycle test/test_task_cycle.cpp)
   target_link_libraries(test_task_cycle amr_bt_nodes)
   target_compile_definitions(test_task_cycle PRIVATE
+    TREE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/behavior_trees/task_cycle.xml")
+  ament_add_gtest(test_check_battery test/test_check_battery.cpp)
+  target_link_libraries(test_check_battery amr_bt_nodes)
+  target_compile_definitions(test_check_battery PRIVATE
     TREE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/behavior_trees/task_cycle.xml")
 
   # 가짜 Nav2·Dock 액션 서버로 실제 노드 한 사이클 (launch_testing)

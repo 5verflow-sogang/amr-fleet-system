@@ -21,6 +21,7 @@ from scipy import ndimage
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
+# 점을 뽑은 지도 v1. 점은 world 좌표로 저장하므로 기본 지도가 v2가 돼도 다시 뽑지 않는다 (#249)
 MAP_YAML = REPO / 'src/localization/amr_mapping/maps/warehouse_v1_0025.yaml'
 MAP_ORIGIN_IN_WORLD = (-0.0562, 1.5317, 0.00009)   # 지도 정렬값 (amr_mapping README, #157)
 SPAWN = (0.0, 1.5, 0.0)

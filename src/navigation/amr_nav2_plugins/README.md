@@ -27,6 +27,10 @@
 3. `setPlan()`에서 전역 경로가 costmap 전역 좌표계와 다르면 tf로 변환한다.
 4. `setSpeedLimit()`은 Nav2 관례(음수=제한 없음, `percentage`면 `max_v` 대비 비율)를
    그대로 따른다.
+5. TTC 회피 모드(`avoid_mode_enabled`, docs/algorithms/navigation.md 4-10절):
+   `perception/collision_risks`(`amr_msgs/msg/CollisionRiskArray`)를 구독해 움직이는 트랙의
+   최소 TTC로 켜고 끈다(`avoid_mode.hpp`의 `AvoidModeSwitch`, 시간 처리). 바뀌면
+   `DwaPlanner::setAvoidMode`로 넘기고 `dwa/avoid_mode`(`std_msgs/msg/Bool`, transient local)를 발행한다.
 
 ## 파라미터
 

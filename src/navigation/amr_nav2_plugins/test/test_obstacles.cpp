@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <cstdint>
+#include <limits>
+
 #include "amr_nav2_plugins/obstacles.hpp"
 
 namespace amr_nav2_plugins
@@ -44,6 +48,39 @@ TEST(ObstaclesTest, AllStaticGivesNoObstacles)
   msg.obstacles.push_back(makeTrack(5.0, 6.0, false));
 
   EXPECT_TRUE(toDynamicObstacles(msg).empty());
+}
+
+TEST(ObstaclesTest, MinDynamicTtcIgnoresStaticTracks)
+{
+  // CollisionRisk에는 is_dynamic이 없다 - perception/obstacles의 track_id로 짝지어 움직이는 트랙만 본다
+  amr_msgs::msg::TrackedObstacleArray tracks;
+  tracks.obstacles.push_back(makeTrack(1.0, 2.0, false));  // 랙 면 같은 정적 트랙
+  tracks.obstacles.back().track_id = 1;
+  tracks.obstacles.push_back(makeTrack(3.0, 4.0, true));
+  tracks.obstacles.back().track_id = 2;
+  tracks.obstacles.push_back(makeTrack(5.0, 6.0, true));
+  tracks.obstacles.back().track_id = 3;
+  const auto ids = dynamicTrackIds(tracks);
+  ASSERT_EQ(ids.size(), 2u);
+
+  amr_msgs::msg::CollisionRiskArray risks;
+  auto add = [&](int32_t id, float ttc) {
+      amr_msgs::msg::CollisionRisk risk;
+      risk.track_id = id;
+      risk.ttc = ttc;
+      risks.risks.push_back(risk);
+    };
+  add(1, 0.5f);                                        // 정적 - 무시
+  add(2, std::numeric_limits<float>::infinity());
+  add(3, 2.5f);
+  add(7, 0.1f);                                        // perception/obstacles에 없는 트랙 - 무시
+  EXPECT_DOUBLE_EQ(minDynamicTtc(risks, ids), 2.5);
+
+  risks.risks.pop_back();
+  risks.risks.pop_back();
+  add(3, std::numeric_limits<float>::quiet_NaN());     // NaN - 무시
+  EXPECT_TRUE(std::isinf(minDynamicTtc(risks, ids)));
+  EXPECT_TRUE(std::isinf(minDynamicTtc(amr_msgs::msg::CollisionRiskArray(), ids)));
 }
 
 }  // namespace amr_nav2_plugins

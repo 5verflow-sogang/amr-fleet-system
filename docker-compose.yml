@@ -17,8 +17,11 @@ x-ros: &ros
   environment:
     - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     - DISPLAY=${DISPLAY:-}
+    # colcon build 기본 인자: CMAKE_BUILD_TYPE=RelWithDebInfo (CI와 같게, docker/colcon_defaults.yaml)
+    - COLCON_DEFAULTS_FILE=/etc/amr/colcon_defaults.yaml
   volumes:
     - ./src:/ros2_ws/src
+    - ./docker/colcon_defaults.yaml:/etc/amr/colcon_defaults.yaml:ro
     - /tmp/.X11-unix:/tmp/.X11-unix:rw
 
 services:

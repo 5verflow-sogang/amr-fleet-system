@@ -79,7 +79,8 @@ RUN apt-get update \
     && rosdep install --from-paths src --ignore-src -y --rosdistro humble \
     && rm -rf /var/lib/apt/lists/*
 
-RUN source /opt/teb_ws/install/setup.bash && colcon build
+# CI·하네스·dev 컨테이너(docker/colcon_defaults.yaml)와 같은 빌드 타입
+RUN source /opt/teb_ws/install/setup.bash && colcon build --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
 # teb_ws가 tracing_ws(→ /opt/ros/humble) 위에 얹혀 있으므로 그것만 source해도 된다
 RUN echo "source /opt/teb_ws/install/setup.bash" >> ~/.bashrc \

@@ -79,16 +79,20 @@ SCENARIOS = {'S1': True, 'S2': False, 'mixed': None}
 # 정보 조건(실험 설계 3절) → 관측에 넣을 질량 배율. None이면 "모름"(앎 여부 0)
 MASS_OBS = {'exact': 1.0, 'plus30': 1.3, 'minus30': 0.7, 'unknown': None}
 MASS_OBS_ALIASES = {'true': 'exact', 'none': 'unknown', 'scale:1.3': 'plus30', 'scale:0.7': 'minus30'}
+# 실제 질량과 관계없이 정해진 질량을 알려 주는 조건 (v3 정보 실험: "25 kg인데 0 kg이라고 속이기" 등). told<kg>
+FIXED_MASS_OBS = {'told0': 0.0, 'told25': 25.0}
 
 
 def mass_obs_label(mode: str) -> str:
     label = MASS_OBS_ALIASES.get(mode, mode)
-    if label not in MASS_OBS:
-        raise ValueError(f'--mass-obs는 {", ".join(MASS_OBS)} 중 하나: {mode}')
+    if label not in MASS_OBS and label not in FIXED_MASS_OBS:
+        raise ValueError(f'--mass-obs는 {", ".join([*MASS_OBS, *FIXED_MASS_OBS])} 중 하나: {mode}')
     return label
 
 
 def mass_obs_for(label: str, payload: float):
+    if label in FIXED_MASS_OBS:
+        return FIXED_MASS_OBS[label]
     scale = MASS_OBS[label]
     return None if scale is None else payload * scale
 
