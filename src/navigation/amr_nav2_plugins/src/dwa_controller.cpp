@@ -71,6 +71,24 @@ void DwaController::configure(
   declareAndGet(node, prefix + "lookahead_distance", lookahead_distance_);
   config.lookahead_distance = lookahead_distance_;
   declareAndGet(node, prefix + "adaptive_lookahead", config.adaptive_lookahead);
+  declareAndGet(node, prefix + "rotate_in_place_min_angle", config.rotate_in_place_min_angle);
+  declareAndGet(node, prefix + "rotate_in_place_exit_angle", config.rotate_in_place_exit_angle);
+  declareAndGet(node, prefix + "rotate_in_place_clearance", config.rotate_in_place_clearance);
+  declareAndGet(node, prefix + "avoid_mode_enabled", config.avoid_mode_enabled);
+  declareAndGet(node, prefix + "avoid_margin_add", config.avoid_margin_add);
+  declareAndGet(node, prefix + "avoid_weight_scale", config.avoid_weight_scale);
+  declareAndGet(node, prefix + "avoid_rollout_time", config.avoid_rollout_time);
+  AvoidModeParams avoid;
+  avoid.enabled = config.avoid_mode_enabled;
+  declareAndGet(node, prefix + "avoid_ttc_enter_s", avoid.enter_ttc_s);
+  declareAndGet(node, prefix + "avoid_exit_hold_s", avoid.exit_hold_s);
+  declareAndGet(node, prefix + "avoid_risk_timeout_s", avoid.risk_timeout_s);
+  avoid_switch_ = AvoidModeSwitch(avoid);
+  if (config.rotate_in_place_exit_angle > config.rotate_in_place_min_angle) {
+    RCLCPP_WARN(
+      logger_, "DWA: rotate_in_place_exit_angle(%.3f) > min_angle(%.3f) - min_angle로 줄인다",
+      config.rotate_in_place_exit_angle, config.rotate_in_place_min_angle);
+  }
   declareAndGet(node, prefix + "xy_goal_tolerance", xy_goal_tolerance_);
   declareAndGet(node, prefix + "yaw_goal_tolerance", yaw_goal_tolerance_);
 
@@ -86,27 +104,44 @@ void DwaController::configure(
   obstacles_sub_ = node->create_subscription<amr_msgs::msg::TrackedObstacleArray>(
     "perception/obstacles", rclcpp::QoS(10),
     std::bind(&DwaController::onObstacles, this, std::placeholders::_1));
+  if (config.avoid_mode_enabled) {
+    risks_sub_ = node->create_subscription<amr_msgs::msg::CollisionRiskArray>(
+      "perception/collision_risks", rclcpp::QoS(10),
+      std::bind(&DwaController::onCollisionRisks, this, std::placeholders::_1));
+  }
+  // 상태가 바뀔 때만 발행한다 - 늦게 붙은 구독자(rosbag, I17 기록)도 지금 상태를 받도록 transient local
+  avoid_mode_pub_ = node->create_publisher<std_msgs::msg::Bool>(
+    "dwa/avoid_mode", rclcpp::QoS(1).reliable().transient_local());
 
   RCLCPP_INFO(
     logger_,
     "DwaController(%s) 설정: max_v=%.2f max_w=%.2f v_samples=%d w_samples=%d "
-    "dynamic_weight=%.2f lookahead=%.2fm",
+    "dynamic_weight=%.2f lookahead=%.2fm avoid_mode=%s(TTC<%.1fs)",
     name_.c_str(), config.max_v, config.max_w, config.v_samples, config.w_samples,
-    config.dynamic_weight, lookahead_distance_);
+    config.dynamic_weight, lookahead_distance_, config.avoid_mode_enabled ? "on" : "off",
+    avoid.enter_ttc_s);
 }
 
 void DwaController::cleanup()
 {
   obstacles_sub_.reset();
+  risks_sub_.reset();
+  avoid_mode_pub_.reset();
   planner_.reset();
 }
 
 void DwaController::activate()
 {
+  avoid_mode_pub_->on_activate();
+  // 처음 상태(꺼짐)를 한 번 내 둔다 - 기록하는 쪽이 첫 전환 전 상태를 알게
+  std_msgs::msg::Bool msg;
+  msg.data = planner_->avoidMode();
+  avoid_mode_pub_->publish(msg);
 }
 
 void DwaController::deactivate()
 {
+  avoid_mode_pub_->on_deactivate();
 }
 
 void DwaController::setPlan(const nav_msgs::msg::Path & path)
@@ -162,9 +197,54 @@ void DwaController::onObstacles(const amr_msgs::msg::TrackedObstacleArray::Share
   }
 
   std::vector<amr_planning_core::DynamicObstacle> obstacles = toDynamicObstacles(*msg);
+  std::unordered_set<int32_t> dynamic_ids = dynamicTrackIds(*msg);
 
   std::lock_guard<std::mutex> lock(obstacles_mutex_);
   obstacles_ = std::move(obstacles);
+  dynamic_track_ids_ = std::move(dynamic_ids);
+}
+
+void DwaController::onCollisionRisks(const amr_msgs::msg::CollisionRiskArray::SharedPtr msg)
+{
+  double min_ttc = 0.0;
+  {
+    std::lock_guard<std::mutex> lock(obstacles_mutex_);
+    min_ttc = minDynamicTtc(*msg, dynamic_track_ids_);
+  }
+  const double now = node_.lock()->now().seconds();
+  std::lock_guard<std::mutex> lock(avoid_mutex_);
+  avoid_switch_.onRisks(min_ttc, now);
+}
+
+void DwaController::updateAvoidMode()
+{
+  auto node = node_.lock();
+  const double now = node->now().seconds();
+  bool active = false;
+  bool stale = false;
+  {
+    std::lock_guard<std::mutex> lock(avoid_mutex_);
+    active = avoid_switch_.update(now);
+    stale = avoid_switch_.stale(now);
+  }
+  if (stale) {
+    RCLCPP_WARN_THROTTLE(
+      logger_, *node->get_clock(), 2000,
+      "DWA: perception/collision_risks가 끊겼다 - 회피 모드를 지금 상태(%s)로 유지한다",
+      active ? "켜짐" : "꺼짐");
+  }
+  if (active == planner_->avoidMode()) {
+    return;
+  }
+  planner_->setAvoidMode(active);
+  const amr_planning_core::DwaConfig & config = planner_->config();
+  RCLCPP_INFO(
+    logger_, "DWA 회피 모드 %s (safety_margin=%.2fm dynamic_weight=%.2f rollout=%.1fs)",
+    active ? "켬" : "끔", config.dynamic_obstacle_safety_margin, config.dynamic_weight,
+    planner_->rolloutTime());
+  std_msgs::msg::Bool msg;
+  msg.data = active;
+  avoid_mode_pub_->publish(msg);
 }
 
 geometry_msgs::msg::TwistStamped DwaController::computeVelocityCommands(
@@ -175,6 +255,8 @@ geometry_msgs::msg::TwistStamped DwaController::computeVelocityCommands(
   geometry_msgs::msg::TwistStamped cmd_vel;
   cmd_vel.header.frame_id = pose.header.frame_id;
   cmd_vel.header.stamp = node_.lock()->now();
+
+  updateAvoidMode();
 
   nav2_costmap_2d::Costmap2D * costmap = costmap_ros_->getCostmap();
   const double origin_x = costmap->getOriginX();

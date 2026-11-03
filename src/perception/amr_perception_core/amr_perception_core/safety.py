@@ -1,7 +1,8 @@
 """안전 단계 판정 (ROS 비의존). amr_safety 노드가 매 주기 update()를 부른다.
 
 원 명세 7장 안전 시스템: 긴급정지 0.3 m, Safety Zone(Warning/Critical), E-Stop, 센서 고장 → 정지·저속.
-단계와 speed_limit 값은 amr_msgs/SafetyStatus 규칙(#70)을 따른다: NORMAL inf, WARNING 0.6, 정지 0.0.
+단계와 speed_limit 값은 amr_msgs/SafetyStatus 규칙(#70)을 따른다: NORMAL inf, WARNING 0.6
+(움직이는 트랙이 dynamic_slow_distance 안이면 dynamic_slow_speed_limit), 정지 0.0.
 
 단계와 조건 (하나라도 맞으면):
 - ESTOP: E-Stop 요청이 걸려 있음 (해제 요청 전까지 유지)
@@ -9,6 +10,9 @@
   / 움직이는 트랙의 TTC ≤ ttc_critical / 스캔 끊김
 - WARNING: 진행 경로 밖이지만 LiDAR 점이 차체에서 critical_distance 이내
   / 움직이는 트랙의 TTC ≤ ttc_warning / 움직이는 트랙이 dynamic_warning_distance 이내 / 추적·odom 끊김
+  - 움직이는 트랙이 dynamic_slow_distance 이내면 speed_limit을 dynamic_slow_speed_limit으로 더 낮춘다.
+    진행 방향과 상관없다: 바로 옆에서 멀어지던 사람이 돌아서면 추적 속도가 따라오는 동안(약 0.5 s) TTC가
+    무한으로 남아, 그 사이 출발·가속한 로봇에 부딪혔다 (I17 시드 1019·1029, 사람이 차체 0.2~0.3 m 옆에서 돌아섬)
 - NORMAL: 그 밖
 
 - 긴급정지는 추적이 아니라 LiDAR 점으로 본다. 트랙은 확정까지 몇 프레임 걸리고, 동적 판정이 틀릴 수 있다.
@@ -21,9 +25,11 @@
   예외: 진행 경로 정지(CRITICAL·장애물 근접)는 바로 내린다. 경로 판정은 명령에 따라 바뀌므로 멀어지는 명령
   (벽 앞에서 후진)이 오면 위험이 없고, 다시 다가가는 명령이 오면 그 즉시 다시 정지하기 때문이다.
   기다리게 하면 정지 뒤 후진이 0.5 s 늦게 풀렸다 (Gazebo 실검증).
+  근접 저속은 걸릴 때 바로, 풀릴 때(WARNING 0.6으로 올라갈 때)도 release_hold_s를 기다린다. 이 기다림은 단계
+  판정과 따로 센다 (_hold_slow): WARNING → NORMAL 기다림은 그대로다.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from typing import List, Optional, Sequence
 
@@ -53,6 +59,11 @@ class SafetyConfig:
     dynamic_warning_distance: float = 1.5
     # WARNING의 speed_limit [m/s] (#70: 반응 0.2 s + 1.0 m/s²로 0.3 m 안에 서는 최대 속도)
     warning_speed_limit: float = 0.6
+    # 움직이는 트랙이 차체에서 이 거리 [m] 안이면 방향과 상관없이 dynamic_slow_speed_limit [m/s]까지 (0이면 끔).
+    # 0.15: 바로 옆 사람이 돌아서도 추적 속도가 따라오는 0.5 s + 반응 0.2 s + 1.0 m/s² 정지 동안
+    # 로봇이 0.15×0.7 + 0.15²/2 ≈ 0.12 m만 간다 (0.6 m/s면 0.6 m)
+    dynamic_slow_distance: float = 0.5
+    dynamic_slow_speed_limit: float = 0.15
     # 단계를 내릴 때 조건이 풀린 채 유지돼야 하는 시간 [s]
     release_hold_s: float = 0.5
     # 센서 끊김 판정 [s]. 스캔(10 Hz)이 끊기면 정지, 추적·odom이 끊기면 저속
@@ -62,15 +73,21 @@ class SafetyConfig:
 
     def __post_init__(self):
         for name in ('critical_distance', 'ttc_critical', 'ttc_warning',
-                     'dynamic_warning_distance', 'warning_speed_limit',
+                     'dynamic_warning_distance', 'warning_speed_limit', 'dynamic_slow_speed_limit',
                      'scan_timeout_s', 'tracks_timeout_s', 'odom_timeout_s'):
             value = getattr(self, name)
             if not (math.isfinite(value) and value > 0.0):
                 raise ValueError(f'{name}는 양수여야 한다: {value}')
-        if not (math.isfinite(self.release_hold_s) and self.release_hold_s >= 0.0):
-            raise ValueError(f'release_hold_s는 0 이상이어야 한다: {self.release_hold_s}')
+        for name in ('release_hold_s', 'dynamic_slow_distance'):
+            value = getattr(self, name)
+            if not (math.isfinite(value) and value >= 0.0):
+                raise ValueError(f'{name}는 0 이상이어야 한다: {value}')
         if self.ttc_critical > self.ttc_warning:
             raise ValueError('ttc_critical은 ttc_warning 이하여야 한다')
+        if self.dynamic_slow_distance > self.dynamic_warning_distance:
+            raise ValueError('dynamic_slow_distance는 dynamic_warning_distance 이하여야 한다')
+        if self.dynamic_slow_speed_limit > self.warning_speed_limit:
+            raise ValueError('dynamic_slow_speed_limit은 warning_speed_limit 이하여야 한다')
 
 
 @dataclass(frozen=True)
@@ -102,6 +119,7 @@ class _Cause:
     reason: int
     detail: str
     track_id: int = -1
+    speed_limit: Optional[float] = None   # None이면 단계 기본값 (SafetyMonitor.speed_limit_for)
 
 
 def _stale(age: Optional[float], timeout: float) -> bool:
@@ -116,6 +134,9 @@ class SafetyMonitor:
         self._estop = False
         self._state: Optional[SafetyState] = None
         self._below_since: Optional[float] = None
+        # 근접 저속(dynamic_slow_distance) 유지: 걸려 있거나 풀린 지 release_hold_s가 안 됐는지, 풀린 시각
+        self._slow_held = False
+        self._slow_clear_since: Optional[float] = None
 
     @property
     def estop(self) -> bool:
@@ -170,7 +191,12 @@ class SafetyMonitor:
             elif obs.ttc <= c.ttc_warning:
                 causes.append(_Cause(LEVEL_WARNING, REASON_COLLISION_RISK,
                                      f'TTC {obs.ttc:.1f} s (track {obs.track_id})', obs.track_id))
-            if obs.clearance <= c.dynamic_warning_distance:
+            if c.dynamic_slow_distance > 0.0 and obs.clearance <= c.dynamic_slow_distance:
+                causes.append(_Cause(LEVEL_WARNING, REASON_OBSTACLE_PROXIMITY,
+                                     f'움직이는 장애물 {obs.clearance:.2f} m, 저속 '
+                                     f'{c.dynamic_slow_speed_limit:.2f} m/s (track {obs.track_id})',
+                                     obs.track_id, c.dynamic_slow_speed_limit))
+            elif obs.clearance <= c.dynamic_warning_distance:
                 causes.append(_Cause(LEVEL_WARNING, REASON_OBSTACLE_PROXIMITY,
                                      f'움직이는 장애물 {obs.clearance:.2f} m (track {obs.track_id})',
                                      obs.track_id))
@@ -179,19 +205,46 @@ class SafetyMonitor:
                      if d is not None and math.isfinite(d)]
         min_distance = max(0.0, min(distances)) if distances else math.inf
         raw = self._pick(causes, faults, min_distance)
-        return self._apply_hysteresis(now, raw)
+        state = self._apply_hysteresis(now, raw)
+        return self._hold_slow(now, state, any(cause.speed_limit is not None for cause in causes))
+
+    def _hold_slow(self, now: float, state: SafetyState, slow_now: bool) -> SafetyState:
+        """근접 저속은 풀린 뒤에도 release_hold_s 동안 WARNING 상한을 dynamic_slow_speed_limit으로 둔다.
+
+        단계 판정(_apply_hysteresis)과 따로 둔다: 같은 WARNING 안에서 0.15 ↔ 0.6이 깜빡이지 않게 하되,
+        WARNING → NORMAL로 내려가는 기다림은 그대로 둔다.
+        """
+        c = self.config
+        if slow_now:
+            self._slow_held, self._slow_clear_since = True, None
+        elif self._slow_held:
+            if self._slow_clear_since is None:
+                self._slow_clear_since = now
+            if now - self._slow_clear_since >= c.release_hold_s - _TIME_EPS:
+                self._slow_held, self._slow_clear_since = False, None
+        if (not slow_now and self._slow_held and state.level == LEVEL_WARNING
+                and state.speed_limit > c.dynamic_slow_speed_limit):
+            state = replace(state, speed_limit=c.dynamic_slow_speed_limit,
+                            detail=state.detail + ' (근접 저속 유지)')
+            self._state = state
+        return state
 
     def _pick(self, causes: List[_Cause], faults: List[str], min_distance: float) -> SafetyState:
         if not causes:
             return SafetyState(LEVEL_NORMAL, REASON_NONE, math.inf, '', -1, min_distance)
         top = max(cause.level for cause in causes)
+
+        def limit(cause):
+            return self.speed_limit_for(top) if cause.speed_limit is None else cause.speed_limit
+
+        # 같은 원인 종류끼리는 속도를 더 낮추는 쪽을 보고한다 (detail이 speed_limit을 설명하게)
         best = min((cause for cause in causes if cause.level == top),
-                   key=lambda cause: _REASON_ORDER.index(cause.reason))
+                   key=lambda cause: (_REASON_ORDER.index(cause.reason), limit(cause)))
         detail = best.detail
         if faults and best.reason != REASON_SENSOR_FAULT:
             detail += ' / 센서: ' + ', '.join(faults)   # SafetyStatus.msg: 센서 고장은 detail에 함께
-        return SafetyState(top, best.reason, self.speed_limit_for(top), detail, best.track_id,
-                           min_distance)
+        speed_limit = min(limit(cause) for cause in causes if cause.level == top)
+        return SafetyState(top, best.reason, speed_limit, detail, best.track_id, min_distance)
 
     def _apply_hysteresis(self, now: float, raw: SafetyState) -> SafetyState:
         current = self._state

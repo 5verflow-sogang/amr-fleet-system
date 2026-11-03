@@ -12,7 +12,8 @@
   평가 시간 범위는 실행 폴더에 GCP 평가 결과(tracking/frames.csv)가 있으면 그 범위를 그대로 쓴다(GCP 평가 노드는 녹화보다
   먼저 떠서 녹화 첫 프레임과 시작이 다르다). 없으면 첫 벤치 프레임부터 실행의 duration_s(0이면 끝까지)
 - 출력은 GCP 실행 폴더와 같은 모양(<out>/<장면-라벨>/<묶음>/<실행>/{meta.json, tracking/…})이라
-  tools/harness/summarize.py, make_tables.py, analyze.py를 그대로 쓴다
+  tools/harness/summarize.py, make_tables.py, analyze.py를 그대로 쓴다. meta.json 라벨에는 +bench_<이름>이 붙고
+  git_sha는 벤치 시점 코드다(bench_meta)
 - --check-node (설정을 바꾸지 않았을 때만 뜻이 있다):
   - 실행 폴더에 GCP 평가 결과(tracking/summary.json·frames.csv)가 있으면 추적기가 정하는 값(위치·속도 RMSE와 짝 수,
     예측·정지 가정 오차는 짝마다, 동적 판정 지연·접근 판정)이 같은지 본다. 다르면 다른 값의 이름을 보이고 실패 코드로
@@ -33,6 +34,7 @@ import bisect
 import csv
 import json
 import math
+import subprocess
 import sys
 from pathlib import Path
 
@@ -376,14 +378,44 @@ def write_csv(path: Path, rows):
                                  (f'{row[k]:.4f}' if isinstance(row[k], float) else row[k])) for k in keys})
 
 
+def git_state():
+    """벤치를 돌린 코드: (짧은 커밋, 커밋 안 한 변경이 있는지). 하네스 runner.git_sha와 같은 식."""
+    def git(*args):
+        return subprocess.run(['git', '-C', str(REPO), *args], capture_output=True, text=True,
+                              timeout=5).stdout.strip()
+    try:
+        sha = git('rev-parse', '--short', 'HEAD') or 'unknown'
+        return sha, bool(git('status', '--porcelain', '--untracked-files=no'))
+    except (OSError, subprocess.TimeoutExpired):
+        return 'unknown', None
+
+
+def bench_meta(meta, name, sets, sha, dirty):
+    """벤치 결과의 meta.json. 녹화 meta를 바탕으로 두 가지를 바꾼다.
+
+    - 라벨에 +bench_<이름>: 요약은 시나리오 + 라벨로 묶어서(summary.group_key) 그대로 두면 다른 벤치끼리, 녹화와도 섞인다
+    - git_sha는 트랙을 만든 벤치 시점 코드 (커밋 안 한 변경이 있으면 -dirty). 녹화 때 값은 bench.recording에 남긴다
+    """
+    out = dict(meta)
+    out['label'] = f"{meta.get('label') or ''}+bench_{name}"
+    out['git_sha'] = sha + ('-dirty' if dirty else '')
+    out['bench'] = {'name': name, 'set': sets, 'tracking_yaml': str(TRACKING_YAML.relative_to(REPO)),
+                    'git_sha': sha, 'dirty': dirty,
+                    'recording': {k: meta.get(k) for k in ('run_id', 'label', 'git_sha')}}
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description='재생 벤치 (녹화 → 추적기 → 평가)')
     ap.add_argument('runs', nargs='+', type=Path, help='실행 폴더 (rosbag/, meta.json)')
     ap.add_argument('--out', type=Path, required=True, help='결과 폴더 (GCP 실행 폴더와 같은 모양)')
+    ap.add_argument('--name', help='벤치 이름. 결과 라벨에 +bench_<이름>으로 붙는다 (기본: --out 폴더 이름)')
     ap.add_argument('--set', action='append', default=[], help='tracking.yaml 값 바꾸기 (이름=값)')
     ap.add_argument('--check-node', action='store_true', help='벤치 트랙이 녹화 속 노드 출력과 같은지')
     a = ap.parse_args(argv)
     p = load_params(a.set)
+    name = a.name or a.out.resolve().name
+    sha, dirty = git_state()
     bad = 0
     for run in a.runs:
         meta = json.loads((run / 'meta.json').read_text())
@@ -396,8 +428,8 @@ def main(argv=None):
         rows, episodes, summary = evaluate(rec, frames, window)
         dest = a.out / Path(*run.resolve().parts[-3:])
         (dest / 'tracking').mkdir(parents=True, exist_ok=True)
-        meta['bench'] = {'set': a.set, 'tracking_yaml': str(TRACKING_YAML.relative_to(REPO))}
-        (dest / 'meta.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+        out_meta = bench_meta(meta, name, a.set, sha, dirty)
+        (dest / 'meta.json').write_text(json.dumps(out_meta, ensure_ascii=False, indent=2))
         write_csv(dest / 'tracking/frames.csv', rows)
         write_csv(dest / 'tracking/episodes.csv', episodes)
         (dest / 'tracking/summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2))

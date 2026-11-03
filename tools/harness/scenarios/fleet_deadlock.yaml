@@ -18,8 +18,8 @@ params:
   deadlock_strategy: revoke
   delay_ms: 100
   # fleet_stack과 같은 0.05 m 지도 (0.025 m는 경로 계획이 느리다)
-  map: warehouse_v1
-  map_origin: "[-0.0571, 1.5167, 0.00013]"
+  map: warehouse_v2
+  map_origin: "[0.0173, 1.4556, 0.00026]"
 processes:
   - name: stack
     cmd: >-

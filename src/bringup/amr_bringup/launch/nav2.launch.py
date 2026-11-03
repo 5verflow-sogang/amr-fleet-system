@@ -10,12 +10,15 @@ planner_server는 global_costmap만, controller_server는 local_costmap만 읽�
 
 컨트롤러: bt_navigator 기본 트리가 "FollowPath"라는 이름을 하드코딩해서 부르므로, nav2_params.yaml의 DWA 설정을 FollowPath 이름으로 등록한다.
 속도 명령은 cmd_vel이 아니라 cmd_vel_nav로 낸다 (cmd_vel 체인: cmd_vel_nav → 구역 클라이언트 → cmd_vel_zone_limited → 안전 노드 → cmd_vel).
+전역 planner: 기본은 GridBased(NavFn). planner:=astar면 우리 A*(nav2_params.yaml planner_server.AStar)를 GridBased 이름에
+얹는다 - 비교용 (amr_bringup.planner, docs/algorithms/navigation.md 3절).
 """
 
 import os
 import tempfile
 
 import yaml
+from amr_bringup.planner import PLANNERS, planner_overrides
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -40,7 +43,9 @@ def _nav2(context):
     scan_topic = f'/{ns}/scan'
 
     with open(params_file) as f:
-        dwa_config = yaml.safe_load(f)['controller_server']['ros__parameters']['DWA']
+        nav2_params = yaml.safe_load(f)
+    dwa_config = nav2_params['controller_server']['ros__parameters']['DWA']
+    planner_params_extra = planner_overrides(nav2_params, arg('planner'))
     overrides = {ns: {'controller_server': {'ros__parameters': {
         'controller_plugins': ['FollowPath'],
         'FollowPath': dwa_config,
@@ -66,7 +71,8 @@ def _nav2(context):
     cmd_vel_remap = [('cmd_vel', cmd_vel_topic)]
     return [
         Node(package='nav2_planner', executable='planner_server', name='planner_server', namespace=ns,
-             parameters=[planner_params, use_sim_time, {'GridBased.use_astar': True}], output='screen'),
+             parameters=[planner_params, use_sim_time, {'GridBased.use_astar': True}, planner_params_extra],
+             output='screen'),
         Node(package='nav2_controller', executable='controller_server', name='controller_server', namespace=ns,
              parameters=[controller_params, use_sim_time, overrides_file.name],
              remappings=cmd_vel_remap, output='screen'),
@@ -95,6 +101,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'odom_topic', default_value='odometry/local',
             description='컨트롤러가 속도를 읽는 odom (상대 이름). 위치추정 없이는 diff_drive/odom'),
+        DeclareLaunchArgument(
+            'planner', default_value='navfn', choices=list(PLANNERS),
+            description='전역 planner. navfn(기본) 또는 astar(우리 A* + 평활화, 비교용)'),
         DeclareLaunchArgument(
             'cmd_vel_topic', default_value='cmd_vel_nav',
             description='Nav2 속도 명령 출력. 구역 클라이언트·안전 노드가 없으면 cmd_vel'),

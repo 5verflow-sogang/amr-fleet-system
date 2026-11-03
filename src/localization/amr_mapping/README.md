@@ -63,7 +63,7 @@ ros2 run amr_mapping map_quality ~/maps/warehouse.yaml \
 
 ## 정답 지도 (`maps/warehouse_gt.*`, 5주차, #183 후속)
 
-월드 SDF의 물체를 LiDAR 스캔 높이에서 잘라 그린 지도다 (SLAM 아님). 지도 v1의 휨(서쪽·북쪽 끝 14–22 cm, #183) 없이 내비·Fleet 실험을 하려고 만들었다. **위치추정 KPI(맵 품질·위치 오차)는 지도 v1로 그대로 잰다.** v1은 바꾸지 않았다.
+월드 SDF의 물체를 LiDAR 스캔 높이에서 잘라 그린 지도다 (SLAM 아님). SLAM 지도의 휨(v1 서쪽·북쪽 끝 14–22 cm, #183)과 벽 띠 두께(좁은 통로가 22칸으로 좁아짐) 없이 내비·Fleet 실험을 하려고 만들었다. **위치추정 KPI(맵 품질·위치 오차)는 SLAM 지도(기본 v2)로 잰다.**
 
 ```bash
 ros2 run amr_mapping gt_map $(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/worlds/warehouse.sdf maps/warehouse_gt.yaml --png maps/warehouse_gt.png
@@ -71,13 +71,13 @@ ros2 run amr_mapping gt_map $(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/world
 ros2 launch amr_bringup system.launch.py map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_gt.yaml
 ```
 
-- **좌표**: map 기준이다. 물체를 launch 기본 `map_origin_in_world` [−0.0562, 1.5317, 0.00009](world → map TF)로 옮겨 그렸다. 그래서 구역 파일(TF로 바꿔 씀)과 측정 구역(map x −10–15, y −15–5)이 그대로 맞는다. 이 지도에서는 map 좌표 = world 좌표 − 정렬 원점이 창고 전체에서 정확히 성립한다 (v1은 먼 끝에서 최대 16 cm 어긋난다)
-- **형식**: v1 0.025 m와 같다. trinary pgm + yaml, 해상도 0.025 m, 원점 [−30.2, −21.8], 2417×1616칸
+- **좌표**: map 기준이다. 물체를 launch 기본 `map_origin_in_world` [−0.0439, 1.4712, −0.00088](world → map TF, 지도 v2 정렬값)로 옮겨 그렸다. 기본 지도를 v2로 바꾸면서, v1 원점·칸으로 그렸던 것을 v2 원점·칸으로 다시 그렸다. 그래서 구역 파일(TF로 바꿔 씀)과 측정 구역(map x −10–15, y −15–5)이 그대로 맞는다. 이 지도에서는 map 좌표 = world 좌표 − 정렬 원점이 창고 전체에서 정확히 성립한다 (SLAM 지도는 먼 끝에서 v1 최대 16 cm, v2 최대 4 cm 어긋난다)
+- **형식**: v2 0.025 m와 같다. trinary pgm + yaml, 해상도 0.025 m, 원점 [−30.1, −21.6], 2411×1609칸
 - **그리는 방법**
   - 칸 중심이 물체 안이면 점유다. 그래서 경계가 칸 중간에 걸려도 폭이 칸 수로 그대로 남는다
   - 외벽 안 바닥은 빈 칸, 외벽 밖은 미관측이다. 물체 속도 점유로 채운다 (SLAM 지도는 속이 미관측)
   - 그리는 것: 랙 22·기둥 6·도크 플랫폼 4·충전기 본체 3·외벽 4. 뺀 것: 표지판(아랫면 0.7 m 이상, 충돌 없음), 바닥 표시, ArUco 마커판(면에서 5 mm, 칸보다 얇다)
-  - v1과 같은 칸 범위라 동쪽·북쪽 외벽 바깥쪽이 3 cm·7 cm 잘린다 (벽 두께 20 cm 중). 안쪽 면은 들어 있다
+  - v2와 같은 칸 범위라 외벽 바깥쪽이 6–7 cm 잘린다 (벽 두께 20 cm 중). 그래서 외벽 밖 미관측 칸은 없다. 안쪽 면은 들어 있다
 - **좁은 통로 폭** (navigation.md 1-1-1, 설계 0.6 m). 통로를 0.1 m 간격으로 가로질러 빈 칸이 몇 개 이어지는지 셌다 (`gt_map`이 실행할 때마다 출력)
 
 | 통로 | 정답 지도 | 지도 v1 0.025 m (참고) |
@@ -108,7 +108,7 @@ ros2 launch amr_bringup system.launch.py map:=$(ros2 pkg prefix amr_mapping)/sha
 
 ## 지도 v2 (`maps/warehouse_v2.*`, 5주차 재매핑, #183 후속)
 
-지도 v1의 휨(서쪽 도크 16 cm 등)을 고친 SLAM 지도다. **새로 주행하지 않고 지도 v1 rosbag을 설정 두 가지만 바꿔 다시 돌렸다** (같은 주행이라 설정 효과만 비교된다). 기본 지도와 `map_origin_in_world`는 아직 v1 그대로다. 바꿀지는 팀에서 정한다 (위치추정 KPI가 같이 바뀐다).
+지도 v1의 휨(서쪽 도크 16 cm 등)을 고친 SLAM 지도다. **기본 지도다** (위치추정·bringup·하네스 기본값, v1에서 바꿈). **새로 주행하지 않고 지도 v1 rosbag을 설정 두 가지만 바꿔 다시 돌렸다** (같은 주행이라 설정 효과만 비교된다). 기본 지도와 `map_origin_in_world`는 v2 0.025 m와 그 보정값 [−0.0439, 1.4712, −0.00088]이다. 위치 오차·CTE KPI는 v2로 다시 잰다.
 
 ```bash
 EKF=1 RATE=1.0 bash tools/run_slam_offline.sh 0.025 warehouse_v2_0025
@@ -150,6 +150,8 @@ EKF=1 RATE=1.0 bash tools/run_slam_offline.sh 0.05 warehouse_v2
 ![지도 v2](maps/warehouse_v2_0025.png)
 
 ## 지도 v1 (`maps/warehouse_v1.*`, 3주차 작업 2 인계)
+
+지금 기본 지도는 v2다. v1과 아래 결과는 비교·기록용으로 남긴다. v1로 돌리려면 `map:=…/warehouse_v1_0025.yaml map_origin_in_world:="[-0.0562, 1.5317, 0.00009]"`를 같이 준다.
 
 **0.05 m(`warehouse_v1`)와 0.025 m(`warehouse_v1_0025`) 두 장을 같은 주행으로 만들어 넘긴다.** 위치 오차 KPI는 아래 정렬 보정값을 원점으로 쓰고(B안, 10/12 회의), 위치추정 기본 지도는 0.025 m로 정했다 (10/13, #157).
 

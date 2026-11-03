@@ -12,10 +12,16 @@
 - 플러그인(amr_nav2_plugins dwa_controller.cpp): 전역 경로(통로 중심선 전체)를 코어에 넘긴다(#195). heading
   기준점(lookahead_distance, adaptive_lookahead)과 목표 앞 감속의 최종 목표(경로 끝)는 코어가 고른다. 목표
   xy_goal_tolerance 안이면 제자리 회전. no_valid·goal_reached면 정지
-- xy_goal_tolerance만 Gazebo(0.25 m)와 다르게 환경 도착 기준(0.2 m)으로 둔다. 플러그인 주석대로 goal_checker와
+- xy_goal_tolerance는 Gazebo(0.25 m)와 다르게 환경 도착 기준(0.2 m)으로 둔다. 플러그인 주석대로 goal_checker와
   같아야 하고, 0.25 m면 도착 반경 밖에서 서 버린다
+- 샘플 수(v_samples·w_samples), 제자리 회전(rotate_in_place_*), TTC 회피 모드(avoid_mode_enabled)는 nav2_params를
+  따라가지 않고 논문 값으로 고정한다 (20 x 30, 회전 끔, 회피 모드 끔). 창고 스택은 10 x 15·회전 45°·회피 모드 켬이다
+  (#244, DwaParams 주석)
 
-질량은 가감속 한계 acc_v로 들어간다 (나머지 파라미터는 nav2_params.yaml DWA 블록 그대로):
+최고 속도 max_v는 nav2_params(창고 스택 순항 0.5 m/s)가 아니라 빈 차 안전 순항 속도(규칙 정책과 같은 값, 약 1.25 m/s)다.
+B1·B2와 규칙 정책이 같은 순항 속도에서 출발해야 속도 상한 차이가 아니라 정책 차이를 비교한다 (10/18 결정).
+
+질량은 가감속 한계 acc_v로 들어간다 (나머지 파라미터는 위 예외 말고 nav2_params.yaml DWA 블록 그대로):
 - B1 ('b1'): 빈 차 기준 a_max(0 kg) 고정
 - B2 ('b2'): 관측 질량 기준 a_max(m_obs). 질량을 모르면 B1과 같다 (실험 설계 3절)
 """
@@ -32,6 +38,7 @@ from typing import Optional
 import numpy as np
 
 from .dynamics import max_linear_accel
+from .rule_policy import safe_cruise_speed
 
 DWA_VARIANTS = ('b1', 'b2')
 
@@ -44,13 +51,21 @@ _LIB = _RESEARCH2 / 'dwa_cpp' / 'build' / 'libamr_dwa.so'
 
 @dataclass(frozen=True)
 class DwaParams:
-    """nav2_params.yaml controller_server.DWA (DwaConfig 필드 이름 그대로, acc_v 제외) + 플러그인 + local costmap."""
-    max_v: float = 2.0
+    """nav2_params.yaml controller_server.DWA (DwaConfig 필드 이름 그대로, acc_v 제외) + 플러그인 + local costmap.
+
+    최고 속도·샘플 수·제자리 회전·xy_goal_tolerance는 nav2_params와 다른 논문 값이다 (모듈 docstring).
+    """
+    # 빈 차 안전 순항 속도 (rule_policy.safe_cruise_speed(0 kg), 최소 출현 간격 0.5 m·반응 0.1 s, 약 1.248 m/s).
+    # 로봇 스펙 2.0이면 DWA가 거의 최고 속도로 달려 돌발 장애물 충돌이 속도 상한 탓이 된다 (10/18, README)
+    max_v: float = safe_cruise_speed(0.0)
     min_v: float = 0.0
     max_w: float = 1.5
     acc_w: float = 3.2
     dt: float = 0.1
     sim_time: float = 2.0
+    # 샘플 수는 nav2_params.yaml을 따라가지 않고 논문(연구 2 비교군) 값 20 x 30으로 고정한다. 창고 스택은 계산량
+    # 때문에 10 x 15로 줄인다(navigation.md 4-2) - 그걸 따라 바꾸면 B1·B2 결과가 달라진다. C++ DwaConfig 기본값도
+    # 안 쓴다(dwa_c_api.cpp가 이 값을 그대로 넘긴다)
     v_samples: int = 20
     w_samples: int = 30
     footprint_half_length: float = 0.3
@@ -67,6 +82,17 @@ class DwaParams:
     use_admissible_velocity: bool = True
     use_goal_slowdown: bool = True
     adaptive_lookahead: bool = True
+    # 제자리 회전(#244)은 논문 값으로 끈다(0 이하). 창고 스택(nav2_params.yaml)은 45°로 켠다 - 켜면 B1 25 kg이
+    # 목표를 0.3 m 지나친 뒤 돌아와 성공해, 고정 한계의 위험(S1 지나침 49%, S2 성공 0%)이 결과에서 사라진다.
+    # C++ DwaConfig 기본값(45°)도 안 쓴다(dwa_c_api.cpp가 이 값을 그대로 넘긴다)
+    rotate_in_place_min_angle: float = 0.0
+    rotate_in_place_exit_angle: float = 0.0
+    # 제자리 회전 샘플의 풋프린트 여유(창고 스택 0.05 m, 안전 노드와 맞춤). 논문 값은 0(키우지 않음) - 회전을 꺼도
+    # v≈0 회전 샘플은 평소 탐색에 있어서, 켜 두면 B1·B2가 바뀐다
+    rotate_in_place_clearance: float = 0.0
+    # TTC 회피 모드(창고 스택, navigation.md 4-10절)는 논문 값으로 끈다. 연구 2 환경에는 collision_risks가 없고,
+    # 켜면 B1·B2의 안전 여유·가중치·sim_time이 바뀐다
+    avoid_mode_enabled: bool = False
     follow_path: bool = True          # 플러그인처럼 전역 경로를 넘긴다 (#195). False면 예전 지점 호출
     path_resolution: float = 0.05
     # 플러그인
@@ -94,7 +120,9 @@ class _CConfig(ctypes.Structure):
         ('dynamic_obstacle_safety_margin', ctypes.c_double), ('dynamic_obstacle_influence_radius', ctypes.c_double),
         ('dynamic_weight', ctypes.c_double),
         ('use_admissible_velocity', ctypes.c_int), ('use_goal_slowdown', ctypes.c_int),
-        ('lookahead_distance', ctypes.c_double), ('adaptive_lookahead', ctypes.c_int)]
+        ('lookahead_distance', ctypes.c_double), ('adaptive_lookahead', ctypes.c_int),
+        ('rotate_in_place_min_angle', ctypes.c_double), ('rotate_in_place_exit_angle', ctypes.c_double),
+        ('rotate_in_place_clearance', ctypes.c_double), ('avoid_mode_enabled', ctypes.c_int)]
 
 
 _lib = None
@@ -178,7 +206,8 @@ class DwaPolicy:
                         int(p.predict_dynamic_obstacles), p.dynamic_obstacle_safety_margin,
                         p.dynamic_obstacle_influence_radius, p.dynamic_weight,
                         int(p.use_admissible_velocity), int(p.use_goal_slowdown), p.lookahead_distance,
-                        int(p.adaptive_lookahead))
+                        int(p.adaptive_lookahead), p.rotate_in_place_min_angle, p.rotate_in_place_exit_angle,
+                        p.rotate_in_place_clearance, int(p.avoid_mode_enabled))
 
     # ------------------------------------------------------------ ROS 노드가 하던 일
     @staticmethod

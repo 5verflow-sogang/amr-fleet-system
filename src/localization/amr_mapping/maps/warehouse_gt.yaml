@@ -1,9 +1,9 @@
 # 정답 지도: 월드 SDF를 LiDAR 스캔 높이에서 잘라 그렸다 (amr_mapping gt_map, SLAM 아님).
-# map_origin_in_world [-0.0562, 1.5317, 0.00009]와 함께 쓴다 (system.launch.py 기본).
+# map_origin_in_world [-0.0439, 1.4712, -0.00088]와 함께 쓴다 (system.launch.py 기본).
 image: warehouse_gt.pgm
 mode: trinary
 resolution: 0.025
-origin: [-30.2, -21.8, 0]
+origin: [-30.1, -21.6, 0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.25

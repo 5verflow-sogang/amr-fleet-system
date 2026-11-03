@@ -30,6 +30,8 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 
 set(dependencies
   amr_msgs
@@ -44,6 +46,7 @@ set(dependencies
   tf2_geometry_msgs
   geometry_msgs
   nav_msgs
+  std_msgs
 )
 
 add_library(waypoint SHARED
@@ -68,6 +71,29 @@ target_link_libraries(dwa_controller
 )
 ament_target_dependencies(dwa_controller ${dependencies})
 
+add_library(plan_path SHARED
+  src/plan_path.cpp
+)
+target_include_directories(plan_path PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(plan_path amr_planning_core::amr_planning_core)
+ament_target_dependencies(plan_path builtin_interfaces geometry_msgs nav_msgs)
+
+add_library(astar_planner SHARED
+  src/astar_planner.cpp
+)
+target_include_directories(astar_planner PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(astar_planner
+  plan_path
+  amr_planning_core::amr_planning_core
+)
+ament_target_dependencies(astar_planner ${dependencies})
+
 pluginlib_export_plugin_description_file(nav2_core plugins.xml)
 
 install(
@@ -76,7 +102,7 @@ install(
 )
 
 install(
-  TARGETS waypoint dwa_controller
+  TARGETS waypoint dwa_controller plan_path astar_planner
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -84,7 +110,7 @@ install(
 )
 
 ament_export_include_directories(include)
-ament_export_libraries(waypoint dwa_controller)
+ament_export_libraries(waypoint dwa_controller plan_path astar_planner)
 ament_export_targets(export_${PROJECT_NAME})
 ament_export_dependencies(${dependencies} amr_planning_core)
 
@@ -99,8 +125,15 @@ if(BUILD_TESTING)
   target_link_libraries(test_obstacles amr_planning_core::amr_planning_core)
   ament_target_dependencies(test_obstacles amr_msgs)
 
+  ament_add_gtest(test_avoid_mode test/test_avoid_mode.cpp)
+  target_include_directories(test_avoid_mode PRIVATE include)
+
+  ament_add_gtest(test_plan_path test/test_plan_path.cpp)
+  target_link_libraries(test_plan_path plan_path)
+  ament_target_dependencies(test_plan_path tf2 tf2_geometry_msgs)
+
   ament_add_gtest(test_plugin_loadable test/test_plugin_loadable.cpp)
-  target_link_libraries(test_plugin_loadable dwa_controller)
+  target_link_libraries(test_plugin_loadable dwa_controller astar_planner)
   ament_target_dependencies(test_plugin_loadable pluginlib nav2_core)
 endif()
 

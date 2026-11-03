@@ -77,6 +77,33 @@ def test_b2_without_mass_info_equals_b1():
     assert DwaPolicy('b2').acc_v(env) == pytest.approx(DwaPolicy('b1').acc_v(env))
 
 
+def test_sample_counts_are_fixed_paper_values():
+    # 논문 비교군 값 20 x 30 고정 - 창고 스택(nav2_params.yaml)이 샘플 수를 줄여도 따라가지 않는다
+    p = DwaPolicy().params
+    assert (p.v_samples, p.w_samples) == (20, 30)
+    cfg = DwaPolicy().config(1.0)
+    assert (cfg.v_samples, cfg.w_samples) == (20, 30)
+
+
+def test_rotate_in_place_is_off_paper_value():
+    # 논문 값: 제자리 회전 끔 - 창고 스택(nav2_params.yaml)이 45°로 켜도 따라가지 않는다. C++ 기본값(45°)이
+    # 아니라 이 값이 C API로 넘어가야 한다
+    p = DwaPolicy().params
+    assert p.rotate_in_place_min_angle <= 0.0
+    cfg = DwaPolicy().config(1.0)
+    assert cfg.rotate_in_place_min_angle <= 0.0
+    # 제자리 회전 샘플의 풋프린트 여유도 논문 값 0 (C++ 기본값 0.05가 아니다)
+    assert p.rotate_in_place_clearance == 0.0
+    assert cfg.rotate_in_place_clearance == 0.0
+
+
+def test_avoid_mode_is_off_paper_value():
+    # 논문 값: TTC 회피 모드 끔 - 창고 스택(nav2_params.yaml)이 켜도 따라가지 않는다. C API로 0이 넘어가야 한다
+    p = DwaPolicy().params
+    assert p.avoid_mode_enabled is False
+    assert DwaPolicy().config(1.0).avoid_mode_enabled == 0
+
+
 def test_names():
     assert DwaPolicy('b1').name == 'dwa_b1'
     with pytest.raises(ValueError):
@@ -140,4 +167,12 @@ def test_point_call_is_kept_for_comparison():
     for follow in (True, False):
         policy = DwaPolicy('b2', replace(DwaPolicy().params, follow_path=follow))
         v, _ = policy.command(env)
-        assert 0.0 <= v <= policy.params.max_v
+        # 처음 속도(1.5)가 max_v보다 빠르면 동적 창 하한(한 주기 최대 감속)까지만 줄인다
+        assert 0.0 <= v <= max(policy.params.max_v, env.state.v)
+
+
+def test_max_v_is_empty_robot_safe_cruise_speed():
+    # B1·B2 최고 속도는 규칙 정책과 같은 빈 차 안전 순항 속도 (10/18). 로봇 스펙 2.0이 아니다
+    from payload_nav.rule_policy import safe_cruise_speed
+    p = DwaPolicy().params
+    assert p.max_v == pytest.approx(safe_cruise_speed(0.0)) == pytest.approx(1.248, abs=1e-3)

@@ -7,6 +7,7 @@
 # 돌릴 코드: 지금 브랜치의 열린 PR을 찾아 그 PR 코드로 돌린다 (push한 데까지). 없으면 --pr <번호> 또는 --ref dev
 # HARNESS_FRESH=1, HARNESS_PACKAGES는 docker_run.sh처럼 환경 변수로 준다 (--fresh, --packages a,b도 된다)
 # --slot a|b1~b4: 러너 슬롯 (기본 a = n2d-standard-16, b = c2d-standard-8). 여러 조건은 gcp_batch.py로
+# --seed-base N: 첫 seed (기본 시나리오 seed_base = 1). 튜닝·개발용 녹화는 1001 (README "seed 규칙"), --label 필수
 # --watch: 끝날 때까지 진행 상황을 보여 준다. 안 주면 실행 링크만 찍고 바로 끝난다
 # 필요: gh (gh auth login)
 set -euo pipefail
@@ -15,7 +16,7 @@ WORKFLOW=fleet-test.yml
 # 워크플로 파일을 읽을 브랜치. 워크플로를 고친 PR을 머지 전에 시험할 때만 바꾼다 (원 저장소에 그 브랜치가 있어야 한다)
 WORKFLOW_REF="${HARNESS_WORKFLOW_REF:-dev}"
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 [ $# -ge 1 ] || usage 1
 case "$1" in -h|--help) usage 0 ;; -*) echo "첫 인자는 시나리오 이름 (예: loc_basic)" >&2; exit 1 ;; esac
 scenario="$1"; shift
@@ -55,9 +56,11 @@ while [ $# -gt 0 ]; do
     --fresh) fresh=1; shift ;;
     --packages) packages="$2"; shift 2 ;;
     --slot) slot="$2"; shift 2 ;;
+    # 첫 seed. 워크플로 입력이 꽉 차 params의 seed_base로 보낸다 (튜닝·개발용 1001~, README "seed 규칙")
+    --seed-base) params+=("seed_base=$2"); shift 2 ;;
     --watch) watch=1; shift ;;
     -h|--help) usage 0 ;;
-    *) echo "GCP에서는 못 쓰는 인자: $1 (-n, --set, --label, --pr, --ref, --fresh, --packages, --slot, --watch)" >&2; exit 1 ;;
+    *) echo "GCP에서는 못 쓰는 인자: $1 (-n, --set, --label, --pr, --ref, --fresh, --packages, --slot, --seed-base, --watch)" >&2; exit 1 ;;
   esac
 done
 
