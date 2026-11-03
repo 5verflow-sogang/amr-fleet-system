@@ -22,13 +22,6 @@ struct RobotState
   double w = 0.0;
 };
 
-// 목표 지점(전역 경로의 다음 지점). RobotState와 같은 좌표계.
-struct Point2D
-{
-  double x = 0.0;
-  double y = 0.0;
-};
-
 // 시뮬레이션된 궤적 위의 한 점.
 struct TrajectoryPoint
 {

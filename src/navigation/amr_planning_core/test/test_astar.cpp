@@ -205,4 +205,55 @@ TEST(AStarPlannerTest, CostWeightRoutesAroundExpensiveCell)
   EXPECT_FALSE(containsCell(detour_result.path, (Cell{2, 1})));
 }
 
+TEST(AStarPlannerTest, ReusedPlannerGivesSameResultsAcrossCallsAndGridSizes)
+{
+  // 작업 버퍼를 호출 사이에 재사용한다(astar.hpp). 앞 탐색의 g·닫힘이 남아 다음 탐색을 망치거나,
+  // 격자 크기가 바뀔 때 버퍼를 다시 안 잡으면 경로가 달라진다
+  TestGrid walled(20, 10);
+  for (int y = 0; y < 8; ++y) {
+    walled.setCost(10, y, 254);
+  }
+  TestGrid open_small(6, 4);
+
+  const AStarPlanner reused;
+  const PlanResult first = reused.plan(walled.grid(), Cell{1, 1}, Cell{18, 1});
+  const PlanResult small = reused.plan(open_small.grid(), Cell{0, 0}, Cell{5, 3});
+  const PlanResult again = reused.plan(walled.grid(), Cell{1, 1}, Cell{18, 1});
+  const PlanResult blocked = reused.plan(walled.grid(), Cell{1, 1}, Cell{10, 2});
+
+  ASSERT_EQ(first.status, PlanStatus::kSuccess);
+  ASSERT_EQ(small.status, PlanStatus::kSuccess);
+  ASSERT_EQ(again.status, PlanStatus::kSuccess);
+  EXPECT_EQ(blocked.status, PlanStatus::kGoalOccupied);
+  EXPECT_NEAR(pathLength(small.path), 3.0 * std::sqrt(2.0) + 2.0, 1e-9);
+  ASSERT_EQ(first.path.size(), again.path.size());
+  for (std::size_t i = 0; i < first.path.size(); ++i) {
+    EXPECT_EQ(first.path[i], again.path[i]);
+  }
+  const PlanResult fresh = AStarPlanner().plan(walled.grid(), Cell{1, 1}, Cell{18, 1});
+  EXPECT_NEAR(pathLength(first.path), pathLength(fresh.path), 1e-9);
+}
+
+TEST(AStarPlannerTest, PathIsConnectedAndOptimalOnWideGridWithWall)
+{
+  // 셀 인덱스(y * width + x)로 부모를 기록하므로 폭과 높이가 다른 격자에서 경로를 되짚는지 확인한다.
+  // 벽 x=60 (y 0..37)을 위쪽 틈으로 돌아간다
+  TestGrid test_grid(120, 40);
+  for (int y = 0; y < 38; ++y) {
+    test_grid.setCost(60, y, 254);
+  }
+  const PlanResult result = AStarPlanner().plan(test_grid.grid(), Cell{5, 5}, Cell{115, 5});
+  ASSERT_EQ(result.status, PlanStatus::kSuccess);
+  EXPECT_EQ(result.path.front(), (Cell{5, 5}));
+  EXPECT_EQ(result.path.back(), (Cell{115, 5}));
+  for (std::size_t i = 1; i < result.path.size(); ++i) {
+    EXPECT_LE(std::abs(result.path[i].x - result.path[i - 1].x), 1);
+    EXPECT_LE(std::abs(result.path[i].y - result.path[i - 1].y), 1);
+    EXPECT_FALSE(result.path[i] == result.path[i - 1]);
+  }
+  // 틈 (60, 38)을 지나는 최단 경로: (5,5)→(59,38)→(61,38)→(115,5)의 옥타일 길이
+  const double leg = 33.0 * std::sqrt(2.0) + 21.0;
+  EXPECT_NEAR(pathLength(result.path), 2.0 * leg + 2.0, 1e-6);
+}
+
 }  // namespace amr_planning_core
