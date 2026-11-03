@@ -1,0 +1,11 @@
+key,attempt,slot,run_id,url,status,conclusion,started,finished
+tracking_kpi_cdev -n 3 --label dev,1,a,41295375862,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41295375862,dispatched,,2026-11-01T18:58:13,
+tracking_kpi_cdev -n 3 --label dev,1,a,41295375862,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41295375862,completed,success,2026-11-01T18:58:13,2026-11-01T19:13:31
+tracking_kpi_e -n 3 --set seed_offset=1000 --label dev,1,a,41296540529,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41296540529,dispatched,,2026-11-01T19:13:39,
+tracking_kpi_e -n 3 --set seed_offset=1000 --label dev,1,a,41296540529,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41296540529,completed,success,2026-11-01T19:13:39,2026-11-01T19:24:53
+tracking_kpi_a -n 3 --set seed_offset=1000 --label dev,1,a,41297384874,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41297384874,dispatched,,2026-11-01T19:25:01,
+tracking_kpi_a -n 3 --set seed_offset=1000 --label dev,1,a,41297384874,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41297384874,completed,success,2026-11-01T19:25:01,2026-11-01T19:48:27
+tracking_kpi_b -n 3 --set seed_offset=1000 --label dev,1,a,41299092663,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41299092663,dispatched,,2026-11-01T19:48:34,
+tracking_kpi_b -n 3 --set seed_offset=1000 --label dev,1,a,41299092663,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41299092663,completed,success,2026-11-01T19:48:34,2026-11-01T20:13:00
+tracking_kpi_d -n 3 --set seed_offset=1000 --label dev,1,a,41300899816,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41300899816,dispatched,,2026-11-01T20:13:08,
+tracking_kpi_d -n 3 --set seed_offset=1000 --label dev,1,a,41300899816,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41300899816,completed,success,2026-11-01T20:13:08,2026-11-01T20:35:33
