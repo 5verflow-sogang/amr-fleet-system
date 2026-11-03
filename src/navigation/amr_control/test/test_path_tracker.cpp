@@ -341,11 +341,13 @@ TEST(PathTracker, JerkLimitDoesNotStallOnCurveEntry)
       pose.yaw = normalizeAngle(pose.yaw + w * kDt);
     }
     ASSERT_TRUE(entered_curve);
-    // Pure Pursuit lookahead가 직선→원호 전환 구간에 걸쳐 있는 한두 틱은 곡률 추정이 더 커져
-    // v_floor보다 살짝 더 떨어질 수 있다(정상) - 고치기 전 버그는 그 틱들에서 0까지 주저앉고
-    // 거기서 회복을 못 해 0.6 s 가까이 멈췄다. 상대 여유(절반)로 "약간의 전환 지연"과
-    // "거의 멈춰 선 버그"를 가른다
-    EXPECT_GT(min_v_in_curve, v_floor * 0.5);
+    // Pure Pursuit는 lookahead가 속도에 비례해 줄기 때문에(purePursuitLookahead), 커브 전체에서
+    // 곡률 추정이 매 틱 조금씩 더 커지며 v가 서서히 v_floor 밑으로 내려간다 - 저크를 완전히 꺼도
+    // (max_linear_jerk=0) 같은 경로에서 직접 재보면 동일하게 떨어진다(이 테스트와 같은 커브,
+    // kappa=4: 79.6%, kappa=5: 78.3%, 저크 켰을 때(79.9%/79.3%)와 거의 같음) - 저크와 무관한
+    // Pure Pursuit 고유 특성이다. 그 바닥(약 78~80%)보다 5%p 여유를 둔 75%를 기준으로 삼는다 -
+    // 고치기 전 버그(0까지 주저앉음)와는 확실히 구분되면서도, 더 민감하게 재발을 잡는다
+    EXPECT_GT(min_v_in_curve, v_floor * 0.75);
   }
 }
 
