@@ -47,7 +47,8 @@ NAV_KPI = {'navkpi.plan_success_rate': (0.98, 'min'), 'navkpi.replan_p95_ms': (5
 TRACK_KPI = {'track.pred_gain_1s': (0.0, 'gt'), 'track.vel_in_range.rmse': (0.2, 'max')}
 TRACK_KPI_SCENARIOS = {'tracking_kpi_a', 'tracking_kpi_b', 'tracking_kpi_d', 'tracking_kpi_e'}
 # 평균·CI로 판정하는 KPI의 최소 실행 수. 모자라면 보류다 (P1·P2는 장면마다 10회로 미리 정했다, perception.md 1-7)
-KPI_MIN_RUNS = {'track.pred_gain_1s': 10, 'track.vel.rmse': 10}
+# TRACK_KPI에서 만든다: P2 지표 이름이 바뀌어도(전체 → 센서 범위 안) 보류 규칙이 같이 따라가게
+KPI_MIN_RUNS = {metric: 10 for metric in TRACK_KPI}
 # 최악값으로 판정하는 KPI: 지표 → (기준 하한, 최소 실행 수, 판정할 시나리오). 안전 기준이라 평균·CI가 아니라
 # 모든 실행이 기준 이상이어야 한다 (D1, perception.md 1-7)
 WORST_KPI = {'track.d1_ttc_s': (3.0, 10, {'tracking_kpi_c10', 'tracking_kpi_c15'})}

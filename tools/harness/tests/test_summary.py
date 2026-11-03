@@ -457,11 +457,13 @@ def test_kpi_holds_when_some_runs_have_no_value(tmp_path):
 
 
 def test_tracking_p1_p2_hold_below_ten_runs(tmp_path):
-    a = [make_track_run(tmp_path, f'a{i}', 'tracking_kpi_a', hold=0.6 + 0.01 * i, vel=0.1 + 0.01 * i)
+    a = [make_track_run(tmp_path, f'a{i}', 'tracking_kpi_a', hold=0.6 + 0.01 * i, vel=0.3, vel_in=0.1 + 0.01 * i)
          for i in range(9)]
     m = summarize(a)['tracking_kpi_a/main']['metrics']
-    for metric in ('track.pred_gain_1s', 'track.vel.rmse'):
+    # P2는 센서 범위 안 RMSE (#264). 전체 거리 track.vel.rmse는 참고 지표라 판정도 보류도 없다
+    for metric in ('track.pred_gain_1s', 'track.vel_in_range.rmse'):
         assert 'kpi' not in m[metric] and m[metric]['kpi_note'] == '보류 (n=9<10)'
+    assert 'kpi' not in m['track.vel.rmse'] and 'kpi_note' not in m['track.vel.rmse']
 
 
 def test_tracking_d1_worst_case_verdict(tmp_path):
