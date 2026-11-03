@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "nav2_core/controller.hpp"
+#include "nav2_core/global_planner.hpp"
 #include "pluginlib/class_loader.hpp"
 
 // configure()는 호출하지 않는다(실제 LifecycleNode·Costmap2DROS가 필요해서 무겁다).
@@ -16,4 +17,16 @@ TEST(DwaControllerPluginTest, LoadableAsNav2CoreController)
   std::shared_ptr<nav2_core::Controller> controller;
   ASSERT_NO_THROW(controller = loader.createSharedInstance("amr_nav2_plugins::DwaController"));
   EXPECT_NE(controller, nullptr);
+}
+
+TEST(AStarGlobalPlannerPluginTest, LoadableAsNav2CoreGlobalPlanner)
+{
+  pluginlib::ClassLoader<nav2_core::GlobalPlanner> loader(
+    "nav2_core", "nav2_core::GlobalPlanner");
+
+  ASSERT_TRUE(loader.isClassAvailable("amr_nav2_plugins::AStarGlobalPlanner"));
+
+  std::shared_ptr<nav2_core::GlobalPlanner> planner;
+  ASSERT_NO_THROW(planner = loader.createSharedInstance("amr_nav2_plugins::AStarGlobalPlanner"));
+  EXPECT_NE(planner, nullptr);
 }

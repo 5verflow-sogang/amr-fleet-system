@@ -93,17 +93,126 @@ A*·DWA 직접 구현과 비교할 baseline으로 Nav2 내장 플러그인을 �
 
 | 서버 | 플러그인 | 역할 |
 | --- | --- | --- |
-| `planner_server` | `nav2_navfn_planner/NavfnPlanner` | 원 명세서가 요구하는 "A* vs NavFn" 비교의 NavFn 쪽. `use_astar: false`로 Dijkstra 모드를 쓴다 |
+| `planner_server` | `nav2_navfn_planner/NavfnPlanner` | 원 명세서가 요구하는 "A* vs NavFn" 비교의 NavFn 쪽. yaml은 `use_astar: false`(Dijkstra)지만 `nav2.launch.py`가 `use_astar: true`로 덮어써, 스택은 NavFn의 A* 모드로 돈다(3-7절 표에 둘 다 있다) |
 | `controller_server` | `dwb_core::DWBLocalPlanner` | "DWA 직접구현 vs TEB" 비교의 대조군 자리에 임시로 둔 것. 속도·가속 한계만 로봇 스펙(2.0m/s, 1.0m/s², 1.5rad/s)에 맞췄고 critic 가중치는 Nav2 공식 튜토리얼 기본값이다 |
 
-TODO(2주차): `amr_planning_core`의 A*를 `amr_nav2_plugins`로 감싸 `planner_plugins`에
-추가하고, NavFn과 경로 길이·계획 소요 시간·장애물 여유 거리를 비교한다. DWA 직접구현도
-같은 방식으로 `controller_plugins`에 추가해 DWB와 비교한다.
+A* 직접 구현과 NavFn·Smac 비교는 3절, DWA 직접 구현은 4절, DWA와 TEB 비교는 7절.
 
-## 3. A* (예정)
+## 3. A* 전역 경로 계획
 
-TODO(2주차): `amr_planning_core`의 A* 알고리즘 설명(격자 표현, 8방향 이동, 휴리스틱
-선택 근거, 셀 비용 가중치), 경로 평활화 방법을 여기에 작성한다.
+코어는 `amr_planning_core`(ROS 비의존)의 `AStarPlanner`(`astar.hpp`)와 `smoothPath`(`path_smoothing.hpp`)이고,
+`amr_nav2_plugins::AStarGlobalPlanner`가 Nav2 전역 planner(`nav2_core::GlobalPlanner`)로 감싼다. DWA 플러그인과 같이
+플러그인은 costmap → `Grid` 변환, world ↔ 셀 좌표 변환, `nav_msgs/Path` 만들기만 하고 탐색·평활화는 코어에 맡긴다.
+기본 planner는 NavFn 그대로이고, A*는 비교용으로 고를 때만 쓴다(3-6절).
+
+### 3-1. 격자 표현
+
+- Nav2 전역 costmap의 셀 버퍼(`getCharMap()`)를 복사하지 않고 `Grid`(폭·높이·해상도 + 비용 포인터)로 감싼다. 셀 인덱스는
+  `y * 폭 + x`로 costmap과 같다. 기본 지도 v2 0.025 m에서 전역 costmap은 2411 × 1609셀(약 390만 셀)이다
+  (static layer가 지도 해상도로 맞춘다).
+- 셀 비용은 Nav2 값 그대로다: 0 빈 곳, 1~252 inflation(장애물까지 거리의 지수 감소), 253 내접(로봇 중심이 여기면
+  풋프린트가 장애물에 닿음), 254 장애물, 255 미지.
+- `lethal_cost_threshold` 253 이상은 지나갈 수 없다. NavFn도 253 이상을 장애물로 본다. 미지(255)도 막힌 것으로 본다
+  (NavFn은 `allow_unknown: true` - 창고 안에는 미지 셀이 없어 비교에는 영향 없음).
+- 탐색 상태(g·부모·닫힘)는 셀 수만큼의 배열에 두고 호출 사이에 재사용한다. 처음 구현은 해시 맵이었고, 배열로 바꾼 뒤에도
+  호출마다 약 70 MB를 새로 잡고 채우는 것만으로 4 m짜리 경로가 34 ms 걸렸다. 지금은 탐색마다 세대 번호만 올려 지우지 않는다.
+
+### 3-2. 이동 방향
+
+8방향(상하좌우 1, 대각선 √2). 4방향은 대각선으로 가는 통로에서 계단 경로가 √2배까지 길어진다. 대각선 이동은 양옆 두 셀이
+모두 지나갈 수 있을 때만 허용한다(`prevent_corner_cutting`) - 장애물 모서리를 대각선으로 뚫고 지나가지 않게 한다.
+
+8방향 격자 경로는 방향이 0°/45°뿐이라 비스듬한 길을 지그재그로 가고, 같은 길이의 최적 경로가 여럿이다. 그래서 평활화가
+필요하다(3-5절, 비교 표의 "평활화 전" 줄).
+
+### 3-3. 휴리스틱
+
+옥타일 거리 `√2 · min(dx, dy) + (max(dx, dy) − min(dx, dy))`(`heuristic: "octile"`). 8방향에서 장애물이 없을 때의 실제
+최단 거리라 허용적(admissible)이면서 가장 팽팽하다. 유클리드도 허용적이지만 더 작게 추정해 더 많이 펼친다(`euclidean`으로
+고를 수 있다). 셀 비용 가중치(3-4절)는 이동 비용을 거리보다 크게만 만들므로 휴리스틱은 그대로 허용적이다.
+
+f가 같은 노드는 g가 큰(목표에 더 가까이 간) 쪽을 먼저 꺼낸다. 빈 공간에서는 f가 같은 노드가 아주 많아, 동점을 아무렇게나
+풀면 최적 경로 둘레를 거의 다 펼친다. 어느 최적 경로를 고르는지만 바뀌고 경로 비용은 그대로다.
+
+### 3-4. 셀 비용
+
+이동 비용 = 거리 × (1 + `cost_weight` × 셀 비용 / 255). `cost_weight` 0이면 순수 최단 거리라 inflation 가장자리(내접 바로
+밖)를 바짝 돈다. NavFn은 셀 비용을 `COST_NEUTRAL(50) + COST_FACTOR(0.8) × 비용`으로 쓰므로 빈 셀 대비 비율이
+1 + 0.016 × 비용이고, 같은 꼴로 쓰면 0.016 × 255 ≈ 4.1이다. 그래서 `cost_weight: 4.0`으로 두어 NavFn과 같은 정도로
+장애물을 피하게 했다 - 비교(3-7절)가 탐색 방식과 평활화의 차이만 보게 한다.
+
+### 3-5. 경로 평활화 (`smoothPath`)
+
+두 단계다. 둘 다 끄고 켤 수 있다(`smoothing_shortcut`·`smoothing_gradient`, `smooth_path: false`면 둘 다 안 함).
+
+1. **지름길**: 경로의 한 점에서 직선으로 보이는 가장 먼 점까지 바로 잇는다(앞에서부터, 처음 막히는 점에서 멈춤). 8방향의
+   지그재그와 0°/45° 꺾임을 없애 길이를 줄인다.
+2. **경사 하강(Thrun)**: 지름길 선분을 `smoothing_point_spacing_m`(0.1 m) 간격으로 나눈 점들을
+   `y ← y + w_data(x − y) + w_smooth(y_prev + y_next − 2y)`로 반복해 편다(`w_data` 0.1, `w_smooth` 0.3, 최대 200회).
+   꺾인 곳이 둥글어지는 길이는 대략 점 간격 × √(w_smooth / w_data) ≈ 0.17 m다. 1셀(0.025 m) 간격으로 하면 둥글어지는
+   길이도 1~2셀이라 거의 안 펴져서 간격을 따로 둔다. Smac planner의 smoother도 같은 식이다.
+3. 끝으로 1셀 간격으로 다시 나눈다 - DWA가 경로 점을 따라 누적 거리로 기준점을 고르므로 촘촘해야 한다.
+
+**안전 규칙: 평활화는 경로를 원래 A* 경로보다 비용이 큰 셀로 옮기지 않는다.**
+
+- 지름길 i → j는 그 선분이 지나는 모든 셀(0.1셀 간격으로 짚음)의 비용이 원래 경로 i..j 구간의 최대 비용 이하일 때만 쓴다.
+- 경사 하강은 옮긴 점의 셀 비용이 지름길 경로에서 그 점이 있던 셀의 비용 이하이고, 이웃 점과 잇는 선분도 두 점 상한 중 큰
+  쪽 이하일 때만 옮긴다.
+
+경로를 펴면 꺾인 곳이 안쪽(장애물 모서리 쪽)으로 당겨지는데, inflation 비용은 장애물까지 거리의 감소 함수라 비용이 늘지
+않으면 여유 거리도 줄지 않는다. 비용이 0인 곳(inflation 반경 0.55 m 밖)에서는 자유롭게 펴진다 - 비교에서 평활화가 여유를
+줄인 쌍 3개는 모두 결과가 0.55 m 근처에서 멈췄다(가장 작은 값 0.551 m). 단위 테스트(`test_path_smoothing.cpp`)가 이
+규칙(평활화 뒤 경로 위 최대 비용 ≤ 원래 최대 비용), 처음·끝 점 유지, 벽의 틈으로만 지나가기, 점 간격 1셀 이하를 확인한다.
+
+### 3-6. Nav2 연결
+
+- 플러그인: `amr_nav2_plugins::AStarGlobalPlanner`. 파라미터는 `nav2_params.yaml`의 `planner_server.AStar` 블록이다.
+- 고르는 법: `ros2 launch amr_bringup nav2.launch.py planner:=astar`(기본 `navfn`). `AStar` 블록을 `GridBased` 이름에 얹어
+  bt_navigator 기본 트리와 측정 스크립트의 `planner_id`("GridBased")를 그대로 쓴다 - DWA를 `FollowPath` 이름으로 등록하는
+  것과 같은 방식(`amr_bringup/planner.py`). `planner_plugins`에 둘을 같이 넣으면 `planner_id`가 비어 있는 요청이 실패하므로
+  넣지 않았다. `system.launch.py`에는 아직 인자를 두지 않았다(비교 실험은 3-7절의 별도 launch를 쓴다).
+- 출력: 경로 점마다 다음 점을 향하는 방향을 넣고, 마지막 점은 요청한 목표 자세 그대로다(`plan_path.hpp`, NavFn처럼).
+- NavFn과 다른 점: 목표 셀이 막혔을 때 근처로 옮기는 허용 오차(NavFn `tolerance` 0.5 m)가 없다 - 실패로 돌려준다.
+  실패(지도 밖, 출발·목표 셀 막힘, 경로 없음)면 빈 경로를 돌려주고 planner_server가 실패로 처리한다.
+
+### 3-7. 비교: A*(평활화 전·후) vs NavFn vs Smac 2D
+
+**조건 (11/3, 1회):** nav_kpi와 같은 출발·목표 50쌍(`experiments/nav_kpi/waypoints.yaml`, 쌍 i = 점 i → 점 i+1), 기본 지도 v2
+0.025 m. Gazebo·위치추정 없이 map_server + planner_server만 띄우고(`experiments/planner_compare/planner_compare.launch.py`),
+`ComputePathToPose`(`use_start: true`)로 planner마다 같은 쌍을 3번씩 계획했다(`compare.py`). 전역 costmap은 `nav2_params.yaml`
+값 그대로에서 obstacle layer만 뺐다(센서 없음). Smac 2D는 Nav2 기본값. 노트북 Docker(Intel Core Ultra 7 355, 8코어).
+
+```bash
+ros2 launch experiments/planner_compare/planner_compare.launch.py
+python3 experiments/planner_compare/compare.py --out /tmp/planner_compare   # pairs.csv, summary.md, summary.json
+```
+
+**지표:**
+- 경로 길이: 경로 점을 이은 길이.
+- 계획 시간: Nav2가 돌려준 `planning_time`(planner_server 안에서 잰 `createPlan` 시간, costmap 잠금·변환 포함). 150회(50쌍 × 3).
+- 최소 여유 거리: 경로를 0.0125 m 간격으로 짚어 지도의 가장 가까운 점유 셀까지 거리(로봇 중심 기준)의 최솟값. 쌍마다 하나.
+- 총 회전각: 경로를 0.1 m 간격으로 다시 나눠 방향 변화의 절댓값을 더한 것. 지그재그가 많을수록 크다.
+
+| planner | 성공 | 경로 길이 평균 (m) | NavFn 대비 | 계획 시간 평균 / p95 / 최대 (ms) | 최소 여유 거리 쌍 평균 / 전체 최소 (m) | 총 회전각 평균 (°) |
+|---|---|---|---|---|---|---|
+| NavFn (Dijkstra, yaml 값) | 50/50 | 10.05 | 1.000 | 20.6 / 35.2 / 54.0 | 1.599 / 0.214 | 160 |
+| NavFn A* 모드 (스택이 실제로 쓰는 값) | 50/50 | 9.93 | 0.994 | 11.4 / 14.0 / 37.5 | 1.581 / 0.214 | 134 |
+| Smac 2D | 50/50 | 10.05 | 1.005 | 11.8 / 34.6 / 61.2 | 1.577 / 0.250 | 132 |
+| **A* 평활화 전** | 50/50 | 10.48 | 1.042 | 6.7 / 25.8 / 41.0 | 1.589 / 0.250 | 234 |
+| **A* 평활화 후** (`AStar` 기본) | 50/50 | 10.01 | 0.996 | 11.5 / 34.4 / 43.1 | 1.585 / 0.250 | 47 |
+
+- **경로 길이:** 평활화 전 A*는 NavFn보다 4.2 % 길다. 8방향 격자 경로는 0°/45°로만 가지만, NavFn은 포텐셜의 경사를 따라
+  아무 방향으로나 내려온다. 평활화가 쌍마다 평균 0.47 m(최대 1.08 m)를 줄여 NavFn보다 0.4 % 짧아졌다.
+- **계획 시간:** 다섯 다 재계획 KPI(500 ms)보다 한참 작다. 평활화 전 A*가 평균으로 가장 빠르고(6.7 ms), 평활화가 평균
+  약 5 ms를 더한다. A* 최대 43 ms는 NavFn Dijkstra(54 ms)·Smac 2D(61 ms)보다 작다.
+- **장애물 여유:** 쌍 평균은 다섯 다 1.58~1.60 m로 같은 수준이다(`cost_weight`를 NavFn에 맞춘 효과). 차이는 좁은 통로(폭
+  0.6 m, 쌍 11·31)에서 난다 - A*·Smac은 통로 가운데(0.250 m, 가능한 최대 0.3 m 근처)를 지나고, NavFn은 0.214~0.225 m다.
+  평활화 후 A*는 여유가 0.55 m 아래로 내려간 쌍이 8개로 NavFn(5개)보다 많다 - 빈 곳에서 직선으로 펴면서 inflation 반경
+  (0.55 m) 경계를 따라가기 때문이다. 그 안쪽(비용이 붙는 곳)으로는 들어가지 않는다(3-5절).
+- **매끄러움:** 평활화 후 총 회전각은 47°로 NavFn(160°)의 3분의 1이다. 평활화 전 A*(234°)는 격자 지그재그 때문에 가장 크다.
+
+**한계:** 1회·노트북 측정이라 계획 시간은 절대값보다 순서로 본다. 정적 지도 기준이다(장애물 레이어 없음). 경로를 실제로
+따라간 주행 시간·CTE는 이 비교에 없다 - 필요하면 nav_kpi를 `planner:=astar`로 돌린다(시나리오에 인자를 넘기는 변경 필요).
 
 ## 4. DWA (Dynamic Window Approach)
 
