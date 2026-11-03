@@ -10,6 +10,9 @@
     max_linear_speed: 2.0
     max_angular_speed: 1.5
     max_linear_accel: 1.0
+    # 가속도 변화량 한계 [m/s³] - 적재물 안정성(명세 5번). 0이면 끔(가속 제한만 쓰는 기존 동작과
+    # 같음). 값 근거는 navigation.md 5-3절
+    max_linear_jerk: 2.5
     # 경로 끝 감속 v <= sqrt(2·decel·남은 거리), 그 중 최저 속도
     max_linear_decel: 1.0
     min_approach_speed: 0.05

@@ -44,6 +44,6 @@ colcon test --packages-select amr_control
 ```
 
 - `test_path_geometry`: 투영·부호 있는 CTE·탐색 창·호 길이·곡률, Pure Pursuit·Stanley 식
-- `test_path_tracker`: 두 방식 폐루프 (직선 수렴, 횡방향 오프셋 출발, 원호 CTE 상한, 경로 끝 정지, 제자리 회전, 각속도 한계, 재계획)
+- `test_path_tracker`: 두 방식 폐루프 (직선 수렴, 횡방향 오프셋 출발, 원호 CTE 상한, 경로 끝 정지, 제자리 회전, 각속도 한계, 재계획, 저크 제한이 끝 정지 정확도를 안 건드리는지)
 - `test_pid`: 계단 응답 정착, 상·하한 포화 시 windup 없음, 게인 0 통과, 측정값 미분
 - `test_cte_log`: `cte.csv` 헤더·행 형식, 구간 분류

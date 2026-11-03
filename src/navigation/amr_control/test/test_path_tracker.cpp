@@ -244,6 +244,51 @@ TEST(PathTracker, AccelerationLimited)
   EXPECT_NEAR(first.v, tracker.config().max_linear_accel * kDt, 1e-9);
 }
 
+TEST(PathTracker, JerkLimitSlowsInitialAcceleration)
+{
+  PathTrackerConfig jerk_config;
+  jerk_config.max_linear_jerk = 2.5;
+  PathTracker jerk_tracker(jerk_config);
+  jerk_tracker.setPath(straightPath(10.0));
+  const auto jerk_first = jerk_tracker.compute(Pose2D{}, 0.0, kDt);
+
+  // 기본값(저크 제한 꺼짐, max_linear_jerk == 0)과 비교하면 첫 틱부터 덜 밟는다
+  PathTracker accel_only_tracker;
+  accel_only_tracker.setPath(straightPath(10.0));
+  const auto accel_first = accel_only_tracker.compute(Pose2D{}, 0.0, kDt);
+
+  EXPECT_LT(jerk_first.v, accel_first.v);
+  EXPECT_NEAR(jerk_first.v, jerk_config.max_linear_jerk * kDt * kDt, 1e-9);
+}
+
+TEST(PathTracker, NegativeJerkDisablesLimit)
+{
+  // 0이나 음수면 가속 제한만 쓰는 기존 동작과 같다
+  PathTrackerConfig config;
+  config.max_linear_jerk = -1.0;
+  PathTracker tracker(config);
+  tracker.setPath(straightPath(10.0));
+  const auto first = tracker.compute(Pose2D{}, 0.0, kDt);
+  EXPECT_NEAR(first.v, config.max_linear_accel * kDt, 1e-9);
+}
+
+// 저크 제한을 켜도 끝 감속 상한은 그대로 매 틱 씌우므로, 정지 정확도(StopsAtPathEnd와 같은 기준)는
+// 그대로 지켜진다 (navigation.md 5-3절 "끝 감속·정지 정확도는 그대로")
+TEST(PathTracker, JerkLimitDoesNotBreakStopAccuracy)
+{
+  PathTrackerConfig config;
+  config.max_linear_jerk = 2.5;
+  PathTracker tracker(config);
+  tracker.setPath(straightPath(3.0));
+  const auto sim = simulate(tracker, Pose2D{0.0, 0.0, 0.0});
+  ASSERT_TRUE(sim.reached);
+  const double tol = tracker.config().goal_tolerance;
+  const double dist_to_end = std::hypot(sim.final_pose.x - 3.0, sim.final_pose.y);
+  EXPECT_LT(dist_to_end, tol + 0.03);
+  EXPECT_LT(sim.final_pose.x, 3.0 + 0.03);
+  EXPECT_NEAR(sim.final_v, 0.0, 1e-3);
+}
+
 TEST(PathTracker, ControllerTypeNames)
 {
   ControllerType type = ControllerType::kPurePursuit;
