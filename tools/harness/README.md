@@ -92,7 +92,7 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 2. 실행 하나에 seed 하나. 그 실행의 모든 무작위 요소(작업 일정, 통신 손실, 엔코더 노이즈, 동적 장애물)에 같은 값을 넘긴다. 패키지마다 내부 난수열을 따로 만들어 서로 얽히지 않는다.
 3. 0은 손으로 돌릴 때의 기본값으로 남긴다. 패키지마다 0의 뜻이 다르다(`amr_odometry`·`amr_gazebo`는 매번 무작위, Fleet 쪽은 고정값). 하네스 결과에는 0이 나오지 않는다.
 4. 튜닝·예비 실험은 `--seed-base 1001`, 본 실험(보고·KPI 판정)은 1~N. 튜닝에 쓴 seed로 성능을 보고하면 결과가 좋게 치우친다(명세서 4장 연구 2와 같은 원칙).
-5. `meta.json`의 `seed`에 실제로 넘긴 값을 남긴다. 시나리오가 params `seed_offset`으로 시드를 옮기면(GCP에서는 `--seed-base`를 못 바꿔서 개발용 녹화를 `--set seed_offset=1000`으로 돌린다: `tracking_kpi`, `nav_avoidance`) `seed`는 반복 번호에서 온 1~N 그대로이고, 실제로 넘긴 값 `seed + seed_offset`은 `scene_seed`에 남는다. 본 측정인지는 `scene_seed`로 가른다(`experiments/tracking_kpi/check_main.py`는 `scene_seed` 1~10과 `seed_offset` 0을 본다). `seed_offset`이 정수가 아니거나 합이 1 미만이면 돌리기 전에 멈춘다.
+5. `meta.json`의 `seed`에 실제로 넘긴 값을 남긴다. GCP에서도 `gcp_run.sh --seed-base 1001`(워크플로 params `seed_base=1001`, 라벨 필수)로 첫 seed를 바꿀 수 있으니 새 개발·튜닝 실행은 이쪽을 쓴다 (`meta.json` `seed` = 실제 값). 예전 방식으로 시나리오가 params `seed_offset`으로 시드를 옮기면(`--set seed_offset=1000`: `tracking_kpi`, `nav_avoidance`) `seed`는 반복 번호에서 온 1~N 그대로이고, 실제로 넘긴 값 `seed + seed_offset`은 `scene_seed`에 남는다. 본 측정인지는 `scene_seed`로 가른다(`experiments/tracking_kpi/check_main.py`는 `scene_seed` 1~10과 `seed_offset` 0을 본다). `seed_offset`이 정수가 아니거나 합이 1 미만이면 돌리기 전에 멈춘다.
 
 seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도 위치 오차 RMSE가 최대 2 cm 달랐다(10/6, AMCL 파티클 필터·Gazebo 센서 노이즈·메시지 도착 순서 등). 그래서 같은 seed가 "같은 조건"은 보장하지만 "같은 결과"는 보장하지 않고, 판정은 N회 반복의 신뢰구간으로 한다.
 
