@@ -387,7 +387,7 @@ DwaCommand DwaPlanner::computeVelocityCommand(
   const std::vector<DynamicObstacle> & dynamic_obstacles,
   const std::optional<Point2D> & final_goal) const
 {
-  return selectCommand(state, {goal}, false, grid, dynamic_obstacles, final_goal);
+  return selectWithAvoidFallback(state, {goal}, false, grid, dynamic_obstacles, final_goal);
 }
 
 DwaCommand DwaPlanner::computeVelocityCommand(
@@ -399,7 +399,31 @@ DwaCommand DwaPlanner::computeVelocityCommand(
     result.status = DwaStatus::kGoalReached;
     return result;
   }
-  return selectCommand(state, path, true, grid, dynamic_obstacles, path.back());
+  return selectWithAvoidFallback(state, path, true, grid, dynamic_obstacles, path.back());
+}
+
+DwaCommand DwaPlanner::selectWithAvoidFallback(
+  const RobotState & state, const std::vector<Point2D> & path, bool follow_path,
+  const Grid & grid, const std::vector<DynamicObstacle> & dynamic_obstacles,
+  const std::optional<Point2D> & final_goal) const
+{
+  used_avoid_fallback_ = false;
+  const bool rotating_before = rotating_in_place_;
+  DwaCommand result = selectCommand(state, path, follow_path, grid, dynamic_obstacles, final_goal);
+  if (!avoid_mode_ || result.status != DwaStatus::kNoValidTrajectory) {
+    return result;
+  }
+  // 회피 모드 여유(0.2 + 0.4 m)로는 갈 궤적이 하나도 없다 - 서 있는 작업자 0.33 m 옆이나, 뒤 끝이 작업자가 오는 길에
+  // 걸친 채 움직이는 중이면 모든 궤적이 "지금보다 가까워짐"이 된다. 그대로 (0, 0)을 내면 그 자리에 서서 부딪히거나
+  // 영영 못 비킨다(#263 시드 1001·1007·1028). 평소 여유(0.2 m)·가중치로 한 번 더 고른다 - 0.3 m 안의 위험은 안전 노드가
+  // 막는다. 궤적 길이(rollout_time_)는 회피 모드 그대로 3 s다. 히스테리시스 상태는 첫 탐색 전으로 되돌려 같은 조건에서 고른다.
+  rotating_in_place_ = rotating_before;
+  config_ = base_config_;
+  result = selectCommand(state, path, follow_path, grid, dynamic_obstacles, final_goal);
+  config_ = avoid_config_;
+  used_avoid_fallback_ = true;
+  ++avoid_fallback_count_;
+  return result;
 }
 
 DwaCommand DwaPlanner::selectCommand(
