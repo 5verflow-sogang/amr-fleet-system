@@ -557,11 +557,19 @@ def _run_row(name: str, s: dict, params: Optional[AvoidanceParams] = None) -> di
     k = dict(s['kpi'])
     av = s['avoidance']
     rec = s.get('params', {})
+    no_after = False
     if params is not None and (params.return_from, params.kpi_return_s) != (
             rec.get('return_from', 'start'), rec.get('kpi_return_s', params.kpi_return_s)):
         # 기록 때와 다른 복귀 기준(회피 시작부터 / 회피 후, 초 상한)으로 다시 판정한다: 복귀만 다시 보고 나머지는 그대로
-        judged = av.get('max_return_after_pass_s') if params.return_from == 'pass' else av['max_return_s']
-        k['return_ok'] = av['unreturned'] == 0 and (judged is None or judged <= params.kpi_return_s)
+        if params.return_from == 'pass':
+            judged = av.get('max_return_after_pass_s')
+            # 회피 후 복귀 값이 생기기 전(11/4)에 기록한 요약에는 이 키가 없다. 회피 구간이 있는데 값이 없으면 재지 못한
+            # 것이니 합격으로 치지 않는다 (하네스 "값 없는 실행 보류"와 같은 원칙, #293 리뷰)
+            no_after = 'max_return_after_pass_s' not in av and av['episodes'] > 0
+        else:
+            judged = av['max_return_s']
+        k['return_ok'] = (av['unreturned'] == 0 and not no_after
+                          and (judged is None or judged <= params.kpi_return_s))
         k['pass'] = k['valid'] and k['collision_free'] and k['deviation_ok'] and k['return_ok'] and k['goal_ok']
     row = {'run': name, 'valid': k['valid'], 'pass': k['pass'], 'collisions': s['collision']['count'],
            'min_clearance': s['collision']['min_clearance'], 'max_deviation': s['deviation']['max'],
@@ -572,7 +580,7 @@ def _run_row(name: str, s: dict, params: Optional[AvoidanceParams] = None) -> di
     for key, label in (('collision_free', '충돌'), ('deviation_ok', '이탈 초과'),
                        ('return_ok', '복귀 초과·미복귀'), ('goal_ok', '목표 미도착')):
         if not k[key]:
-            row['reasons'].append(label)
+            row['reasons'].append('회피 후 복귀 값 없음' if key == 'return_ok' and no_after else label)
     return row
 
 
@@ -690,6 +698,7 @@ def aggregate_markdown(a: dict) -> str:
         return '—' if v is None else f'{v:.{nd}f}' if isinstance(v, float) else str(v)
 
     k = a['kpi']
+    after = k.get('return_from') == 'pass'
     pr = a['pass_rate']
     rate = (f"{pr['passed']}/{pr['valid']} ({100 * pr['ci95'][0]:.1f}~{100 * pr['ci95'][1]:.1f}%)"
             if pr['valid'] else '—')
@@ -712,8 +721,10 @@ def aggregate_markdown(a: dict) -> str:
           if a.get('require_avoidance') else []),
         f"| 최소 이격 [m] | {f(a['min_clearance'])} | — |",
         f"| 합격률 (유효 실행, 95% CI, 참고) | {rate} | — |", '',
-        '| 실행 | 유효 | 판정 | 충돌 | 최소 이격 | 최대 이탈 | 최대 복귀 | 사유 |',
-        '| --- | --- | --- | --- | --- | --- | --- | --- |',
+        # 회피 후로 판정하면 실행별 표도 판정에 쓴 값(회피 후)을 앞에 두고 회피 시작부터 값을 참고로 붙인다
+        ('| 실행 | 유효 | 판정 | 충돌 | 최소 이격 | 최대 이탈 | 회피 후 복귀 | 회피 시작부터 복귀 (참고) | 사유 |' if after else
+         '| 실행 | 유효 | 판정 | 충돌 | 최소 이격 | 최대 이탈 | 최대 복귀 | 사유 |'),
+        '| --- ' * (9 if after else 8) + '|',
     ]
     counts = [*(f'{n}회: {reason}' for reason, n in a['invalid_reason_counts'].items()),
               *(f'{n}회: 하네스 실패 ({o})' for o, n in a['harness_outcome_counts'].items())]
@@ -723,5 +734,6 @@ def aggregate_markdown(a: dict) -> str:
         verdict = '하네스 실패' if r.get('harness_outcome') else 'PASS' if r['pass'] else 'FAIL'
         lines.append(f"| {r['run']} | {'O' if r['valid'] else 'X'} | {verdict} | "
                      f"{r.get('collisions', '—')} | {f(r.get('min_clearance'))} | {f(r.get('max_deviation'))} | "
-                     f"{f(r.get('max_return_s'))} | {', '.join(r['reasons'])} |")
+                     + (f"{f(r.get('max_return_after_pass_s'))} | " if after else '')
+                     + f"{f(r.get('max_return_s'))} | {', '.join(r['reasons'])} |")
     return '\n'.join(lines) + '\n'

@@ -28,8 +28,8 @@ params:
   # 목표 결과를 받은 뒤 더 기록하는 시간 [s] (복귀 판정 return_hold_s 1.0 s + 여유)
   after_goal_s: 5
   record: "true"
-  # 시드 = 하네스 seed + seed_offset (장애물·시뮬레이션). GCP는 한 번에 15회까지라 30회는 0과 15로 두 번 넣는다
-  # (GCP에서는 seed_base를 바꿀 수 없다, tracking_kpi와 같은 방식)
+  # 시드 = 하네스 seed + seed_offset (장애물·시뮬레이션). 30회는 gcp_run.sh --seed-base로 첫 시드를 나눠 두 번 넣는다
+  # (#283부터 GCP도 seed_base를 받는다). seed_offset은 처음 방식(0과 15)과 호환하려고 남겨 둔다
   seed_offset: "0"
   # 작업자 속도 [m/s] (원 명세 동적 장애물 0.3~1.5. 기본은 원 명세 "1.0 m/s 장애물")
   worker_speed: "1.0"

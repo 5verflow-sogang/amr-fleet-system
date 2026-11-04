@@ -148,6 +148,27 @@ def test_aggregate_rejudges_return_from_pass():
     assert after['max_return_after_pass_s'] == pytest.approx(0.567, abs=0.03)
     md = aggregate_markdown(after)
     assert '회피 후(장애물 통과 뒤)' in md and '회피 시작부터 [s] (참고)' in md
+    # 실행별 표도 판정에 쓴 회피 후 값을 보여 준다 (회피 시작부터 3.5 s는 참고 열)
+    assert '| 회피 후 복귀 | 회피 시작부터 복귀 (참고) |' in md
+    assert f"| {ok['avoidance']['max_return_after_pass_s']:.3f} | {ok['avoidance']['max_return_s']:.3f} |" in md
+    assert '| 최대 복귀 |' in aggregate_markdown(strict)
+
+
+def test_rejudge_return_from_pass_fails_old_summary_without_after_pass_value():
+    # 회피 후 복귀 값이 생기기 전에 기록한 요약(키 없음)을 --return-from pass로 다시 보면, 회피 구간이 있는데 값이 없으니
+    # 합격이 아니다 (#293 리뷰: 전에는 값 없이 PASS가 나왔다)
+    old = _run_summary()
+    del old['avoidance']['max_return_after_pass_s']
+    old['avoidance']['max_return_s'] = 16.0
+    a = aggregate([('old_run', old)], AvoidanceParams(kpi_runs=1, return_from='pass'))
+    assert a['verdict'] == 'FAIL'
+    assert not a['per_run'][0]['pass']
+    assert '회피 후 복귀 값 없음' in a['per_run'][0]['reasons']
+    # 회피 구간이 없으면 잴 복귀가 없으니 그대로 합격
+    calm = _run_summary()
+    del calm['avoidance']['max_return_after_pass_s']
+    calm['avoidance']['episodes'] = 0
+    assert aggregate([('calm', calm)], AvoidanceParams(kpi_runs=1, return_from='pass'))['verdict'] == 'PASS'
 
 
 def test_collision_counted_once_per_contact():
