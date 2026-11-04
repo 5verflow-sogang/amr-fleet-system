@@ -65,6 +65,17 @@ def test_mask_overlap_takes_max_and_zero_value_is_free():
     assert make_mask([], []) is None
 
 
+def test_mask_padding_surrounds_zones_with_free_cells():
+    # 속도 필터가 마스크 밖에서 마지막 제한을 유지하므로, 구역 둘레를 값 0 칸으로 감싼다
+    m = make_mask([LINE], [1.0], resolution=1.0, padding=1.0)
+    assert (m.origin, m.width, m.height) == ((1.0, 0.0), 6, 4)
+    rows = [m.data[j * m.width:(j + 1) * m.width] for j in range(m.height)]
+    assert rows[0] == [0] * 6 and rows[3] == [0] * 6
+    assert rows[1] == [0, 90, 90, 90, 90, 0]
+    with pytest.raises(ValueError):
+        make_mask([LINE], [1.0], padding=-0.1)
+
+
 def test_mask_fine_resolution_size():
     m = make_mask([LINE], [1.0], resolution=0.1)
     assert (m.width, m.height) == (40, 15)

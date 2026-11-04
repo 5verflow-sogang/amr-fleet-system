@@ -70,6 +70,8 @@ class CongestionNode(Node):
         self._frame_id = self.declare_parameter('frame_id', 'map').value
         self._resolution = self.declare_parameter('mask.resolution', 0.1).value
         self._max_value = self.declare_parameter('mask.max_value', 90).value
+        # 구역 둘레 값 0 칸 [m]. 속도 필터가 마스크 밖에서 마지막 제한을 유지하므로 로봇이 구역을 벗어나며 꼭 지나게 한다
+        self._padding = self.declare_parameter('mask.padding', 1.0).value
         # 이보다 오래 위치가 안 온 손님은 세지 않는다 (시뮬레이션 시간)
         self._stale_s = self.declare_parameter('stale_s', 2.0).value
         speed_base = self.declare_parameter('speed_filter.base', 100.0).value
@@ -125,7 +127,8 @@ class CongestionNode(Node):
         values = self._tracker.update(people)
         stamp = now.to_msg()
         self._congestion_pub.publish(to_array_msg(values, self._areas, self._frame_id, stamp))
-        mask = make_mask(self._tracker.zones, [v.value for v in values], self._resolution, self._max_value)
+        mask = make_mask(self._tracker.zones, [v.value for v in values], self._resolution, self._max_value,
+                         self._padding)
         self._mask_pub.publish(to_grid_msg(mask, self._frame_id, stamp))
 
 
