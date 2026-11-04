@@ -53,6 +53,7 @@ public:
     config.max_angular_speed =
       declare_parameter<double>("max_angular_speed", config.max_angular_speed);
     config.max_linear_accel = declare_parameter<double>("max_linear_accel", config.max_linear_accel);
+    config.max_linear_jerk = declare_parameter<double>("max_linear_jerk", config.max_linear_jerk);
     config.max_linear_decel = declare_parameter<double>("max_linear_decel", config.max_linear_decel);
     config.min_approach_speed =
       declare_parameter<double>("min_approach_speed", config.min_approach_speed);
