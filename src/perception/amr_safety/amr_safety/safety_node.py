@@ -54,11 +54,14 @@ def yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
 
 
 def obstacle_infos(obstacles: TrackedObstacleArray, ttc_by_id: Dict[int, float], yaw: float,
-                   translation, length: float, width: float) -> List[ObstacleInfo]:
+                   translation, length: float, width: float,
+                   robot_vx: float = 0.0) -> List[ObstacleInfo]:
     """추적 장애물 → 판정 입력. yaw, translation: obstacles 좌표계 → base_footprint 변환.
 
     clearance = 차체에서 장애물 중심까지 거리 − 장애물 반경 (0 아래로 내려가지 않는다).
     TTC가 없는 트랙(collision_risks에 없음)은 inf.
+    receding_behind: 장애물 몸이 차체 뒤 끝보다 뒤에 있고(몸체 x < −(length/2 + 반경)), 로봇에 대한 상대 속도
+    (트랙 속도를 몸체 축으로 돌린 것 − robot_vx)의 x가 음수(뒤쪽으로 멀어짐). robot_vx: 지금 전진 명령 [m/s]
     """
     if not obstacles.obstacles:
         return []
@@ -66,11 +69,19 @@ def obstacle_infos(obstacles: TrackedObstacleArray, ttc_by_id: Dict[int, float],
                         for o in obstacles.obstacles])
     body = transform_points_2d(centers, yaw, translation)
     distances = footprint_clearance(body, length, width)
-    return [ObstacleInfo(track_id=o.track_id,
-                         clearance=max(float(d) - float(o.radius), 0.0),
-                         ttc=ttc_by_id.get(o.track_id, math.inf),
-                         is_dynamic=bool(o.is_dynamic))
-            for o, d in zip(obstacles.obstacles, distances)]
+    cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+    infos = []
+    for o, d, (bx, _) in zip(obstacles.obstacles, distances, body):
+        vx, vy = o.twist.twist.linear.x, o.twist.twist.linear.y
+        rel_vx = cos_y * vx - sin_y * vy - robot_vx
+        behind = float(bx) < -(length / 2.0 + float(o.radius))
+        infos.append(ObstacleInfo(track_id=o.track_id,
+                                  clearance=max(float(d) - float(o.radius), 0.0),
+                                  ttc=ttc_by_id.get(o.track_id, math.inf),
+                                  is_dynamic=bool(o.is_dynamic),
+                                  receding_behind=behind and rel_vx < 0.0,
+                                  speed=math.hypot(vx, vy), radius=float(o.radius)))
+    return infos
 
 
 def to_status_msg(state: SafetyState, stamp) -> SafetyStatus:
@@ -98,6 +109,10 @@ class SafetyNode(Node):
             warning_speed_limit=p('warning_speed_limit', 0.6).value,
             dynamic_slow_distance=p('dynamic_slow_distance', 0.5).value,
             dynamic_slow_speed_limit=p('dynamic_slow_speed_limit', 0.15).value,
+            dynamic_slow_skip_receding_behind=p('dynamic_slow_skip_receding_behind', False).value,
+            dynamic_slow_unconfirmed_speed=p('dynamic_slow_unconfirmed_speed', 0.0).value,
+            dynamic_slow_unconfirmed_max_radius=p('dynamic_slow_unconfirmed_max_radius', 0.35).value,
+            dynamic_slow_unconfirmed_max_speed=p('dynamic_slow_unconfirmed_max_speed', 1.8).value,
             release_hold_s=p('release_hold_s', 0.5).value,
             scan_timeout_s=p('scan_timeout', 0.5).value,
             tracks_timeout_s=p('tracks_timeout', 1.0).value,
@@ -253,7 +268,7 @@ class SafetyNode(Node):
         q, t = tf.transform.rotation, tf.transform.translation
         return obstacle_infos(self.obstacles, self.ttc_by_id,
                               yaw_from_quaternion(q.x, q.y, q.z, q.w), (t.x, t.y),
-                              self.length, self.width)
+                              self.length, self.width, self.current_command(self.now())[0])
 
     def _publish_state(self, state: SafetyState, now: float):
         previous = self.state
