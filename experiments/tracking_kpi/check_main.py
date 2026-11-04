@@ -2,8 +2,9 @@
 """본 측정 결과가 '돌아갔는지'만 본다. KPI 값(P1·P2·D1, 오차, 가짜 비율)은 출력하지 않는다.
 
     python3 -I check_main.py results/tracking_kpi_c10-main [results/...]
+    python3 -I check_main.py --first-seed 2001 results/tracking_kpi_c10-act3 [...]   # 3막 재측정 (1-7-1)
 
-실행 폴더(*_00 ~ *_09)마다 한 줄. 마지막에 장면 전체 확인(실행 수, 시드 1~10, 같은 커밋).
+실행 폴더(*_00 ~ *_09)마다 한 줄. 마지막에 장면 전체 확인(실행 수, 시드 first-seed부터 10개(기본 1~10), 같은 커밋).
 - 시드는 실제로 넘긴 장애물 시드(meta scene_seed = seed + seed_offset)로 본다. seed_offset이 0이 아니면(개발용 녹화)
   실행마다 문제로 센다
 - 로그 오류는 종료 신호(SIGINT) 전에 나온 것만 문제로 센다. 종료 단계 오류는 짧은 시험에서 모두 무해했다
@@ -88,6 +89,11 @@ def check_run(run):
 
 
 def main(argv):
+    first = 1
+    if '--first-seed' in argv:
+        i = argv.index('--first-seed')
+        first = int(argv[i + 1])
+        argv = argv[:i] + argv[i + 2:]
     total_bad = 0
     for scene in map(Path, argv):
         runs = sorted(scene.glob('*/*_0[0-9]'))
@@ -108,7 +114,7 @@ def main(argv):
         whole = []
         if len(runs) != 10:
             whole.append(f'실행 {len(runs)}개 (10개여야 함)')
-        if sorted(seeds) != list(range(1, 11)):
+        if sorted(seeds) != list(range(first, first + 10)):
             whole.append(f'시드 {sorted(seeds)}')
         if len(shas) != 1:
             whole.append(f'커밋이 여럿 {sorted(shas)}')
