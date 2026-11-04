@@ -263,14 +263,21 @@ def test_fleet_stack_metrics(tmp_path):
           ['amr_02', 'narrow_01', '1', '0', '', '45.0', 'waiting', ''],
           ['amr_03', 'narrow_02', '1', '0', '', '0.0', 'rejected', ''],
           ['amr_04', 'narrow_02', '2', '0', '1', '0.0', 'revoked', '9']])
-    _csv(tmp_path / 'stalls.csv', ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s'], [])
+    _csv(tmp_path / 'stalls.csv', ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s', 'with'], [])
     m = fleet_metrics(tmp_path)
     assert m['fleet.response_ms.mean'] == pytest.approx(275.0)
     assert m['fleet.response_recv_ms.mean'] == pytest.approx(175.0)
     assert (m['fleet.task_time_s.mean'], m['fleet.distance_m.total']) == (pytest.approx(80.0), pytest.approx(60.0))
     assert (m['fleet.zone_requests'], m['fleet.zone_long_waits']) == (4, 1)
     assert (m['fleet.deadlock_rejects'], m['fleet.deadlock_revokes']) == (1, 1)
-    assert m['fleet.stalls'] == 0 and 'fleet.stall_s.max' not in m
+    assert m['fleet.stalls'] == 0 and m['fleet.stalls_paired'] == 0 and 'fleet.stall_s.max' not in m
+    # 마주친 두 대 + 혼자 막힌 한 대
+    _csv(tmp_path / 'stalls.csv', ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s', 'with'],
+         [['amr_02', 't9', 'move_to_dropoff', '0', '134', '134.0', 'amr_05'],
+          ['amr_05', 't13', 'move_to_pickup', '1', '129', '128.0', 'amr_02'],
+          ['amr_01', 't1', 'move_to_pickup', '0', '66', '66.0', '']])
+    m2 = fleet_metrics(tmp_path)
+    assert (m2['fleet.stalls'], m2['fleet.stalls_paired'], m2['fleet.stall_s.max']) == (3, 2, 134.0)
     # KPI: 수신 기준 200 ms 안, 장기 대기 1건은 FAIL, 정체 0건은 PASS
     assert kpi_verdict('fleet.response_recv_ms.mean', 175.0, 190.0) == 'PASS'
     assert kpi_verdict('fleet.zone_long_waits', 1.0, 1.0) == 'FAIL'

@@ -185,6 +185,8 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
     if (run_dir / 'stalls.csv').exists():
         stalled = _read_csv(run_dir / 'stalls.csv')
         out['fleet.stalls'] = len(stalled)
+        # 같은 때 가까이서 같이 정체한 로봇이 있는 행 (마주침 교착 → 교통 관리). 11/2 전 파일에는 with 열이 없다
+        out['fleet.stalls_paired'] = sum(1 for r in stalled if r.get('with'))
         if stalled:
             out['fleet.stall_s.max'] = max(_floats(stalled, 'duration_s'))
     # 로봇 장애 회수 (fault_events.csv에 robot_kill이 있을 때만 파일이 있다)
