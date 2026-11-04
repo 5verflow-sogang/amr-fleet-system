@@ -178,6 +178,26 @@ def test_id_switch_counted_per_gt_object():
     assert summary['overall']['id_switches'] == 1
 
 
+def test_p2_in_range_and_match_rate_count_only_pairs_in_sensor_range():
+    # 로봇 (0, 0) 정지. near는 5 m, far는 15 m(센서 범위 12 m 밖)에서 1 m/s. 트랙 속도는 near 0.1, far 0.5 m/s 틀림
+    ev = TrackingEvaluator(EvalConfig(), gt_ids=['near', 'far'])
+    gt_line(ev, 'near', 0.0, 2.0, (5.0, 0.0), (0.0, 1.0))
+    gt_line(ev, 'far', 0.0, 2.0, (15.0, 0.0), (0.0, 1.0))
+    for k in range(21):
+        t = k * DT
+        tracks = [TrackObs(1, 5.0, t, 0.0, 1.1, True, radius=0.25), TrackObs(2, 15.0, t, 0.0, 1.5, True, radius=0.7)]
+        ev.add_frame(t, tracks, robot_xy=(0.0, 0.0), robot_yaw=0.0, robot_velocity=(0.0, 0.0))
+    rows, _, summary = ev.evaluate()
+    o = summary['overall']
+    assert o['vel_in_range']['rmse'] == pytest.approx(0.1)                     # P2: 범위 안 짝만
+    assert o['vel']['rmse'] == pytest.approx(math.sqrt((0.1 ** 2 + 0.5 ** 2) / 2))   # 전체 거리 (참고)
+    assert o['frames_matched'] == 2 * o['frames_in_range']                     # 범위 밖 짝도 세지만
+    assert o['frames_matched_in_range'] == o['frames_in_range']
+    assert o['match_rate_in_range'] == 1.0                                     # 비율은 범위 안 짝만 (전에는 2.0)
+    match = [r for r in rows if r['kind'] == 'match']
+    assert {r['gt_id']: r['radius'] for r in match} == {'near': 0.25, 'far': 0.7}   # 짝 행에도 트랙 반경
+
+
 def test_false_and_duplicate_dynamic_tracks():
     ev = TrackingEvaluator(EvalConfig(), gt_ids=['a'])
     gt_line(ev, 'a', 0.0, 2.0, (0.0, 0.0), (1.0, 0.0))

@@ -102,10 +102,12 @@ seed로 묶이지 않는 무작위성도 있다. 같은 seed로 다시 돌려도
 **추적 지표** (`tracking_kpi_*`, 판정 기준은 [perception.md](../../docs/algorithms/perception.md) 1-7): `track.*`(`tracking/summary.json`, `amr_tracking` `tracking_eval`). 판정하는 지표는 셋이다.
 
 - `track.pred_gain_1s` = 정지 가정 RMSE − 등속 예측 RMSE(+1 s, 움직이는 GT). P1: CI 하한이 0보다 크면 PASS. 0과 같아도 FAIL이다(추정 속도가 0이면 두 값이 같다)
-- `track.vel.rmse` = 속도 벡터 RMSE. P2: CI 상한 ≤ 0.2 m/s
+- `track.vel_in_range.rmse` = 센서 범위(12 m) 안 짝의 속도 벡터 RMSE. P2: CI 상한 ≤ 0.2 m/s. 3막 재측정부터다(1차 결과 후·재측정 전 등록, perception.md 1-7 "P2 보완"). 그 밖은 LiDAR 점이 적고 DWA·안전 노드가 쓰지 않는 거리다. 전체 거리 `track.vel.rmse`는 참고 지표로 남긴다(1차 본측정 판정은 이 값)
+  - 1차 본 측정 결과는 그때의 요약(#258) 기준이다. 그때 평가 결과에는 `vel_in_range`가 없어, 1차 폴더를 지금 코드로 다시 요약하면 P2 판정이 나오지 않는다
+  - 12 m 안 짝이 하나도 없는 실행은 P2 평균에서 빠진다(값 없음). 1차 본 측정 녹화로 세면 실행마다 12 m 안 짝이 A·B·D 1,466개 이상, E 313개 이상이라 지금 장면에서는 생기기 어렵다
 - P1·P2는 장면 A·B·D·E(`tracking_kpi_a·b·d·e`)에서만 판정한다. 장면 C는 정면 접근 하나라 판정 열을 비운다
 - `track.d1_ttc_s` = 접근 판정 TTC(GT 물체가 하나인 기록의 첫 판정, 판정 없이 최근접까지 오면 0). D1은 안전 기준이라 평균·CI가 아니라 **최악값**으로 `tracking_kpi_c10·c15`에서 판정한다. 가장 나쁜 실행이 3 s 미만이면 FAIL, 아니면 하네스 실패 실행이나 값이 없는 실행이 있거나 10회 미만이면 보류(이유를 KPI 열에), 그 외 PASS. Discord 알림에는 평균 대신 최솟값이 나간다
-- 나머지(`match_rate`, `pos.rmse`, `radial.mean` 센서 방향 편향, `speed.mean`, `heading.mean`, +1·+2 s 예측·정지 가정 RMSE, NEES, `id_switches`, 판정 지연, 가짜·중복 동적, `d1_dist_m`·`d1_latency_s`)는 참고 지표다. P1·P2 표본 수는 `track.pred_1s.n`·`track.vel.n`
+- 나머지(`match_rate`, `pos.rmse`, `radial.mean` 센서 방향 편향, `speed.mean`, `heading.mean`, +1·+2 s 예측·정지 가정 RMSE, NEES, `id_switches`, 판정 지연, 가짜·중복 동적, `d1_dist_m`·`d1_latency_s`)는 참고 지표다. P1·P2 표본 수는 `track.pred_1s.n`·`track.vel_in_range.n`(전체 거리는 `track.vel.n`). `match_rate`는 센서 범위 안 GT 프레임 중 짝지어진 비율이다(전에는 분자에 범위 밖 짝이 섞여 1을 넘을 수 있었다)
 - 가짜 동적 트랙 때문에 늘어난 감속·정지(참고): 안전 노드 판정 규칙을 가짜를 넣고 한 번, 빼고 한 번 돌려 다른 시간을 잰다. `track.false_limited_frac`(감속 또는 정지인 시간 비율)·`false_stop_frac`(정지)·`false_stop_events`(정지 횟수)·`false_min_clearance`(가장 가까운 가짜의 차체 거리 [m])
 
 **작업·로봇 장애 지표** (`fleet_fake`): `fleet.tasks_requested`·`tasks_completed`·`task_completion_rate`(`task_outcomes.csv`), 완료한 작업의 `fleet.task_time_s.mean`(요청~완료)·`distance_m.total`·`distance_m.mean`, `fleet.throughput_per_min`(완료 작업 수 / 첫 요청~마지막 완료 분), `fleet.duplicate_tasks`(같은 작업을 둘 이상의 로봇이 움직이며 한 수, `runners` 열. 하이브리드 중복 실행), 하이브리드 실행이면 `fleet.fallbacks`(분산 전환 횟수)·`fleet.decentral_s`(분산 모드 시간 합, `fleet_modes.csv`), 로봇 장애 실행이면 `fleet.reclaimed_tasks`·`recovery_s.mean`·`recovery_s.max`·`reclaimed_completed_rate`(`recovery.csv`). 실행 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로 완료율은 같은 seed(같은 작업 일정)의 장애 있음·없음끼리 비교한다. `task_outcomes.csv`에 `error_code` 열이 있으면 실패한 작업을 원인별로 센다: `fleet.tasks_failed_<묶음>` (assign 101·102, canceled 103·104, localization 203, nav 201·202, traffic 3xx, comm 4xx, task_timeout 501, charge 502, docking 9xx, 그 밖의 코드는 other. 합 = 실패 수, `summary.py` `FAILURE_CAUSES`).
