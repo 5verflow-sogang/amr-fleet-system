@@ -254,9 +254,12 @@ zones:
 | `/fleet/congestion_keepout_info` | 0 (keepout) | 0 | 1 | 마스크 0~100이 비용 0~254로 바뀐다. 90 → 229라 치명(253 이상)은 아니어서 **돌아갈 길이 있으면 돌아가고, 없으면 지나간다**. 100을 쓰면 막혀 버려서 상한을 90으로 둔다 |
 | `/fleet/congestion_speed_info` | 1 (속도 %) | 100 | -0.5 | 제한 % = `100 − 0.5 × 마스크`. 혼잡도 1.0(마스크 90) → 55%. 마스크 0은 제한 없음(Nav2가 `speed_limit` 0.0 = `NO_SPEED_LIMIT`을 보낸다. 컨트롤러가 0.0을 "제한 없음"으로 받아야 한다) |
 
-**할당 반영** (작업 4, 11/7 구현 예정)
+**할당 반영** (`amr_fleet_core.make_congestion_cost`)
 
-`congestion_cost = 직선거리 + λ × Σ_z (value_z × 로봇 → 작업 시작점 선분이 구역 z 안을 지나는 길이)` (m). `assignment.cost_fn: congestion`으로 켜고 `euclidean`으로 끈다. λ 기본값은 측정으로 정한다.
+`congestion_cost = 직선거리 + λ × Σ_z (value_z × 로봇 → 작업 시작점 선분이 구역 z 안을 지나는 길이)` (m). `fleet_manager`의 `assignment.cost_fn: congestion`(launch 인자 `cost_fn:=congestion`)으로 켜고 `euclidean`(기본)으로 끈다. λ는 `assignment.congestion_weight`(기본 3.0). 시간으로 보면 λ = 평소 속도 / 혼잡 구역 속도 − 1이라(속도 필터 55%만이면 0.8), 켬/끔 측정에서 혼잡 구역 실제 속도로 다시 정한다. 켠 쪽만 `/fleet/congestion`을 구독하고, `assignment.congestion_timeout_s`(3 s) 넘게 못 받으면 직선 거리로 돌아간다(`assignments.csv`에 실제로 쓴 쪽이 남는다).
+
+- `load_balance`는 할당 수를 먼저 보고 비용은 동률일 때만 봐서 혼잡도가 거의 안 먹힌다. 1-1 시연은 `nearest`(기본)나 `hungarian`으로 한다
+- 혼잡 구역은 겹치지 않게 정한다. 겹치면 사람을 양쪽에서 세고 벌점도 두 번 붙는다
 
 **가짜 값으로 개발하기** (노드가 나오기 전, 11/5 ~ 11/6)
 
