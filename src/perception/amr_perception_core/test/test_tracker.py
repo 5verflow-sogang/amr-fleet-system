@@ -84,6 +84,10 @@ def test_rejects_time_going_backwards():
     {'max_coast_time': -1.0},
     {'dynamic_speed_threshold': 0.0},
     {'dynamic_confirm_frames': 0},
+    {'maneuver_max_speed': -1.0},
+    {'maneuver_margin': float('nan')},
+    {'maneuver_max_age': 0.0},
+    {'maneuver_max_radius': 0.0},
 ])
 def test_rejects_invalid_config(kwargs):
     with pytest.raises(ValueError):
@@ -191,3 +195,137 @@ def test_rejects_bad_radii(radii):
 def test_rejects_bad_radius_smoothing(value):
     with pytest.raises(ValueError):
         TrackerConfig(radius_smoothing=value)
+
+
+MANEUVER = TrackerConfig(maneuver_max_speed=1.5, max_coast_time=2.0)   # tracking.yaml 값
+
+
+def _reverse(tracker, speed, seed=7, frames_after=10, dt=0.1):
+    """x = 8 m에서 -x로 3 s 걷다가 제자리에서 돌아서는 사람 (측정 잡음 0.05 m). 반전 뒤 프레임마다 (진짜 x, 확정 트랙)."""
+    rng = np.random.default_rng(seed)
+    turn = 8.0 - speed * 30 * dt
+    after = []
+    for k in range(31 + frames_after):
+        x = 8.0 - speed * k * dt if k <= 30 else turn + speed * (k - 30) * dt
+        tracks = tracker.step(k * dt, [(x + rng.normal(0.0, 0.05), rng.normal(0.0, 0.05))])
+        if k > 30:
+            after.append((x, tracks))
+    return after
+
+
+def _walk(tracker, frames=20, dt=0.1):
+    """원점에서 +x로 1.0 m/s 걷는 동적 트랙 (잡음 없음). 마지막 관측은 ((frames-1)·0.1, 0), 시각 (frames-1)·dt."""
+    for k in range(frames):
+        tracker.step(k * dt, [(0.1 * k, 0.0)])
+    assert tracker.tracks[0].is_dynamic
+
+
+@pytest.mark.parametrize('speed', [1.0, 1.25, 1.5])
+def test_reversal_keeps_one_track_and_follows_new_direction(speed):
+    # 등속 예측은 1.0 m/s 이상으로 걷다 돌아서면 게이트를 벗어나 헛트랙이 남았다 (perception.md 1-7 P2 분석)
+    tracker = MultiTargetTracker(MANEUVER)
+    after = _reverse(tracker, speed)
+    # 확정 트랙은 하나뿐이다. 잡음으로 갈 수 있는 거리를 조금 넘은 측정 하나는 미확정 트랙으로 남을 수 있다(밖으로 안 나감)
+    assert {track.track_id for _, tracks in after for track in tracks} == {0}
+    x, tracks = after[-1]                             # 돌아선 뒤 1 s
+    np.testing.assert_allclose(tracks[0].kf.velocity, [speed, 0.0], atol=0.3)
+    assert abs(tracks[0].kf.position[0] - x) < 0.15
+
+
+def test_reversal_without_maneuver_association_leaves_ghost_track():
+    # 끄면(코어 기본) 예전 동작: 새 트랙이 생기고 옛 트랙은 계속 -x로 미끄러진다
+    tracker = MultiTargetTracker()
+    x, tracks = _reverse(tracker, 1.5)[4]             # 돌아선 뒤 0.5 s
+    by_id = {track.track_id: track for track in tracks}
+    assert set(by_id) == {0, 1}
+    assert by_id[0].kf.velocity[0] < 0.0
+    assert abs(by_id[0].kf.position[0] - x) > 0.5
+
+
+def test_maneuver_association_skips_static_track():
+    # 정적 물체의 군집 중심이 튀면 새 트랙으로 둔다. 붙이면 0.35 m / 0.2 s = 1.75 m/s 속도가 생긴다
+    for dynamic, expected_tracks in ((False, 2), (True, 1)):
+        tracker = MultiTargetTracker(MANEUVER)
+        confirm_static(tracker, frames=30)
+        tracker.tracks[0].is_dynamic = dynamic        # 대조: 동적이었다면 붙는다
+        tracker.step(3.1, [(0.35, 0.0)])              # 한 프레임 건너뜀. 게이트 밖(d² 18.5), 갈 수 있는 거리(0.45 m) 안
+        assert len(tracker.tracks) == expected_tracks
+    tracker = MultiTargetTracker(MANEUVER)
+    confirm_static(tracker, frames=30)
+    tracker.step(3.1, [(0.35, 0.0)])
+    assert tracker.tracks[0].kf.speed < 0.1
+
+
+def test_maneuver_association_skips_far_measurement():
+    tracker = MultiTargetTracker(MANEUVER)
+    _walk(tracker)
+    tracker.step(2.0, [(1.9, 0.6)])                   # 마지막 관측에서 0.6 m > 1.5 × 0.1 + 0.15
+    assert len(tracker.tracks) == 2
+    assert tracker.tracks[0].last_update == pytest.approx(1.9)
+
+
+def test_maneuver_association_skips_track_unseen_too_long():
+    # 0.6 s 못 본 뒤 0.4 m 뒤로 돌아온 측정. 예측(2.5, 0)과는 1.0 m라 1차 게이트 밖
+    for max_age, expected_tracks in ((0.5, 2), (1.0, 1)):
+        tracker = MultiTargetTracker(TrackerConfig(maneuver_max_speed=1.5, maneuver_max_age=max_age,
+                                                   max_coast_time=2.0))
+        _walk(tracker)
+        tracker.step(2.5, [(1.5, 0.0)])
+        assert len(tracker.tracks) == expected_tracks
+
+
+def test_maneuver_association_does_not_take_matched_measurement():
+    # 동적 트랙 A가 사라진 프레임에, A가 갈 수 있는 거리 안의 정지 물체 B 측정은 B 몫이다
+    tracker = MultiTargetTracker(MANEUVER)
+    for k in range(21):
+        tracker.step(k * 0.1, [(0.1 * k, 0.0), (2.0, 0.25)])
+    walker, still = sorted(tracker.tracks, key=lambda track: track.kf.position[1])
+    assert walker.is_dynamic and not still.is_dynamic
+    tracker.step(2.1, [(2.0, 0.25), (10.0, 10.0)])   # 멀리 새 물체도 있어야 남은 측정 비교까지 간다
+    assert len(tracker.tracks) == 3
+    assert walker.last_update == pytest.approx(2.0)
+    assert still.last_update == pytest.approx(2.1)
+
+
+def test_maneuver_association_comes_before_tentative_tracks():
+    # 잡음으로 생겨 1 s 예측만 한 미확정 트랙은 게이트가 넓다. 돌아선 사람의 측정을 먼저 가져가면 새 ID가 생긴다
+    tracker = MultiTargetTracker(MANEUVER)
+    for k in range(20):
+        tracker.step(k * 0.1, [(0.1 * k, 0.0)] + ([(1.6, 0.0)] if k == 10 else []))
+    walker, stale = tracker.tracks
+    assert walker.is_dynamic and not stale.confirmed
+    tracker.step(2.0, [(1.7, 0.0)])                   # 1.9에서 돌아섬: 걷던 트랙 게이트 밖, 미확정 트랙 게이트 안
+    assert walker.last_update == pytest.approx(2.0)
+    assert stale.last_update == pytest.approx(1.0)
+
+
+def test_maneuver_association_restarts_velocity_from_last_two_measurements():
+    tracker = MultiTargetTracker(MANEUVER)
+    _walk(tracker)
+    track = tracker.tracks[0]
+    tracker.step(2.0, [(1.65, 0.0)])                  # 1.9 → 1.65: 게이트 밖, 0.30 m 안 → -2.5 m/s로 다시 잡는다
+    assert tracker.tracks == [track]
+    np.testing.assert_allclose(track.kf.position, [1.65, 0.0])
+    np.testing.assert_allclose(track.kf.velocity, [-2.5, 0.0])
+    assert track.confirmed and track.is_dynamic and track.hits == 21
+
+
+def _walk_sized(tracker, radii, frames=20):
+    """_walk와 같은 동적 트랙인데 프레임마다 측정 반경을 준다 (radii: 프레임 번호 → 반경)."""
+    for k in range(frames):
+        tracker.step(k * 0.1, [(0.1 * k, 0.0)], [radii(k)])
+    assert tracker.tracks[0].is_dynamic
+
+
+@pytest.mark.parametrize('radii, joined', [
+    (lambda k: 0.15, True),                          # 사람 크기: 돌아서면 이어 붙인다
+    (lambda k: 0.8, False),                          # 지게차 크기: 새 트랙으로 둔다
+    (lambda k: 0.8 if k < 5 else 0.25, False),       # 한 번이라도 크게 보였으면 일부만 보여도 뺀다
+])
+def test_maneuver_association_skips_large_objects(radii, joined):
+    # 큰 물체는 가려지거나 보이는 면이 바뀔 때 군집 중심이 튀어 기동으로 받으면 속도가 엉터리가 된다
+    tracker = MultiTargetTracker(MANEUVER)
+    _walk_sized(tracker, radii)
+    tracker.step(2.0, [(1.65, 0.0)], [0.15])          # 1.9 → 1.65: 게이트 밖, 갈 수 있는 거리 0.30 m 안
+    assert (len(tracker.tracks) == 1) == joined
+    assert (tracker.tracks[0].last_update == pytest.approx(2.0)) == joined

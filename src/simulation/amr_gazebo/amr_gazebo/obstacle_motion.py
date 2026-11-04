@@ -7,21 +7,46 @@ config/dynamic_obstacles.yaml의 장애물 1개를 받아, 현재 위치에서 �
 - random: waypoints가 이루는 사각 영역 안에서 무작위 목표점으로 직선 이동 (random waypoint 모델)
 
 속도는 구간(왕복 한 번, 무작위 목표점 하나)마다 speed_range_mps 안에서 무작위로 정한다.
+
+yield_to_robots(선택, 로봇 네임스페이스 목록)를 주면 그 로봇이 멈춘 채 앞길을 막을 때 그 앞에서 선다.
+사람은 멈춘 로봇에 걸어 들어가지 않는다. 움직이는 로봇에는 비키지 않는다 (로봇이 피하는지 보는 시험이므로).
+한번 서면 로봇이 다시 움직여도 이번 구간(다음 경유점까지) 길에서 비킬 때까지 기다린다
+(막 출발한 로봇에 걸어 들어가지 않게). 로봇이 YIELD_PATIENCE_S 동안 계속 멈춰 있으면 온 쪽으로 돌아선다.
+straight·random 패턴만 쓸 수 있다 (curve는 구간이 표본 간격 0.5 m로 짧아 앞을 충분히 못 본다).
 """
 
 from __future__ import annotations
 
 import math
 import random
-from typing import List, Sequence, Tuple
+from typing import List, Mapping, Optional, Sequence, Tuple
 
 Point = Tuple[float, float]
+# 로봇 상태: world x, y [m], yaw [rad], 속력 [m/s]
+RobotState = Tuple[float, float, float, float]
 
 PATTERNS = ('straight', 'curve', 'random')
 # 목표점에 이만큼 가까워지면 다음 점으로 넘어간다 [m]
 REACH_TOLERANCE = 0.15
 # 곡선 표본 간격 [m]
 CURVE_SPACING = 0.5
+
+# yield_to_robots: 로봇 GT 속력이 이 값 [m/s] 미만이면 멈춘 것으로 본다
+STOPPED_SPEED = 0.05
+# 몸이 진행 방향으로 이만큼 [m] 더 가면 멈춘 로봇 차체에 닿을 때 선다. 사람이 두는 간격이고, 멀리서 다가와
+# 서면 안전 노드 긴급정지 띠(차체 앞 0.3 m) 밖이라 선 작업자 때문에 로봇이 긴급정지에 묶이지 않는다
+YIELD_DISTANCE = 0.5
+# 몸 둘레에서 이만큼 [m] 안으로 스쳐도 막힌 것으로 본다 (avoidance_eval 충돌 기준 0.01 m + 몸을 돌리며 걸어
+# 0.5 m 앞 예측 직선에서 옆으로 벗어나는 정도: I17 시험 녹화 30개에서 중앙값 0.022 m, p99 0.029 m)
+YIELD_SIDE_MARGIN = 0.05
+# 서 있는 동안 막은 로봇이 이만큼 [s] 계속 멈춰 있으면 돌아선다. 로봇이 작업자가 이미 가까이 있을 때 서면
+# 작업자는 긴급정지 띠 안이고 로봇은 후진하지 않아(min_vel_x 0) 둘 다 기다리기만 한다 (로컬 시험에서 50 s)
+YIELD_PATIENCE_S = 5.0
+# 로봇 차체 [m] (amr_description, avoidance_eval robot_length·width)
+ROBOT_LENGTH = 0.6
+ROBOT_WIDTH = 0.4
+# 장애물 몸을 덮는 원 반지름 [m] (models/dynamic_*/model.sdf 충돌체: 원기둥 r 0.25, 1.2×0.9·0.6×0.4 상자의 외접원)
+BODY_RADIUS = {'worker': 0.25, 'forklift': 0.75, 'robot': 0.36}
 
 
 def catmull_rom(points: Sequence[Point], spacing: float = CURVE_SPACING) -> List[Point]:
@@ -57,6 +82,18 @@ class ObstacleMotion:
         if not 0 < lo <= hi:
             raise ValueError(f'{self.id}: speed_range_mps가 잘못됐다: {spec["speed_range_mps"]}')
         self.speed_range = (float(lo), float(hi))
+        yield_to = spec.get('yield_to_robots') or []
+        if not isinstance(yield_to, list):
+            raise ValueError(f'{self.id}: yield_to_robots는 로봇 이름 목록이어야 한다: {yield_to!r}')
+        self.yield_to = tuple(yield_to)
+        if self.yield_to and spec.get('type') not in BODY_RADIUS:
+            raise ValueError(f'{self.id}: yield_to_robots는 type이 {sorted(BODY_RADIUS)} 중 하나여야 한다')
+        if self.yield_to and self.pattern == 'curve':
+            raise ValueError(f'{self.id}: yield_to_robots는 straight·random 패턴만 쓸 수 있다')
+        self.radius = BODY_RADIUS.get(spec.get('type'), 0.0)
+        self.waiting = False     # 멈춘 로봇 앞에서 서 있는 중
+        self.turn_backs = 0      # 오래 멈춘 로봇 앞에서 돌아선 횟수
+        self._stuck_since: Optional[float] = None   # 막은 로봇이 계속 멈춰 있기 시작한 시각 [s]
         waypoints = [(float(w['x']), float(w['y'])) for w in spec['waypoints']]
         if len(waypoints) < 2:
             raise ValueError(f'{self.id}: waypoints가 2개 이상 필요하다')
@@ -79,13 +116,60 @@ class ObstacleMotion:
     def goal(self) -> Point:
         return self._goal
 
-    def step(self, xy: Point) -> Tuple[float, float]:
-        """현재 위치 xy에서 낼 월드 기준 속도. 목표점에 닿으면 다음 목표점으로 넘긴다."""
+    def step(self, xy: Point, robots: Optional[Mapping[str, RobotState]] = None,
+             t: Optional[float] = None) -> Tuple[float, float]:
+        """현재 위치 xy에서 낼 월드 기준 속도. 목표점에 닿으면 다음 목표점으로 넘긴다.
+
+        robots: 로봇 네임스페이스 → RobotState (world 기준). yield_to_robots의 로봇이 앞길을 막으면 (0, 0).
+        t: 지금 시각 [s]. 없으면 돌아서지 않고 로봇이 비킬 때까지 기다린다.
+        """
         while math.dist(xy, self._goal) < REACH_TOLERANCE:
             self._advance()
+        if self.yield_to and self._must_wait(xy, robots or {}, t):
+            return 0.0, 0.0
         dx, dy = self._goal[0] - xy[0], self._goal[1] - xy[1]
         d = math.hypot(dx, dy)
         return self.speed * dx / d, self.speed * dy / d
+
+    def _must_wait(self, xy: Point, robots: Mapping[str, RobotState], t: Optional[float]) -> bool:
+        """길을 막은 로봇 때문에 서야 하면 True (self.waiting도 같은 값).
+
+        새로 설지는 YIELD_DISTANCE 앞까지, 그 로봇이 멈춰 있을 때만 정한다. 서 있을 때는 이번 구간 끝까지 보고
+        로봇이 움직여도 길에서 비킬 때까지 기다린다. 0.5 m만 보면 옆으로 조금 비킨 로봇을 비켰다고 보고 걷기
+        시작해, 아직 길 위에서 움직이는 로봇에 걸어 들어간다. 막은 로봇이 YIELD_PATIENCE_S 동안 계속 멈춰
+        있으면 돌아서고 False.
+        """
+        dx, dy = self._goal[0] - xy[0], self._goal[1] - xy[1]
+        d = math.hypot(dx, dy)
+        reach = d if self.waiting else min(YIELD_DISTANCE, d)
+        blocking = [state for name, state in robots.items()
+                    if name in self.yield_to
+                    and blocks_path(xy, (dx / d, dy / d), reach, state, self.radius + YIELD_SIDE_MARGIN)]
+        all_stopped = all(speed < STOPPED_SPEED for *_, speed in blocking)
+        if not self.waiting:
+            self.waiting = bool(blocking) and any(speed < STOPPED_SPEED for *_, speed in blocking)
+            self._stuck_since = t if self.waiting and all_stopped else None
+        elif not blocking:
+            self.waiting = False
+        elif not all_stopped:
+            self._stuck_since = None
+        elif self._stuck_since is None:
+            self._stuck_since = t
+        elif t is not None and t - self._stuck_since >= YIELD_PATIENCE_S:
+            self._turn_back()
+            self.waiting = False
+        return self.waiting
+
+    def _turn_back(self) -> None:
+        """온 쪽으로 돌아선다 (random은 새 목표점)."""
+        self.turn_backs += 1
+        self._stuck_since = None
+        if self.pattern == 'random':
+            self._goal = self._random_goal()
+            return
+        self._dir = -self._dir
+        self._index += self._dir
+        self._goal = self.path[self._index]
 
     def _advance(self) -> None:
         if self.pattern == 'random':
@@ -107,6 +191,53 @@ class ObstacleMotion:
 
     def _new_speed(self) -> float:
         return self._rng.uniform(*self.speed_range)
+
+
+def blocks_path(xy: Point, u: Point, reach: float, robot: RobotState, clearance: float) -> bool:
+    """xy에서 단위 방향 u로 reach [m] 가는 동안 로봇 차체에 clearance [m]보다 가까워지는지.
+
+    지금 차체에서 가장 가까운 점 쪽으로 가지 않으면 막히지 않은 것으로 본다. 점과 볼록 도형 사이 거리는
+    직선을 따라 볼록 함수라, 처음에 줄지 않으면 그 방향으로는 계속 줄지 않는다 (이미 붙어 있어도 떨어지는 쪽은 간다).
+    """
+    x, y, yaw, _ = robot
+    c, s = math.cos(yaw), math.sin(yaw)
+    rx, ry = xy[0] - x, xy[1] - y
+    px, py = c * rx + s * ry, -s * rx + c * ry          # 차체 기준 좌표 (x 앞, y 왼쪽)
+    ux, uy = c * u[0] + s * u[1], -s * u[0] + c * u[1]
+    hl, hw = 0.5 * ROBOT_LENGTH, 0.5 * ROBOT_WIDTH
+    qx, qy = min(max(px, -hl), hl), min(max(py, -hw), hw)
+    if (qx - px) * ux + (qy - py) * uy <= 0.0:
+        return False
+    return segment_box_distance(px, py, px + reach * ux, py + reach * uy, hl, hw) < clearance
+
+
+def segment_box_distance(ax: float, ay: float, bx: float, by: float, hl: float, hw: float) -> float:
+    """선분 a–b와 축 정렬 사각형 [-hl, hl]×[-hw, hw] 사이 최소 거리. 만나면 0."""
+    if _segment_meets_box(ax, ay, bx, by, hl, hw):
+        return 0.0
+    # 만나지 않으면 최소 거리는 선분 끝점과 사각형, 또는 사각형 꼭짓점과 선분 사이에서 나온다
+    best = min(math.hypot(max(abs(px) - hl, 0.0), max(abs(py) - hw, 0.0)) for px, py in ((ax, ay), (bx, by)))
+    dx, dy = bx - ax, by - ay
+    den = dx * dx + dy * dy
+    for cx, cy in ((hl, hw), (hl, -hw), (-hl, -hw), (-hl, hw)):
+        t = 0.0 if den <= 0.0 else min(max(((cx - ax) * dx + (cy - ay) * dy) / den, 0.0), 1.0)
+        best = min(best, math.hypot(cx - (ax + t * dx), cy - (ay + t * dy)))
+    return best
+
+
+def _segment_meets_box(ax: float, ay: float, bx: float, by: float, hl: float, hw: float) -> bool:
+    """Liang–Barsky: 선분 a + t(b − a), t ∈ [0, 1] 중 사각형 안(경계 포함)인 구간이 있는지."""
+    dx, dy = bx - ax, by - ay
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, ax + hl), (dx, hl - ax), (-dy, ay + hw), (dy, hw - ay)):
+        if p == 0.0:
+            if q < 0.0:          # 이 축과 나란하고 바깥
+                return False
+        elif p < 0.0:
+            t0 = max(t0, q / p)
+        else:
+            t1 = min(t1, q / p)
+    return t0 <= t1
 
 
 def body_twist(vx: float, vy: float, yaw: float, yaw_gain: float = 2.0,

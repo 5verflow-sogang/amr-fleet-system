@@ -321,6 +321,7 @@ def test_obstacles_from_seed_vary_and_repeat():
     for o in specs:
         (a, b) = o['waypoints']
         assert o['id'] == 'worker_cross' and o['pattern'] == 'straight' and o['type'] == 'worker'
+        assert o['yield_to_robots'] == ['amr_01']           # 멈춘 시나리오 로봇에는 걸어 들어가지 않는다
         assert CROSS_X[0] <= o['spawn']['x'] <= CROSS_X[1] and a['x'] == b['x'] == o['spawn']['x']
         assert CORRIDOR_Y[0] <= o['spawn']['y'] <= CORRIDOR_Y[1]
         assert {a['y'], b['y']} == set(CORRIDOR_Y)

@@ -24,7 +24,8 @@ class_name·confidence·source를 채운다 (amr_perception_core association.py)
 촬영 시각의 map → odom으로 되돌리므로 위치추정 오차가 상쇄된다. 클래스는 근거가 쌓여야 붙고, 카메라 시야를
 벗어나도 근거가 줄어들 때까지 유지한다. source는 최근 camera_recent_s 안에 짝지어졌을 때만 LIDAR_CAMERA다.
 클래스별 최소 반경(min_radius_classes·min_radius_values)을 둔다. 사람은 LiDAR 높이에서 다리만 보여 반경이
-0.12 m 정도로 작게 잡혔다.
+0.12 m 정도로 작게 잡혔다. 클래스가 아직 없는 동적 트랙에도 사람 반경을 바닥으로 둔다(dynamic_min_radius,
+카메라를 끄거나 시야 밖일 때).
 """
 
 import math
@@ -56,6 +57,7 @@ from amr_perception_core.association import (
     AssociationConfig,
     ClassLabeler,
     FixedDetection,
+    published_radius,
     TrackSnapshot,
 )
 from amr_perception_core.clustering import (
@@ -150,6 +152,10 @@ class TrackingNode(Node):
             dynamic_confirm_frames=p('dynamic_confirm_frames', 5).value,
             dynamic_evidence_frames=p('dynamic_evidence_frames', 3).value,
             radius_smoothing=p('radius_smoothing', 0.3).value,
+            maneuver_max_speed=p('maneuver_max_speed', 1.5).value,
+            maneuver_margin=p('maneuver_margin', 0.15).value,
+            maneuver_max_age=p('maneuver_max_age', 0.5).value,
+            maneuver_max_radius=p('maneuver_max_radius', 0.4).value,
         ))
         self.clustering = ClusteringConfig(
             breakpoint_lambda_deg=p('breakpoint_lambda_deg', 10.0).value,
@@ -212,6 +218,7 @@ class TrackingNode(Node):
         if len(classes) != len(values):
             raise ValueError('min_radius_classes와 min_radius_values의 길이가 다르다')
         self.class_min_radius = dict(zip(classes, values))
+        self.dynamic_min_radius = p('dynamic_min_radius', 0.25).value
         self.last_odom = None          # (수신 시각 [s], 몸체 기준 vx, vy)
         self._reset_stats()
 
@@ -450,8 +457,8 @@ class TrackingNode(Node):
         twist = obstacle.twist.twist
         twist.linear.x, twist.linear.y = kf.velocity.tolist()
         obstacle.twist.covariance = covariance_6x6(kf.velocity_covariance)
-        radius = track.radius if track.radius is not None else self.radius
-        obstacle.radius = float(max(radius, self.class_min_radius.get(label.class_name, 0.0)))
+        obstacle.radius = published_radius(track.radius, self.radius, label.class_name, track.is_dynamic,
+                                           self.class_min_radius, self.dynamic_min_radius)
         return obstacle
 
     # ------------------------------------------------------------------ 기록

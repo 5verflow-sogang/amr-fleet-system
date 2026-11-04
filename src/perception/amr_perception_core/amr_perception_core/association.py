@@ -12,7 +12,7 @@ LiDAR는 위치·속도가 정확하지만 무엇인지 모르고, 카메라는 
 
 from dataclasses import dataclass, field
 import math
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -168,3 +168,19 @@ class ClassLabeler:
         for track_id in list(self._tracks):
             if track_id not in alive:
                 del self._tracks[track_id]
+
+
+def published_radius(track_radius: Optional[float], default_radius: float, class_name: str, is_dynamic: bool,
+                     class_min_radius: Mapping[str, float], dynamic_min_radius: float = 0.0) -> float:
+    """메시지로 내보내는 장애물 반경 [m] = max(트랙 반경, 클래스 최소 반경, 클래스 없는 동적 트랙 최소 반경).
+
+    트랙 반경이 없으면(반경 없는 측정) default_radius. 사람은 LiDAR 높이에서 다리만 보여 군집 반경이 작다
+    (카메라를 끄면 중앙 0.11 m, perception.md 1-7). 클래스가 아직 없는(unknown) 동적 트랙에도 사람 반경을
+    바닥으로 두어, DWA·안전 노드·TTC가 사람을 실제보다 작게 보지 않게 한다. 지게차·로봇은 군집 반경이 이보다
+    커서 바뀌지 않는다. 정적 트랙은 DWA·안전 노드가 쓰지 않아 그대로 둔다.
+    """
+    radius = default_radius if track_radius is None else float(track_radius)
+    floor = class_min_radius.get(class_name, 0.0)
+    if is_dynamic and class_name == UNKNOWN_CLASS:
+        floor = max(floor, dynamic_min_radius)
+    return float(max(radius, floor))
