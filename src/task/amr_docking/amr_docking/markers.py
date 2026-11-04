@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import math
 from typing import Dict, List, Sequence, Tuple
 
+from amr_description.extrinsics import lidar_height
 import yaml
 
 ARUCO_DICT = 'DICT_4X4_100'
@@ -39,7 +40,7 @@ MARKER_SIZE = BOARDS['small'].marker_size
 MARKER_SPACING = BOARDS['small'].spacing
 BOARD_CENTER_Z = BOARDS['small'].center_z
 BOARD_THICKNESS = 0.004         # m
-LIDAR_HEIGHT = 0.38             # m. base_link 0.18 + lidar_link 0.2 (amr_description)
+LIDAR_HEIGHT = lidar_height()   # m. base_link 0.18 + lidar z (amr_description config/extrinsics.yaml, 지금 0.38)
 LIDAR_MARGIN = 0.05
 
 WHITE = (0.95, 0.95, 0.93)

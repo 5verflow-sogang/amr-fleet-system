@@ -40,7 +40,8 @@ def main(argv):
     # RTF는 /clock으로 잰다. 실제 시간으로 기다리는 시나리오(use_sim_time: false)에서 노드 시계로 재면
     # sim_s = wall_s가 되어 Gazebo가 느려도 늘 1.0이었다 (fleet_stack, 11/2). 주행 시작·끝에 /clock을 한 번씩만
     # 받는다: 내내 구독하면 파이썬 콜백이 초당 수십~수백 번 돌아 측정 도구가 CPU를 먹는다 (#272 리뷰)
-    def clock_sample(timeout_s=2.0):
+    # 새 구독이 /clock 발행자를 찾는(DDS 탐색) 데 로봇 5대 스택에서는 2초로 모자랐다 (11/2 station_resv RTF None)
+    def clock_sample(timeout_s=10.0):
         """/clock 한 번 → (sim 시각, 받은 실제 시각). timeout_s 안에 안 오면(가짜 로봇 시나리오) None."""
         got = []
         sub = node.create_subscription(Clock, '/clock', lambda m: got.append(
@@ -49,6 +50,8 @@ def main(argv):
         while not got and time.monotonic() - t0 < timeout_s:
             rclpy.spin_once(node, timeout_sec=0.05)
         node.destroy_subscription(sub)
+        if not got:
+            print(f'/clock을 {timeout_s:g}초 안에 못 받음: RTF를 null로 남긴다', file=sys.stderr, flush=True)
         return got[0] if got else None
 
     # 시뮬레이션 시계(/clock)가 들어올 때까지 기다린다

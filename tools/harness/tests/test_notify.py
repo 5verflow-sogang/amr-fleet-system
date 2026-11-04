@@ -39,6 +39,8 @@ def group(runs=('a',), failed=(), verdicts=()):
     (group(verdicts=['PASS', 'MARGINAL']), 'MARGINAL'),
     (group(failed=[{'run_id': 'x', 'outcome': 'timeout'}], verdicts=['PASS']), 'MARGINAL'),
     (group(verdicts=['PASS']), 'PASS'),
+    # 보류한 KPI가 있으면 나머지가 PASS여도 PASS가 아니다
+    ({'runs': ['a'], 'failed': [], 'metrics': {'m0': {'kpi': 'PASS'}, 'm1': {'kpi_note': '보류'}}}, 'NONE'),
     (group(), 'NONE'),
 ])
 def test_group_status(g, expected):

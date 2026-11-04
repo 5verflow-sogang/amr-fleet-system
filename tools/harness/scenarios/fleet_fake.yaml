@@ -74,6 +74,8 @@ processes:
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
       kill_at_s:={kill_at_s} restart_after_s:={restart_after_s} fault_events_file:={run_dir}/fault_events.csv
       max_resends:={max_resends} resend_interval_s:={resend_interval_s} reclaim_timeout_s:={reclaim_timeout_s}
+      station_clearance_m:=0.0
+    # station_clearance_m:=0.0: 스테이션 예약(11/2)을 끈다. 가짜 로봇은 서로 막히지 않고, 연구 1 결과와 조건을 맞춘다
     ready_topic: /fleet/heartbeat
     # 분산(decentral)에서는 서버를 띄우지 않는다. 떠 있으면 서버도 할당해 경매와 겹친다 (#208 하연 리뷰)
     enabled: "{server}"

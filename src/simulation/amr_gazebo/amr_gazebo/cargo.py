@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import math
 from typing import List
 
+from amr_description.extrinsics import lidar_height
 import yaml
 
 # 명세 "가상 물품" 표 (원 명세서 6장): 길이(x) × 폭(y) × 높이 [m]
@@ -17,8 +18,8 @@ SIZES = {
     'medium': (0.50, 0.40, 0.30),
     'large': (0.60, 0.50, 0.40),
 }
-# 2D LiDAR 스캔 평면 높이: base_link 0.18 m + lidar_link 0.2 m (amr_description)
-LIDAR_HEIGHT = 0.38
+# 2D LiDAR 스캔 평면 높이 [m]: base_link 0.18 + lidar z (amr_description config/extrinsics.yaml, 지금 0.38)
+LIDAR_HEIGHT = lidar_height()
 # 스캔 평면 위아래로 이만큼은 비워 둔다 (로봇 기울기·가감속 피칭 여유)
 LIDAR_MARGIN = 0.05
 

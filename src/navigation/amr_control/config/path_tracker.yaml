@@ -10,6 +10,11 @@
     max_linear_speed: 2.0
     max_angular_speed: 1.5
     max_linear_accel: 1.0
+    # 가속도 변화량 한계 [m/s³] - 적재물 안정성(명세 5번). 기본은 끔(0) - 기존 CTE 측정
+    # (experiments/cte_baseline/run.sh·run_localized.sh, nav_kpi pp 모드, #158)이 이 yaml을
+    # 그대로 읽어서, 여기서 켜면 같은 명령이 조건만 몰래 바뀐다(#279 민지 리뷰). 켤 때 권장값은
+    # 2.5(근거는 navigation.md 5-3절) - 저크를 보려면 `-p max_linear_jerk:=2.5`로 명시해서 켠다
+    max_linear_jerk: 0.0
     # 경로 끝 감속 v <= sqrt(2·decel·남은 거리), 그 중 최저 속도
     max_linear_decel: 1.0
     min_approach_speed: 0.05

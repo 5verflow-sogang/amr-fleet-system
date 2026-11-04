@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 import pytest
 import yaml
 
+from amr_description.extrinsics import BASE_LINK_HEIGHT, load
 from amr_gazebo.cargo import (LIDAR_HEIGHT, SIZES, CargoBox, cargo_model_sdf, check_lidar_clearance, footprint,
                               load_boxes)
 
@@ -58,7 +59,8 @@ def test_lidar_scan_plane_is_clear(boxes):
     assert check_lidar_clearance(boxes) == []
     # 큰 상자를 바닥에 두면 걸린다
     assert check_lidar_clearance([CargoBox('x', 'large', 0, 0)]) == ['x']
-    assert LIDAR_HEIGHT == pytest.approx(0.18 + 0.2)
+    # 스캔 높이는 extrinsics.yaml에서 읽는다 (lidar z를 바꾸면 위 배치 확인도 새 높이로 돈다, #266)
+    assert LIDAR_HEIGHT == pytest.approx(BASE_LINK_HEIGHT + load()['lidar']['xyz'][2])
 
 
 def test_camera_height_range(boxes):

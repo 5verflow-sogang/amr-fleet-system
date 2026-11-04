@@ -36,6 +36,9 @@ struct PathTrackerConfig
   double max_linear_speed = 2.0;
   double max_angular_speed = 1.5;
   double max_linear_accel = 1.0;
+  // 가속도(= (v - 직전 v)/dt) 변화량의 한계 [m/s³] - 적재물 안정성(명세 5번). 0 이하면 끔(가속
+  // 제한만 쓰는 기존 동작과 같음). navigation.md 5-3절에 값 근거
+  double max_linear_jerk = 0.0;
   // 경로 끝 감속: v ≤ sqrt(2·decel·남은 호 길이)
   double max_linear_decel = 1.0;
   // 끝 감속 중 최저 속도. 0이면 목표 직전에서 기어가다 못 닿는다
@@ -89,7 +92,7 @@ public:
   void setPath(const Path & path);
   void clearPath();
   // 로봇이 섰을 때(odom 끊김 등 추종기 밖의 이유) 부른다. 다음 출발을 0부터 가속한다
-  void resetSpeed() {last_v_ = 0.0;}
+  void resetSpeed() {last_v_ = 0.0; last_a_ = 0.0;}
   bool hasPath() const {return !path_.empty();}
   const Path & path() const {return path_;}
 
@@ -108,6 +111,8 @@ private:
   bool first_search_ = true;
   bool goal_reached_ = false;
   double last_v_ = 0.0;
+  // 직전 틱에서 실제로 낸 가속도(= (v - 그 전 v)/dt). 저크 제한의 기준값 (max_linear_jerk)
+  double last_a_ = 0.0;
 };
 
 }  // namespace amr_control

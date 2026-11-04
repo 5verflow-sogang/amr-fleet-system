@@ -13,6 +13,10 @@ fleet_manager:
       # 작업을 맡은 로봇의 RobotState가 이 시간 동안 끊기면 로봇이 죽은 것으로 보고 작업을 회수해 다시 할당한다
       # (실제 시간, s). 0이면 회수하지 않는다. robot_timeout_s 이상
       reclaim_timeout_s: 5.0
+      # 스테이션 예약 (m): 맡겨진 작업의 픽업·하역 위치에서 이 거리 안을 쓰는 작업은 그 작업이 끝날 때까지 맡기지 않는다.
+      # 같은 도크로 가는 두 작업을 동시에 내보내 두 로봇이 한 자리에서 막혔다 (11/2 fleet_stack, dock_a).
+      # 0이면 끈다. 스테이션 간격(도크 5 m)보다 충분히 작게 둔다
+      station_clearance_m: 1.0
     # 이 시간 동안 RobotState가 안 오면 할당 후보에서 뺀다 (실제 시간, s)
     robot_timeout_s: 3.0
     resend:

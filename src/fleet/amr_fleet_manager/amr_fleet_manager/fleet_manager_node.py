@@ -63,6 +63,7 @@ class FleetManager(Node):
             max_resends=self.declare_parameter('resend.max_resends', 5).value,
             failed_retries=self.declare_parameter('assignment.failed_retries', 1).value,
             reclaim_timeout_s=self.declare_parameter('assignment.reclaim_timeout_s', 5.0).value,
+            station_clearance_m=self.declare_parameter('assignment.station_clearance_m', 1.0).value,
         ))
         heartbeat_period_s = self.declare_parameter('heartbeat_period_s', 0.2).value
         task_table_period_s = self.declare_parameter('task_table_period_s', 1.0).value

@@ -26,7 +26,7 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF, 센서 `scan_raw`·`imu/data_raw`�
 | `properties.xacro` | 치수·질량·동역학 제한, 관성 매크로. **값은 여기서만 바꾼다** |
 | `base.xacro` | `base_footprint`, `base_link` |
 | `wheels.xacro` | 좌우 구동 바퀴, 앞뒤 캐스터 |
-| `sensors.xacro` | `lidar_link`, `camera_link` → `camera_optical_frame`, `imu_link`. LiDAR(`gpu_lidar`)·RGBD 카메라(`rgbd_camera` 1개)·IMU 센서. 값은 `config/sensors.yaml`에서 읽음 |
+| `sensors.xacro` | `lidar_link`, `camera_link` → `camera_optical_frame`, `imu_link`. LiDAR(`gpu_lidar`)·RGBD 카메라(`rgbd_camera` 1개)·IMU 센서. 위치는 `config/extrinsics.yaml`, 사양·노이즈는 `config/sensors.yaml`에서 읽음 |
 | `gazebo.xacro` | Fortress DiffDrive, JointStatePublisher, OdometryPublisher(GT) 시스템 플러그인 |
 
 ### 주요 값
@@ -93,7 +93,7 @@ amr_01/odom                         (발행: Gazebo DiffDrive 기본, EKF를 띄
         └── amr_01/imu_link         (0, 0, 0.1)
 ```
 
-센서 위치는 원 명세서 TF 예시값이다. 확인: `ros2 run tf2_tools view_frames`
+센서 위치는 원 명세서 TF 예시값이고 `config/extrinsics.yaml`에 있다. 확인: `ros2 run tf2_tools view_frames`, 절차는 아래 "센서 캘리브레이션"
 위치추정(`map → odom`, EKF)까지 띄운 전체 트리 그림, 발행 주체·주기, `/tf_static` 값 확인은 [api.md 2-2절](../../../docs/api.md#2-2-전체-tf-트리-확인-view_frames-107).
 
 ### 옆에서 본 그림 (x–z, 오른쪽이 앞, 높이는 지면 기준)
@@ -165,6 +165,9 @@ amr_01/odom                         (발행: Gazebo DiffDrive 기본, EKF를 띄
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
 
 - `config/sensors.yaml`: 센서 사양·노이즈. `sensors.xacro`가 xacro 처리 때 읽으므로 값을 바꾸면 launch만 다시 하면 된다. 바꿀 때는 민지에게 알린다 (명세서 8-2절)
+- `config/extrinsics.yaml`: 센서 외부 파라미터 (LiDAR·카메라·IMU 링크의 `base_link` 기준 xyz·rpy). 위와 같이 xacro가 읽어 `/tf_static`과 Gazebo 센서 위치가 같이 바뀐다. 바꿀 때는 민지·연우에게 알린다
+  - 숫자가 필요한 Python 코드는 `amr_description.extrinsics`로 이 파일을 읽는다 (`lidar_height()` = base_link 0.18 + lidar z). 화물 상자(`amr_gazebo` `cargo.py`)·도킹 마커판(`amr_docking` `markers.py`)의 스캔 평면 비키기 확인이 이 값을 쓴다
+  - LiDAR roll·pitch는 0이어야 한다. 인지·안전 노드가 스캔을 2D로 옮기며 TF의 yaw·x·y만 쓴다 (`test_extrinsics.py`가 본다)
 
 ### 센서 검증 (정지 상태, 월드 v0 스폰 위치 (0, 1.5))
 
@@ -184,6 +187,23 @@ amr_01/odom                         (발행: Gazebo DiffDrive 기본, EKF를 띄
 - RGB와 Depth는 `rgbd_camera` 센서 하나라 주기·클립 거리(0.3~10 m)를 공유한다. 명세(RGB 30 Hz, Depth 15 Hz 이상)는 30 Hz로 둘 다 만족한다.
 - Fortress `rgbd_camera`는 Depth 노이즈를 RGB에도 같이 넣는다. RGB 흔들림은 σ 약 0.5/255(1단계 미만)라 인식에 영향이 없다고 보고 그대로 둔다.
 - Gazebo 포인트클라우드(`camera/points`)는 점 좌표가 x 전방인데 frame_id가 광학 프레임이라 쓰지 않는다. 포인트클라우드는 Depth 영상과 `camera_info`로 만든다 (작업: Depth 포인트클라우드 변환·다운샘플링).
+
+### 센서 캘리브레이션
+
+시뮬레이션에서는 센서 위치·내부 파라미터·노이즈를 우리가 정한다. 그래서 캘리브레이션은 **정한 값이 TF·메시지에 그대로 나오는지 확인**하는 것과 **실행 중에 추정하는 값(IMU 바이어스)을 잡는 것** 두 가지다. 값을 바꾸거나 센서 플러그인·Gazebo 버전이 바뀌면 아래를 다시 한다. 마지막 확인 결과는 위 "센서 검증" 표다.
+
+| 대상 | 값이 있는 곳 | 절차 | 합격 기준 |
+| --- | --- | --- | --- |
+| ① extrinsic: 파일 = URDF | `config/extrinsics.yaml` | `colcon test --packages-select amr_description` (`test_extrinsics.py`: xacro 결과의 센서 조인트 부모·xyz·rpy를 파일과 비교, base_link 높이, LiDAR 수평) | 통과 |
+| ② extrinsic: URDF = 실행 중 TF | 같음 | sim을 띄우고 `ros2 run tf2_ros tf2_echo amr_01/base_link amr_01/lidar_link` (`camera_link`, `imu_link`도). 센서 메시지 `frame_id`가 링크 이름인지 `ros2 topic echo --once <토픽> --field header.frame_id` | 파일 값과 같음. `frame_id` = `amr_01/lidar_link`, `amr_01/camera_optical_frame`, `amr_01/imu_link` |
+| ③ extrinsic: 센서가 그 자리에서 본다 | 같음 | 스폰 (0, 1.5, 0)에 세우고 LiDAR 남·북 빔 100스캔 평균을 월드 SDF로 계산한 거리와 비교. 카메라는 yaw −90°로 스폰해 정면 `rack_lane_divider`까지 Depth 중앙 80×80 px 평균 | LiDAR ±1 cm (σ 3 cm를 100번 평균하면 0.3 cm), Depth ±1 cm. 위치가 틀리면 그만큼 거리가 어긋난다 |
+| ④ 카메라 내부 파라미터 | `config/sensors.yaml` (`width`, `height`, `horizontal_fov`) | `ros2 topic echo --once /amr_01/camera/camera_info --field k` | fx = fy = (width/2) / tan(fov/2) = 337.2, cx 320, cy 240 |
+| ⑤ 노이즈 σ | `config/sensors.yaml` | 정지 상태에서 LiDAR 빔별 100스캔 표준편차 중앙값, IMU 축별 표준편차, Depth 40프레임 표준편차 | 설정값 ±10% |
+| ⑥ IMU 바이어스 | 실행 중 추정 (`amr_odometry` IMU 필터) | 시작 후 2초 정지 평균을 바이어스로 뺀다. 자동이고 움직이면 다시 잰다 ([amr_odometry README](../../localization/amr_odometry/README.md) "IMU 필터") | 보정 완료 INFO 로그. 정지 중 `/imu/data` 각속도 평균 ≈ 0, 가속도 평균 ≈ (0, 0, g) |
+| ⑦ 바퀴 반지름·간격 | `urdf/properties.xacro`, `amr_odometry` `config/odometry.yaml` | UMBmark: 10 m 사각형을 반시계·시계로 돌아 휠 odom 복귀 오차를 직진·회전 성분으로 나눈다 ([드리프트 리포트 4-3](../../../docs/reports/map_odometry_report.md)) | D9 기준 (위치 중앙값 ≤ 3%, 방향 중앙값 ≤ 8°) |
+
+- 실제 로봇이면 ①은 CAD·실측 장착 위치로 파일을 채우고, ③은 체커보드·벽 평면으로 LiDAR–카메라 상대 위치를 맞추는 단계가 된다. ④는 `camera_calibration` 체커보드, ⑦은 UMBmark 결과로 좌우 반지름 비·간격을 고친다. 시뮬에서는 값이 정확하므로 확인만 한다
+- 광학 프레임 회전 (−π/2, 0, −π/2)은 좌표축 관례라 `extrinsics.yaml`에 두지 않고 `sensors.xacro`에 고정했다
 
 launch 인자 (`description.launch.py`): `namespace`(기본 `amr_01`), `payload_mass`(기본 `0.0`), `gt_rate`(기본 `100`), `enable_camera`(기본 `true`), `max_linear_acceleration`(기본 `1.0`), `use_sim_time`(기본 `true`)
 

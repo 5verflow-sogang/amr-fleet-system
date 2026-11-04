@@ -1,14 +1,19 @@
 <?xml version="1.0"?>
 <!--
-  센서 링크와 Gazebo 센서. 위치는 원 명세서 TF 예시값이다 (base_link 기준).
-  사양·노이즈 값은 config/sensors.yaml에서 읽는다. 값은 거기서만 바꾼다.
+  센서 링크와 Gazebo 센서.
+  위치(extrinsic)는 config/extrinsics.yaml, 사양·노이즈 값은 config/sensors.yaml에서 읽는다. 값은 거기서만 바꾼다.
   센서 시스템(Sensors, Imu)은 월드(amr_gazebo/worlds/warehouse.sdf)에 있다.
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <xacro:property name="lidar_xyz" value="0.15 0 0.2"/>
-  <xacro:property name="camera_xyz" value="0.18 0 0.25"/>
-  <xacro:property name="imu_xyz" value="0 0 0.1"/>
+  <xacro:property name="extrinsics" value="${xacro.load_yaml('$(find amr_description)/config/extrinsics.yaml')}"/>
+
+  <!-- extrinsics.yaml 한 센서의 xyz·rpy를 joint origin으로 -->
+  <xacro:macro name="extrinsic_origin" params="name">
+    <xacro:property name="p" value="${extrinsics[name]['xyz']}"/>
+    <xacro:property name="r" value="${extrinsics[name]['rpy']}"/>
+    <origin xyz="${p[0]} ${p[1]} ${p[2]}" rpy="${r[0]} ${r[1]} ${r[2]}"/>
+  </xacro:macro>
 
   <xacro:property name="sensors" value="${xacro.load_yaml('$(find amr_description)/config/sensors.yaml')}"/>
   <xacro:property name="lidar" value="${sensors['lidar']}"/>
@@ -52,7 +57,7 @@
   <joint name="${prefix}lidar_joint" type="fixed">
     <parent link="${prefix}base_link"/>
     <child link="${prefix}lidar_link"/>
-    <origin xyz="${lidar_xyz}" rpy="0 0 0"/>
+    <xacro:extrinsic_origin name="lidar"/>
   </joint>
 
   <!-- 카메라 (링크는 ROS 관례 x 전방, 광학 프레임은 z 전방·x 오른쪽·y 아래) -->
@@ -74,7 +79,7 @@
   <joint name="${prefix}camera_joint" type="fixed">
     <parent link="${prefix}base_link"/>
     <child link="${prefix}camera_link"/>
-    <origin xyz="${camera_xyz}" rpy="0 0 0"/>
+    <xacro:extrinsic_origin name="camera"/>
   </joint>
 
   <link name="${prefix}camera_optical_frame"/>
@@ -91,7 +96,7 @@
   <joint name="${prefix}imu_joint" type="fixed">
     <parent link="${prefix}base_link"/>
     <child link="${prefix}imu_link"/>
-    <origin xyz="${imu_xyz}" rpy="0 0 0"/>
+    <xacro:extrinsic_origin name="imu"/>
   </joint>
 
   <!--

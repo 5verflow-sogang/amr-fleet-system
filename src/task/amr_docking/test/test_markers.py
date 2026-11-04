@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 import pytest
 import yaml
 
+from amr_description.extrinsics import BASE_LINK_HEIGHT, load
 from amr_docking.markers import (
     BOARDS, LIDAR_HEIGHT, LIDAR_MARGIN, black_runs, board_height_range, clears_lidar, load_stations,
     markers_sdf)
@@ -18,6 +19,11 @@ def test_load_and_ids_unique():
     ids = [i for s in stations.values() for i in s.marker_ids]
     assert len(ids) == len(set(ids))
     assert max(ids) < 100
+
+
+def test_lidar_height_from_extrinsics():
+    # 스캔 높이는 extrinsics.yaml에서 읽는다 (lidar z를 바꾸면 판 배치 확인도 새 높이로 돈다, #266)
+    assert LIDAR_HEIGHT == pytest.approx(BASE_LINK_HEIGHT + load()['lidar']['xyz'][2])
 
 
 @pytest.mark.parametrize('board', list(BOARDS))
