@@ -79,6 +79,7 @@ def _spawn(context):
                 'enable_camera': enable_camera,
                 'max_linear_acceleration': LaunchConfiguration('max_linear_acceleration'),
                 'label_camera': label_camera,
+                'body': LaunchConfiguration('body'),
                 'use_sim_time': use_sim_time,
             }.items(),
         ),
@@ -141,5 +142,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'label_camera', default_value='false',
             description='라벨 카메라(YOLO 학습 데이터 수집 전용)와 브리지를 만들지'),
+        DeclareLaunchArgument(
+            'body', default_value='amr',
+            description='몸체 종류. amr(기본) 또는 serving(트레이 타워, 식당 월드에서 테이블 밑으로 못 들어간다)'),
         OpaqueFunction(function=_spawn),
     ])

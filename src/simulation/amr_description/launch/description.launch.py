@@ -29,6 +29,7 @@ def generate_launch_description():
             ' enable_camera:=', LaunchConfiguration('enable_camera'),
             ' max_linear_acceleration:=', LaunchConfiguration('max_linear_acceleration'),
             ' label_camera:=', LaunchConfiguration('label_camera'),
+            ' body:=', LaunchConfiguration('body'),
         ]),
         value_type=str)
 
@@ -51,6 +52,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'label_camera', default_value='false',
             description='라벨 카메라(YOLO 학습 데이터 수집 전용)를 만들지'),
+        DeclareLaunchArgument(
+            'body', default_value='amr',
+            description='몸체 종류. amr(기본) 또는 serving(트레이 타워, 식당 월드)'),
         DeclareLaunchArgument(
             'use_sim_time', default_value='true',
             description='Gazebo /clock 사용 여부'),
