@@ -30,6 +30,7 @@ CIRCLE = 'circle'
 BOX = 'box'
 
 START_ON = ('deviation', 'proximity', 'either')
+RETURN_FROM = ('start', 'pass')
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,10 @@ class AvoidanceParams:
     require_goal: bool = True
     # 장애물을 못 만난 무효 실행 중 로봇 이동 거리가 이보다 짧으면 "거의 안 움직임"(Nav2 실패·정지 등)으로 본다 [m]
     stuck_travel_m: float = 0.5
+    # 복귀 시간을 어디서부터 재나: start = 회피 구간 시작(이탈 > start_deviation)부터 (I17 등록 11/3),
+    # pass = 장애물이 차체 뒤로 지나간 뒤부터 (원 명세 문구 "회피 후 원래 경로로 복귀하는 시간이 5초 이내",
+    # 정면 접근 등록 11/4). 둘 다 기록하고, KPI(kpi_return_s)는 이 값으로 고른 쪽으로 판정한다
+    return_from: str = 'start'
     # 원 명세 KPI
     kpi_collisions: int = 0
     kpi_max_deviation: float = 1.0
@@ -119,6 +124,8 @@ class AvoidanceParams:
     def __post_init__(self):
         if self.start_on not in START_ON:
             raise ValueError(f'start_on은 {START_ON} 중 하나: {self.start_on}')
+        if self.return_from not in RETURN_FROM:
+            raise ValueError(f'return_from은 {RETURN_FROM} 중 하나: {self.return_from}')
         if self.return_hold_s < 0.0:
             raise ValueError('return_hold_s는 0 이상')
 
@@ -239,6 +246,8 @@ class SampleResult:
     obstacle_speed: Optional[float]
     episode: Optional[int] = None
     collision: bool = False
+    # 가장 가까운 장애물 몸 전체가 차체 뒤 끝보다 뒤에 있다 (회피 후 복귀 시간의 기준)
+    obstacle_behind: bool = False
 
 
 @dataclass
@@ -254,6 +263,10 @@ class Episode:
     nearest_obstacle: str
     obstacle_speed: Optional[float]
     obstacle_related: bool
+    # 회피 후: 가장 가까웠던 뒤 장애물이 차체 뒤로 지나갔거나 interaction_distance 밖으로 나간 첫 시각과,
+    # 그때부터 복귀까지 [s] (원 명세 "회피 후 원래 경로로 복귀하는 시간")
+    pass_t: Optional[float] = None
+    return_after_pass_s: Optional[float] = None
 
 
 @dataclass
@@ -269,6 +282,11 @@ def _robot_speed(robot: Sequence[Pose], i: int) -> float:
     a, b = (robot[i - 1], robot[i]) if i > 0 else (robot[0], robot[1])
     dt = b.t - a.t
     return math.hypot(b.x - a.x, b.y - a.y) / dt if dt > 0 else 0.0
+
+
+def _outer_radius(shape: Shape) -> float:
+    """장애물 몸을 덮는 원 반지름 (box는 외접원)."""
+    return shape.radius if shape.kind == CIRCLE else 0.5 * math.hypot(shape.length, shape.width)
 
 
 def evaluate_run(
@@ -305,8 +323,11 @@ def evaluate_run(
             per_obstacle_min[oid] = min(per_obstacle_min.get(oid, math.inf), c)
             if best is None or c < best:
                 best, best_id, best_speed = c, oid, o.speed
+                body_x = math.cos(r.yaw) * (o.x - r.x) + math.sin(r.yaw) * (o.y - r.y)
+                behind = body_x < -(0.5 * p.robot_length + _outer_radius(shapes[oid]))
         samples.append(SampleResult(r.t, r.x, r.y, r.yaw, dev, best, best_id, best_speed,
-                                    collision=best is not None and best <= p.collision_margin))
+                                    collision=best is not None and best <= p.collision_margin,
+                                    obstacle_behind=best is not None and behind))
 
     episodes = _detect_episodes(samples, p) if have_ref else []
     collisions = _collision_events(samples, robot)
@@ -378,6 +399,15 @@ def _detect_episodes(samples: list[SampleResult], p: AvoidanceParams) -> list[Ep
         window = [k for k in range(lo, max(e, last) + 1) if samples[k].clearance is not None]
         k_near = min(window, key=lambda k: samples[k].clearance) if window else None
         min_c = samples[k_near].clearance if k_near is not None else None
+        k_pass = None
+        if k_near is not None and r is not None:
+            for k in range(k_near, r + 1):
+                c = samples[k].clearance
+                if samples[k].obstacle_behind or c is None or c >= p.interaction_distance:
+                    k_pass = k
+                    break
+            if k_pass is None:
+                k_pass = r          # 지나가기 전에 돌아왔다: 회피 후 복귀 0
         ep = Episode(
             index=len(episodes), start_t=times[s], trigger=trigger,
             max_deviation=dev[k_max], max_deviation_t=times[k_max],
@@ -386,7 +416,9 @@ def _detect_episodes(samples: list[SampleResult], p: AvoidanceParams) -> list[Ep
             min_clearance=min_c,
             nearest_obstacle=samples[k_near].nearest_obstacle if k_near is not None else '',
             obstacle_speed=samples[k_near].obstacle_speed if k_near is not None else None,
-            obstacle_related=min_c is not None and min_c < p.interaction_distance)
+            obstacle_related=min_c is not None and min_c < p.interaction_distance,
+            pass_t=times[k_pass] if k_pass is not None else None,
+            return_after_pass_s=max(0.0, times[r] - times[k_pass]) if k_pass is not None else None)
         episodes.append(ep)
         for k in span:
             samples[k].episode = ep.index
@@ -431,6 +463,9 @@ def _summarize(samples, episodes, collisions, per_obstacle_min, reference, p: Av
     unreturned = [e for e in related if e.return_s is None]
     returns = [e.return_s for e in related if e.return_s is not None]
     max_return = None if unreturned else (max(returns) if returns else 0.0 if related else None)
+    after = [e.return_after_pass_s for e in related if e.return_after_pass_s is not None]
+    max_after = None if unreturned else (max(after) if after else 0.0 if related else None)
+    judged = after if p.return_from == 'pass' else returns
 
     goal_t = None
     if reference:
@@ -441,7 +476,7 @@ def _summarize(samples, episodes, collisions, per_obstacle_min, reference, p: Av
 
     collision_free = len(collisions) <= p.kpi_collisions
     deviation_ok = max_dev is not None and max_dev[0] <= p.kpi_max_deviation
-    return_ok = not unreturned and all(r <= p.kpi_return_s for r in returns)
+    return_ok = not unreturned and all(r <= p.kpi_return_s for r in judged)
     goal_ok = goal_t is not None or not p.require_goal
     reasons = []
     if not reference:
@@ -479,7 +514,8 @@ def _summarize(samples, episodes, collisions, per_obstacle_min, reference, p: Av
         'deviation': {'max': _r(max_dev[0]) if max_dev else None, 'max_t': _r(max_dev[1], 3) if max_dev else None},
         'episodes': [{k: (_r(v) if isinstance(v, float) else v) for k, v in asdict(e).items()} for e in episodes],
         'avoidance': {'episodes': len(related), 'tracking_episodes': len(episodes) - len(related),
-                      'max_return_s': _r(max_return, 3), 'unreturned': len(unreturned)},
+                      'max_return_s': _r(max_return, 3), 'max_return_after_pass_s': _r(max_after, 3),
+                      'unreturned': len(unreturned)},
         'encounter': encounter,
         'reached_goal': goal_t is not None,
         'reached_goal_t': _r(goal_t, 3),
@@ -517,13 +553,22 @@ def clopper_pearson(k: int, n: int, confidence: float = 0.95) -> tuple[Optional[
     return lo, hi
 
 
-def _run_row(name: str, s: dict) -> dict:
-    k = s['kpi']
+def _run_row(name: str, s: dict, params: Optional[AvoidanceParams] = None) -> dict:
+    k = dict(s['kpi'])
+    av = s['avoidance']
+    rec = s.get('params', {})
+    if params is not None and (params.return_from, params.kpi_return_s) != (
+            rec.get('return_from', 'start'), rec.get('kpi_return_s', params.kpi_return_s)):
+        # 기록 때와 다른 복귀 기준(회피 시작부터 / 회피 후, 초 상한)으로 다시 판정한다: 복귀만 다시 보고 나머지는 그대로
+        judged = av.get('max_return_after_pass_s') if params.return_from == 'pass' else av['max_return_s']
+        k['return_ok'] = av['unreturned'] == 0 and (judged is None or judged <= params.kpi_return_s)
+        k['pass'] = k['valid'] and k['collision_free'] and k['deviation_ok'] and k['return_ok'] and k['goal_ok']
     row = {'run': name, 'valid': k['valid'], 'pass': k['pass'], 'collisions': s['collision']['count'],
            'min_clearance': s['collision']['min_clearance'], 'max_deviation': s['deviation']['max'],
-           'max_return_s': s['avoidance']['max_return_s'], 'unreturned': s['avoidance']['unreturned'],
+           'max_return_s': av['max_return_s'], 'max_return_after_pass_s': av.get('max_return_after_pass_s'),
+           'unreturned': av['unreturned'],
            'reached_goal': s['reached_goal'], 'invalid_reasons': list(k['invalid_reasons']),
-           'reasons': list(k['invalid_reasons'])}
+           'reasons': list(k['invalid_reasons']), 'avoidance_episodes': s['avoidance']['episodes']}
     for key, label in (('collision_free', '충돌'), ('deviation_ok', '이탈 초과'),
                        ('return_ok', '복귀 초과·미복귀'), ('goal_ok', '목표 미도착')):
         if not k[key]:
@@ -532,7 +577,7 @@ def _run_row(name: str, s: dict) -> dict:
 
 
 def aggregate(runs: Sequence[tuple[str, Optional[dict]]], params: AvoidanceParams = AvoidanceParams(),
-              failed: Sequence[tuple] = ()) -> dict:
+              failed: Sequence[tuple] = (), require_avoidance: bool = False) -> dict:
     """실행별 요약(avoidance_summary.json) 여러 개 → I17 판정.
 
     runs: (실행 이름, 요약 또는 None(요약 파일 없음)).
@@ -543,6 +588,9 @@ def aggregate(runs: Sequence[tuple[str, Optional[dict]]], params: AvoidanceParam
     3. 하네스 실패 실행, 요약이 없는 실행이 있거나 valid 실행이 kpi_runs보다 적으면 INSUFFICIENT.
        재지 못한 실행을 빼고 PASS를 주면 성공한 실행만 고르는 셈이다
     4. 그 외 PASS
+    require_avoidance: 유효 실행마다 장애물 관련 회피 구간(이탈 > start_deviation)이 하나 이상 있어야 통과한다.
+    정면 접근(원 명세 "1.0 m/s 장애물 재계획 회피"): 서서 기다리거나 장애물이 물러나 지나간 실행은 비켜 지나가기를
+    보이지 못한 것이라 불합격이다 (가로지르기 I17은 끈다 - 기다리는 것이 맞는 장면이다)
     """
     per_run, valid, measured = [], [], []
     missing = 0
@@ -552,7 +600,7 @@ def aggregate(runs: Sequence[tuple[str, Optional[dict]]], params: AvoidanceParam
             per_run.append({'run': name, 'valid': False, 'pass': False, 'invalid_reasons': ['요약 없음'],
                             'reasons': ['요약 없음']})
             continue
-        row = _run_row(name, s)
+        row = _run_row(name, s, params)
         per_run.append(row)
         measured.append(row)
         if row['valid']:
@@ -561,7 +609,7 @@ def aggregate(runs: Sequence[tuple[str, Optional[dict]]], params: AvoidanceParam
     for name, outcome, *rest in failed:
         s = rest[0] if rest else None
         harness_failed.append({'run': name, 'outcome': outcome})
-        row = (_run_row(name, s) if s is not None
+        row = (_run_row(name, s, params) if s is not None
                else {'run': name, 'valid': False, 'pass': False, 'reasons': []})
         # 하네스 실패 실행은 유효 횟수에 넣지 않고, 충돌만 판정에 쓴다
         row.update({'valid': False, 'pass': False, 'harness_outcome': outcome})
@@ -569,6 +617,12 @@ def aggregate(runs: Sequence[tuple[str, Optional[dict]]], params: AvoidanceParam
         per_run.append(row)
         if s is not None:
             measured.append(row)
+
+    if require_avoidance:
+        for r in valid:
+            if not r.get('avoidance_episodes'):
+                r['pass'] = False
+                r['reasons'].append('회피 구간 없음 (재계획 회피 안 보임)')
 
     def worst(key):
         vals = [r[key] for r in valid if r.get(key) is not None]
@@ -609,11 +663,14 @@ def aggregate(runs: Sequence[tuple[str, Optional[dict]]], params: AvoidanceParam
         'min_clearance': min((r['min_clearance'] for r in measured if r['min_clearance'] is not None), default=None),
         'max_deviation': worst('max_deviation'),
         'max_return_s': worst('max_return_s'),
+        'max_return_after_pass_s': worst('max_return_after_pass_s'),
         'unreturned': sum(r['unreturned'] for r in valid),
         'goal_missed': sum(not r['reached_goal'] for r in valid),
+        'require_avoidance': require_avoidance,
+        'runs_without_avoidance': sum(not r.get('avoidance_episodes') for r in valid),
         'failing_runs': list(dict.fromkeys(collided + failing)),
         'kpi': {'collisions': params.kpi_collisions, 'max_deviation': params.kpi_max_deviation,
-                'return_s': params.kpi_return_s, 'runs': params.kpi_runs},
+                'return_s': params.kpi_return_s, 'runs': params.kpi_runs, 'return_from': params.return_from},
         'per_run': per_run,
     }
 
@@ -644,9 +701,15 @@ def aggregate_markdown(a: dict) -> str:
         '| 지표 | 값 | KPI |', '| --- | --- | --- |',
         f"| 충돌 (건, 모든 실행) | {a['collisions']} | {k['collisions']} |",
         f"| 최대 경로 이탈 [m] (최악 실행) | {f(a['max_deviation'])} | ≤ {k['max_deviation']} |",
-        f"| 최대 복귀 시간 [s] (최악 실행) | {f(a['max_return_s'])} | ≤ {k['return_s']} |",
+        *((f"| 최대 복귀 시간, 회피 후(장애물 통과 뒤) [s] (최악 실행) | {f(a.get('max_return_after_pass_s'))} "
+           f"| ≤ {k['return_s']} |",
+           f"| 최대 복귀 시간, 회피 시작부터 [s] (참고) | {f(a['max_return_s'])} | — |")
+          if k.get('return_from') == 'pass' else
+          (f"| 최대 복귀 시간 [s] (최악 실행) | {f(a['max_return_s'])} | ≤ {k['return_s']} |",)),
         f"| 복귀 못 한 회피 | {a['unreturned']} | 0 |",
         f"| 목표 미도착 실행 | {a['goal_missed']} | 0 |",
+        *([f"| 회피 구간 없는 실행 (재계획 회피 안 보임) | {a['runs_without_avoidance']} | 0 |"]
+          if a.get('require_avoidance') else []),
         f"| 최소 이격 [m] | {f(a['min_clearance'])} | — |",
         f"| 합격률 (유효 실행, 95% CI, 참고) | {rate} | — |", '',
         '| 실행 | 유효 | 판정 | 충돌 | 최소 이격 | 최대 이탈 | 최대 복귀 | 사유 |',

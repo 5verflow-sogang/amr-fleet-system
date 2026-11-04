@@ -31,9 +31,26 @@ SPEC_SPEED = 1.0                 # m/s. 원 명세 "1.0 m/s 장애물 재계획 
 SPEC_SPEED_EVERY = 3             # 시드 % 3 == 0이면 SPEC_SPEED로 고정
 YIELD_TO = ('amr_01',)           # 작업자가 멈춰 있으면 비키는 로봇 (시나리오 로봇 1대)
 
+# 정면 접근 (mode headon, nav_avoidance_headon): 작업자가 로봇 경로 위를 마주 걸어와 로봇이 비켜 가야 한다.
+# 가로지르기(cross)에서는 로봇이 서서 기다리면 돼 경로를 벗어나지 않아 복귀 시간·재계획 회피가 잡히지 않았다(I17 11/3)
+HEADON_ID = 'worker_headon'
+HEADON_PATH_Y = 1.5              # world y [m]. 로봇 경로 (출발 world (0, 1.5))
+HEADON_OFFSET = 0.3              # m. 경로에서 옆으로 벗어난 정도 최대. 작업자 반경 0.25 + 로봇 반폭 0.2 = 0.45 안이라 늘 길을 막는다
+HEADON_SPAWN_X = (10.0, 11.0)    # world x [m]. 목표(map x 9) 너머 1 m 밖에서 출발해 첫 전역 경로에 끼지 않는다
+HEADON_END_X = -10.0             # world x [m]. 서쪽 끝. 로봇을 지나친 뒤 측정 동안 다시 돌아오지 않게 멀리 둔다
+HEADON_SPEEDS = (0.3, 1.5)       # m/s. 원 명세 동적 장애물 속도 범위 (0.3 = 가장 느린 작업자)
 
-def make_obstacles(seed: int) -> dict:
-    """시드 → dynamic_obstacles.launch.py 설정 (사전). 같은 시드면 같은 값이다."""
+
+def make_obstacles(seed: int, mode: str = 'cross', speed: Optional[float] = None) -> dict:
+    """시드 → dynamic_obstacles.launch.py 설정 (사전). 같은 시드면 같은 값이다.
+
+    mode cross: 통로를 가로지르는 작업자 (I17 본 측정). headon: 로봇 경로를 마주 걸어오는 작업자, speed [m/s] 고정
+    (주지 않으면 원 명세 1.0 m/s).
+    """
+    if mode == 'headon':
+        return _headon(seed, SPEC_SPEED if speed is None else speed)
+    if mode != 'cross' or speed is not None:
+        raise ValueError(f'mode는 cross 또는 headon이고, speed는 headon에서만 쓴다: {mode}, {speed}')
     rng = random.Random(seed)
     x = round(rng.uniform(*CROSS_X), 3)
     southward = rng.random() < 0.5
@@ -54,14 +71,35 @@ def make_obstacles(seed: int) -> dict:
     }]}
 
 
+def _headon(seed: int, speed: float) -> dict:
+    if not HEADON_SPEEDS[0] <= speed <= HEADON_SPEEDS[1]:
+        raise ValueError(f'headon speed는 {HEADON_SPEEDS} m/s 안이어야 한다: {speed}')
+    rng = random.Random(seed)
+    x = round(rng.uniform(*HEADON_SPAWN_X), 3)
+    y = round(HEADON_PATH_Y + rng.uniform(-HEADON_OFFSET, HEADON_OFFSET), 3)
+    return {'obstacles': [{
+        'id': HEADON_ID,
+        'type': 'worker',
+        'pattern': 'straight',
+        'speed_range_mps': [speed, speed],
+        'spawn': {'x': x, 'y': y, 'yaw': round(math.pi, 4)},     # 처음에 두 번째 waypoint(서쪽)로 간다
+        'waypoints': [{'x': x, 'y': y}, {'x': HEADON_END_X, 'y': y}],
+        'yield_to_robots': list(YIELD_TO),
+        'note': f'avoidance_obstacles seed {seed} headon: x = {x}에서 서쪽으로 {speed} m/s, y = {y}',
+    }]}
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description='I17 회피 시나리오의 동적 장애물 설정을 시드로 만든다')
     ap.add_argument('--seed', type=int, required=True)
     ap.add_argument('--out', required=True, help='저장할 YAML 경로')
+    ap.add_argument('--mode', choices=('cross', 'headon'), default='cross',
+                    help='cross: 통로를 가로지른다 (기본, I17 본 측정). headon: 로봇 경로를 마주 걸어온다')
+    ap.add_argument('--speed', type=float, help='headon 작업자 속도 [m/s] (기본 1.0)')
     args = ap.parse_args(argv)
     import yaml   # ROS 환경(PyYAML)에서만 쓰는 의존성이라 여기서 읽는다
 
-    config = make_obstacles(args.seed)
+    config = make_obstacles(args.seed, args.mode, args.speed)
     with open(args.out, 'w', encoding='utf-8') as f:
         yaml.safe_dump(config, f, allow_unicode=True, sort_keys=False)
     print(config['obstacles'][0]['note'])
