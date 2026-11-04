@@ -227,7 +227,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 좌표 | 정답 위치는 frame `"world"`라 `map_origin_in_world`(world에서 본 map 원점 [x, y, yaw], 작업 생성기와 같은 파라미터)로 map 좌표로 옮긴다. 식당 맵의 값은 지수가 매핑 시작 자세로 알려 준다 |
 | 구역 안 판정 | 손님 중심점이 구역 사각형 안(경계 포함)이면 그 구역 사람으로 센다. 구역이 겹치면 양쪽에 다 센다 |
 | 원시 값 | `raw = min(1, people_count / capacity)` |
-| 혼잡도 | `value = α × raw + (1 − α) × 직전 value`, `α = 0.5`. 사람이 모두 빠지면 약 2초(4주기) 뒤 0.1 아래로 내려간다 |
+| 혼잡도 | `value = α × raw + (1 − α) × 직전 value`, `α = 0.5`. 첫 갱신은 평활 없이 raw다. 사람이 모두 빠지면 약 2초(4주기) 뒤 0.1 아래로 내려간다 |
 | 갱신 주기 | 2 Hz (시뮬레이션 시간) |
 
 **구역 파일** (`congestion.zones_file`, 식당 구역 이름은 지수 11/5. 그 전에는 물류센터 맵에 가짜 구역)
@@ -243,7 +243,7 @@ zones:
 
 | 항목 | 정의 |
 | --- | --- |
-| 범위 | 모든 구역을 덮는 사각형. frame `"map"`, 해상도 `mask.resolution`(기본 0.1 m) |
+| 범위 | 모든 구역을 덮는 사각형 + 둘레 `mask.padding`(기본 1 m). frame `"map"`, 해상도 `mask.resolution`(기본 0.1 m). 둘레는 값 0 칸이다: Nav2 Humble 속도 필터는 로봇이 마스크 밖이면 마지막 제한을 그대로 두므로, 구역을 벗어날 때 꼭 0 칸을 지나게 한다 |
 | 셀 값 | 구역 밖 0, 구역 안 `round(value × mask.max_value)`. 기본 `max_value = 90`. 겹치면 큰 값 |
 | QoS | reliable, transient local, depth 1 (Nav2 필터 구독과 같음) |
 
@@ -252,7 +252,7 @@ zones:
 | 필터 정보 토픽 | `type` | `base` | `multiplier` | 결과 (Nav2 Humble) |
 | --- | --- | --- | --- | --- |
 | `/fleet/congestion_keepout_info` | 0 (keepout) | 0 | 1 | 마스크 0~100이 비용 0~254로 바뀐다. 90 → 229라 치명(253 이상)은 아니어서 **돌아갈 길이 있으면 돌아가고, 없으면 지나간다**. 100을 쓰면 막혀 버려서 상한을 90으로 둔다 |
-| `/fleet/congestion_speed_info` | 1 (속도 %) | 100 | -0.5 | 제한 % = `100 − 0.5 × 마스크`. 혼잡도 1.0(마스크 90) → 55%. 마스크 0은 제한 없음 |
+| `/fleet/congestion_speed_info` | 1 (속도 %) | 100 | -0.5 | 제한 % = `100 − 0.5 × 마스크`. 혼잡도 1.0(마스크 90) → 55%. 마스크 0은 제한 없음(Nav2가 `speed_limit` 0.0 = `NO_SPEED_LIMIT`을 보낸다. 컨트롤러가 0.0을 "제한 없음"으로 받아야 한다) |
 
 **할당 반영** (작업 4, 11/7 구현 예정)
 
