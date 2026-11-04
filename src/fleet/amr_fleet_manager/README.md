@@ -6,7 +6,7 @@
 
 > 상태: 최소판(3주차). 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송, `assignments.csv` 기록, 구역 허가(정원·lease·작업 우선순위 대기열, 교착 시 허가 회수)까지 구현했다. 작업 취소, 실패 작업 재할당은 아직 없다.
 
-노드 세 개와 지표 변환 도구를 제공한다.
+노드 네 개와 지표 변환 도구를 제공한다.
 
 | 실행 파일 | 역할 |
 | --- | --- |
@@ -14,6 +14,7 @@
 | `fake_robot` | 가짜 로봇. Nav2·BT 없이 Fleet 메시지만 주고받는다. `amr_bt`가 완성되기 전에 서버·장애 주입기·하네스를 끝까지 돌려볼 때 쓴다 |
 | `fleet_metrics` | rosbag → `fleet_latency.csv`, `response_time.csv` (하네스가 실행마다 부른다) |
 | `task_generator` | 작업 생성기. 시나리오(seed로 재현) 또는 JSON Task 파일의 일정대로 작업을 요청한다 |
+| `congestion` | 혼잡도 노드 (식당 시연). 손님 정답 위치로 구역별 혼잡도와 Nav2 costmap 마스크를 낸다 |
 
 ## 제공 인터페이스
 
@@ -50,6 +51,27 @@
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
 | Publish | `/fleet/task_requests` | `amr_msgs/msg/Task` | 일정의 `at_s`마다 1건. 자세는 map 좌표, `created_time`은 발행 시각 |
+
+### `congestion`
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `/dynamic_obstacles/<id>/ground_truth/odom` | `nav_msgs/msg/Odometry` | 손님 정답 위치 (frame `world`). `<id>`는 `obstacles_file`에서 읽는다 |
+| Publish | `/fleet/congestion` | `amr_msgs/msg/ZoneCongestionArray` | `rate_hz`(2 Hz)마다 모든 구역 |
+| Publish | `/fleet/congestion_mask` | `nav_msgs/msg/OccupancyGrid` | 같은 주기, transient local |
+| Publish | `/fleet/congestion_keepout_info`, `/fleet/congestion_speed_info` | `nav2_msgs/msg/CostmapFilterInfo` | 시작할 때 한 번, transient local |
+
+계산식·마스크 값·필터 정보 값은 [api.md 4-5절](../../../docs/api.md#4-5-혼잡도-d1-115-민지-제안)이 기준이다. 계산은 `amr_fleet_core.congestion`(ROS 비의존)에 있다.
+
+- 인식 결과가 아니라 시뮬레이터 정답 위치를 센다. `obstacles_file`의 장애물은 종류와 상관없이 모두 "사람"으로 센다(물류센터 기본 설정이면 지게차·로봇도 들어간다). 식당에서는 손님만 담은 파일을 준다
+- `stale_s`(2 s) 넘게 위치가 안 온 손님은 세지 않는다
+- 마스크는 구역 둘레를 `mask.padding`(1 m)만큼 값 0 칸으로 감싼다. Nav2 Humble 속도 필터는 로봇이 마스크 밖이면 마지막 제한을 유지해서, 혼잡 구역에서 바로 마스크 밖으로 나가면 감속이 안 풀린다
+- 구역 파일 기본값(`config/congestion_zones.yaml`)은 식당 맵 전 물류센터 통로에 붙인 가짜 구역이다
+
+```bash
+ros2 launch amr_fleet_manager congestion.launch.py                         # 물류센터 가짜 구역 + 동적 장애물 5개
+ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<식당 구역> obstacles_file:=<손님 yaml> map_origin_in_world:='[x, y, yaw]'
+```
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 

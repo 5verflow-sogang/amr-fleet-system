@@ -10,6 +10,9 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>amr_msgs</exec_depend>
   <exec_depend>builtin_interfaces</exec_depend>
+  <!-- congestion: 손님 정답 위치(Odometry), costmap 마스크(OccupancyGrid)·필터 정보. 단위 테스트에서도 import한다 -->
+  <depend>nav_msgs</depend>
+  <depend>nav2_msgs</depend>
   <!-- config/zones.yaml, 시나리오·스테이션 yaml 읽기. 단위 테스트에서도 쓴다 -->
   <depend>python3-yaml</depend>
   <exec_depend>launch</exec_depend>
@@ -28,7 +31,6 @@
   <test_depend>launch_testing</test_depend>
   <test_depend>launch_testing_ros</test_depend>
   <!-- test_fleet_metrics_bag.py: odom 메시지로 bag을 만든다 -->
-  <test_depend>nav_msgs</test_depend>
   <test_depend>rosidl_runtime_py</test_depend>
 
   <export>
