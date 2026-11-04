@@ -482,6 +482,7 @@ ros2 run amr_tracking tracking_eval --ros-args -r __ns:=/amr_01 -p use_sim_time:
 - 슬롯 a(n2d-standard-16)에서 장면마다 10회(시드 2001~2010) 돌렸다. 60회 모두 커밋 1cce07c이고 `check_main.py --first-seed 2001`을 통과했다. 무효 실행은 없다.
 - RTF: C10 0.705~0.995, C15 0.993~0.994, A 0.981~0.988, B 0.961~0.989, D 0.919~0.981, E 0.891~0.949. C10은 실행 05(시드 2006)만 0.705였다. 프레임 401개로 무효 기준 밖이고 D1은 6.12 s다. 시간 값은 모두 시뮬레이션 시각이다.
 - 원자료는 `gs://amr-fleet-results/runs/tracking_kpi_<장면>-act3/`, 실행 기록은 `experiments/tracking_kpi/conditions/tracking_act3.txt.log.csv`. GitHub Actions 실행 번호: C10 41587686766, C15 41590139538, A 41592532308, B 41599229633, D 41606832842, E 41615433658.
+- 같은 코드 확인 (11/5, 등록): #264·#260 머지 뒤 dev 89e1da1과 측정 커밋 1cce07c의 추적 관련 코드(`src/perception`, `tools/harness`, `experiments/tracking_kpi`)를 `git diff`로 비교했다. 추적기(`amr_perception_core`·`amr_tracking`)는 같다. `tools/harness`는 다른 PR 변경(I12 지표 #261, Fleet 정체 #280, I17 시나리오 #262)과 `summary.py`의 P2 주석 문구뿐이라 추적 지표 계산(`tracking_metrics`, P2 판정)은 같다. `experiments/tracking_kpi`는 실행 기록(`*.log.csv`)만 늘었고, `src/perception`의 나머지 차이는 `amr_safety` 회피 평가(#262)다
 
 | 기준 | 장면 | 값: 평균 [95% CI] | 통과 조건 | 판정 |
 | --- | --- | --- | --- | --- |
