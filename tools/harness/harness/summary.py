@@ -43,7 +43,8 @@ NAV_KPI = {'navkpi.plan_success_rate': (0.98, 'min'), 'navkpi.replan_p95_ms': (5
            'navkpi.cte_curve_mean_m': (0.10, 'max')}
 # 추적 정확도 KPI (docs/algorithms/perception.md 1-7): (기준, 방향). gt = 기준보다 커야 함 (CI 하한으로 판정).
 # P1은 0과 같아도 불합격이다 (추정 속도가 0이면 예측과 정지 가정이 같아진다). 장면 A·B·D·E에서만 판정한다
-# P2는 센서 범위(12 m) 안 짝의 속도 RMSE다 (3막 재측정부터, 결과 전 등록). 전체 거리 track.vel.rmse는 참고 지표
+# P2는 센서 범위(12 m) 안 짝의 속도 RMSE다 (3막 재측정부터. 1차 결과 후·재측정 전 등록, perception.md 1-7 P2 보완).
+# 전체 거리 track.vel.rmse는 참고 지표 (1차 본 측정 판정은 이 값)
 TRACK_KPI = {'track.pred_gain_1s': (0.0, 'gt'), 'track.vel_in_range.rmse': (0.2, 'max')}
 TRACK_KPI_SCENARIOS = {'tracking_kpi_a', 'tracking_kpi_b', 'tracking_kpi_d', 'tracking_kpi_e'}
 # 평균·CI로 판정하는 KPI의 최소 실행 수. 모자라면 보류다 (P1·P2는 장면마다 10회로 미리 정했다, perception.md 1-7)
