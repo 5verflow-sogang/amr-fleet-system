@@ -115,6 +115,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | Fleet 서버 → 로봇 | `Task`, `TaskAssignment`, `FleetHeartbeat`, `ZoneGrant`, `FleetTaskTable`, `TaskRecord` | 작업 할당, 서버 생존 신호, 구역 허가, 전체 작업 현황 | 지수, 이진 | 민지 |
 | Fleet 로봇 → 서버 | `TaskAssignmentAck`, `TaskStatus`, `RobotState`, `ZoneRequest` | 할당 확인, 작업 진행 보고, 로봇 상태, 구역 진입 요청 | 지수 | 민지 |
 | Fleet 분산 | `TaskAuction`, `TaskBid`, `RobotFleetMode` | 서버 장애 시 로봇끼리 경매, 하이브리드 로봇별 모드 | 이진 | 민지 |
+| Fleet 혼잡도 | `ZoneCongestion`, `ZoneCongestionArray` | 구역별 사람 수와 혼잡도 0~1 (식당 시연, 4-5절) | 이진, 연우 | — |
 | 로봇 내부 | `Dock` (action) | 도킹 | 지수 | — |
 
 9/28 회의에서 `TrafficCommand`는 `ZoneRequest`·`ZoneGrant`로 대체했다. 서버가 WAIT를 밀어 보내는 방식은 WAIT가 유실되면 로봇이 그대로 교차로에 들어가기 때문에, "허가 없으면 진입 금지"로 기본값을 뒤집었다 (VDA 5050 v3 zone, RMF MutexGroup).
@@ -143,6 +144,9 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 분산 | `/fleet/task_auctions` | 토픽 | `amr_msgs/msg/TaskAuction` | `amr_fleet_decentralized` (경매인 로봇) | `amr_fleet_decentralized` (장애 주입 실험에서는 네임스페이스 안 `fleet/task_auctions` 중계본) | 서버 장애 중 미할당 작업이 있을 때 |
 | 분산 | `/fleet/task_bids` | 토픽 | `amr_msgs/msg/TaskBid` | `amr_fleet_decentralized` | `amr_fleet_decentralized` (장애 주입 실험에서는 네임스페이스 안 `fleet/task_bids` 중계본) | 경매 진행 중 |
 | 하이브리드 | `/fleet/robot_modes` | 토픽 | `amr_msgs/msg/RobotFleetMode` | `amr_fleet_decentralized` (`fleet_mode:=hybrid`) | `amr_fleet_manager`, `amr_fleet_decentralized`, 하네스 | 1 Hz와 바뀔 때. 로봇 → 모두라 장애를 주입하지 않는다 ([architecture.md 5-2절](architecture.md#5-2-하이브리드-폴백-연구-1-비교군-1016-하연-설계)) |
+| 혼잡도 | `/fleet/congestion` | 토픽 | `amr_msgs/msg/ZoneCongestionArray` | `amr_fleet_manager` `congestion_node` | `amr_fleet_manager`(할당), 대시보드 | 2 Hz ([4-5절](#4-5-혼잡도-d1-115-민지-제안)) |
+| 혼잡도 | `/fleet/congestion_mask` | 토픽 (transient local) | `nav_msgs/msg/OccupancyGrid` | `amr_fleet_manager` `congestion_node` | Nav2 costmap 필터 (keepout·speed) | 2 Hz |
+| 혼잡도 | `/fleet/congestion_keepout_info`, `/fleet/congestion_speed_info` | 토픽 (transient local) | `nav2_msgs/msg/CostmapFilterInfo` | `amr_fleet_manager` `congestion_node` | Nav2 costmap 필터 | 시작할 때 한 번 |
 | 로봇 | `docking/dock` | 액션 | `amr_msgs/action/Dock` | `amr_docking` | `amr_bt` | BT가 요청할 때 |
 | 로봇 | `aruco_pose` | 토픽 | `geometry_msgs/msg/PoseWithCovarianceStamped` | `amr_docking` `aruco_localizer` | `kidnap_recovery` (연결 예정, 민지) | 위치를 잃었을 때(복구 상태 ≠ tracking) 마커판이 보이면 최대 5 Hz |
 
@@ -210,6 +214,70 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | Fleet | 낙찰 통보(`TYPE_AWARD`) 재전송 | 하연, 이진 | **결정: 중앙 Ack 재전송과 같게 1초 간격 × 5회** (10/7), 그래도 ACCEPT가 없으면 다시 경매한다. 재전송 정책이 같아야 지연 내성 비교가 공정하다 |
 | Fleet | 분산 할당 규칙 (연구 1 공정성) | 하연, 이진 | **결정** (#91 리뷰 반영, #106): 명세 3장 "가장 가까운 로봇 선점"에 맞춰 IDLE 로봇만 입찰, 비용은 시작점까지 거리(중앙 `nearest`와 같은 규칙). 입찰 마감은 경매인이 받은 시각으로 판정. `TaskBid.cost` 주석도 이 정의로 바꿨다 |
 | 공통 | 응답 시간을 시뮬레이션 시간으로 잴지 실제 시간으로 잴지 | 민지, 하연 | **결정: 실제 시간** (하연, #5). 측정 방법은 [하네스 로그 포맷](../tools/harness/README.md#합의-기록) |
+
+### 4-5. 혼잡도 (D1, 11/5, 민지 제안)
+
+> 상태: 제안. 이진·연우 합의 후 "제안"을 뗀다. 식당 시연 시나리오 1-1(할당)·1-2(경로)에 쓴다.
+
+**계산**
+
+| 항목 | 정의 |
+| --- | --- |
+| 입력 | 손님(동적 장애물) 정답 위치 `/dynamic_obstacles/<id>/ground_truth/odom`. 인식 결과는 쓰지 않는다(시연이 인식 불안정에 흔들리지 않게) |
+| 좌표 | 정답 위치는 frame `"world"`라 `world_to_map_xy`(기본 `[0, 0]`)만큼 옮겨 map 좌표로 쓴다. 식당 맵에서 world와 map이 같은지는 지수가 확인한다 |
+| 구역 안 판정 | 손님 중심점이 구역 사각형 안(경계 포함)이면 그 구역 사람으로 센다. 구역이 겹치면 양쪽에 다 센다 |
+| 원시 값 | `raw = min(1, people_count / capacity)` |
+| 혼잡도 | `value = α × raw + (1 − α) × 직전 value`, `α = 0.5`. 사람이 모두 빠지면 약 2초(4주기) 뒤 0.1 아래로 내려간다 |
+| 갱신 주기 | 2 Hz (시뮬레이션 시간) |
+
+**구역 파일** (`congestion.zones_file`, 식당 구역 이름은 지수 11/5. 그 전에는 물류센터 맵에 가짜 구역)
+
+```yaml
+zones:
+  - id: buffet_line        # 구역 이름 (ZoneCongestion.zone_id)
+    area: [2.0, 6.0, 1.0, 2.5]   # [x_min, x_max, y_min, y_max] (m, map)
+    capacity: 4            # 이 인원이면 혼잡도 1.0
+```
+
+**costmap 마스크** (`/fleet/congestion_mask`)
+
+| 항목 | 정의 |
+| --- | --- |
+| 범위 | 모든 구역을 덮는 사각형. frame `"map"`, 해상도 `mask.resolution`(기본 0.1 m) |
+| 셀 값 | 구역 밖 0, 구역 안 `round(value × mask.max_value)`. 기본 `max_value = 90`. 겹치면 큰 값 |
+| QoS | reliable, transient local, depth 1 (Nav2 필터 구독과 같음) |
+
+마스크 하나를 두 필터에 같이 쓸 수 있게 필터 정보 토픽을 둘 다 발행한다. 1-2 장면을 어느 쪽으로 찍을지는 이진이 고른다.
+
+| 필터 정보 토픽 | `type` | `base` | `multiplier` | 결과 (Nav2 Humble) |
+| --- | --- | --- | --- | --- |
+| `/fleet/congestion_keepout_info` | 0 (keepout) | 0 | 1 | 마스크 0~100이 비용 0~254로 바뀐다. 90 → 229라 치명(253 이상)은 아니어서 **돌아갈 길이 있으면 돌아가고, 없으면 지나간다**. 100을 쓰면 막혀 버려서 상한을 90으로 둔다 |
+| `/fleet/congestion_speed_info` | 1 (속도 %) | 100 | -0.5 | 제한 % = `100 − 0.5 × 마스크`. 혼잡도 1.0(마스크 90) → 55%. 마스크 0은 제한 없음 |
+
+**할당 반영** (작업 4, 11/7 구현 예정)
+
+`congestion_cost = 직선거리 + λ × Σ_z (value_z × 로봇 → 작업 시작점 선분이 구역 z 안을 지나는 길이)` (m). `assignment.cost_fn: congestion`으로 켜고 `euclidean`으로 끈다. λ 기본값은 측정으로 정한다.
+
+**가짜 값으로 개발하기** (노드가 나오기 전, 11/5 ~ 11/6)
+
+```bash
+# 혼잡도 (대시보드)
+ros2 topic pub -r 2 /fleet/congestion amr_msgs/msg/ZoneCongestionArray \
+  "{header: {frame_id: map}, zones: [
+     {zone_id: buffet_line, area: [2.0, 6.0, 1.0, 2.5], people_count: 4, value: 1.0},
+     {zone_id: hall_east,   area: [6.0, 9.0, 1.0, 5.0], people_count: 0, value: 0.0}]}"
+
+# 마스크: 원점 (2, 1), 1 m 셀 4×2. 아래 줄(y 1~2) 전부 90, 위 줄 0
+ros2 topic pub -r 2 --qos-durability transient_local --qos-reliability reliable \
+  /fleet/congestion_mask nav_msgs/msg/OccupancyGrid \
+  "{header: {frame_id: map}, info: {resolution: 1.0, width: 4, height: 2,
+    origin: {position: {x: 2.0, y: 1.0}}}, data: [90, 90, 90, 90, 0, 0, 0, 0]}"
+
+# 필터 정보 (keepout 예. 속도 필터는 type 1, base 100, multiplier -0.5)
+ros2 topic pub --once --qos-durability transient_local --qos-reliability reliable \
+  /fleet/congestion_keepout_info nav2_msgs/msg/CostmapFilterInfo \
+  "{header: {frame_id: map}, type: 0, filter_mask_topic: /fleet/congestion_mask, base: 0.0, multiplier: 1.0}"
+```
 
 ## 5. 패키지별 인터페이스
 
@@ -297,6 +365,15 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | Publish | `/fleet/heartbeat` | `amr_msgs/msg/FleetHeartbeat` | 고정 주기 |
 | Publish | `/fleet/task_table` | `amr_msgs/msg/FleetTaskTable` | 고정 주기 |
 | Publish | `/fleet/zone_grants` | `amr_msgs/msg/ZoneGrant` | 요청에 대한 답, 대기 로봇 차례가 오면. `lease_expiry`는 노드 시계 기준 |
+
+**`congestion_node`** (식당 시연, [4-5절](#4-5-혼잡도-d1-115-민지-제안))
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `/dynamic_obstacles/<id>/ground_truth/odom` | `nav_msgs/msg/Odometry` | 손님 정답 위치. `<id>`는 동적 장애물 설정 파일에서 읽는다 |
+| Publish | `/fleet/congestion` | `amr_msgs/msg/ZoneCongestionArray` | 2 Hz |
+| Publish | `/fleet/congestion_mask` | `nav_msgs/msg/OccupancyGrid` | 2 Hz, transient local |
+| Publish | `/fleet/congestion_keepout_info`, `/fleet/congestion_speed_info` | `nav2_msgs/msg/CostmapFilterInfo` | 시작할 때 한 번, transient local |
 
 가짜 로봇(`fake_robot`)과 동작 규칙은 [amr_fleet_manager README](../src/fleet/amr_fleet_manager/README.md)에 있다.
 
