@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!-- 빈 그릇 반납대. 스테인리스 3단 카트 맨 위에 식기 건조대를 올렸다. 모델 원점은 바닥 중심이다.
+     메시: "IKEA KUNGSFORS kitchen trolley" by W1NT3R (https://sketchfab.com/3d-models/5272c4bafd3044bcad2cea031a57a141); "Dish Rack with Dishes" by HippoStance (https://sketchfab.com/3d-models/ce69014964624fbb808a028e5c55d88b), CC BY 4.0. glTF를 OBJ(Z-up, m)로 바꾸고 텍스처를 줄였다 (docs/restaurant_assets.md). -->
+<sdf version="1.8">
+  <model name="restaurant_dish_return">
+    <static>true</static>
+    <link name="link">
+      <!-- 충돌체는 바닥까지 꽉 찬 박스 (D2). 라이다가 다리 사이를 빈 곳으로 보지 않게 한다 -->
+      <collision name="collision">
+        <pose>0 0 0.45 0 0 0</pose>
+        <geometry><box><size>0.79 0.73 0.9</size></box></geometry>
+      </collision>
+      <visual name="dish_return_cart">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><mesh><uri>model://restaurant_dish_return/meshes/dish_return_cart.obj</uri></mesh></geometry>
+      </visual>
+      <visual name="dish_rack">
+        <pose>0 0 0.82 0 0 0</pose>
+        <geometry><mesh><uri>model://restaurant_dish_return/meshes/dish_rack.obj</uri></mesh></geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>
