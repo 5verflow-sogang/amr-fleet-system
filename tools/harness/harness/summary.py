@@ -52,6 +52,9 @@ KPI_MIN_RUNS = {'track.pred_gain_1s': 10, 'track.vel.rmse': 10}
 WORST_KPI = {'track.d1_ttc_s': (3.0, 10, {'tracking_kpi_c10', 'tracking_kpi_c15'})}
 # tracking_eval 판정 지연 속력 구간 → 지표 이름
 TRACK_SPEED_BINS = {'<0.6': 'lt0_6', '0.6-1.0': '0_6to1_0', '>=1.0': 'ge1_0'}
+# I12 (docs/test-plan.md, fleet_i12만): 측정 손실률·지연 중앙값이 주입값과 맞고, 할당 명령이 모두 Ack된다.
+# 손실 1 %p: 10/16 손실 30% 10회가 29.1~30.5%. 지연 5 ms: 지연 100 ms 10회 평균이 101 ms (DDS 전달 몫)
+I12_KPI = {'i12.loss_err_pp': (1.0, 'max'), 'i12.latency_err_ms': (5.0, 'max'), 'i12.ack_rate': (1.0, 'min')}
 
 
 def load_meta(run_dir: Path) -> dict:
@@ -88,15 +91,16 @@ def _floats(rows: Iterable[dict], key: str) -> list[float]:
 
 
 def _put_dist(out: dict, prefix: str, values: list[float], *stats: str) -> None:
-    """values의 통계(mean·p95·p99·max·n)를 out[f'{prefix}.{통계}']에 넣는다. 비어 있으면 아무것도 넣지 않는다.
+    """values의 통계(mean·p50·p95·p99·max·n)를 out[f'{prefix}.{통계}']에 넣는다. 비어 있으면 아무것도 넣지 않는다.
 
     평균은 받은 순서대로 더한다 (부동소수점 합은 순서에 따라 끝자리가 달라져, 예전 요약 값과 같게 둔다).
     """
     if not values:
         return
     ordered = sorted(values)
-    calc = {'mean': lambda: sum(values) / len(values), 'p95': lambda: percentile(ordered, 0.95),
-            'p99': lambda: percentile(ordered, 0.99), 'max': lambda: ordered[-1], 'n': lambda: len(values)}
+    calc = {'mean': lambda: sum(values) / len(values), 'p50': lambda: percentile(ordered, 0.5),
+            'p95': lambda: percentile(ordered, 0.95), 'p99': lambda: percentile(ordered, 0.99),
+            'max': lambda: ordered[-1], 'n': lambda: len(values)}
     for stat in stats:
         out[f'{prefix}.{stat}'] = calc[stat]()
 
@@ -109,7 +113,7 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
     if judged:
         out['fleet.loss_rate'] = sum(r['delivered'] == '0' for r in judged) / len(judged)
         lat = sorted(_floats((r for r in judged if r['delivered'] == '1'), 'latency_ms'))
-        _put_dist(out, 'fleet.latency_ms', lat, 'mean', 'p95', 'p99', 'max')
+        _put_dist(out, 'fleet.latency_ms', lat, 'mean', 'p50', 'p95', 'p99', 'max')
     resp_rows = _read_csv(run_dir / 'response_time.csv')
     if resp_rows:
         out['fleet.commands'] = len(resp_rows)
@@ -397,11 +401,27 @@ def tracking_metrics(run_dir: Path) -> dict[str, float]:
     return out
 
 
+def i12_metrics(meta: dict, fleet: dict[str, float]) -> dict[str, float]:
+    """I12: 주입값과 측정값의 차이. 지연은 중앙값으로 본다 (재전송으로 늦게 닿은 메시지가 평균을 끌어올린다)."""
+    if meta.get('scenario') != 'fleet_i12':
+        return {}
+    fault = meta.get('fault') or {}
+    # 명령이 0건이면 Ack 비율 0 (FAIL). 손실·지연은 잴 메시지가 없으면 비워 두고 summarize가 보류로 드러낸다
+    out = {'i12.ack_rate': fleet.get('fleet.ack_rate', 0.0)}
+    if 'fleet.loss_rate' in fleet:
+        out['i12.loss_err_pp'] = abs(fleet['fleet.loss_rate'] * 100 - float(fault.get('loss_pct', 0)))
+    if 'fleet.latency_ms.p50' in fleet:
+        out['i12.latency_err_ms'] = abs(fleet['fleet.latency_ms.p50'] - float(fault.get('delay_ms', 0)))
+    return out
+
+
 def run_metrics(run_dir: Path) -> dict[str, float]:
     meta = load_meta(run_dir)
-    out = {**localization_metrics(run_dir), **fleet_metrics(run_dir), **nav_metrics(run_dir),
+    fleet = fleet_metrics(run_dir)
+    out = {**localization_metrics(run_dir), **fleet, **nav_metrics(run_dir),
            **kidnap_metrics(run_dir), **nav_kpi_metrics(run_dir), **cpu_metrics(run_dir),
-           **avoidance_metrics(run_dir), **tracking_metrics(run_dir)}
+           **avoidance_metrics(run_dir), **tracking_metrics(run_dir),
+           **i12_metrics(meta, fleet)}
     rtf = meta.get('real_time_factor')
     if isinstance(rtf, (int, float)):
         out['run.real_time_factor'] = float(rtf)
@@ -447,8 +467,8 @@ def kpi_rule(metric: str, scenario: str = '') -> Optional[tuple[float, str]]:
         return 0.0, 'max'
     if metric == 'sys.cpu_pct.mean':
         return CPU_KPI_PCT, 'max'
-    if metric in NAV_KPI:
-        return NAV_KPI[metric]
+    if metric in NAV_KPI or metric in I12_KPI:
+        return NAV_KPI.get(metric) or I12_KPI[metric]
     if metric in TRACK_KPI and scenario in TRACK_KPI_SCENARIOS:
         return TRACK_KPI[metric]
     return None
@@ -522,6 +542,11 @@ def summarize(run_dirs: Iterable[Path]) -> dict:
             elif note:
                 d['kpi_note'] = note
             metrics[metric] = d
+        if g.get('scenario') == 'fleet_i12' and g['runs']:
+            # 모든 실행에서 못 잰 I12 지표도 보류로 남긴다 (빠지면 나머지 지표만으로 PASS가 된다)
+            for metric in sorted(set(I12_KPI) - set(metrics)):
+                metrics[metric] = {**dict.fromkeys(('mean', 'std', 'min', 'max', 'ci_low', 'ci_high')), 'n': 0,
+                                   'kpi_note': f"보류 (값 없는 실행 {len(g['runs'])}회)"}
         result[name] = {'runs': g['runs'], 'failed': g['failed'], 'metrics': metrics}
     return result
 

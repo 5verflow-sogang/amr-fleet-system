@@ -71,6 +71,49 @@ def test_fleet_metrics(tmp_path):
     assert 'fleet.response_ms.mean' not in m   # 가짜 로봇: odom 없음
 
 
+def test_i12_verdict(tmp_path):
+    def run(name, scenario, lost, latency, commands=True):
+        d = tmp_path / name
+        d.mkdir()
+        (d / 'meta.json').write_text(json.dumps({'scenario': scenario, 'outcome': 'completed',
+                                                 'fault': {'delay_ms': 100.0, 'loss_pct': 5.0}}))
+        with (d / 'fleet_latency.csv').open('w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['topic', 'robot', 'key', 'send_time', 'recv_time', 'latency_ms', 'delivered'])
+            for i in range(100):
+                if i < lost:
+                    w.writerow(['heartbeat', 'amr_01', f'1:{i}', '1.0', '', '', '0'])
+                else:   # 재전송으로 늦게 닿은 하나가 평균을 끌어올려도 중앙값은 그대로
+                    w.writerow(['heartbeat', 'amr_01', f'1:{i}', '1.0', '1.1', '3000.0' if i == 99 else latency, '1'])
+        with (d / 'response_time.csv').open('w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms',
+                        'assignment_id', 'ack_time', 'ack_rtt_ms', 'resends'])
+            if commands:
+                w.writerow(['1.0', '', '', 'amr_01', 't1', '', '1', '1.25', '250.0', '1'])
+        return d
+    ok = summarize([run(f'ok{i}', 'fleet_i12', 5, '101.0') for i in range(3)])['fleet_i12']['metrics']
+    assert ok['i12.loss_err_pp']['mean'] == pytest.approx(0.0)
+    assert ok['i12.latency_err_ms']['mean'] == pytest.approx(1.0)
+    assert all(ok[k]['kpi'] == 'PASS' for k in ('i12.loss_err_pp', 'i12.latency_err_ms', 'i12.ack_rate'))
+    bad = summarize([run(f'bad{i}', 'fleet_i12', 10, '120.0') for i in range(3)])['fleet_i12']['metrics']
+    assert bad['i12.loss_err_pp']['kpi'] == 'FAIL' and bad['i12.latency_err_ms']['kpi'] == 'FAIL'
+    # 명령이 0건인 실행이 있으면 Ack 비율 0으로 FAIL (빼고 나머지로 PASS를 주지 않는다)
+    runs = [run(f'ack{i}', 'fleet_i12', 5, '101.0', commands=i > 0) for i in range(3)]
+    assert summarize(runs)['fleet_i12']['metrics']['i12.ack_rate']['kpi'] == 'FAIL'
+    # 지연을 못 잰 실행이 있으면 보류, 모든 실행에서 못 재도 지표를 남겨 보류
+    runs = [run(f'lat{i}', 'fleet_i12', 100 if i == 0 else 5, '101.0') for i in range(3)]
+    lat = summarize(runs)['fleet_i12']['metrics']['i12.latency_err_ms']
+    assert 'kpi' not in lat and lat['kpi_note'] == '보류 (값 없는 실행 1회)'
+    lost = summarize([run(f'lost{i}', 'fleet_i12', 100, '101.0') for i in range(3)])['fleet_i12']['metrics']
+    assert lost['i12.latency_err_ms'] == {'n': 0, 'mean': None, 'std': None, 'min': None, 'max': None,
+                                          'ci_low': None, 'ci_high': None, 'kpi_note': '보류 (값 없는 실행 3회)'}
+    assert '보류 (값 없는 실행 1회)' in to_markdown(summarize([run('lost9', 'fleet_i12', 100, '101.0')]))
+    # 연구 1 fleet_fake 실행에는 I12 지표를 만들지 않는다
+    other = summarize([run('fake0', 'fleet_fake', 5, '101.0')])['fleet_fake']['metrics']
+    assert not any(k.startswith('i12.') for k in other)
+
+
 def test_render_and_fault_meta():
     params = {'run_dir': '/r/x', 'seed': 3}
     assert render({'cmd': 'a {seed} {run_dir}/f', 'l': ['{seed}']}, params) == {'cmd': 'a 3 /r/x/f', 'l': ['3']}
