@@ -32,6 +32,13 @@
     # 로봇에 부딪혔다(I17 시드 1019·1029). 0.15면 0.5 s + 반응 0.2 s + 1.0 m/s² 정지 동안 약 0.12 m만 간다
     dynamic_slow_distance: 0.5
     dynamic_slow_speed_limit: 0.15
+    # 차체 뒤로 지나가 멀어지는 트랙은 근접 저속에서 뺀다 (amr_perception_core.safety, 정면 비켜 지나가기 뒤 복귀)
+    dynamic_slow_skip_receding_behind: true
+    # 동적 확정 전 트랙도 이 속력 [m/s] 이상이면 0.5 m 안에서 저속 (새 트랙으로 잡힌 직후의 사람)
+    dynamic_slow_unconfirmed_speed: 0.5
+    # 그중 사람 크기(반경 이하)·속력(이하)만 - 로봇 옆 벽·랙 조각이 빠르게 보이는 가짜는 뺀다
+    dynamic_slow_unconfirmed_max_radius: 0.35
+    dynamic_slow_unconfirmed_max_speed: 1.8
     # 단계를 내릴 때 조건이 풀린 채 유지돼야 하는 시간 [s] (깜빡임 방지). 올릴 때는 바로
     release_hold_s: 0.5
 

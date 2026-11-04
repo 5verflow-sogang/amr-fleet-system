@@ -95,6 +95,41 @@ def test_close_dynamic_track_slows_further_whatever_its_direction():
     assert _update(off, obstacles=[_obs(clearance=0.0)]).speed_limit == pytest.approx(0.6)
 
 
+def test_close_dynamic_slow_skips_track_receding_behind_only_when_enabled():
+    # 정면으로 마주 오던 사람을 비켜 지나친 뒤: 차체 뒤에서 멀어지는 중이면 근접 저속을 풀 수 있다
+    receding = ObstacleInfo(7, 0.3, math.inf, True, receding_behind=True)
+    on = SafetyMonitor(SafetyConfig(dynamic_slow_skip_receding_behind=True))
+    state = _update(on, obstacles=[receding])
+    assert state.level == LEVEL_WARNING and state.speed_limit == pytest.approx(0.6)
+    assert '저속' not in state.detail
+    # 기본값(끔)이면 그대로 저속
+    assert _update(SafetyMonitor(), obstacles=[receding]).speed_limit == pytest.approx(0.15)
+    # 켜도 뒤에서 멀어지는 트랙이 아니면(옆·앞, 돌아서는 사람) 저속
+    beside = ObstacleInfo(7, 0.3, math.inf, True, receding_behind=False)
+    assert _update(on, obstacles=[beside]).speed_limit == pytest.approx(0.15)
+    # 뒤에서 멀어져도 TTC가 짧으면 정지 판정은 그대로
+    assert _update(on, obstacles=[ObstacleInfo(7, 0.3, 0.5, True, receding_behind=True)]).level == LEVEL_CRITICAL
+
+
+def test_close_fast_unconfirmed_track_slows_only_when_enabled():
+    # 돌아선 작업자가 새 트랙으로 잡혀 아직 정적(동적 확정 전)인데 1.2 m/s로 다가온다
+    fast = ObstacleInfo(9, 0.3, math.inf, False, speed=1.2, radius=0.15)
+    def on():
+        return SafetyMonitor(SafetyConfig(dynamic_slow_unconfirmed_speed=0.5))
+    state = _update(on(), obstacles=[fast])
+    assert (state.level, state.speed_limit, state.related_track_id) == (LEVEL_WARNING, pytest.approx(0.15), 9)
+    assert '확정 전' in state.detail
+    # 기본값(끔), 느린 정적 트랙(기둥·벽 조각), 0.5 m 밖은 그대로
+    assert _update(SafetyMonitor(), obstacles=[fast]).level == LEVEL_NORMAL
+    assert _update(on(), obstacles=[ObstacleInfo(9, 0.3, math.inf, False, speed=0.2, radius=0.15)]).level == LEVEL_NORMAL
+    assert _update(on(), obstacles=[ObstacleInfo(9, 0.6, math.inf, False, speed=1.2, radius=0.15)]).level == LEVEL_NORMAL
+    # 벽·랙 조각처럼 크거나(반경 0.6 m) 너무 빠르면(2.4 m/s) 빼다 (로봇이 움직이면 옆 조각이 빠르게 보인다)
+    assert _update(on(), obstacles=[ObstacleInfo(9, 0.3, math.inf, False, speed=1.4, radius=0.6)]).level == LEVEL_NORMAL
+    assert _update(on(), obstacles=[ObstacleInfo(9, 0.3, math.inf, False, speed=2.4, radius=0.2)]).level == LEVEL_NORMAL
+    # TTC 정지는 동적 트랙만 (정적 트랙의 TTC는 쓰지 않는다)
+    assert _update(on(), obstacles=[ObstacleInfo(9, 0.3, 0.2, False, speed=1.2, radius=0.15)]).level == LEVEL_WARNING
+
+
 def test_close_dynamic_slow_is_reported_over_other_warnings():
     # 진행 경로 밖 LiDAR 근접(0.6)·TTC 경고와 같이 걸려도 상한은 더 낮은 쪽, 설명도 그 원인
     state = _update(SafetyMonitor(), scan=0.2, obstacles=[_obs(track_id=9, clearance=0.2, ttc=1.5)])

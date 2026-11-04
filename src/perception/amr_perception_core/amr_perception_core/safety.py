@@ -64,6 +64,19 @@ class SafetyConfig:
     # 로봇이 0.15×0.7 + 0.15²/2 ≈ 0.12 m만 간다 (0.6 m/s면 0.6 m)
     dynamic_slow_distance: float = 0.5
     dynamic_slow_speed_limit: float = 0.15
+    # 근접 저속에서 '차체 뒤 끝보다 뒤에 있고 로봇보다 뒤쪽으로 움직이는' 트랙은 뺀다 (ObstacleInfo.receding_behind).
+    # 마주 오던 사람을 비켜 지나친 뒤 그 사람이 0.5 m 안에 남아 있는 동안 0.15 m/s에 묶여 처음 경로로 늦게
+    # 돌아왔다(정면 접근 시험 11/4, 원 명세 '복귀 5초'). 앞으로 가는 로봇과 멀어지는 뒤쪽 물체는 부딪치지 않는다.
+    # 옆·앞에서 돌아서는 사람(근접 저속을 넣은 이유, 11/2 I17)은 그대로 저속이다
+    dynamic_slow_skip_receding_behind: bool = False
+    # 아직 동적으로 확정되지 않은 트랙도 추정 속력이 이 값 [m/s] 이상이면 근접 저속을 건다 (0이면 끔, TTC 정지는 동적만).
+    # 돌아선 작업자가 새 트랙으로 잡혀 1.2 m/s로 오는데 0.6 s 동안 정적이라 저속이 안 걸려 옆구리에 닿았다
+    # (정면 접근 작업 중 I17 가로지르기 로컬 시드 1004, 11/4)
+    dynamic_slow_unconfirmed_speed: float = 0.0
+    # 그중 사람 크기·속력만: 반경이 이보다 크거나(벽·랙 조각, 0.28~0.78 m) 이보다 빠르면(가짜 동적 1.6~3.5 m/s, 1-2-1)
+    # 뺀다. 로봇이 움직이면 옆 벽 조각이 1.5~2.5 m/s로 보여 저속이 3.5 s 걸렸다(정면 접근 시험 11/4)
+    dynamic_slow_unconfirmed_max_radius: float = 0.35
+    dynamic_slow_unconfirmed_max_speed: float = 1.8
     # 단계를 내릴 때 조건이 풀린 채 유지돼야 하는 시간 [s]
     release_hold_s: float = 0.5
     # 센서 끊김 판정 [s]. 스캔(10 Hz)이 끊기면 정지, 추적·odom이 끊기면 저속
@@ -78,7 +91,7 @@ class SafetyConfig:
             value = getattr(self, name)
             if not (math.isfinite(value) and value > 0.0):
                 raise ValueError(f'{name}는 양수여야 한다: {value}')
-        for name in ('release_hold_s', 'dynamic_slow_distance'):
+        for name in ('release_hold_s', 'dynamic_slow_distance', 'dynamic_slow_unconfirmed_speed'):
             value = getattr(self, name)
             if not (math.isfinite(value) and value >= 0.0):
                 raise ValueError(f'{name}는 0 이상이어야 한다: {value}')
@@ -97,6 +110,11 @@ class ObstacleInfo:
     clearance: float      # 차체에서 장애물 표면까지 [m] (장애물 반경을 뺀 값)
     ttc: float            # [s], 충돌 경로가 아니면 inf
     is_dynamic: bool
+    # 차체 뒤 끝보다 뒤에 있고 로봇에 대한 상대 속도가 뒤쪽(멀어짐)이다 (safety_node.obstacle_infos)
+    receding_behind: bool = False
+    # 추정 속력 [m/s] (동적 확정 전 트랙의 근접 저속, dynamic_slow_unconfirmed_speed)
+    speed: float = 0.0
+    radius: float = 0.0   # 트랙 반경 [m] (동적 확정 전 트랙의 근접 저속)
 
 
 @dataclass(frozen=True)
@@ -184,6 +202,16 @@ class SafetyMonitor:
                 causes.append(_Cause(LEVEL_WARNING, REASON_SENSOR_FAULT, f'{name} 끊김'))
         for obs in obstacles:
             if not obs.is_dynamic:
+                # 동적 확정 전이어도 빠르게 움직이면 바로 옆에서는 저속 (TTC·1.5 m 경고는 동적만)
+                if (c.dynamic_slow_unconfirmed_speed > 0.0 and c.dynamic_slow_distance > 0.0
+                        and c.dynamic_slow_unconfirmed_speed <= obs.speed
+                        <= c.dynamic_slow_unconfirmed_max_speed
+                        and obs.radius <= c.dynamic_slow_unconfirmed_max_radius
+                        and obs.clearance <= c.dynamic_slow_distance):
+                    causes.append(_Cause(LEVEL_WARNING, REASON_OBSTACLE_PROXIMITY,
+                                         f'움직이는 물체(확정 전) {obs.clearance:.2f} m, 저속 '
+                                         f'{c.dynamic_slow_speed_limit:.2f} m/s (track {obs.track_id})',
+                                         obs.track_id, c.dynamic_slow_speed_limit))
                 continue
             if obs.ttc <= c.ttc_critical:
                 causes.append(_Cause(LEVEL_CRITICAL, REASON_COLLISION_RISK,
@@ -191,7 +219,10 @@ class SafetyMonitor:
             elif obs.ttc <= c.ttc_warning:
                 causes.append(_Cause(LEVEL_WARNING, REASON_COLLISION_RISK,
                                      f'TTC {obs.ttc:.1f} s (track {obs.track_id})', obs.track_id))
-            if c.dynamic_slow_distance > 0.0 and obs.clearance <= c.dynamic_slow_distance:
+            slow = c.dynamic_slow_distance > 0.0 and obs.clearance <= c.dynamic_slow_distance
+            if slow and c.dynamic_slow_skip_receding_behind and obs.receding_behind:
+                slow = False
+            if slow:
                 causes.append(_Cause(LEVEL_WARNING, REASON_OBSTACLE_PROXIMITY,
                                      f'움직이는 장애물 {obs.clearance:.2f} m, 저속 '
                                      f'{c.dynamic_slow_speed_limit:.2f} m/s (track {obs.track_id})',
