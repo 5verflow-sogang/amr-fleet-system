@@ -1,4 +1,4 @@
-# LiDAR·IMU 전처리 필터 파라미터 (scan_filter, imu_filter 노드)
+# LiDAR·IMU·Depth 전처리 필터 파라미터 (scan_filter, imu_filter, depth_cloud 노드)
 /**/scan_filter:
   ros__parameters:
     # 거리 필터 [m]. 센서 한계(LiDAR 0.12~25 m)와 이 값 중 좁은 쪽을 쓴다
@@ -44,3 +44,17 @@
     # 보정 후 각속도 분산 하한 [(rad/s)²]. 정속에선 오차가 노이즈 σ와 같지만 가감속 순간에 조금 커져서,
     # 완만한 주행 실측 σ 0.00035에 맞춘다: 보고 σ ≈ √(2e-4² + 1e-7) ≈ 0.00037 (분산비 3.0 → 약 0.9, 인계 기준 0.5~2)
     gyro_variance_floor: 1.0e-7
+
+/**/depth_cloud:
+  ros__parameters:
+    # 거리 필터 [m] (깊이 z). sensors.yaml rgbd_camera 클립 거리(0.3~10 m)와 같게 둔다
+    range_min: 0.3
+    range_max: 10.0
+    # 가로·세로 2픽셀마다 하나 (640×480 → 320×240). 10 m에서 픽셀 간격 약 6 cm라 복셀 5 cm와 비슷하다
+    stride: 2
+    # 복셀 한 변 [m]. costmap 해상도(0.05 m)와 같게
+    voxel_size: 0.05
+    # 1이면 점 하나짜리 복셀도 남긴다. 올리면 튄 픽셀은 지워지지만 먼 면도 같이 지워진다 (depth_cloud.py)
+    min_points_per_voxel: 1
+    # Depth 30 Hz 중 이 주기까지만 처리 [Hz]. Nav2 costmap 갱신(5~10 Hz)보다 자주 낼 필요가 없다
+    max_rate_hz: 10.0
