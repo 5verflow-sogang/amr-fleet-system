@@ -3,6 +3,7 @@
     ros2 launch amr_gazebo dynamic_obstacles.launch.py                    # yaml의 5개 전부
     ros2 launch amr_gazebo dynamic_obstacles.launch.py only:=forklift_1   # 1개만 (쉼표로 여러 개)
     ros2 launch amr_gazebo dynamic_obstacles.launch.py seed:=42           # 속도·무작위 경로 재현
+    ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=<직원.yaml> name:=staff_obstacles   # 두 번째 파일을 같이 띄울 때
 
 ROS 토픽 (<id> = yaml의 id):
     /dynamic_obstacles/<id>/ground_truth/odom  nav_msgs/Odometry  Gazebo → ROS (진짜 위치·속도, frame "world", 평가 전용)
@@ -19,7 +20,8 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 # yaml의 type → models/ 안의 모델
-MODELS = {'worker': 'dynamic_worker', 'forklift': 'dynamic_forklift', 'robot': 'dynamic_robot'}
+MODELS = {'worker': 'dynamic_worker', 'forklift': 'dynamic_forklift', 'robot': 'dynamic_robot',
+          'customer': 'dynamic_customer'}
 
 
 def _obstacles(context):
@@ -28,6 +30,7 @@ def _obstacles(context):
         or os.path.join(share, 'config', 'dynamic_obstacles.yaml')
     only = [s.strip() for s in LaunchConfiguration('only').perform(context).split(',') if s.strip()]
     use_sim_time = LaunchConfiguration('use_sim_time').perform(context).lower() == 'true'
+    name = LaunchConfiguration('name').perform(context)
 
     with open(config, encoding='utf-8') as f:
         specs = yaml.safe_load(f)['obstacles']
@@ -61,7 +64,7 @@ def _obstacles(context):
         Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
-            name='dynamic_obstacles_bridge',
+            name=f'{name}_bridge',
             arguments=bridge_args,
             remappings=remappings,
             parameters=[{'use_sim_time': use_sim_time}],
@@ -70,7 +73,7 @@ def _obstacles(context):
         Node(
             package='amr_gazebo',
             executable='dynamic_obstacles_node.py',
-            name='dynamic_obstacles',
+            name=name,
             parameters=[{
                 'config': config,
                 'seed': int(LaunchConfiguration('seed').perform(context)),
@@ -94,5 +97,8 @@ def generate_launch_description():
             'seed', default_value='0',
             description='속도·무작위 경로 seed. 0이면 실행마다 무작위'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
+        DeclareLaunchArgument(
+            'name', default_value='dynamic_obstacles',
+            description='이동 노드 이름 (브리지는 <name>_bridge). 파일 두 개(손님·직원)를 같이 띄울 때 하나를 바꾼다'),
         OpaqueFunction(function=_obstacles),
     ])

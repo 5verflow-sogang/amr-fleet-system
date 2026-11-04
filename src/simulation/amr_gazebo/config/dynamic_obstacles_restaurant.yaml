@@ -1,0 +1,96 @@
+# 식당(푸드코트) 월드 동적 장애물 - 평상시 손님 7명 (worlds/restaurant.sdf, 프로토타입)
+# 손님만 담는다: 혼잡도 노드(amr_fleet_manager congestion, #296)가 이 파일의 장애물을 전부 "사람"으로 센다.
+# 직원은 dynamic_obstacles_restaurant_staff.yaml, 피크 몰림은 dynamic_obstacles_restaurant_peak.yaml
+#
+#   C=$(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/config
+#   ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant.yaml        # 평상시 손님 (또는 _peak.yaml)
+#   ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant_staff.yaml name:=staff_obstacles   # 직원
+#
+# 형식·이동 패턴은 dynamic_obstacles.yaml(물류센터)과 같다. 서 있는 손님·앉은 손님은 정지 모델로 월드에 있다.
+# 경로는 통로 가운데만 지난다 (restaurant.sdf 머리말 배치도). 통로 가운데 좌표:
+#   세로 통로 x -10.5(셀프 코너 앞), -7.275, -4.225, -1.175, 1.875, 5.43(4인석-2인석 사이)
+#   가로 통로 y 3.45(매장 앞), 0.55, -2.45, -5.6(남쪽)
+# 가로 통로는 테이블 정차 자리(stations_restaurant.yaml t01~t15)를 비켜 조금 옮겼다. 매장 앞 통로(y 3.45)만은 폭이 좁아
+# 픽업·테이블 정차 로봇과 겹칠 수 있다 (혼잡 구간). 손님은 로봇을 피하지 않는다 (obstacle_motion은 경로만 따른다)
+# random은 경유점이 이루는 사각 영역 안을 직선으로 다니므로 테이블이 없는 남쪽 빈 곳에만 쓴다.
+# 사람 걸음 0.4~1.0 m/s (식당 안이라 물류센터 작업자보다 조금 넓게).
+
+obstacles:
+  - id: customer_1
+    type: customer
+    pattern: straight
+    speed_range_mps: [0.4, 0.9]
+    spawn: {x: -10.0, y: 3.45, yaw: 0.0}
+    waypoints:
+      - {x: -10.0, y: 3.45}
+      - {x: 6.0, y: 3.45}
+    note: "매장 앞 통로를 동서로 왕복 (픽업하는 로봇과 겹치는 혼잡 구간)"
+
+  - id: customer_2
+    type: customer
+    pattern: straight
+    speed_range_mps: [0.4, 0.9]
+    spawn: {x: -4.225, y: -5.6, yaw: 1.5707963}
+    waypoints:
+      - {x: -4.225, y: -5.6}
+      - {x: -4.225, y: 3.45}
+    note: "세로 통로 x -4.225 남북 왕복 (입구 쪽 → 매장)"
+
+  - id: customer_3
+    type: customer
+    pattern: curve
+    speed_range_mps: [0.4, 0.9]
+    spawn: {x: -1.175, y: -5.6, yaw: 1.5707963}
+    waypoints:
+      - {x: -1.175, y: -5.6}
+      - {x: -1.175, y: -2.5}
+      - {x: -1.175, y: 0.0}
+      - {x: -0.85, y: 0.5}
+      - {x: -0.4, y: 0.55}
+      - {x: 1.4, y: 0.55}
+      - {x: 1.8, y: 0.8}
+      - {x: 1.875, y: 1.3}
+      - {x: 1.875, y: 3.45}
+    note: "퇴식구 쪽에서 가운데 가로 통로를 거쳐 매장 앞으로 (교차로 두 곳). 모서리는 경유점을 촘촘히 둬 곡선이 테이블 쪽으로 튀지 않게 했다"
+
+  - id: customer_4
+    type: customer
+    pattern: straight
+    speed_range_mps: [0.4, 0.9]
+    spawn: {x: -10.5, y: 0.55, yaw: 0.0}
+    waypoints:
+      - {x: -10.5, y: 0.55}
+      - {x: 5.43, y: 0.55}
+    note: "가운데 가로 통로 y 0.55 동서 왕복 (셀프 코너 앞 → 동쪽 통로)"
+
+  - id: customer_5
+    type: customer
+    pattern: straight
+    speed_range_mps: [0.5, 1.0]
+    spawn: {x: 5.43, y: -5.6, yaw: 1.5707963}
+    waypoints:
+      - {x: 5.43, y: -5.6}
+      - {x: 5.43, y: 3.45}
+    note: "동쪽 세로 통로 (4인석과 2인석 사이). 충전소 앞을 지난다"
+
+  - id: customer_6
+    type: customer
+    pattern: random
+    speed_range_mps: [0.4, 0.8]
+    spawn: {x: -6.0, y: -5.6, yaw: 0.0}
+    waypoints:
+      - {x: -8.0, y: -6.0}
+      - {x: 3.5, y: -6.0}
+      - {x: 3.5, y: -5.2}
+      - {x: -8.0, y: -5.2}
+    note: "남쪽 빈 곳(입구~퇴식구)에서 무작위. 위 4점은 활동 범위"
+
+  - id: customer_7
+    type: customer
+    pattern: straight
+    speed_range_mps: [0.4, 0.9]
+    spawn: {x: -7.275, y: -2.45, yaw: 0.0}
+    waypoints:
+      - {x: -7.275, y: -2.45}
+      - {x: 1.875, y: -2.45}
+    note: "아래 가로 통로 y -2.45 동서 왕복"
