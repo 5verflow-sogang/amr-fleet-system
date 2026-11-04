@@ -15,7 +15,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
 
-from amr_odometry.depth_cloud import decode_depth, depth_to_cloud, DepthCloudConfig
+from amr_odometry.depth_cloud import decode_depth, depth_to_cloud, DepthCloudConfig, rate_limited
 
 XYZ_FIELDS = [PointField(name=n, offset=4 * i, datatype=PointField.FLOAT32, count=1)
               for i, n in enumerate('xyz')]
@@ -64,12 +64,13 @@ class DepthCloudNode(Node):
         if self.k is None:
             return
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        if self.max_rate_hz > 0 and self.last_stamp is not None and stamp - self.last_stamp < 0.99 / self.max_rate_hz:
+        if rate_limited(stamp, self.last_stamp, self.max_rate_hz):
             return
         self.last_stamp = stamp
         t0 = time.perf_counter()
         try:
-            depth = decode_depth(bytes(msg.data), msg.encoding, msg.width, msg.height, msg.step)
+            depth = decode_depth(bytes(msg.data), msg.encoding, msg.width, msg.height, msg.step,
+                                 bool(msg.is_bigendian))
         except ValueError as e:
             self.get_logger().warn(str(e), throttle_duration_sec=10.0)
             return

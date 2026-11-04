@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from amr_odometry.depth_cloud import (
-    decode_depth, depth_to_cloud, depth_to_points, DepthCloudConfig, voxel_downsample,
+    decode_depth, depth_to_cloud, depth_to_points, DepthCloudConfig, rate_limited, voxel_downsample,
 )
 
 # sensors.yaml rgbd_camera: 640×480, 수평 FOV 87° → fx = 320 / tan(43.5°) ≈ 337.2
@@ -92,6 +92,8 @@ def test_decode_rejects_bad_input():
     with pytest.raises(ValueError):
         decode_depth(b'\0' * 12, 'rgb8', 2, 2, 6)
     with pytest.raises(ValueError):
+        decode_depth(b'\0' * 8, '32FC1', 2, 1, 8, is_bigendian=True)
+    with pytest.raises(ValueError):
         decode_depth(b'\0' * 8, '32FC1', 3, 1, 8)         # step이 width보다 짧다
 
 
@@ -101,3 +103,15 @@ def test_decode_rejects_bad_input():
 def test_config_validation(kwargs):
     with pytest.raises(ValueError):
         DepthCloudConfig(**kwargs)
+
+
+def test_rate_limit_skips_frames_closer_than_period():
+    assert not rate_limited(0.0, None, 10.0)            # 첫 영상은 처리
+    assert rate_limited(1.05, 1.0, 10.0)                # 0.05 s < 0.1 s → 건너뜀
+    assert not rate_limited(1.1, 1.0, 10.0)             # 한 주기 지남
+    assert not rate_limited(1.01, 1.0, 0.0)             # 0이면 전부 처리
+
+
+def test_rate_limit_does_not_stall_when_clock_goes_back():
+    # /clock이 다시 시작해 시각이 뒤로 가면 건너뛰지 않고 처리한다 (last_stamp를 새로 잡게)
+    assert not rate_limited(0.2, 120.0, 10.0)

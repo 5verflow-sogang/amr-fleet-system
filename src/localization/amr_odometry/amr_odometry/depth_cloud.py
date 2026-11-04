@@ -36,8 +36,22 @@ class DepthCloudConfig:
             raise ValueError(f'min_points_per_voxel은 1 이상이어야 한다: {self.min_points_per_voxel}')
 
 
-def decode_depth(data: bytes, encoding: str, width: int, height: int, step: int) -> np.ndarray:
-    """sensor_msgs/Image 버퍼를 (height, width) float32 깊이 [m]로. 32FC1(m)과 16UC1(mm)만 받는다."""
+def rate_limited(stamp: float, last_stamp, max_rate_hz: float) -> bool:
+    """영상 시각 stamp [s]를 건너뛸지. 직전 처리 시각에서 1 / max_rate_hz가 안 지났으면 True.
+
+    max_rate_hz가 0 이하이거나 처음 받은 영상이면 False. 시각이 뒤로 가면(/clock 다시 시작) 거르지 않는다:
+    stamp − last_stamp가 음수인 동안 계속 건너뛰면 예전 시각을 따라잡을 때까지 아무것도 안 낸다 (#267 연우 리뷰).
+    """
+    if max_rate_hz <= 0 or last_stamp is None:
+        return False
+    return 0.0 <= stamp - last_stamp < 0.99 / max_rate_hz
+
+
+def decode_depth(data: bytes, encoding: str, width: int, height: int, step: int,
+                 is_bigendian: bool = False) -> np.ndarray:
+    """sensor_msgs/Image 버퍼를 (height, width) float32 깊이 [m]로. 32FC1(m)과 16UC1(mm), little-endian만 받는다."""
+    if is_bigendian:
+        raise ValueError('big-endian depth 영상은 지원하지 않는다 (Gazebo는 little-endian)')
     if encoding == '32FC1':
         dtype, scale = np.float32, None
     elif encoding == '16UC1':
