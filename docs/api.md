@@ -256,7 +256,10 @@ zones:
 
 **할당 반영** (`amr_fleet_core.make_congestion_cost`)
 
-`congestion_cost = 직선거리 + λ × Σ_z (value_z × 로봇 → 작업 시작점 선분이 구역 z 안을 지나는 길이)` (m). `fleet_manager`의 `assignment.cost_fn: congestion`(launch 인자 `cost_fn:=congestion`)으로 켜고 `euclidean`(기본)으로 끈다. λ는 `assignment.congestion_weight`(기본 3.0, 켬/끔 측정으로 다시 정한다). 켠 쪽만 `/fleet/congestion`을 구독한다.
+`congestion_cost = 직선거리 + λ × Σ_z (value_z × 로봇 → 작업 시작점 선분이 구역 z 안을 지나는 길이)` (m). `fleet_manager`의 `assignment.cost_fn: congestion`(launch 인자 `cost_fn:=congestion`)으로 켜고 `euclidean`(기본)으로 끈다. λ는 `assignment.congestion_weight`(기본 3.0). 시간으로 보면 λ = 평소 속도 / 혼잡 구역 속도 − 1이라(속도 필터 55%만이면 0.8), 켬/끔 측정에서 혼잡 구역 실제 속도로 다시 정한다. 켠 쪽만 `/fleet/congestion`을 구독하고, `assignment.congestion_timeout_s`(3 s) 넘게 못 받으면 직선 거리로 돌아간다(`assignments.csv`에 실제로 쓴 쪽이 남는다).
+
+- `load_balance`는 할당 수를 먼저 보고 비용은 동률일 때만 봐서 혼잡도가 거의 안 먹힌다. 1-1 시연은 `nearest`(기본)나 `hungarian`으로 한다
+- 혼잡 구역은 겹치지 않게 정한다. 겹치면 사람을 양쪽에서 세고 벌점도 두 번 붙는다
 
 **가짜 값으로 개발하기** (노드가 나오기 전, 11/5 ~ 11/6)
 

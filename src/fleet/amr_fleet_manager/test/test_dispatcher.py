@@ -40,14 +40,15 @@ def test_unknown_cost_fn_rejected():
         make(cost_fn='congestion', congestion_weight=-1.0)
 
 
-def _crowded_choice(**kwargs):
-    # 시연 1-1: 가까운 amr_01(5 m)은 손님이 몰린 구역(x 2~4)을 지나야 하고, amr_02(6 m)는 안 지난다
+def _crowded_choice(at=0.0, **kwargs):
+    # 시연 1-1: 가까운 amr_01(5 m)은 손님이 몰린 구역(x 2~4)을 지나야 하고, amr_02(6 m)는 안 지난다.
+    # 혼잡도는 0 s에 받고, at 초에 할당한다
     d = make(**kwargs)
-    d.update_robot(robot('amr_01', (0.0, 0.0)), '', 0.0)
-    d.update_robot(robot('amr_02', (5.0, 6.0)), '', 0.0)
-    d.set_congestion([((2.0, 4.0, -1.0, 1.0), 1.0)])
+    d.update_robot(robot('amr_01', (0.0, 0.0)), '', at)
+    d.update_robot(robot('amr_02', (5.0, 6.0)), '', at)
+    d.set_congestion([((2.0, 4.0, -1.0, 1.0), 1.0)], 0.0)
     d.add_task(task('t1', (5.0, 0.0)))
-    commands, rows = d.assign(0.0)
+    commands, rows = d.assign(at)
     return commands[0].robot_id, rows[0]
 
 
@@ -60,6 +61,16 @@ def test_euclidean_ignores_congestion():
     # 끈 쪽(기본): 혼잡도를 넣어도 가까운 로봇
     robot_id, row = _crowded_choice()
     assert (robot_id, row.cost_fn, row.cost) == ('amr_01', 'euclidean', pytest.approx(5.0))
+
+
+def test_stale_congestion_falls_back_to_distance():
+    # 혼잡도 노드가 죽어 congestion_timeout_s 넘게 안 오면 마지막 값으로 벌점을 주지 않는다.
+    # assignments.csv에는 실제로 쓴 비용 함수가 남는다 (켬/끔 측정에서 섞인 호출을 가려내게)
+    robot_id, row = _crowded_choice(at=3.5, cost_fn='congestion', congestion_timeout_s=3.0)
+    assert (robot_id, row.cost_fn, row.cost) == ('amr_01', 'euclidean', pytest.approx(5.0))
+    assert _crowded_choice(at=2.9, cost_fn='congestion', congestion_timeout_s=3.0)[0] == 'amr_02'
+    with pytest.raises(ValueError):
+        make(cost_fn='congestion', congestion_timeout_s=0.0)
 
 
 def test_no_call_without_tasks_or_robots():

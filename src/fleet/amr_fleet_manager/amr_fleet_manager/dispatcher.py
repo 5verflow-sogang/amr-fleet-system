@@ -50,6 +50,8 @@ class DispatcherConfig:
     # 혼잡도는 set_congestion으로 넣는다(노드가 /fleet/congestion을 구독). 식당 시연 1-1 켬/끔 비교
     cost_fn: str = 'euclidean'
     congestion_weight: float = 3.0
+    # 혼잡도를 이 시간 [s] 동안 못 받으면 직선 거리로 돌아간다. 혼잡도 노드가 죽었을 때 마지막 값으로 계속 벌점을 주지 않게
+    congestion_timeout_s: float = 3.0
 
     def __post_init__(self):
         if self.algorithm not in ALGORITHMS:
@@ -58,6 +60,8 @@ class DispatcherConfig:
             raise ValueError(f'알 수 없는 비용 함수: {self.cost_fn} (가능: {list(COST_FNS)})')
         if not self.congestion_weight >= 0:
             raise ValueError(f'congestion_weight는 0 이상이어야 한다: {self.congestion_weight}')
+        if not self.congestion_timeout_s > 0:
+            raise ValueError(f'congestion_timeout_s는 0보다 커야 한다: {self.congestion_timeout_s}')
         if self.resend_interval_s <= 0:
             raise ValueError(f'resend_interval_s는 0보다 커야 한다: {self.resend_interval_s}')
         if self.max_resends < 0:
@@ -136,7 +140,9 @@ class Dispatcher:
 
     def __post_init__(self):
         self._assign_fn = ALGORITHMS[self.config.algorithm]
-        self._cost_fn: CostFn = euclidean_cost
+        # 혼잡도 반영 비용과 그 혼잡도를 받은 시각 (cost_fn이 congestion일 때만)
+        self._congestion_cost: Optional[CostFn] = None
+        self._congestion_at = -math.inf
         # 넣은 순서를 유지한다 (작업표 방송 순서)
         self.tasks: dict[str, TaskEntry] = {}
         self.robots: dict[str, RobotEntry] = {}
@@ -149,10 +155,17 @@ class Dispatcher:
 
     # ---- 입력 ----
 
-    def set_congestion(self, areas: list[CongestedArea]) -> None:
+    def set_congestion(self, areas: list[CongestedArea], now: float) -> None:
         """구역별 혼잡도 (/fleet/congestion 한 장). cost_fn이 congestion일 때만 할당에 쓴다."""
         if self.config.cost_fn == 'congestion':
-            self._cost_fn = make_congestion_cost(areas, self.config.congestion_weight)
+            self._congestion_cost = make_congestion_cost(areas, self.config.congestion_weight)
+            self._congestion_at = now
+
+    def _current_cost_fn(self, now: float) -> tuple[str, CostFn]:
+        """이번 할당에 쓸 (이름, 비용 함수). 혼잡도를 아직 못 받았거나 오래됐으면 euclidean."""
+        if self._congestion_cost is not None and now - self._congestion_at <= self.config.congestion_timeout_s:
+            return 'congestion', self._congestion_cost
+        return 'euclidean', euclidean_cost
 
     def add_task(self, info: TaskInfo, payload: Any = None) -> bool:
         """새 작업을 큐에 넣는다. 같은 task_id가 이미 있으면 무시하고 False."""
@@ -265,7 +278,7 @@ class Dispatcher:
         if not queued or not candidates:
             return [], []
 
-        cost_fn = self._cost_fn
+        cost_name, cost_fn = self._current_cost_fn(now)
         result = self._assign_fn(queued, candidates, cost_fn)
         call_id = self._next_call_id
         self._next_call_id += 1
@@ -287,11 +300,11 @@ class Dispatcher:
             self._pending[assignment_id] = _PendingAck(robot_id, info.task_id, now)
             commands.append(Outgoing(assignment_id, robot_id, info.task_id, first=True))
             rows.append(AssignmentRow(
-                call_id, self.config.algorithm, self.config.cost_fn, info.task_id, robot_id,
+                call_id, self.config.algorithm, cost_name, info.task_id, robot_id,
                 cost_fn(by_id[robot_id], info)))
         for task_id in result.unassigned:
             rows.append(AssignmentRow(
-                call_id, self.config.algorithm, self.config.cost_fn, task_id, '', None))
+                call_id, self.config.algorithm, cost_name, task_id, '', None))
         return commands, rows
 
     def due_resends(self, now: float) -> tuple[list[Outgoing], list[str]]:

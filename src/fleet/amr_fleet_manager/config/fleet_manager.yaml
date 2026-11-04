@@ -19,10 +19,14 @@ fleet_manager:
       station_clearance_m: 1.0
       # 비용 함수. euclidean: 로봇 → 작업 시작점 직선 거리 /
       # congestion: 직선 거리 + congestion_weight × Σ(혼잡도 × 그 직선이 혼잡 구역 안을 지나는 길이) (식당 시연 1-1).
-      # congestion이면 /fleet/congestion(혼잡도 노드)을 구독한다. 아직 못 받았으면 euclidean과 같다
+      # congestion이면 /fleet/congestion(혼잡도 노드)을 구독한다. 아직 못 받았으면 euclidean과 같다.
+      # load_balance는 할당 수를 먼저 보고 비용은 동률일 때만 봐서 혼잡도가 거의 안 먹힌다. 시연은 nearest·hungarian
       cost_fn: euclidean
-      # 혼잡도 1.0인 구역 1 m를 (1 + 이 값) m로 본다. 켬/끔 측정(작업 5)으로 다시 정한다
+      # 혼잡도 1.0인 구역 1 m를 (1 + 이 값) m로 본다. 시간으로 보면 (평소 속도 / 혼잡 구역 속도 − 1)이다
+      # (속도 필터 55%만이면 0.8). 3.0은 멈춤·우회까지 감안한 시연용 값이고, 켬/끔 측정(작업 5)으로 다시 정한다
       congestion_weight: 3.0
+      # 혼잡도를 이 시간 동안 못 받으면 euclidean으로 돌아간다 (실제 시간, s). 혼잡도 노드는 2 Hz
+      congestion_timeout_s: 3.0
     # 이 시간 동안 RobotState가 안 오면 할당 후보에서 뺀다 (실제 시간, s)
     robot_timeout_s: 3.0
     resend:

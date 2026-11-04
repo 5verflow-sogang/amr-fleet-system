@@ -174,8 +174,9 @@
 | `assignment.min_battery_percent` | `20.0` | 할당 후보 배터리 하한 (%) |
 | `assignment.failed_retries` | `1` | FAILED 보고된 작업을 큐로 되돌려 다시 할당하는 횟수. 넘으면 실패로 남긴다. 분산 재경매(최대 1회)와 같게 둔다 |
 | `assignment.reclaim_timeout_s` | `5.0` | 작업을 맡은 로봇의 `RobotState`가 이 시간 동안 끊기면 로봇이 죽은 것으로 보고 작업을 회수해 다시 할당한다 (실제 시간, s). 0이면 끄기. `robot_timeout_s` 이상 |
-| `assignment.cost_fn` | `euclidean` | 할당 비용. `euclidean` / `congestion`(직선 거리 + 혼잡 구역 통과 벌점, `amr_fleet_core.make_congestion_cost`). `congestion`이면 `/fleet/congestion`을 구독하고, 아직 못 받았으면 `euclidean`과 같다. launch 인자 `cost_fn`. `assignments.csv`의 `cost_fn` 열에 남는다 |
-| `assignment.congestion_weight` | `3.0` | 혼잡도 1.0인 구역 1 m를 (1 + 이 값) m로 본다. 켬/끔 측정으로 다시 정한다. launch 인자 `congestion_weight` |
+| `assignment.cost_fn` | `euclidean` | 할당 비용. `euclidean` / `congestion`(직선 거리 + 혼잡 구역 통과 벌점, `amr_fleet_core.make_congestion_cost`). `congestion`이면 `/fleet/congestion`을 구독하고, 아직 못 받았거나 `congestion_timeout_s` 넘게 끊기면 `euclidean`으로 할당한다. `assignments.csv`의 `cost_fn` 열에 호출마다 실제로 쓴 쪽이 남는다. launch 인자 `cost_fn`. `load_balance`는 할당 수를 먼저 보고 비용은 동률일 때만 봐서 혼잡도가 거의 안 먹힌다(시연은 `nearest`·`hungarian`) |
+| `assignment.congestion_weight` | `3.0` | 혼잡도 1.0인 구역 1 m를 (1 + 이 값) m로 본다. 시간으로 보면 (평소 속도 / 혼잡 구역 속도 − 1)이고, 속도 필터 55%만이면 0.8이다. 3.0은 멈춤·우회까지 감안한 시연용 값으로, 켬/끔 측정으로 다시 정한다. launch 인자 `congestion_weight` |
+| `assignment.congestion_timeout_s` | `3.0` | 혼잡도를 이 시간 동안 못 받으면 `euclidean`으로 돌아간다 (실제 시간, s). 혼잡도 노드가 죽었을 때 마지막 값으로 계속 벌점을 주지 않게 |
 | `assignment.station_clearance_m` | `1.0` | 스테이션 예약 (m). 맡겨진 작업의 픽업·하역 위치에서 이 거리 안을 쓰는 작업은 그 작업이 끝날 때까지 큐에서 기다린다. 큐 안에서 겹치면 우선순위가 높은 하나만 맡긴다. 같은 도크로 가는 두 작업을 동시에 내보내 두 로봇이 한 자리에서 막혔다 (11/2). 0이면 끄기 (`fleet_fake`는 연구 1 조건대로 0) |
 | `robot_timeout_s` | `3.0` | 이 시간 동안 `RobotState`가 없으면 후보에서 뺀다 (s) |
 | `resend.interval_s` | `1.0` | Ack 없을 때 재전송 간격 (s) launch 인자 `resend_interval_s`(연구 1 재시도 간격 비교) |

@@ -76,7 +76,7 @@ amr_fleet_core/assignment/
 **비용 함수** `CostFn = Callable[[RobotInfo, TaskInfo], float]`
 
 - 기본값 `euclidean_cost`: 로봇 → `start_xy` 직선 거리.
-- `make_congestion_cost(areas, weight)`: 직선 거리 + `weight × Σ(구역 혼잡도 × 로봇 → start_xy 선분이 그 구역 안을 지나는 길이)` (식당 시연 1-1). `areas`는 `/fleet/congestion`의 (구역 범위, 혼잡도) 목록이다. 혼잡도 1.0인 구역 1 m를 (1 + weight) m로 본다. 실제 경로가 아닌 직선이라 트인 홀을 가정한다.
+- `make_congestion_cost(areas, weight)`: 직선 거리 + `weight × Σ(구역 혼잡도 × 로봇 → start_xy 선분이 그 구역 안을 지나는 길이)` (식당 시연 1-1). `areas`는 `/fleet/congestion`의 (구역 범위, 혼잡도) 목록이다. 혼잡도 1.0인 구역 1 m를 (1 + weight) m로 본다. 실제 경로가 아닌 직선이라 트인 홀을 가정한다. `assign_load_balance`는 load를 먼저 보고 비용은 동률일 때만 보므로 이 비용의 효과가 작다.
 - 픽업 → 목적지 구간은 어느 로봇이 맡아도 같으므로 할당 비용에 넣지 않는다. 총 이동거리 지표는 `TaskStatus.distance_traveled`로 따로 잰다.
 - 나중에 Nav2 경로 길이 비용으로 바꿀 수 있도록 인자로 받는다.
 

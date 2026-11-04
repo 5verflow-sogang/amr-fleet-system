@@ -67,6 +67,7 @@ class FleetManager(Node):
             station_clearance_m=self.declare_parameter('assignment.station_clearance_m', 1.0).value,
             cost_fn=self.declare_parameter('assignment.cost_fn', 'euclidean').value,
             congestion_weight=self.declare_parameter('assignment.congestion_weight', 3.0).value,
+            congestion_timeout_s=self.declare_parameter('assignment.congestion_timeout_s', 3.0).value,
         ))
         heartbeat_period_s = self.declare_parameter('heartbeat_period_s', 0.2).value
         task_table_period_s = self.declare_parameter('task_table_period_s', 1.0).value
@@ -168,7 +169,7 @@ class FleetManager(Node):
             self._assign()
 
     def _on_congestion(self, msg: ZoneCongestionArray):
-        self._dispatcher.set_congestion([(tuple(z.area), z.value) for z in msg.zones])
+        self._dispatcher.set_congestion([(tuple(z.area), z.value) for z in msg.zones], time.monotonic())
 
     def _on_robot_mode(self, msg: RobotFleetMode):
         decentral = msg.mode == FleetHeartbeat.MODE_DECENTRALIZED
