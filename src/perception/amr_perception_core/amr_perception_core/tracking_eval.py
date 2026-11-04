@@ -418,10 +418,13 @@ class TrackingEvaluator:
                             'is_dynamic': int(tr.is_dynamic),
                             'tr_x': tr.x, 'tr_y': tr.y, 'tr_vx': tr.vx, 'tr_vy': tr.vy,
                             'pos_err': d, 'vel_err': float(np.linalg.norm(verr)),
-                            'speed_err': tspeed - gspeed})
+                            'speed_err': tspeed - gspeed, 'radius': float(tr.radius)})
                 push(gid, 'pos', d)
                 pos_err_all[gid].append(d)
                 push(gid, 'vel', row['vel_err'])
+                if in_range:
+                    # P2는 센서 범위 안 짝만 (3막 재측정부터). 그 밖은 LiDAR 점이 적어 DWA·안전 노드가 쓰지 않는 거리다
+                    push(gid, 'vel_in_range', row['vel_err'])
                 push(gid, 'speed', row['speed_err'])
                 if frame.robot_xy is not None and rdist and rdist > 1e-6:
                     # 센서 → 물체 방향 성분: 음수면 트랙이 센서 쪽으로 치우침 (군집 중심 치우침)
@@ -612,7 +615,7 @@ class TrackingEvaluator:
     def _summarize(self, frames, gids, acc, history, episodes,
                    per_frame_false, per_frame_dup, per_frame_tracks, per_frame_dyn) -> dict:
         cfg = self.config
-        keys = ['pos', 'vel', 'speed', 'radial', 'heading', 'nees_pos', 'nees_vel']
+        keys = ['pos', 'vel', 'vel_in_range', 'speed', 'radial', 'heading', 'nees_pos', 'nees_vel']
         keys += [f'{p}_{h:g}' for h in cfg.horizons for p in ('pred', 'hold')]
 
         def block(values: Dict[str, list]) -> dict:
@@ -635,6 +638,7 @@ class TrackingEvaluator:
             obj.update({
                 'frames_in_range': len(in_range),
                 'frames_matched': sum(1 for r in hist if r[3] is not None),
+                'frames_matched_in_range': sum(1 for r in in_range if r[3] is not None),
                 'match_rate_in_range': (
                     None if not in_range
                     else sum(1 for r in in_range if r[3] is not None) / len(in_range)),
@@ -649,10 +653,12 @@ class TrackingEvaluator:
         overall.update({
             'frames_in_range': total_in_range,
             'frames_matched': sum(o['frames_matched'] for o in per_object.values()),
+            'frames_matched_in_range': sum(o['frames_matched_in_range'] for o in per_object.values()),
             'id_switches': sum(o['id_switches'] for o in per_object.values()),
         })
+        # 분자도 범위 안 짝만 (전에는 범위 밖 짝까지 세어 1을 넘을 수 있었다)
         overall['match_rate_in_range'] = (None if not total_in_range else
-                                          overall['frames_matched'] / total_in_range)
+                                          overall['frames_matched_in_range'] / total_in_range)
 
         valid = [e for e in episodes if not e['censored'] and not e['carried']]
         seen = [e for e in valid if e['t_seen'] is not None]
@@ -719,7 +725,7 @@ def format_summary_ko(summary: dict) -> str:
             f'{_f(b[f"pred_{h:g}"]["rmse"])} ({_f(b[f"hold_{h:g}"]["rmse"])})'
             for h in cfg['horizons'])
         return (f'| {name} | {_f(b.get("match_rate_in_range"), ".0f", 100)}% '
-                f'({b["frames_matched"]}/{b["frames_in_range"]}) | '
+                f'({b["frames_matched_in_range"]}/{b["frames_in_range"]}) | '
                 f'{_f(b["pos"]["rmse"], ".3f")} | '
                 f'{_f(b["radial"]["mean"], ".3f")} | {_f(b["vel"]["rmse"], ".3f")} | '
                 f'{_f(b["heading"]["mean"], ".1f")} | {preds} | '

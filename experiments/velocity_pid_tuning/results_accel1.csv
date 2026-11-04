@@ -1,0 +1,7 @@
+label,mass_kg,enabled,kp,ki,kd,target_mps,max_linear_accel,peak_v,overshoot_pct,settling_time_s,ss_error,n_samples
+off,0.0,false,0.0,0.0,0.0,0.5,1.0,0.5,0.0,0.48,-0.0,600
+default,0.0,true,0.5,1.0,0.0,0.5,1.0,0.5397,7.94,1.69,0.0008,600
+off,10.0,false,0.0,0.0,0.0,0.5,1.0,0.5,0.0,0.48,0.0,600
+default,10.0,true,0.5,1.0,0.0,0.5,1.0,0.542,8.4,1.63,0.0008,600
+off,25.0,false,0.0,0.0,0.0,0.5,1.0,0.5,0.0,0.48,-0.0,601
+default,25.0,true,0.5,1.0,0.0,0.5,1.0,0.5087,1.73,0.0,0.0002,601

@@ -137,8 +137,7 @@ local_costmap:
       always_send_full_costmap: False
 
 # --- 1주차 기준선 플래너: NavFn (우리 A*와 성능·경로 비교용 baseline) ---
-# TODO(2주차): planner_plugins에 amr_nav2_plugins의 A* 플러그인을 추가하고
-# 두 플래너를 나란히 비교(경로 길이·계획 소요 시간·장애물 여유 거리)한다.
+# 우리 A*(아래 AStar 블록)와의 비교(경로 길이·계획 소요 시간·장애물 여유 거리)는 docs/algorithms/navigation.md 3-7절.
 planner_server:
   ros__parameters:
     expected_planner_frequency: 20.0
@@ -149,6 +148,28 @@ planner_server:
       tolerance: 0.5
       use_astar: false     # NavFn 내장 A* 모드는 끈다. 우리 A*는 별도 플러그인(2주차)으로 비교
       allow_unknown: true
+    # 우리 A* (amr_nav2_plugins::AStarGlobalPlanner, docs/algorithms/navigation.md 3절). planner_plugins에는 넣지
+    # 않는다 - 기본 planner는 GridBased(NavFn) 그대로이고, nav2.launch.py planner:=astar로 고를 때만 이 블록이
+    # GridBased 자리에 들어간다(DWA를 FollowPath 이름으로 등록하는 것과 같은 방식, BT의 planner_id는 그대로)
+    AStar:
+      plugin: "amr_nav2_plugins::AStarGlobalPlanner"
+      # 8방향 이동에 맞는 허용 휴리스틱(대각선 √2 + 직선 1). euclidean도 고를 수 있다(더 느슨해서 더 많이 펼친다)
+      heuristic: "octile"
+      # 253(내접 팽창) 이상은 지나갈 수 없다 - 로봇 중심이 그 안이면 풋프린트가 장애물에 닿는다. NavFn과 같다
+      lethal_cost_threshold: 253
+      # 이동 비용 = 거리 * (1 + cost_weight * 셀 비용 / 255). NavFn의 셀 비용(COST_NEUTRAL 50 + COST_FACTOR 0.8 * 비용)과
+      # 같은 비율이 0.8 / 50 * 255 ≈ 4.1이라 4.0으로 둔다 - 0이면 inflation 가장자리를 바짝 돈다
+      cost_weight: 4.0
+      prevent_corner_cutting: True
+      # 평활화: 지름길(가장 먼 보이는 점까지 직선) + 경사 하강(Thrun). 원래 경로보다 비싼 셀로는 옮기지 않는다
+      smooth_path: True
+      smoothing_shortcut: True
+      smoothing_gradient: True
+      smoothing_weight_data: 0.1
+      smoothing_weight_smooth: 0.3
+      smoothing_max_iterations: 200
+      # 경사 하강 점 간격. 꺾인 곳이 둥글어지는 길이 ≈ 0.1 * sqrt(0.3 / 0.1) ≈ 0.17 m
+      smoothing_point_spacing_m: 0.1
 
 # --- 1주차 기준선 컨트롤러: DWB (우리 Pure Pursuit/Stanley + PID와 비교용 baseline) ---
 # 속도·가속 한계만 로봇 스펙에 맞추고, critic 가중치는 nav2 공식 튜토리얼의 기본값을

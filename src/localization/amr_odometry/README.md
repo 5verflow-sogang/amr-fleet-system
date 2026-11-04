@@ -15,7 +15,7 @@
 | Publish | `/<ns>/scan` | `sensor_msgs/msg/LaserScan` | 필터 적용 스캔 (거리·각도·아웃라이어), 10 Hz, frame `<ns>/lidar_link` |
 | Publish | `/<ns>/imu/data` | `sensor_msgs/msg/Imu` | 바이어스 보정·저역통과, 100 Hz, 각속도·가속도 공분산 채움, orientation 없음 |
 | Publish | `/<ns>/camera/depth/points` | `sensor_msgs/msg/PointCloud2` | Depth 포인트클라우드 (역투영·복셀 5 cm 다운샘플), 최대 10 Hz, xyz float32, frame `<ns>/camera_optical_frame`. **`depth_cloud:=true`일 때만** |
-| Subscribe | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 좌우 바퀴 각도 (Gazebo에서 브리지, 1 kHz) |
+| Subscribe | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 좌우 바퀴 각도 (Gazebo에서 브리지, `amr_gazebo` joint_state_throttle이 1 kHz → 50 Hz로 줄임) |
 | Subscribe | `/<ns>/scan_raw` | `sensor_msgs/msg/LaserScan` | LiDAR 원본 (amr_gazebo 브리지) |
 | Subscribe | `/<ns>/imu/data_raw` | `sensor_msgs/msg/Imu` | IMU 원본 (amr_gazebo 브리지) |
 | Subscribe | `/<ns>/camera/depth/image_raw`, `/<ns>/camera/camera_info` | `sensor_msgs/msg/Image` (32FC1·16UC1), `CameraInfo` | Depth 원본과 내부 파라미터 K (amr_gazebo 브리지, `enable_camera:=true`) |
@@ -128,7 +128,7 @@ Gazebo에는 엔코더 센서가 없어 실제 바퀴 각도에 오차를 넣는
 | `left_wheel_joint`, `right_wheel_joint` | `left_wheel_joint`, `right_wheel_joint` | 네임스페이스 접두어 없이. 끝부분으로 찾는다 |
 | `odom_topic` | `odom` | 출력 토픽 |
 | `publish_tf` | `false` | D4: EKF가 TF를 발행 |
-| `publish_rate` | 50 Hz | Gazebo `joint_states`(1 kHz)는 매번 적분하고 발행만 묶는다 |
+| `publish_rate` | 50 Hz | `joint_states`는 받을 때마다 적분하고 발행만 묶는다 (지금 입력도 50 Hz라 한 번씩 낸다) |
 | `twist_variance_floor` | 1e-4 | 정지 중 속도 공분산 하한 |
 | `encoder.ticks_per_rev` | 4096 | 명세 |
 | `encoder.wheel_radius_scale_stddev` | 0.001 | 계통 오차 σ (D9 B안, 이전 0.005) |

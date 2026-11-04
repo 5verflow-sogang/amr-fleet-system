@@ -1,0 +1,15 @@
+key,attempt,slot,run_id,url,status,conclusion,started,finished
+tracking_kpi_a -n 1 --set duration_s=120.0 --set wait_s=135.0 --label smoke,1,a,41020139674,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41020139674,dispatched,,2026-10-30T16:26:54,
+tracking_kpi_a -n 1 --set duration_s=120.0 --set wait_s=135.0 --label smoke,1,a,41020139674,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41020139674,completed,success,2026-10-30T16:26:54,2026-10-30T21:36:28
+tracking_kpi_b -n 1 --set duration_s=120.0 --set wait_s=135.0 --label smoke,1,a,41056624140,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41056624140,dispatched,,2026-10-30T21:36:36,
+tracking_kpi_b -n 1 --set duration_s=120.0 --set wait_s=135.0 --label smoke,1,a,41056624140,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41056624140,completed,success,2026-10-30T21:36:36,2026-10-30T21:46:51
+tracking_kpi_c05 -n 1 --label smoke,1,a,41057944862,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41057944862,dispatched,,2026-10-30T21:46:59,
+tracking_kpi_c05 -n 1 --label smoke,1,a,41057944862,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41057944862,completed,success,2026-10-30T21:46:59,2026-10-30T21:55:12
+tracking_kpi_c10 -n 1 --label smoke,1,a,41059017547,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41059017547,dispatched,,2026-10-30T21:55:20,
+tracking_kpi_c10 -n 1 --label smoke,1,a,41059017547,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41059017547,completed,success,2026-10-30T21:55:20,2026-10-30T22:03:32
+tracking_kpi_c15 -n 1 --label smoke,1,a,41060105901,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41060105901,dispatched,,2026-10-30T22:03:41,
+tracking_kpi_c15 -n 1 --label smoke,1,a,41060105901,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41060105901,completed,success,2026-10-30T22:03:41,2026-10-30T22:11:54
+tracking_kpi_d -n 1 --set duration_s=120.0 --set wait_s=135.0 --label smoke,1,a,41061239220,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41061239220,dispatched,,2026-10-30T22:12:02,
+tracking_kpi_d -n 1 --set duration_s=120.0 --set wait_s=135.0 --label smoke,1,a,41061239220,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41061239220,completed,success,2026-10-30T22:12:02,2026-10-30T22:21:16
+tracking_kpi_e -n 1 --label smoke,1,a,41062544054,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41062544054,dispatched,,2026-10-30T22:21:24,
+tracking_kpi_e -n 1 --label smoke,1,a,41062544054,https://github.com/5verflow-sogang/amr-fleet-system/actions/runs/41062544054,completed,success,2026-10-30T22:21:24,2026-10-30T23:10:17

@@ -8,3 +8,6 @@ params:
   robot_y: "10.5"
   duration_s: "300.0"
   wait_s: "315.0"
+  # 장애물 시드 오프셋 (tracking_kpi.yaml과 같은 기본값). GCP 워크플로는 이 파일의 params만 읽어 --set을 허용하므로
+  # 여기에도 둔다. 추적기 개발용 녹화는 --set seed_offset=1000
+  seed_offset: "0"

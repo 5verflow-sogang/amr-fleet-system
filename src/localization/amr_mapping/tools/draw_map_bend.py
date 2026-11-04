@@ -24,13 +24,15 @@ import numpy as np
 import yaml
 from PIL import Image, ImageDraw, ImageFont
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, '..'))
+sys.path.insert(0, HERE)
 from amr_mapping.gt_map import MAP_ORIGIN_IN_WORLD, rasterize  # noqa: E402
 from amr_mapping.map_quality import (  # noqa: E402
     GHOST_DISTANCE, associate, load_objects, occupied_world_points, read_pgm,
 )
+from draw_kpi_zone import ZONE  # noqa: E402  측정 구역은 draw_kpi_zone.py 한 곳에서만 정한다 (map x0, y0, x1, y1)
 
-ZONE = (-10.0, -15.0, 15.0, 5.0)   # map x0, y0, x1, y1 (draw_kpi_zone.py와 같다)
 ARROW_GAIN = 20.0
 
 

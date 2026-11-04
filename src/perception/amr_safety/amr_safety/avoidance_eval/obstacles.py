@@ -7,6 +7,9 @@
 - 작업자 1명이 x = CROSS_X 안의 한 곳에서 통로를 남북으로 왕복한다 (amr_gazebo straight 패턴)
 - 처음 위치를 건너는 선 위 아무 곳으로 두어 로봇과 만나는 시점을 바꾼다 (시작 지연과 같은 효과)
 - 시드 3개 중 1개는 원 명세 "1.0 m/s 장애물"로 고정하고, 나머지는 명세 동적 장애물 속도 범위 안에서 뽑는다
+- 작업자는 로봇을 피하지 않지만, 로봇이 멈춘 채 앞길을 막으면 그 앞에서 선다 (amr_gazebo yield_to_robots).
+  사람은 멈춘 로봇에 걸어 들어가지 않는다. 아무것도 보지 않는 작업자로 돌린 시험 30회(11/1)에서는
+  충돌 29건 중 22건이 멈춰 있는 로봇에 작업자가 걸어 들어간 것이었다
 
 형식은 amr_gazebo/config/dynamic_obstacles.yaml과 같다 (dynamic_obstacles.launch.py config:=<파일>).
 
@@ -26,6 +29,7 @@ CORRIDOR_Y = (0.8, 4.0)          # world y [m]. 통로 벽(0.4·4.4)에서 작�
 SPEED_RANGE = (0.5, 1.5)         # m/s. 원 명세 동적 장애물 속도 범위 안
 SPEC_SPEED = 1.0                 # m/s. 원 명세 "1.0 m/s 장애물 재계획 회피"
 SPEC_SPEED_EVERY = 3             # 시드 % 3 == 0이면 SPEC_SPEED로 고정
+YIELD_TO = ('amr_01',)           # 작업자가 멈춰 있으면 비키는 로봇 (시나리오 로봇 1대)
 
 
 def make_obstacles(seed: int) -> dict:
@@ -44,6 +48,7 @@ def make_obstacles(seed: int) -> dict:
         'speed_range_mps': [speed, speed],
         'spawn': {'x': x, 'y': start_y, 'yaw': round(-math.pi / 2 if southward else math.pi / 2, 4)},
         'waypoints': [{'x': x, 'y': near}, {'x': x, 'y': far}],
+        'yield_to_robots': list(YIELD_TO),
         'note': (f"avoidance_obstacles seed {seed}: x = {x}에서 {'남' if southward else '북'}쪽으로 먼저, "
                  f"{speed} m/s, 처음 y = {start_y}"),
     }]}

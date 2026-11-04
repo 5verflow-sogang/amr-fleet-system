@@ -39,6 +39,8 @@ def group(runs=('a',), failed=(), verdicts=()):
     (group(verdicts=['PASS', 'MARGINAL']), 'MARGINAL'),
     (group(failed=[{'run_id': 'x', 'outcome': 'timeout'}], verdicts=['PASS']), 'MARGINAL'),
     (group(verdicts=['PASS']), 'PASS'),
+    # 보류한 KPI가 있으면 나머지가 PASS여도 PASS가 아니다
+    ({'runs': ['a'], 'failed': [], 'metrics': {'m0': {'kpi': 'PASS'}, 'm1': {'kpi_note': '보류'}}}, 'NONE'),
     (group(), 'NONE'),
 ])
 def test_group_status(g, expected):
@@ -53,6 +55,17 @@ def test_context_line_shows_gcp_runner(tmp_path):
     (run / 'meta.json').write_text(json.dumps(meta))
     assert context_line([run]) == ('하네스 결과 · git `abc1234` · GCP c2d-standard-8 (8코어, 슬롯 b2) · 실행 alswl722'
                                    ' · 지연 100 ms · 손실 5% · seed 1~1')
+
+
+def test_context_line_shows_seed_actually_passed(tmp_path):
+    """seed_offset으로 옮긴 개발용 녹화는 실제로 넘긴 seed(scene_seed)를 보인다. 없는 예전 실행은 seed 그대로."""
+    runs = [make_run(tmp_path, f'r{i}', seed=i + 1) for i in range(3)]
+    for i, run in enumerate(runs[:2]):
+        meta = json.loads((run / 'meta.json').read_text())
+        meta['scene_seed'] = 1001 + i
+        (run / 'meta.json').write_text(json.dumps(meta))
+    assert context_line(runs[:2]).endswith(' · seed 1001~1002')
+    assert context_line(runs[2:]).endswith(' · seed 3~3')
 
 
 def test_host_info_records_runner(monkeypatch):

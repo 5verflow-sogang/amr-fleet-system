@@ -3,7 +3,8 @@
 
 장애물마다 GT odom(/dynamic_obstacles/<id>/ground_truth/odom)을 받아 위치를 보고,
 속도 명령(/dynamic_obstacles/<id>/cmd_vel)을 낸다. Gazebo와는 dynamic_obstacles.launch.py의 브리지가 잇는다.
-이동 패턴은 amr_gazebo.obstacle_motion에 있다.
+이동 패턴은 amr_gazebo.obstacle_motion에 있다. yield_to_robots가 있는 장애물이 있으면
+그 로봇들의 GT odom(/<ns>/ground_truth/odom, world 기준)도 받는다.
 """
 
 import math
@@ -17,6 +18,9 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 from amr_gazebo.obstacle_motion import ObstacleMotion, body_twist
+
+# 로봇 GT가 이보다 오래 [ns] 끊기면 그 로봇을 모르는 것으로 본다 (마지막 정지 값에 계속 비켜 서 있지 않게)
+ROBOT_TIMEOUT_NS = 1_000_000_000
 
 
 def _yaw(q) -> float:
@@ -54,24 +58,46 @@ class DynamicObstacles(Node):
                 Odometry, f'/dynamic_obstacles/{oid}/ground_truth/odom',
                 lambda msg, oid=oid: self._on_odom(oid, msg), 10)
 
+        # 멈춘 로봇에 비키는 장애물이 볼 로봇: 이름 → (x, y, yaw, 속력, 받은 시각 [ns])
+        self._robots = {}
+        yield_to = sorted({name for m in self._motions.values() for name in m.yield_to})
+        for name in yield_to:
+            self.create_subscription(
+                Odometry, f'/{name}/ground_truth/odom',
+                lambda msg, name=name: self._on_robot(name, msg), 10)
+
         # 시뮬레이션 시간 기준 (use_sim_time). sim이 멈추면 명령도 멈춘다
         self.create_timer(1.0 / rate, self._control)
         self.get_logger().info(
             f'동적 장애물 {len(self._motions)}개: '
             + ', '.join(f'{m.id}({m.pattern})' for m in self._motions.values())
-            + f', seed={seed}')
+            + f', seed={seed}'
+            + (f', 멈춘 로봇에 비킴: {", ".join(yield_to)}' if yield_to else ''))
 
     def _on_odom(self, oid: str, msg: Odometry):
         p = msg.pose.pose
         self._pose[oid] = (p.position.x, p.position.y, _yaw(p.orientation))
 
+    def _on_robot(self, name: str, msg: Odometry):
+        p, v = msg.pose.pose, msg.twist.twist.linear
+        self._robots[name] = (p.position.x, p.position.y, _yaw(p.orientation), math.hypot(v.x, v.y),
+                              self.get_clock().now().nanoseconds)
+
     def _control(self):
+        now = self.get_clock().now().nanoseconds
+        robots = {name: r[:4] for name, r in self._robots.items() if now - r[4] < ROBOT_TIMEOUT_NS}
         for oid, motion in self._motions.items():
             pose = self._pose.get(oid)
             if pose is None:
                 continue
             x, y, yaw = pose
-            vx, vy = motion.step((x, y))
+            waiting, turn_backs = motion.waiting, motion.turn_backs
+            vx, vy = motion.step((x, y), robots, now * 1e-9)
+            if motion.turn_backs != turn_backs:
+                self.get_logger().info(f'{oid}: 로봇이 계속 멈춰 있어 돌아선다')
+            elif motion.waiting != waiting:
+                self.get_logger().info(
+                    f'{oid}: ' + ('멈춘 로봇이 앞길을 막아 선다' if motion.waiting else '앞길이 비어 다시 걷는다'))
             bx, by, wz = body_twist(vx, vy, yaw)
             t = Twist()
             t.linear.x, t.linear.y, t.angular.z = bx, by, wz

@@ -1,0 +1,8 @@
+# I12 통합 테스트 (docs/test-plan.md): fleet_fake에 원 명세 통신 지연 100 ms와 손실 5%를 건다.
+# 측정한 손실률·지연이 장애 주입기 설정값과 맞는지, 재전송으로 할당 명령이 모두 Ack되는지 요약에서 판정한다 (summary.py I12_KPI).
+#   tools/harness/gcp_run.sh fleet_i12 -n 3 --ref dev --slot b1
+name: fleet_i12
+extends: fleet_fake
+params:
+  delay_ms: 100
+  loss_pct: 5

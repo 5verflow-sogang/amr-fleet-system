@@ -61,7 +61,7 @@ on:
         description: 로봇 장애 - 가짜 로봇 launch 시작 후 죽일 시각 (s). -1이면 끄기
         default: "-1"
       params:
-        description: "시나리오 값 '이름=값' 공백 구분 (예: controller=teb scenario=obstacle, duration_s=120). packages=a,b는 빌드할 패키지, slot=b1은 러너 슬롯"
+        description: "시나리오 값 '이름=값' 공백 구분 (예: controller=teb scenario=obstacle, duration_s=120). packages=a,b는 빌드할 패키지, slot=b1은 러너 슬롯, seed_base=1001은 첫 seed(튜닝·개발용)"
         default: ""
       fresh:
         description: 반복마다 새 컨테이너 (Nav2 시나리오를 여러 번 돌릴 때)
@@ -242,6 +242,13 @@ jobs:
                 continue ;;
               # 러너 슬롯. start-runner가 VM 종류를 고를 때 쓰고 하네스에는 넘기지 않는다
               slot) continue ;;
+              # 첫 seed (run.py --seed-base). 튜닝·개발용은 1001부터라 meta.json seed가 실제 값이 된다 (README "seed 규칙").
+              # 본 실험 seed(1~N)와 같은 라벨로 묶이지 않게 조건으로 센다 (label을 직접 정해야 한다)
+              seed_base)
+                [[ "$value" =~ ^[1-9][0-9]*$ ]] || fail "seed_base는 1 이상 정수: $value"
+                args+=(--seed-base "$value")
+                conditions=$((conditions + 1))
+                continue ;;
             esac
             has_param "$key" || fail "$key는 $scenario_file params에 없다. 있는 이름: $(tr '\n' ' ' <<< "$scenario_params")"
             args+=(--set "$key=$value")

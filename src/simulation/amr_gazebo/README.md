@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | Publish | `/clock` | `rosgraph_msgs/msg/Clock` | 시뮬레이션 시간. 다른 노드는 `use_sim_time:=true`로 쓴다. Gazebo 시계(물리 스텝마다, 약 1000 Hz)를 `/clock_raw`로 받아 `clock_throttle`이 `clock_rate_hz`(기본 200 Hz)로 줄여 낸다 - 노드마다 1000 Hz를 받으면 5대에서 16코어를 다 썼다 |
 | Publish | `/<ns>/diff_drive/odom` | `nav_msgs/msg/Odometry` | DiffDrive 이상적 휠 오도메트리 (노이즈·공분산 없음), 50 Hz. 로봇 판단용 `/<ns>/odom`은 `amr_odometry`가 낸다 |
-| Publish | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 바퀴 조인트 각도 |
+| Publish | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 바퀴 조인트 각도. Gazebo가 물리 스텝마다(약 1000 Hz) 내고 주기 설정이 없어 `joint_states_raw`로 받아 `joint_state_throttle`(C++)이 `joint_state_rate_hz`(기본 50 Hz)로 줄여 낸다 - 받는 쪽(wheel_odometry, robot_state_publisher)이 5대에서 약 2코어를 썼다 |
 | Publish | `/<ns>/ground_truth/odom` | `nav_msgs/msg/Odometry` | **GT(진짜 위치·속도)**, 기본 100 Hz (`gt_rate`). `frame_id: world`(Gazebo 월드 원점 = 창고 중심), `child_frame_id: <ns>/base_footprint`. TF로는 내보내지 않음. **평가 전용**(RMSE, 제동 거리) — 로봇 판단에 쓰지 않는다. 아래 "GT 사용 시 주의" 참고 |
 | Publish | `/<ns>/scan_raw` | `sensor_msgs/msg/LaserScan` | 2D LiDAR 원본 (노이즈 포함), 10 Hz, frame `<ns>/lidar_link` |
 | Publish | `/<ns>/imu/data_raw` | `sensor_msgs/msg/Imu` | IMU 원본 (노이즈·바이어스 포함, 공분산 비어 있음), 100 Hz, frame `<ns>/imu_link` |
@@ -190,6 +190,12 @@ noVNC로 확인해보니 광원 바로 아래만 동그랗게 밝고 사이가 �
   - `random`: 경유점이 이루는 사각 영역 안 무작위 목표점으로 직선 이동 (random waypoint)
   - 속도는 구간(왕복 한 번, 무작위 목표점 하나)마다 `speed_range_mps` 안에서 무작위. `obstacle_seed`로 재현한다 (0이면 실행마다 무작위)
   - 몸체는 진행 방향을 보도록 돈다 (최대 1.5 rad/s). 이동 자체는 방향과 상관없이 경로를 따른다
+  - `yield_to_robots` (선택, 로봇 네임스페이스 목록): 그 로봇이 멈춘 채(GT 속력 0.05 m/s 미만) 앞길을 막으면,
+    즉 몸이 0.5 m 더 가면 차체에 0.05 m 안으로 닿으면 선다 (몸과 차체 사이 약 0.5~0.55 m). 한번 서면 로봇이 다시
+    움직여도 이번 구간(다음 경유점까지) 길에서 비킬 때까지 기다린다. 막은 로봇이 5 s 동안 계속 멈춰 있으면 온 쪽으로
+    돌아선다 (로봇이 작업자가 이미 옆에 왔을 때 서면 서로 기다리기만 한다). 움직이는 로봇에는 비키지 않는다
+    (로봇이 피하는지 보는 시험용). straight·random 패턴만. 로봇 GT `/<ns>/ground_truth/odom`을 받는다.
+    기본 `config/dynamic_obstacles.yaml`에는 없고, I17 회피 시나리오(`amr_safety` `avoidance_obstacles`)가 쓴다
 - Gazebo 쪽: `VelocityControl`(속도 명령) + `OdometryPublisher`(GT). 중력을 끄고 충돌체를 바닥에서 2.5 cm 띄웠다.
   바닥에 닿으면 마찰이 발밑을 잡아 키 큰 작업자가 넘어졌다. 로봇과는 충돌한다
 - `VelocityControl`은 마지막 명령을 유지한다. 노드만 죽으면 장애물이 계속 같은 방향으로 가니 sim도 같이 다시 띄운다

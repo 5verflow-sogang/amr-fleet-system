@@ -63,6 +63,8 @@ def _server(context):
                 'resend.interval_s': float(arg('resend_interval_s')),
                 # 상태 보고가 이 시간 끊긴 로봇의 작업을 회수 (연구 1 회수 기준 비교, robot_timeout_s 이상이어야 한다)
                 'assignment.reclaim_timeout_s': float(arg('reclaim_timeout_s')),
+                # 스테이션 예약 거리 (연구 1 가짜 로봇 실험은 지난 조건대로 0으로 끈다)
+                'assignment.station_clearance_m': float(arg('station_clearance_m')),
             }],
             output='screen',
         )
@@ -115,6 +117,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'reclaim_timeout_s', default_value='5.0',
             description='RobotState가 이 시간(s) 끊기면 그 로봇의 작업을 회수해 다시 할당한다 (config 기본 5.0)'),
+        DeclareLaunchArgument(
+            'station_clearance_m', default_value='1.0',
+            description='스테이션 예약 거리 (m). 맡겨진 작업의 스테이션 근처를 쓰는 작업은 끝날 때까지 미룬다. 0이면 끔 (config 기본 1.0)'),
         DeclareLaunchArgument(
             'max_resends', default_value='5',
             description='Ack가 없을 때 할당 명령 재전송 한도. 넘으면 작업을 큐로 되돌려 다른 로봇에 맡긴다 (config 기본 5)'),

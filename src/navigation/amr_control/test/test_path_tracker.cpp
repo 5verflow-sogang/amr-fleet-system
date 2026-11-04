@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,19 @@ Path arcPath(double radius, double angle, double spacing = 0.05)
   for (int i = 0; i <= n; ++i) {
     const double a = angle * i / n;
     path.push_back(PathPoint{radius * std::sin(a), radius - radius * std::cos(a)});
+  }
+  return path;
+}
+
+// 직선(straight_len) 뒤에 이어지는 원호(반지름 radius, 각도 angle, 왼쪽으로). 커브 진입 때
+// 각속도 한계가 v를 깎는 상황을 재현하려고(#279 리뷰) 순항 속도까지 올린 뒤 커브에 들어가게 한다
+Path straightThenArc(double straight_len, double radius, double angle, double spacing = 0.05)
+{
+  Path path = straightPath(straight_len, spacing);
+  const int n = static_cast<int>(std::ceil(radius * angle / spacing));
+  for (int i = 1; i <= n; ++i) {
+    const double a = angle * i / n;
+    path.push_back(PathPoint{straight_len + radius * std::sin(a), radius - radius * std::cos(a)});
   }
   return path;
 }
@@ -242,6 +256,99 @@ TEST(PathTracker, AccelerationLimited)
   tracker.setPath(straightPath(10.0));
   const auto first = tracker.compute(Pose2D{}, 0.0, kDt);
   EXPECT_NEAR(first.v, tracker.config().max_linear_accel * kDt, 1e-9);
+}
+
+TEST(PathTracker, JerkLimitSlowsInitialAcceleration)
+{
+  PathTrackerConfig jerk_config;
+  jerk_config.max_linear_jerk = 2.5;
+  PathTracker jerk_tracker(jerk_config);
+  jerk_tracker.setPath(straightPath(10.0));
+  const auto jerk_first = jerk_tracker.compute(Pose2D{}, 0.0, kDt);
+
+  // 기본값(저크 제한 꺼짐, max_linear_jerk == 0)과 비교하면 첫 틱부터 덜 밟는다
+  PathTracker accel_only_tracker;
+  accel_only_tracker.setPath(straightPath(10.0));
+  const auto accel_first = accel_only_tracker.compute(Pose2D{}, 0.0, kDt);
+
+  EXPECT_LT(jerk_first.v, accel_first.v);
+  EXPECT_NEAR(jerk_first.v, jerk_config.max_linear_jerk * kDt * kDt, 1e-9);
+}
+
+TEST(PathTracker, NegativeJerkDisablesLimit)
+{
+  // 0이나 음수면 가속 제한만 쓰는 기존 동작과 같다
+  PathTrackerConfig config;
+  config.max_linear_jerk = -1.0;
+  PathTracker tracker(config);
+  tracker.setPath(straightPath(10.0));
+  const auto first = tracker.compute(Pose2D{}, 0.0, kDt);
+  EXPECT_NEAR(first.v, config.max_linear_accel * kDt, 1e-9);
+}
+
+// 저크 제한을 켜도 끝 감속 상한은 그대로 매 틱 씌우므로, 정지 정확도(StopsAtPathEnd와 같은 기준)는
+// 그대로 지켜진다 (navigation.md 5-3절 "끝 감속·정지 정확도는 그대로")
+TEST(PathTracker, JerkLimitDoesNotBreakStopAccuracy)
+{
+  PathTrackerConfig config;
+  config.max_linear_jerk = 2.5;
+  PathTracker tracker(config);
+  tracker.setPath(straightPath(3.0));
+  const auto sim = simulate(tracker, Pose2D{0.0, 0.0, 0.0});
+  ASSERT_TRUE(sim.reached);
+  const double tol = tracker.config().goal_tolerance;
+  const double dist_to_end = std::hypot(sim.final_pose.x - 3.0, sim.final_pose.y);
+  EXPECT_LT(dist_to_end, tol + 0.03);
+  EXPECT_LT(sim.final_pose.x, 3.0 + 0.03);
+  EXPECT_NEAR(sim.final_v, 0.0, 1e-3);
+}
+
+// #279 민지 리뷰 재현: 커브 진입 때 각속도 한계가 v를 깎으면(순항 → 곡률 상한), 저크가 그
+// 감속을 "가속도 이력"으로 들고 가서 다음 틱부터 회복을 계속 느리게 묶어 거의 멈춰 섰다
+// (κ=5에서 0.5 → 0.3 → 0.11 → 0). 고친 뒤에는 원호 구간 내내 v가 max_angular_speed/κ
+// (곡률이 요구하는 값) 근처에 머물러야 한다 - 그보다 크게 더 떨어지면 버그가 재발한 것
+TEST(PathTracker, JerkLimitDoesNotStallOnCurveEntry)
+{
+  for (const double kappa : {4.0, 5.0}) {
+    SCOPED_TRACE("kappa " + std::to_string(kappa));
+    const double radius = 1.0 / kappa;
+
+    PathTrackerConfig config;
+    config.max_linear_jerk = 2.5;
+    PathTracker tracker(config);
+    tracker.setPath(straightThenArc(3.0, radius, M_PI));
+
+    const double v_floor = config.max_angular_speed / kappa;
+    double min_v_in_curve = std::numeric_limits<double>::infinity();
+    bool entered_curve = false;
+    double v = 0.0;
+    double w = 0.0;
+    Pose2D pose{0.0, 0.0, 0.0};
+    for (int i = 0; i < static_cast<int>(20.0 / kDt); ++i) {
+      const auto result = tracker.compute(pose, v, kDt);
+      if (result.status == TrackingStatus::kGoalReached) {
+        break;
+      }
+      // 곡률이 커브 값(kappa)에 가까워지면 원호 구간으로 본다(직선 구간은 곡률 0)
+      if (result.path_curvature > kappa * 0.5) {
+        entered_curve = true;
+        min_v_in_curve = std::min(min_v_in_curve, result.v);
+      }
+      v = result.v;
+      w = result.w;
+      pose.x += v * std::cos(pose.yaw) * kDt;
+      pose.y += v * std::sin(pose.yaw) * kDt;
+      pose.yaw = normalizeAngle(pose.yaw + w * kDt);
+    }
+    ASSERT_TRUE(entered_curve);
+    // Pure Pursuit는 lookahead가 속도에 비례해 줄기 때문에(purePursuitLookahead), 커브 전체에서
+    // 곡률 추정이 매 틱 조금씩 더 커지며 v가 서서히 v_floor 밑으로 내려간다 - 저크를 완전히 꺼도
+    // (max_linear_jerk=0) 같은 경로에서 직접 재보면 동일하게 떨어진다(이 테스트와 같은 커브,
+    // kappa=4: 79.6%, kappa=5: 78.3%, 저크 켰을 때(79.9%/79.3%)와 거의 같음) - 저크와 무관한
+    // Pure Pursuit 고유 특성이다. 그 바닥(약 78~80%)보다 5%p 여유를 둔 75%를 기준으로 삼는다 -
+    // 고치기 전 버그(0까지 주저앉음)와는 확실히 구분되면서도, 더 민감하게 재발을 잡는다
+    EXPECT_GT(min_v_in_curve, v_floor * 0.75);
+  }
 }
 
 TEST(PathTracker, ControllerTypeNames)

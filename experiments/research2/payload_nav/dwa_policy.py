@@ -18,6 +18,9 @@
   따라가지 않고 논문 값으로 고정한다 (20 x 30, 회전 끔, 회피 모드 끔). 창고 스택은 10 x 15·회전 45°·회피 모드 켬이다
   (#244, DwaParams 주석)
 
+최고 속도 max_v는 nav2_params(창고 스택 순항 0.5 m/s)가 아니라 빈 차 안전 순항 속도(규칙 정책과 같은 값, 약 1.25 m/s)다.
+B1·B2와 규칙 정책이 같은 순항 속도에서 출발해야 속도 상한 차이가 아니라 정책 차이를 비교한다 (10/18 결정).
+
 질량은 가감속 한계 acc_v로 들어간다 (나머지 파라미터는 위 예외 말고 nav2_params.yaml DWA 블록 그대로):
 - B1 ('b1'): 빈 차 기준 a_max(0 kg) 고정
 - B2 ('b2'): 관측 질량 기준 a_max(m_obs). 질량을 모르면 B1과 같다 (실험 설계 3절)
@@ -35,6 +38,7 @@ from typing import Optional
 import numpy as np
 
 from .dynamics import max_linear_accel
+from .rule_policy import safe_cruise_speed
 
 DWA_VARIANTS = ('b1', 'b2')
 
@@ -49,9 +53,11 @@ _LIB = _RESEARCH2 / 'dwa_cpp' / 'build' / 'libamr_dwa.so'
 class DwaParams:
     """nav2_params.yaml controller_server.DWA (DwaConfig 필드 이름 그대로, acc_v 제외) + 플러그인 + local costmap.
 
-    샘플 수·제자리 회전·xy_goal_tolerance는 nav2_params와 다른 논문 값이다 (모듈 docstring).
+    최고 속도·샘플 수·제자리 회전·xy_goal_tolerance는 nav2_params와 다른 논문 값이다 (모듈 docstring).
     """
-    max_v: float = 2.0
+    # 빈 차 안전 순항 속도 (rule_policy.safe_cruise_speed(0 kg), 최소 출현 간격 0.5 m·반응 0.1 s, 약 1.248 m/s).
+    # 로봇 스펙 2.0이면 DWA가 거의 최고 속도로 달려 돌발 장애물 충돌이 속도 상한 탓이 된다 (10/18, README)
+    max_v: float = safe_cruise_speed(0.0)
     min_v: float = 0.0
     max_w: float = 1.5
     acc_w: float = 3.2
@@ -85,7 +91,7 @@ class DwaParams:
     # v≈0 회전 샘플은 평소 탐색에 있어서, 켜 두면 B1·B2가 바뀐다
     rotate_in_place_clearance: float = 0.0
     # TTC 회피 모드(창고 스택, navigation.md 4-10절)는 논문 값으로 끈다. 연구 2 환경에는 collision_risks가 없고,
-    # 켜면 B1·B2의 안전 여유·가중치·sim_time이 바뀐다
+    # 켜면 B1·B2의 안전 여유·가중치·궤적 길이(avoid_rollout_time)가 바뀐다
     avoid_mode_enabled: bool = False
     follow_path: bool = True          # 플러그인처럼 전역 경로를 넘긴다 (#195). False면 예전 지점 호출
     path_resolution: float = 0.05
