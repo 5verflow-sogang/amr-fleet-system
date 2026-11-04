@@ -102,6 +102,34 @@ void DwaController::configure(
 
   planner_ = std::make_unique<amr_planning_core::DwaPlanner>(config);
 
+  amr_planning_core::PassingConfig passing;
+  passing.footprint_half_length = config.footprint_half_length;
+  passing.footprint_half_width = config.footprint_half_width;
+  passing.lethal_cost_threshold = config.lethal_cost_threshold;
+  declareAndGet(node, prefix + "passing_enabled", passing.enabled);
+  declareAndGet(node, prefix + "passing_clearance", passing.clearance);
+  declareAndGet(node, prefix + "passing_max_offset", passing.max_offset);
+  declareAndGet(node, prefix + "passing_ramp_out", passing.ramp_out);
+  declareAndGet(node, prefix + "passing_ramp_in", passing.ramp_in);
+  declareAndGet(node, prefix + "passing_start_margin", passing.start_margin);
+  declareAndGet(node, prefix + "passing_max_lookahead", passing.max_lookahead);
+  declareAndGet(node, prefix + "passing_pass_margin", passing.pass_margin);
+  declareAndGet(node, prefix + "passing_clear_cycles", passing.clear_cycles);
+  declareAndGet(node, prefix + "passing_preferred_side", passing.preferred_side);
+  declareAndGet(node, prefix + "passing_max_heading_cos", passing.max_heading_cos);
+  declareAndGet(node, prefix + "passing_min_obstacle_speed", passing.min_obstacle_speed);
+  declareAndGet(node, prefix + "passing_threat_memory", passing.threat_memory);
+  declareAndGet(node, prefix + "passing_heading_time", passing_heading_time_);
+  declareAndGet(node, prefix + "passing_lookahead", passing_lookahead_);
+  if (passing.enabled && passing.clearance <= config.dynamic_obstacle_safety_margin) {
+    RCLCPP_WARN(
+      logger_, "DWA: passing_clearance(%.2f) <= dynamic_obstacle_safety_margin(%.2f) - "
+      "옮긴 경로를 따라가는 궤적이 걸러진다", passing.clearance, config.dynamic_obstacle_safety_margin);
+  }
+  passing_ = std::make_unique<amr_planning_core::PassingManeuver>(passing);
+  passing_pub_ = node->create_publisher<std_msgs::msg::Bool>(
+    "dwa/passing", rclcpp::QoS(1).reliable().transient_local());
+
   obstacles_sub_ = node->create_subscription<amr_msgs::msg::TrackedObstacleArray>(
     "perception/obstacles", rclcpp::QoS(10),
     std::bind(&DwaController::onObstacles, this, std::placeholders::_1));
@@ -128,6 +156,8 @@ void DwaController::cleanup()
   obstacles_sub_.reset();
   risks_sub_.reset();
   avoid_mode_pub_.reset();
+  passing_pub_.reset();
+  passing_.reset();
   planner_.reset();
 }
 
@@ -138,11 +168,15 @@ void DwaController::activate()
   std_msgs::msg::Bool msg;
   msg.data = planner_->avoidMode();
   avoid_mode_pub_->publish(msg);
+  passing_pub_->on_activate();
+  msg.data = false;
+  passing_pub_->publish(msg);
 }
 
 void DwaController::deactivate()
 {
   avoid_mode_pub_->on_deactivate();
+  passing_pub_->on_deactivate();
 }
 
 void DwaController::setPlan(const nav_msgs::msg::Path & path)
@@ -227,6 +261,10 @@ void DwaController::updateAvoidMode()
     std::lock_guard<std::mutex> lock(avoid_mutex_);
     active = avoid_switch_.update(now);
     stale = avoid_switch_.stale(now);
+  }
+  // 비켜 지나가는 동안·곧 비킬 예정인 동안은 회피 모드를 끈다 (지난 주기 상태. 끝나면 TTC 판정대로 돌아간다)
+  if (passing_ && passing_->engaged()) {
+    active = false;
   }
   if (stale) {
     RCLCPP_WARN_THROTTLE(
@@ -322,6 +360,21 @@ geometry_msgs::msg::TwistStamped DwaController::computeVelocityCommands(
   for (amr_planning_core::DynamicObstacle & obstacle : obstacles) {
     obstacle.x -= origin_x;
     obstacle.y -= origin_y;
+  }
+
+  // 정면 비켜 지나가기: 마주 오는 동적 장애물이 경로를 막으면 옆으로 옮긴 경로를 따라간다
+  if (passing_) {
+    const bool was_passing = passing_->active();
+    path = passing_->update(state, path, grid, obstacles, node_.lock()->now().seconds());
+    planner_->setPassingTracking(passing_->active(), passing_heading_time_, passing_lookahead_);
+    if (passing_->active() != was_passing) {
+      RCLCPP_INFO(
+        logger_, "DWA 비켜 지나가기 %s (옆 이탈 %.2f m)", passing_->active() ? "시작" : "끝",
+        passing_->active() ? passing_->offset() : 0.0);
+      std_msgs::msg::Bool msg;
+      msg.data = passing_->active();
+      passing_pub_->publish(msg);
+    }
   }
 
   const amr_planning_core::DwaCommand command =

@@ -426,6 +426,13 @@ DwaCommand DwaPlanner::selectWithAvoidFallback(
   return result;
 }
 
+void DwaPlanner::setPassingTracking(bool active, double heading_time, double lookahead)
+{
+  passing_tracking_ = active && heading_time > 0.0 && lookahead >= 0.0;
+  passing_heading_time_ = heading_time;
+  passing_lookahead_ = lookahead;
+}
+
 DwaCommand DwaPlanner::selectCommand(
   const RobotState & state, const std::vector<Point2D> & path, bool follow_path,
   const Grid & grid, const std::vector<DynamicObstacle> & dynamic_obstacles,
@@ -434,6 +441,10 @@ DwaCommand DwaPlanner::selectCommand(
   DwaCommand result;
 
   const std::size_t path_start = closestPathIndex(path, state.x, state.y);
+  // 비켜 지나가기 추종 모드: heading을 짧은 궤적·가까운 기준점으로 매긴다 (setPassingTracking)
+  const double heading_time = passing_tracking_ ?
+    std::min(passing_heading_time_, config_.sim_time) : config_.sim_time;
+  const double lookahead = passing_tracking_ ? passing_lookahead_ : config_.lookahead_distance;
   const double base_distance = follow_path ? config_.lookahead_distance : 0.0;
   const Point2D goal =
     pathPointAheadFrom(path, path_start, state.x, state.y, base_distance).point;
@@ -487,7 +498,9 @@ DwaCommand DwaPlanner::selectCommand(
   // 오차가 커져, 회전이 회피와 싸운다(ClosedLoopReachesGoalWithOneObstacle). 경로의 기준점은 장애물을 이미 돌아간다.
   const double heading_error = std::abs(normalizeAngle(
       std::atan2(goal.y - state.y, goal.x - state.x) - state.yaw));
-  if (follow_path && config_.rotate_in_place_min_angle > 0.0 && !dynamic_near) {
+  if (follow_path && config_.rotate_in_place_min_angle > 0.0 && !dynamic_near &&
+    !passing_tracking_)
+  {
     rotating_in_place_ = heading_error > (rotating_in_place_ ?
       config_.rotate_in_place_exit_angle : config_.rotate_in_place_min_angle);
   } else {
@@ -514,7 +527,7 @@ DwaCommand DwaPlanner::selectCommand(
   };
   // 비용(heading)을 매기는 궤적 길이: sim_time 시점까지(회피 모드의 긴 궤적은 충돌 검사에만 쓴다)
   const std::size_t cost_steps = static_cast<std::size_t>(
-    std::max(1, static_cast<int>(std::round(config_.sim_time / config_.dt))));
+    std::max(1, static_cast<int>(std::round(heading_time / config_.dt))));
 
   // turn_search: 회전 모드의 회전 후보 탐색이면 true - v≈0 샘플을 회전한 뒤 방향으로 채점하고 회전 샘플은
   // 풋프린트를 turn_clearance만큼 키운다. 전체 윈도우 탐색(false)은 평소처럼 정지를 1.0으로 고정한다 - 아니면
@@ -532,12 +545,12 @@ DwaCommand DwaPlanner::selectCommand(
       Point2D heading_target = goal;
       std::size_t heading_steps = std::numeric_limits<std::size_t>::max();
       if (adaptive) {
-        const double travel = std::abs(v) * config_.sim_time;
+        const double travel = std::abs(v) * heading_time;
         const PathTarget target = pathPointAheadFrom(
-          path, path_start, state.x, state.y, travel + config_.lookahead_distance);
+          path, path_start, state.x, state.y, travel + lookahead);
         heading_target = target.point;
         const double step_length = std::abs(v) * config_.dt;
-        const double before_end = target.distance_from_robot - config_.lookahead_distance;
+        const double before_end = target.distance_from_robot - lookahead;
         if (target.at_path_end && before_end < travel && step_length > 0.0) {
           heading_steps =
             static_cast<std::size_t>(std::max(1.0, std::floor(before_end / step_length)));

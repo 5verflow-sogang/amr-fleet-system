@@ -18,6 +18,7 @@ add_library(${PROJECT_NAME}
   src/astar.cpp
   src/path_smoothing.cpp
   src/dwa.cpp
+  src/passing.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -49,6 +50,8 @@ if(BUILD_TESTING)
   target_link_libraries(test_path_smoothing ${PROJECT_NAME})
   ament_add_gtest(test_dwa test/test_dwa.cpp)
   target_link_libraries(test_dwa ${PROJECT_NAME})
+  ament_add_gtest(test_passing test/test_passing.cpp)
+  target_link_libraries(test_passing ${PROJECT_NAME})
 endif()
 
 ament_package()
