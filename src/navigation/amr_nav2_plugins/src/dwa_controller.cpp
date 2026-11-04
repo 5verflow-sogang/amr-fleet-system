@@ -238,10 +238,17 @@ void DwaController::updateAvoidMode()
   }
   planner_->setAvoidMode(active);
   const amr_planning_core::DwaConfig & config = planner_->config();
+  const std::size_t fallbacks = planner_->avoidFallbackCount();
+  if (active) {
+    avoid_fallback_count_at_enter_ = fallbacks;
+  }
+  // 끌 때는 이번 회피 동안 대체 탐색(4-10절)을 쓴 주기 수와 누적을 남긴다 - 로그만으로 셀 수 있게
   RCLCPP_INFO(
-    logger_, "DWA 회피 모드 %s (safety_margin=%.2fm dynamic_weight=%.2f rollout=%.1fs)",
+    logger_,
+    "DWA 회피 모드 %s (safety_margin=%.2fm dynamic_weight=%.2f rollout=%.1fs, 대체 탐색 이번 %zu주기 / 누적 %zu)",
     active ? "켬" : "끔", config.dynamic_obstacle_safety_margin, config.dynamic_weight,
-    planner_->rolloutTime());
+    planner_->rolloutTime(), active ? std::size_t{0} : fallbacks - avoid_fallback_count_at_enter_,
+    fallbacks);
   std_msgs::msg::Bool msg;
   msg.data = active;
   avoid_mode_pub_->publish(msg);
@@ -318,6 +325,13 @@ geometry_msgs::msg::TwistStamped DwaController::computeVelocityCommands(
 
   const amr_planning_core::DwaCommand command =
     planner_->computeVelocityCommand(state, path, grid, obstacles);
+  if (planner_->lastUsedAvoidFallback()) {
+    RCLCPP_DEBUG_THROTTLE(
+      logger_, *node_.lock()->get_clock(), 1000,
+      "DWA: 회피 모드 여유로 갈 궤적이 없어 평소 여유로 다시 골랐다 -> %s (누적 %zu주기)",
+      command.status == amr_planning_core::DwaStatus::kOk ? "찾음" : "못 찾음",
+      planner_->avoidFallbackCount());
+  }
 
   if (command.status == amr_planning_core::DwaStatus::kNoValidTrajectory) {
     RCLCPP_WARN_THROTTLE(
