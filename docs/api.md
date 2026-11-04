@@ -224,7 +224,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 항목 | 정의 |
 | --- | --- |
 | 입력 | 손님(동적 장애물) 정답 위치 `/dynamic_obstacles/<id>/ground_truth/odom`. 인식 결과는 쓰지 않는다(시연이 인식 불안정에 흔들리지 않게) |
-| 좌표 | 정답 위치는 frame `"world"`라 `world_to_map_xy`(기본 `[0, 0]`)만큼 옮겨 map 좌표로 쓴다. 식당 맵에서 world와 map이 같은지는 지수가 확인한다 |
+| 좌표 | 정답 위치는 frame `"world"`라 `map_origin_in_world`(world에서 본 map 원점 [x, y, yaw], 작업 생성기와 같은 파라미터)로 map 좌표로 옮긴다. 식당 맵의 값은 지수가 매핑 시작 자세로 알려 준다 |
 | 구역 안 판정 | 손님 중심점이 구역 사각형 안(경계 포함)이면 그 구역 사람으로 센다. 구역이 겹치면 양쪽에 다 센다 |
 | 원시 값 | `raw = min(1, people_count / capacity)` |
 | 혼잡도 | `value = α × raw + (1 − α) × 직전 value`, `α = 0.5`. 사람이 모두 빠지면 약 2초(4주기) 뒤 0.1 아래로 내려간다 |
