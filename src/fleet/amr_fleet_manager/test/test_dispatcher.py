@@ -33,6 +33,35 @@ def test_unknown_algorithm_rejected():
         make(algorithm='random')
 
 
+def test_unknown_cost_fn_rejected():
+    with pytest.raises(ValueError):
+        make(cost_fn='random')
+    with pytest.raises(ValueError):
+        make(cost_fn='congestion', congestion_weight=-1.0)
+
+
+def _crowded_choice(**kwargs):
+    # 시연 1-1: 가까운 amr_01(5 m)은 손님이 몰린 구역(x 2~4)을 지나야 하고, amr_02(6 m)는 안 지난다
+    d = make(**kwargs)
+    d.update_robot(robot('amr_01', (0.0, 0.0)), '', 0.0)
+    d.update_robot(robot('amr_02', (5.0, 6.0)), '', 0.0)
+    d.set_congestion([((2.0, 4.0, -1.0, 1.0), 1.0)])
+    d.add_task(task('t1', (5.0, 0.0)))
+    commands, rows = d.assign(0.0)
+    return commands[0].robot_id, rows[0]
+
+
+def test_congestion_cost_fn_avoids_crowded_robot_and_logs_name():
+    robot_id, row = _crowded_choice(cost_fn='congestion', congestion_weight=3.0)
+    assert (robot_id, row.cost_fn, row.cost) == ('amr_02', 'congestion', pytest.approx(6.0))
+
+
+def test_euclidean_ignores_congestion():
+    # 끈 쪽(기본): 혼잡도를 넣어도 가까운 로봇
+    robot_id, row = _crowded_choice()
+    assert (robot_id, row.cost_fn, row.cost) == ('amr_01', 'euclidean', pytest.approx(5.0))
+
+
 def test_no_call_without_tasks_or_robots():
     d = make()
     assert d.assign(0.0) == ([], [])

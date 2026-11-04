@@ -7,6 +7,8 @@ from amr_fleet_core.assignment import (
     check_unique_ids,
     euclidean_cost,
     filter_candidates,
+    make_congestion_cost,
+    segment_length_in_rect,
     sort_by_priority,
 )
 from amr_fleet_core.assignment.types import MODE_BUSY, MODE_IDLE, TYPE_CHARGE, TYPE_DELIVERY
@@ -31,6 +33,46 @@ def test_start_xy_falls_back_to_dropoff():
 
 def test_euclidean_cost_uses_start_xy():
     assert euclidean_cost(robot('amr_01', xy=(0.0, 0.0)), task('t', pickup=(3.0, 4.0))) == 5.0
+
+
+@pytest.mark.parametrize('a, b, expected', [
+    ((0.0, 0.0), (10.0, 0.0), 2.0),     # 가로질러 지남
+    ((3.0, 0.0), (10.0, 0.0), 1.0),     # 안에서 출발
+    ((3.0, 0.0), (3.5, 0.0), 0.5),      # 통째로 안
+    ((0.0, 5.0), (10.0, 5.0), 0.0),     # 위로 비켜 감
+    ((0.0, 1.0), (10.0, 1.0), 2.0),     # 경계를 따라감
+    ((3.0, -5.0), (3.0, 5.0), 2.0),     # 세로로 지남
+    ((0.0, -2.0), (6.0, 4.0), 2 ** 0.5),  # 대각선 y = x − 2: x 2~3에서만 y ≤ 1이라 안에 든다
+])
+def test_segment_length_in_rect(a, b, expected):
+    assert segment_length_in_rect(a, b, (2.0, 4.0, -1.0, 1.0)) == pytest.approx(expected)
+
+
+def test_congestion_cost_adds_weighted_length_through_busy_zones():
+    cost = make_congestion_cost([((2.0, 4.0, -1.0, 1.0), 1.0), ((6.0, 7.0, -1.0, 1.0), 0.5)], weight=3.0)
+    # 직선 10 m + 3 × (1.0 × 2 m + 0.5 × 1 m)
+    assert cost(robot('amr_01'), task('t', pickup=(10.0, 0.0))) == pytest.approx(17.5)
+    # 혼잡도 0이나 가중치 0이면 직선 거리
+    assert make_congestion_cost([((2.0, 4.0, -1.0, 1.0), 0.0)], 3.0)(robot('amr_01'), task('t', pickup=(10.0, 0.0))) == 10.0
+    assert make_congestion_cost([((2.0, 4.0, -1.0, 1.0), 1.0)], 0.0)(robot('amr_01'), task('t', pickup=(10.0, 0.0))) == 10.0
+    with pytest.raises(ValueError):
+        make_congestion_cost([], -1.0)
+
+
+@pytest.mark.parametrize('name', sorted(ALGORITHMS))
+def test_congestion_sends_the_robot_that_avoids_the_crowd(name):
+    # 시연 1-1: 놀고 있는 로봇 2대 중 가까운 amr_01(5 m)은 손님이 몰린 구역(x 2~4)을 지나야 한다.
+    # 혼잡도를 끄면 amr_01, 켜면 조금 먼 amr_02(6 m, 혼잡 구역을 안 지남)가 간다
+    tasks = [task('t1', pickup=(5.0, 0.0))]
+    robots = [robot('amr_01', xy=(0.0, 0.0)), robot('amr_02', xy=(5.0, 6.0))]
+    crowd = [((2.0, 4.0, -1.0, 1.0), 1.0)]
+    assert ALGORITHMS[name](tasks, robots, euclidean_cost).assignments == {'t1': 'amr_01'}
+    on = ALGORITHMS[name](tasks, robots, make_congestion_cost(crowd, weight=3.0))
+    assert on.assignments == {'t1': 'amr_02'}
+    assert on.total_cost == pytest.approx(6.0)
+    # 혼잡이 풀리면(혼잡도 0) 다시 가까운 로봇
+    calm = make_congestion_cost([((2.0, 4.0, -1.0, 1.0), 0.0)], weight=3.0)
+    assert ALGORITHMS[name](tasks, robots, calm).assignments == {'t1': 'amr_01'}
 
 
 def test_filter_candidates():
