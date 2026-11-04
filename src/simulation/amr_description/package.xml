@@ -8,6 +8,7 @@
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
 
   <!-- TODO: 구현 시 의존성 추가 (예: rclcpp, amr_msgs) -->
   <exec_depend>xacro</exec_depend>
@@ -15,6 +16,12 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>  <!-- amr_description/extrinsics.py -->
+
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-yaml</test_depend>
+  <!-- CI는 rosdep -t build·test만 설치해 exec_depend인 xacro가 없다. test_extrinsics.py가 import한다 -->
+  <test_depend>xacro</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

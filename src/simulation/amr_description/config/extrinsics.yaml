@@ -1,0 +1,26 @@
+# 센서 외부 파라미터(extrinsic): 부모 프레임 기준 센서 링크 위치 xyz [m]와 자세 rpy [rad] (roll, pitch, yaw).
+# sensors.xacro가 xacro 처리 때 읽는다. 값을 바꾸면 launch만 다시 하면 되고 /tf_static과 Gazebo 센서 위치가 같이 바뀐다.
+# 프레임 이름은 로봇 접두어(amr_01/)를 뺀 이름이다. parent·child는 확인용이고 test_extrinsics.py가 URDF와 맞는지 본다.
+# 값은 원 명세서 TF 예시값이다 (2주차 센서 플러그인에서 확정). 확인 절차는 README "센서 캘리브레이션".
+# 바꿀 때는 민지(위치추정)·연우(인지)에게 알린다. 둘 다 이 값을 TF로 받아 쓴다 (명세서 8-2절).
+# 숫자가 필요한 Python 코드는 amr_description.extrinsics로 이 파일을 읽는다 (화물 상자 cargo.py, 도킹 마커판 markers.py)
+lidar:
+  parent: base_link
+  child: lidar_link
+  # z를 바꾸면 스캔 평면 높이(지면 = base_link 0.18 + z)가 바뀐다. 화물 상자·마커판 배치 확인은 따라오지만,
+  # 사람 다리를 자르는 높이가 달라져 추적 값(다리 짝 묶기·반경, 연우)도 다시 봐야 한다
+  xyz: [0.15, 0.0, 0.2]
+  # roll·pitch는 0이어야 한다. 인지·안전 노드가 스캔을 2D로 옮기며 TF의 yaw만 쓴다 (test_extrinsics.py가 본다)
+  rpy: [0.0, 0.0, 0.0]
+# 카메라 링크는 ROS 관례(x 전방)다. 광학 프레임(camera_optical_frame, z 전방)은 이 링크에서 rpy (−π/2, 0, −π/2)로
+# 고정이라 여기 두지 않는다 (좌표축 관례이지 장착 위치가 아니다)
+camera:
+  parent: base_link
+  child: camera_link
+  xyz: [0.18, 0.0, 0.25]
+  rpy: [0.0, 0.0, 0.0]
+imu:
+  parent: base_link
+  child: imu_link
+  xyz: [0.0, 0.0, 0.1]
+  rpy: [0.0, 0.0, 0.0]
