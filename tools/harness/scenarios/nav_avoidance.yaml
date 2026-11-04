@@ -2,7 +2,7 @@
 # + 추적 + 안전 노드. cmd_vel 체인은 Nav2 → cmd_vel_nav → 안전 노드 → cmd_vel (amr_bringup system.launch.py 3단계)
 #
 #   tools/harness/gcp_run.sh nav_avoidance -n 3 --label smoke --pr <번호>      # 첫 시험
-#   ... -n 15 --label <라벨> / -n 15 --set seed_offset=15 --label <라벨>       # 30회 (GCP는 한 번에 15회까지)
+#   ... -n 15 --seed-base <첫 시드> --label <라벨> / -n 15 --seed-base <첫 시드 + 15> ...  # 30회 (GCP는 한 번에 15회까지)
 #   ros2 run amr_safety avoidance_report <실행 폴더…> --runs 30                   # 30회 판정 (amr_safety README)
 #
 # 로봇 1대가 world (0, 1.5) → map (goal_x, goal_y)로 가는 동안 작업자 1명이 경로를 가로지른다.
@@ -34,8 +34,8 @@ params:
   # 목표 결과를 받은 뒤 더 기록하는 시간 [s] (복귀 판정 return_hold_s 1.0 s + 여유)
   after_goal_s: 5
   record: "true"
-  # 시드 = 하네스 seed + seed_offset (장애물·시뮬레이션). GCP는 한 번에 15회까지라 30회는 0과 15로 두 번 넣는다
-  # (GCP에서는 seed_base를 바꿀 수 없다, tracking_kpi와 같은 방식)
+  # 시드 = 하네스 seed + seed_offset (장애물·시뮬레이션). 30회는 gcp_run.sh --seed-base로 첫 시드를 나눠 두 번 넣는다
+  # (#283부터 GCP도 seed_base를 받는다). seed_offset은 처음 방식(0과 15)과 호환하려고 남겨 둔다
   seed_offset: "0"
 processes:
   # 기록을 가장 먼저 띄운다: 첫 전역 경로가 기준 경로다. 장애물 토픽은 1초마다 찾아 붙는다
