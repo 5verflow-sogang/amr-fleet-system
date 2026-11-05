@@ -82,6 +82,33 @@ def test_charge_flow_has_no_pickup(stations):
         assert t.dropoff.startswith('charger_')
 
 
+def test_collect_flow_has_pickup_and_its_own_priority(stations):
+    scenario = {'count': 20, 'interval_s': 1.0, 'priority': [100, 100],
+                'flows': [{'type': 'delivery', 'pickup': ['dock_1'], 'dropoff': ['rack_*']},
+                          {'type': 'collect', 'pickup': ['rack_c*'], 'dropoff': ['dock_b'], 'priority': [200, 200]}]}
+    tasks = generate(scenario, stations, seed=3)
+    collects = [t for t in tasks if t.type == 'collect']
+    assert collects and len(collects) < len(tasks)
+    for t in collects:
+        assert t.pickup.startswith('rack_c') and t.dropoff == 'dock_b' and t.item == 'none' and t.priority == 200
+    assert {t.priority for t in tasks if t.type == 'delivery'} == {100}
+
+
+def test_flow_priority_keeps_the_random_sequence(stations, basic):
+    # 흐름에 시나리오와 같은 priority를 적어도 일정(시각·스테이션·물품)은 그대로다 - 난수 순서가 안 바뀐다
+    flows = [dict(f, priority=basic['priority']) for f in basic['flows']]
+    assert generate(dict(basic, flows=flows), stations, seed=4) == generate(basic, stations, seed=4)
+
+
+def test_collect_aging_scenario_mix(stations):
+    # 시연 2 리허설 일정: 회수 호출 약 20 %, 일반 100 / 회수 200, 평균 간격 6 s
+    scenario = yaml.safe_load((CONFIG / 'scenarios' / 'collect_aging.yaml').read_text(encoding='utf-8'))
+    tasks = [t for seed in range(1, 6) for t in generate(scenario, stations, seed=seed)]
+    share = sum(t.type == 'collect' for t in tasks) / len(tasks)
+    assert 0.1 < share < 0.3
+    assert {(t.type, t.priority) for t in tasks} == {('delivery', 100), ('collect', 200)}
+
+
 def test_task_spec_validation():
     with pytest.raises(ValueError):
         TaskSpec(0.0, 't', 'fly', 'small', 'a', 'b')
@@ -89,6 +116,8 @@ def test_task_spec_validation():
         TaskSpec(0.0, 't', 'charge', 'none', 'dock_1', 'charger_c1')
     with pytest.raises(ValueError):
         TaskSpec(0.0, 't', 'delivery', 'small', 'a', 'b', priority=300)
+    with pytest.raises(ValueError):
+        TaskSpec(0.0, 't', 'collect', 'none', '', 'dock_b')  # 회수는 테이블(pickup)이 있어야 한다
 
 
 def test_json_round_trip(tmp_path, stations, basic):

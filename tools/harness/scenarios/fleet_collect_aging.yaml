@@ -1,0 +1,55 @@
+# 식당 시연 2 리허설: 회수 호출(TYPE_COLLECT, priority 200) + 우선순위 aging 켬/끔 (가짜 로봇, 시뮬레이터 없음).
+# fleet_manager + 가짜 로봇 3대(장애 주입기 없이 직접 연결) + 작업 생성기(collect_aging.yaml). 할당은 nearest.
+# 결과 정리: experiments/fleet_collect_aging (analyze.py가 task_outcomes.csv·tasks.json으로 대기 시간·미할당·처리량을 낸다)
+#
+#   python3 tools/harness/run.py fleet_collect_aging -n 5 --set aging=off --label aging_off
+#   python3 tools/harness/run.py fleet_collect_aging -n 5 --set aging=on  --label aging_on
+#
+# 시간: 가짜 로봇은 odom이 없어 시뮬레이션 시계가 없다. 서버·작업 생성기·지표가 모두 실제 시간이라 같은 시계다
+# (#285: odom이 없으면 실제 시간 그대로). aging의 대기 시간(서버 노드 시계 − created_time)도 실제 시간이다.
+name: fleet_collect_aging
+packages: amr_fleet_manager
+num_robots: 3
+use_sim_time: false
+seed_base: 1
+timeout_s: 900
+params:
+  # off: aging_rate 0.0 (fleet_manager.yaml 기본) / on: fleet_manager_restaurant.yaml의 1.667
+  aging: "off"
+  algorithm: nearest
+  num_robots: 3
+  # 가짜 로봇 속도 (m/s). 작업 시간을 줄여 한 실행을 짧게 한다 (collect_aging.yaml 주석의 처리량 근거)
+  robot_speed_mps: 3.0
+  # 작업 생성기 일정(collect_aging.yaml): 첫 작업 5 s + 평균 간격 × 건수 ≈ 일정 길이. 그 뒤 여유를 두고 끝낸다
+  duration_s: 480
+processes:
+  - name: fleet_manager
+    # station_clearance_m:=0.0: 가짜 로봇은 서로 막히지 않는다(fleet_fake와 같은 조건)
+    cmd: >-
+      ros2 launch amr_fleet_manager fleet_manager.launch.py algorithm:={algorithm}
+      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch station_clearance_m:=0.0
+      extra_params_file:={extra_params_file}
+    ready_topic: /fleet/heartbeat
+  - name: fake_robots
+    cmd: >-
+      ros2 launch amr_fleet_manager fake_robots.launch.py count:={num_robots} speed_mps:={robot_speed_mps}
+    settle_s: 3
+  - name: rosbag
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*'
+    settle_s: 3
+  - name: task_generator
+    cmd: >-
+      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json
+      scenario_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/scenarios/collect_aging.yaml
+param_sets:
+  aging:
+    # 끔도 파일을 넘긴다: ros2 launch가 빈 인자(extra_params_file:=)를 받지 않는다. 기본 설정을 한 번 더 얹으므로 값은 같다
+    "off": {extra_params_file: "$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/fleet_manager.yaml"}
+    "on": {extra_params_file: "$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/fleet_manager_restaurant.yaml"}
+driver:
+  mode: wait
+  use_sim_time: false
+  duration_s: "{duration_s}"
+postprocess:
+  - name: fleet_metrics
+    cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms 0 --num-robots {num_robots}
