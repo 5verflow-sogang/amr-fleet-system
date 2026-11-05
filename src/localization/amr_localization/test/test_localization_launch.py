@@ -125,12 +125,18 @@ class TestLocalizationStack(unittest.TestCase):
         node = cls.node
         # 입력을 내는 노드 (백그라운드 스레드). 확인용 구독은 node가 테스트 스레드에서 돈다
         cls.inputs = rclpy.create_node('test_localization_inputs')
-        tf = TransformStamped()
-        tf.header.stamp = cls.inputs.get_clock().now().to_msg()
-        tf.header.frame_id, tf.child_frame_id = f'{NS}/base_footprint', f'{NS}/lidar_link'
-        tf.transform.rotation.w = 1.0
+        # 센서 고정 TF. imu_link가 없으면 robot_localization이 IMU 측정을 버려 odom만으로 통과한다 (#287 하연 리뷰)
+        transforms = []
+        for child in ('lidar_link', 'imu_link'):
+            tf = TransformStamped()
+            tf.header.stamp = cls.inputs.get_clock().now().to_msg()
+            tf.header.frame_id, tf.child_frame_id = f'{NS}/base_footprint', f'{NS}/{child}'
+            tf.transform.rotation.w = 1.0
+            transforms.append(tf)
         cls.static_tf = StaticTransformBroadcaster(cls.inputs)
-        cls.static_tf.sendTransform(tf)
+        cls.static_tf.sendTransform(transforms)
+        # 가짜 IMU 회전 속도 (rad/s). test_5에서만 올려 EKF가 IMU를 쓰는지 본다
+        cls.imu_wz = 0.0
         cls.tf_buffer = Buffer()
         cls.tf_listener = TransformListener(cls.tf_buffer, node)
         cls.filtered, cls.amcl = [], []
@@ -186,6 +192,7 @@ class TestLocalizationStack(unittest.TestCase):
         imu = Imu()
         imu.header.stamp, imu.header.frame_id = cls.inputs.get_clock().now().to_msg(), f'{NS}/imu_link'
         imu.orientation.w = 1.0
+        imu.angular_velocity.z = cls.imu_wz
         imu.angular_velocity_covariance[8] = 1e-4
         imu.linear_acceleration.z = 9.81
         cls.imu_pub.publish(imu)
@@ -242,6 +249,14 @@ class TestLocalizationStack(unittest.TestCase):
         q = self.filtered[-1][1].pose.pose.position
         self.assertLess(math.hypot(q.x - ROBOT[0], q.y - ROBOT[1]), 0.1,
                         f'odometry/filtered ({q.x:.3f}, {q.y:.3f})')
+
+    def test_5_imu_fused(self):
+        # 휠 오도메트리는 계속 회전 0인데 IMU만 돌면, EKF(imu0: vyaw)가 IMU를 받을 때만 출력 회전 속도가 0에서 벗어난다.
+        # 위치 확인(test_4) 뒤에 돌려 다른 확인에 영향이 없게 한다
+        type(self).imu_wz = 0.5
+        ok = self.spin_until(lambda: self.filtered and abs(self.filtered[-1][1].twist.twist.angular.z) > 0.1)
+        wz = self.filtered[-1][1].twist.twist.angular.z if self.filtered else None
+        self.assertTrue(ok, f'IMU 회전 속도 0.5 rad/s가 odometry/filtered에 안 들어간다 (angular.z = {wz})')
 
 
 @launch_testing.post_shutdown_test()
