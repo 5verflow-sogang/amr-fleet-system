@@ -50,6 +50,27 @@ def test_obstacle_infos_rotation():
     assert infos[0].clearance == pytest.approx(3.0 - 0.2 - 0.2)
 
 
+def test_obstacle_infos_receding_behind_needs_rear_position_and_moving_away():
+    out = TrackedObstacleArray()
+    # 로봇은 원점에서 +x를 본다. 차체 뒤 끝 x = -0.3, 작업자 반경 0.25 → 몸 전체가 뒤면 x < -0.55
+    for track_id, (x, vx) in enumerate([(-0.8, -1.0), (-0.8, 0.6), (-0.4, -1.0), (0.8, -1.0)]):
+        obs = TrackedObstacle(track_id=track_id, is_dynamic=True, radius=0.25)
+        obs.pose.pose.position.x, obs.pose.pose.position.y = x, 0.5
+        obs.twist.twist.linear.x = vx
+        out.obstacles.append(obs)
+    infos = obstacle_infos(out, {}, 0.0, (0.0, 0.0), 0.6, 0.4, robot_vx=0.3)
+    assert [i.receding_behind for i in infos] == [True, False, False, False]
+    assert [i.speed for i in infos] == [pytest.approx(1.0), pytest.approx(0.6), pytest.approx(1.0), pytest.approx(1.0)]
+    # 뒤에서 따라오는 쪽(로봇 0.3보다 빠른 0.6): 다가온다. 뒤 끝에 걸친 것(-0.4)·앞(0.8)은 뒤가 아니다
+    # 로봇이 왼쪽(+y)을 보면 world -y 이동이 몸체 -x: 몸체 뒤(world (0.0, -0.8))에서 멀어진다
+    rot = TrackedObstacleArray()
+    obs = TrackedObstacle(track_id=0, is_dynamic=True, radius=0.25)
+    obs.pose.pose.position.y = -0.8
+    obs.twist.twist.linear.y = -1.0
+    rot.obstacles.append(obs)
+    assert obstacle_infos(rot, {}, -math.pi / 2, (0.0, 0.0), 0.6, 0.4)[0].receding_behind
+
+
 def test_obstacle_infos_empty():
     assert obstacle_infos(TrackedObstacleArray(), {}, 0.0, (0.0, 0.0), 0.6, 0.4) == []
 

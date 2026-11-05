@@ -6,7 +6,7 @@
 
 > 상태: 최소판(3주차). 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송, `assignments.csv` 기록, 구역 허가(정원·lease·작업 우선순위 대기열, 교착 시 허가 회수)까지 구현했다. 작업 취소, 실패 작업 재할당은 아직 없다.
 
-노드 세 개와 지표 변환 도구를 제공한다.
+노드 네 개와 지표 변환 도구를 제공한다.
 
 | 실행 파일 | 역할 |
 | --- | --- |
@@ -14,6 +14,7 @@
 | `fake_robot` | 가짜 로봇. Nav2·BT 없이 Fleet 메시지만 주고받는다. `amr_bt`가 완성되기 전에 서버·장애 주입기·하네스를 끝까지 돌려볼 때 쓴다 |
 | `fleet_metrics` | rosbag → `fleet_latency.csv`, `response_time.csv` (하네스가 실행마다 부른다) |
 | `task_generator` | 작업 생성기. 시나리오(seed로 재현) 또는 JSON Task 파일의 일정대로 작업을 요청한다 |
+| `congestion` | 혼잡도 노드 (식당 시연). 손님 정답 위치로 구역별 혼잡도와 Nav2 costmap 마스크를 낸다 |
 
 ## 제공 인터페이스
 
@@ -50,6 +51,27 @@
 | 종류 | 이름 | 타입 | 설명 |
 | --- | --- | --- | --- |
 | Publish | `/fleet/task_requests` | `amr_msgs/msg/Task` | 일정의 `at_s`마다 1건. 자세는 map 좌표, `created_time`은 발행 시각 |
+
+### `congestion`
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `/dynamic_obstacles/<id>/ground_truth/odom` | `nav_msgs/msg/Odometry` | 손님 정답 위치 (frame `world`). `<id>`는 `obstacles_file`에서 읽는다 |
+| Publish | `/fleet/congestion` | `amr_msgs/msg/ZoneCongestionArray` | `rate_hz`(2 Hz)마다 모든 구역 |
+| Publish | `/fleet/congestion_mask` | `nav_msgs/msg/OccupancyGrid` | 같은 주기, transient local |
+| Publish | `/fleet/congestion_keepout_info`, `/fleet/congestion_speed_info` | `nav2_msgs/msg/CostmapFilterInfo` | 시작할 때 한 번, transient local |
+
+계산식·마스크 값·필터 정보 값은 [api.md 4-5절](../../../docs/api.md#4-5-혼잡도-d1-115-민지-제안)이 기준이다. 계산은 `amr_fleet_core.congestion`(ROS 비의존)에 있다.
+
+- 인식 결과가 아니라 시뮬레이터 정답 위치를 센다. `obstacles_file`의 장애물은 종류와 상관없이 모두 "사람"으로 센다(물류센터 기본 설정이면 지게차·로봇도 들어간다). 식당에서는 손님만 담은 파일을 준다
+- `stale_s`(2 s) 넘게 위치가 안 온 손님은 세지 않는다
+- 마스크는 구역 둘레를 `mask.padding`(1 m)만큼 값 0 칸으로 감싼다. Nav2 Humble 속도 필터는 로봇이 마스크 밖이면 마지막 제한을 유지해서, 혼잡 구역에서 바로 마스크 밖으로 나가면 감속이 안 풀린다
+- 구역 파일 기본값(`config/congestion_zones.yaml`)은 식당 맵 전 물류센터 통로에 붙인 가짜 구역이다
+
+```bash
+ros2 launch amr_fleet_manager congestion.launch.py                         # 물류센터 가짜 구역 + 동적 장애물 5개
+ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<식당 구역> obstacles_file:=<손님 yaml> map_origin_in_world:='[x, y, yaw]'
+```
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
@@ -174,6 +196,9 @@
 | `assignment.min_battery_percent` | `20.0` | 할당 후보 배터리 하한 (%) |
 | `assignment.failed_retries` | `1` | FAILED 보고된 작업을 큐로 되돌려 다시 할당하는 횟수. 넘으면 실패로 남긴다. 분산 재경매(최대 1회)와 같게 둔다 |
 | `assignment.reclaim_timeout_s` | `5.0` | 작업을 맡은 로봇의 `RobotState`가 이 시간 동안 끊기면 로봇이 죽은 것으로 보고 작업을 회수해 다시 할당한다 (실제 시간, s). 0이면 끄기. `robot_timeout_s` 이상 |
+| `assignment.cost_fn` | `euclidean` | 할당 비용. `euclidean` / `congestion`(직선 거리 + 혼잡 구역 통과 벌점, `amr_fleet_core.make_congestion_cost`). `congestion`이면 `/fleet/congestion`을 구독하고, 아직 못 받았거나 `congestion_timeout_s` 넘게 끊기면 `euclidean`으로 할당한다. `assignments.csv`의 `cost_fn` 열에 호출마다 실제로 쓴 쪽이 남는다. launch 인자 `cost_fn`. `load_balance`는 할당 수를 먼저 보고 비용은 동률일 때만 봐서 혼잡도가 거의 안 먹힌다(시연은 `nearest`·`hungarian`) |
+| `assignment.congestion_weight` | `3.0` | 혼잡도 1.0인 구역 1 m를 (1 + 이 값) m로 본다. 시간으로 보면 (평소 속도 / 혼잡 구역 속도 − 1)이고, 속도 필터 55%만이면 0.8이다. 3.0은 멈춤·우회까지 감안한 시연용 값으로, 켬/끔 측정으로 다시 정한다. launch 인자 `congestion_weight` |
+| `assignment.congestion_timeout_s` | `3.0` | 혼잡도를 이 시간 동안 못 받으면 `euclidean`으로 돌아간다 (실제 시간, s). 혼잡도 노드가 죽었을 때 마지막 값으로 계속 벌점을 주지 않게 |
 | `assignment.station_clearance_m` | `1.0` | 스테이션 예약 (m). 맡겨진 작업의 픽업·하역 위치에서 이 거리 안을 쓰는 작업은 그 작업이 끝날 때까지 큐에서 기다린다. 큐 안에서 겹치면 우선순위가 높은 하나만 맡긴다. 같은 도크로 가는 두 작업을 동시에 내보내 두 로봇이 한 자리에서 막혔다 (11/2). 0이면 끄기 (`fleet_fake`는 연구 1 조건대로 0) |
 | `robot_timeout_s` | `3.0` | 이 시간 동안 `RobotState`가 없으면 후보에서 뺀다 (s) |
 | `resend.interval_s` | `1.0` | Ack 없을 때 재전송 간격 (s) launch 인자 `resend_interval_s`(연구 1 재시도 간격 비교) |

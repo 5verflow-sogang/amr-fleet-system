@@ -9,8 +9,8 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Optional
 
-from amr_fleet_core.assignment import (ALGORITHMS, RobotInfo, TaskInfo, euclidean_cost, filter_candidates,
-                                       sort_by_priority)
+from amr_fleet_core.assignment import (ALGORITHMS, COST_FNS, CongestedArea, CostFn, RobotInfo, TaskInfo,
+                                       euclidean_cost, filter_candidates, make_congestion_cost, sort_by_priority)
 
 from amr_fleet_core.claims import TaskClaims
 
@@ -24,8 +24,6 @@ FINISHED = (STATE_COMPLETED, STATE_FAILED)
 ERROR_CANCELED = 103
 # amr_msgs/msg/ErrorInfo.ASSIGN_TASK_TAKEN 와 같은 값. 다른 로봇이 먼저 맡아 물러난 것이라 재시도로 세지 않는다
 ERROR_TASK_TAKEN = 104
-
-COST_FN_NAME = 'euclidean'
 
 
 @dataclass(frozen=True)
@@ -48,10 +46,22 @@ class DispatcherConfig:
     # 같은 도크로 가는 두 작업을 동시에 내보내 두 로봇이 한 정차 자세로 들어가 막혔다 (11/2 fleet_stack-release_build,
     # dock_a). 0이면 끈다 (기본. 노드 설정은 1.0, 연구 1 가짜 로봇 실험은 지난 조건대로 끈다)
     station_clearance_m: float = 0.0
+    # 비용 함수 (COST_FNS). congestion: 직선 거리 + congestion_weight × Σ(혼잡도 × 혼잡 구역 통과 길이).
+    # 혼잡도는 set_congestion으로 넣는다(노드가 /fleet/congestion을 구독). 식당 시연 1-1 켬/끔 비교
+    cost_fn: str = 'euclidean'
+    congestion_weight: float = 3.0
+    # 혼잡도를 이 시간 [s] 동안 못 받으면 직선 거리로 돌아간다. 혼잡도 노드가 죽었을 때 마지막 값으로 계속 벌점을 주지 않게
+    congestion_timeout_s: float = 3.0
 
     def __post_init__(self):
         if self.algorithm not in ALGORITHMS:
             raise ValueError(f'알 수 없는 할당 알고리즘: {self.algorithm} (가능: {sorted(ALGORITHMS)})')
+        if self.cost_fn not in COST_FNS:
+            raise ValueError(f'알 수 없는 비용 함수: {self.cost_fn} (가능: {list(COST_FNS)})')
+        if not self.congestion_weight >= 0:
+            raise ValueError(f'congestion_weight는 0 이상이어야 한다: {self.congestion_weight}')
+        if not self.congestion_timeout_s > 0:
+            raise ValueError(f'congestion_timeout_s는 0보다 커야 한다: {self.congestion_timeout_s}')
         if self.resend_interval_s <= 0:
             raise ValueError(f'resend_interval_s는 0보다 커야 한다: {self.resend_interval_s}')
         if self.max_resends < 0:
@@ -130,6 +140,9 @@ class Dispatcher:
 
     def __post_init__(self):
         self._assign_fn = ALGORITHMS[self.config.algorithm]
+        # 혼잡도 반영 비용과 그 혼잡도를 받은 시각 (cost_fn이 congestion일 때만)
+        self._congestion_cost: Optional[CostFn] = None
+        self._congestion_at = -math.inf
         # 넣은 순서를 유지한다 (작업표 방송 순서)
         self.tasks: dict[str, TaskEntry] = {}
         self.robots: dict[str, RobotEntry] = {}
@@ -141,6 +154,18 @@ class Dispatcher:
         self.claims = TaskClaims(timeout)
 
     # ---- 입력 ----
+
+    def set_congestion(self, areas: list[CongestedArea], now: float) -> None:
+        """구역별 혼잡도 (/fleet/congestion 한 장). cost_fn이 congestion일 때만 할당에 쓴다."""
+        if self.config.cost_fn == 'congestion':
+            self._congestion_cost = make_congestion_cost(areas, self.config.congestion_weight)
+            self._congestion_at = now
+
+    def _current_cost_fn(self, now: float) -> tuple[str, CostFn]:
+        """이번 할당에 쓸 (이름, 비용 함수). 혼잡도를 아직 못 받았거나 오래됐으면 euclidean."""
+        if self._congestion_cost is not None and now - self._congestion_at <= self.config.congestion_timeout_s:
+            return 'congestion', self._congestion_cost
+        return 'euclidean', euclidean_cost
 
     def add_task(self, info: TaskInfo, payload: Any = None) -> bool:
         """새 작업을 큐에 넣는다. 같은 task_id가 이미 있으면 무시하고 False."""
@@ -253,7 +278,8 @@ class Dispatcher:
         if not queued or not candidates:
             return [], []
 
-        result = self._assign_fn(queued, candidates, euclidean_cost)
+        cost_name, cost_fn = self._current_cost_fn(now)
+        result = self._assign_fn(queued, candidates, cost_fn)
         call_id = self._next_call_id
         self._next_call_id += 1
         by_id = {r.robot_id: r for r in candidates}
@@ -274,11 +300,11 @@ class Dispatcher:
             self._pending[assignment_id] = _PendingAck(robot_id, info.task_id, now)
             commands.append(Outgoing(assignment_id, robot_id, info.task_id, first=True))
             rows.append(AssignmentRow(
-                call_id, self.config.algorithm, COST_FN_NAME, info.task_id, robot_id,
-                euclidean_cost(by_id[robot_id], info)))
+                call_id, self.config.algorithm, cost_name, info.task_id, robot_id,
+                cost_fn(by_id[robot_id], info)))
         for task_id in result.unassigned:
             rows.append(AssignmentRow(
-                call_id, self.config.algorithm, COST_FN_NAME, task_id, '', None))
+                call_id, self.config.algorithm, cost_name, task_id, '', None))
         return commands, rows
 
     def due_resends(self, now: float) -> tuple[list[Outgoing], list[str]]:

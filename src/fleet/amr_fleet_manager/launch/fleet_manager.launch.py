@@ -29,6 +29,7 @@ from amr_fleet_manager.records import append_fault_event
 # Node 파라미터 이름 ← launch 인자 이름
 SERVER_ARGS = [
     ('assignment.algorithm', 'algorithm'),
+    ('assignment.cost_fn', 'cost_fn'),
     ('assignments_csv', 'assignments_csv'),
     ('traffic.zones_file', 'zones_file'),
     ('traffic.deadlock_strategy', 'deadlock_strategy'),
@@ -65,6 +66,8 @@ def _server(context):
                 'assignment.reclaim_timeout_s': float(arg('reclaim_timeout_s')),
                 # 스테이션 예약 거리 (연구 1 가짜 로봇 실험은 지난 조건대로 0으로 끈다)
                 'assignment.station_clearance_m': float(arg('station_clearance_m')),
+                # 혼잡도 가중치 (식당 시연 1-1). cost_fn:=congestion일 때만 쓴다
+                'assignment.congestion_weight': float(arg('congestion_weight')),
             }],
             output='screen',
         )
@@ -96,6 +99,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'algorithm', default_value='nearest',
             description='할당 알고리즘: nearest / load_balance / hungarian'),
+        DeclareLaunchArgument(
+            'cost_fn', default_value='euclidean',
+            description='할당 비용: euclidean / congestion (직선 거리 + 혼잡 구역 통과 벌점, /fleet/congestion 구독)'),
+        DeclareLaunchArgument(
+            'congestion_weight', default_value='3.0',
+            description='혼잡도 1.0인 구역 1 m를 (1 + 이 값) m로 본다 (cost_fn:=congestion일 때)'),
         DeclareLaunchArgument(
             'assignments_csv', default_value='',
             description='할당 호출 기록 파일. 비우면 기록하지 않는다 (하네스가 실행마다 경로를 준다)'),

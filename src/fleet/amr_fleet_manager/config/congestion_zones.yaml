@@ -1,0 +1,19 @@
+# 혼잡도 구역 (congestion_node, docs/api.md 4-5절).
+# 상태: 가짜 구역. 식당 맵이 나오기 전(11/5~6) 물류센터 맵의 동적 장애물 통로에 붙였다. 지수의 식당 구역 이름이
+# 나오면 그 값으로 바꾼다.
+#
+# area: [x_min, x_max, y_min, y_max] (m, map 좌표). capacity: 이 인원이면 혼잡도 1.0
+# map ≈ world − (−0.04, 1.47) (지도 v2). 장애물 경로는 amr_gazebo config/dynamic_obstacles.yaml(world 좌표)
+zones:
+  - id: aisle_main_west
+    area: [-25.0, 0.0, 9.5, 13.5]
+    capacity: 2
+    description: 메인 통로 서쪽 (worker_1이 world y 13을 동서로 왕복)
+  - id: aisle_main_east
+    area: [0.0, 25.0, 9.5, 13.5]
+    capacity: 2
+    description: 메인 통로 동쪽
+  - id: aisle_south
+    area: [-22.0, 22.0, -1.0, 3.0]
+    capacity: 2
+    description: A열 남쪽 통로 (worker_2 지그재그)
