@@ -20,27 +20,19 @@ _RESTAURANT_FOOTPRINT = (
 )
 
 
-def profile_overrides(nav2_params: dict, profile: str, bt_xml: str = '') -> dict:
-    """{'global_costmap': {...}, 'local_costmap': {...}, 'DWA': {...}, 'bt_navigator': {...}}에 덮어쓸 키만.
-    warehouse면 빈 dict.
+def profile_overrides(nav2_params: dict, profile: str) -> dict:
+    """{'global_costmap': {...}, 'local_costmap': {...}, 'DWA': {...}}에 덮어쓸 키만. warehouse면 빈 dict.
 
     nav2_params는 지금 쓰이지 않지만(식당 footprint는 물류센터 값과 무관한 고정값이다) 다른
     오버레이 함수(congestion_filter_overrides)와 시그니처를 맞추고, 나중에 기존 값 기준으로
     덧셈/비율 계산이 필요해지면 바로 쓸 수 있게 받아 둔다.
-
-    bt_xml: restaurant일 때 bt_navigator에 줄 default_nav_to_pose_bt_xml 절대 경로(1초 재계획
-    BT, nav2 제공 navigate_to_pose_w_replanning_and_recovery.xml). #292가 bt_navigator 기본
-    트리를 "막혔을 때만 재계획" BT로 바꾸면, 식당은 그 BT에서는 혼잡 비용(229)으로 재계획이
-    안 돼 우회가 안 나온다(로컬 비교로 확인, #292 PR) - 식당만 이 값으로 되돌린다. 물류센터는
-    #292가 정한 기본값을 그대로 쓴다(여기서 아무 것도 안 건드림). 비우면(예: nav2.launch.py가
-    아직 안 넘겼거나 warehouse) 아무 영향 없다.
     """
     if profile not in PROFILES:
         raise ValueError(f'nav2_profile은 {", ".join(PROFILES)} 중 하나: {profile!r}')
     if profile == 'warehouse':
         return {}
     del nav2_params
-    result = {
+    return {
         'global_costmap': {'footprint': _RESTAURANT_FOOTPRINT},
         'local_costmap': {'footprint': _RESTAURANT_FOOTPRINT},
         'DWA': {
@@ -48,9 +40,6 @@ def profile_overrides(nav2_params: dict, profile: str, bt_xml: str = '') -> dict
             'footprint_half_width': _RESTAURANT_HALF_WIDTH,
         },
     }
-    if bt_xml:
-        result['bt_navigator'] = {'default_nav_to_pose_bt_xml': bt_xml}
-    return result
 
 
 CONGESTION_FILTERS = ('none', 'keepout', 'speed')
@@ -100,23 +89,20 @@ def congestion_filter_overrides(filter_choice: str, speed_limit_topic: str = '')
 
 def build_overrides(
     nav2_params: dict, profile: str, filter_choice: str, odom_topic: str, speed_limit_topic: str = '',
-    bt_xml: str = '',
 ) -> dict:
-    """로봇 하나의 controller_server(FollowPath=DWA)·global_costmap·local_costmap·bt_navigator에
-    덧붙일 오버레이 전체.
+    """로봇 하나의 controller_server(FollowPath=DWA)·global_costmap·local_costmap에 덧붙일 오버레이 전체.
 
     nav2.launch.py가 {ns: 이 dict}로 감싸 임시 yaml에 써서, 로봇별 RewrittenYaml 뒤에 추가
     parameters 소스로 얹는다. 기본(warehouse, none)은 지금 controller_server override와 똑같고
-    global_costmap·local_costmap·bt_navigator 쪽은 빈 dict(변경 없음)다.
+    global_costmap·local_costmap 쪽은 빈 dict(변경 없음)다.
     """
     dwa_config = dict(nav2_params['controller_server']['ros__parameters']['DWA'])
-    profile_over = profile_overrides(nav2_params, profile, bt_xml)
+    profile_over = profile_overrides(nav2_params, profile)
     dwa_config.update(profile_over.get('DWA', {}))
 
     global_over = dict(profile_over.get('global_costmap', {}))
     global_over.update(congestion_filter_overrides(filter_choice, speed_limit_topic))
     local_over = dict(profile_over.get('local_costmap', {}))
-    bt_over = dict(profile_over.get('bt_navigator', {}))
 
     return {
         'controller_server': {'ros__parameters': {
@@ -126,5 +112,4 @@ def build_overrides(
         }},
         'global_costmap': {'global_costmap': {'ros__parameters': global_over}},
         'local_costmap': {'local_costmap': {'ros__parameters': local_over}},
-        'bt_navigator': {'ros__parameters': bt_over},
     }
