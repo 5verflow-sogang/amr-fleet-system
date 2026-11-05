@@ -1,0 +1,75 @@
+# 식당 시연 1-1: 혼잡도 반영 할당 켬/끔 (실제 로봇 스택). 식당 월드 + 서빙 로봇 5대 + 위치추정 + Nav2 + Fleet 서버 +
+# 피크 손님(서쪽 통로·배식대 앞 몰림) + 혼잡도 노드 + 작업 생성기(restaurant_serving.yaml) + rosbag.
+# 결과 정리: experiments/restaurant_congestion (analyze.py)
+#
+#   tools/harness/gcp_run.sh fleet_restaurant_congestion -n 5 --set assign=off --label off
+#   tools/harness/gcp_run.sh fleet_restaurant_congestion -n 5 --set assign=on  --label on
+#
+# Nav2 혼잡도 필터(1-2)는 켬·끔 모두 끈다(system.launch 기본 congestion_filter 없음). 할당 효과만 본다.
+# 구역 클라이언트는 끈다: zones_file 기본값이 물류센터 좁은 통로라 식당 홀에 걸린다(#308).
+name: fleet_restaurant_congestion
+packages: amr_bringup
+num_robots: 5
+use_sim_time: true
+seed_base: 1
+timeout_s: 3600
+params:
+  num_robots: 5
+  delay_ms: 100
+  loss_pct: 0
+  algorithm: nearest
+  # off: 직선거리 / on: 직선거리 + 혼잡 구역 통과 길이 × 가중치 (#297)
+  assign: "off"
+  cost_fn: euclidean
+  congestion_weight: 3.0
+  # 일정 약 490 s(10 s + 23 × 평균 20 s) 뒤 마지막 서빙을 끝낼 여유
+  duration_s: 900
+  guests: peak
+processes:
+  - name: stack
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true
+      world:=restaurant.sdf body:=serving
+      robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant.yaml
+      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0, 0, 0]"
+      dynamic_obstacles:=true dynamic_obstacles_file:=dynamic_obstacles_restaurant_{guests}.yaml
+      seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct} algorithm:={algorithm}
+      cost_fn:={cost_fn} congestion_weight:={congestion_weight}
+      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
+      fault_events_file:={run_dir}/fault_events.csv spawn_interval_s:=5.0
+    ready_topic: /fleet/heartbeat
+    # fleet_stack과 같다: 모든 로봇의 bt_navigator가 active여야 작업을 받아 움직인다
+    ready_cmds:
+      - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
+    ready_timeout_s: 240
+    settle_s: 5
+  # 끔 조건도 띄운다: 혼잡도 체류 비교와 녹화를 같게 하려고. 서버는 cost_fn:=congestion일 때만 구독한다
+  - name: congestion
+    cmd: >-
+      ros2 launch amr_fleet_manager congestion.launch.py site:=restaurant guests:={guests} use_sim_time:=true
+    ready_topic: /fleet/congestion
+    settle_s: 2
+  - name: rosbag
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/amr_[0-9][0-9]/odom'
+    settle_s: 3
+  - name: task_generator
+    cmd: >-
+      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json
+      map_origin_in_world:="[0, 0, 0]"
+      stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
+      scenario_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/scenarios/restaurant_serving.yaml
+param_sets:
+  assign:
+    "off": {cost_fn: euclidean}
+    "on": {cost_fn: congestion}
+driver:
+  mode: wait
+  # 작업 일정이 실제 시간이라 실제 시간으로 기다린다 (#285 머지 전)
+  use_sim_time: false
+  duration_s: "{duration_s}"
+postprocess:
+  - name: fleet_metrics
+    cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots {num_robots}
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true

@@ -1,7 +1,7 @@
 """식당 시연 1-1 켬/끔 지표 (혼잡도 반영 할당). rclpy 없이 돈다. analyze.py가 부르고 test_congestion_metrics.py가 시험한다.
 
 실행 하나 = 하네스 결과 폴더(fleet_metrics가 쓴 task_outcomes.csv, robot_states.csv, tasks.json, meta.json).
-시각 열은 bag 수신 시각(실제 시간)이고, 길이는 meta.json fleet_clock.rtf를 곱해 시뮬레이션 시간으로 바꾼다(#285와 같은 기준).
+시각 열은 bag 수신 시각(실제 시간)이고, 길이는 meta.json fleet_clock.rtf(없으면 real_time_factor)를 곱해 시뮬레이션 시간으로 바꾼다(#285와 같은 기준).
 완료 시간은 task_outcomes.csv에 request_sim·end_sim(#285 뒤)이 있으면 그 차이, 없으면 task_time_s × rtf다.
 
 - 할당 대기: first_assign_time − request_time
@@ -121,7 +121,8 @@ def other_robot_choices(outcomes: Sequence[dict], schedule: dict[str, dict], sta
 def run_metrics(run_dir: Path, stations: dict[str, tuple[float, float]], crowd: Sequence[Area]) -> dict:
     """실행 폴더 하나의 지표."""
     meta = json.loads((run_dir / 'meta.json').read_text(encoding='utf-8')) if (run_dir / 'meta.json').exists() else {}
-    rtf = ((meta.get('fleet_clock') or {}).get('rtf')) or 1.0
+    # #285 뒤는 fleet_clock.rtf, 그 전은 하네스가 잰 real_time_factor (/clock 기준)
+    rtf = ((meta.get('fleet_clock') or {}).get('rtf')) or meta.get('real_time_factor') or 1.0
     outcomes = _read_csv(run_dir / 'task_outcomes.csv')
     tasks_file = run_dir / 'tasks.json'
     schedule = {t['task_id']: t for t in json.loads(tasks_file.read_text(encoding='utf-8'))['tasks']} \

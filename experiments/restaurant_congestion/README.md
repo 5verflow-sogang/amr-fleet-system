@@ -3,7 +3,7 @@
 손님이 한쪽(서쪽 통로·배식대 앞)에 몰렸을 때, 할당 비용에 혼잡도를 넣으면(`cost_fn:=congestion`, #297) 덜 막히는 로봇이
 일을 받는지, 그래서 대기·완료·정지 시간이 줄어드는지 잰다. 효과가 작으면 작다고 그대로 적는다.
 
-> 상태: **설계·지표 코드 준비**. 식당 5대 실행 명령(하연, 11/6)이 나오면 아래 "실행"을 채워 돌린다.
+> 상태: **측정 중**. 식당 5대 실행(#308)과 하네스 시나리오 `fleet_restaurant_congestion`으로 돌린다.
 
 ## 조건
 
@@ -32,16 +32,19 @@
 
 ## 실행
 
+하네스 시나리오 `tools/harness/scenarios/fleet_restaurant_congestion.yaml`(#308의 `system.launch.py` 식당 인자 + 혼잡도 노드 +
+작업 생성기 + rosbag). GCP 러너(RTF 1.0 근처)로 돌린다. 노트북 Docker는 5대 + 손님 13명에서 RTF가 낮아 작업 일정(실제 시간,
+#285 머지 전)이 상대적으로 몰린다.
+
 ```bash
-# 하연의 식당 5대 실행 명령이 나오면 채운다 (필요한 인자는 아래 "스택에 필요한 것")
-for c in off on; do
-  python3 tools/harness/run.py <식당 fleet 시나리오> -n 5 --set cost_fn=<euclidean|congestion> --label restaurant_1_1_$c
-done
+tools/harness/gcp_run.sh fleet_restaurant_congestion -n 5 --set assign=off --label off
+tools/harness/gcp_run.sh fleet_restaurant_congestion -n 5 --set assign=on  --label on
 # 결과 폴더를 raw/off/, raw/on/ 아래로 옮긴 뒤
 python3 experiments/restaurant_congestion/analyze.py raw/ --out experiments/restaurant_congestion
 ```
 
-`analyze.py`는 실행별 `summary.csv`와 조건별 `results.md`(평균 ± 표준편차)를 쓴다.
+`analyze.py`는 실행별 `summary.csv`와 조건별 `results.md`(평균 ± 표준편차)를 쓴다. 시간은 `meta.json`의
+`fleet_clock.rtf`(#285 뒤) 또는 `real_time_factor`를 곱해 시뮬레이션 시간으로 바꾼다.
 
 ## 스택에 필요한 것 (하연 식당 실행과 맞출 것)
 
