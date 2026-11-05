@@ -128,6 +128,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_avoid_mode test/test_avoid_mode.cpp)
   target_include_directories(test_avoid_mode PRIVATE include)
 
+  ament_add_gtest(test_speed_limit test/test_speed_limit.cpp)
+  target_include_directories(test_speed_limit PRIVATE include)
+
   ament_add_gtest(test_plan_path test/test_plan_path.cpp)
   target_link_libraries(test_plan_path plan_path)
   ament_target_dependencies(test_plan_path tf2 tf2_geometry_msgs)
