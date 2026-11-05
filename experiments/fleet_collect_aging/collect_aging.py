@@ -71,6 +71,48 @@ def summarize(rows: Sequence[TaskRow], cutoff: float) -> dict:
     return out
 
 
+def starvation(rows: Sequence[TaskRow], window: tuple[float, float], cutoff: float) -> float:
+    """기아 시간: 일반 작업이 기다리는데 일반 작업이 하나도 할당되지 않은 가장 긴 구간 (s). window와 겹치는 구간만 본다.
+
+    일반 작업 할당 시각 a_i 사이(마지막은 관측 마감까지)마다, 그 사이에 일반 작업이 처음 기다리기 시작한 시각
+    s = max(a_i, a_i 뒤에도 남은 일반 작업의 가장 이른 요청)부터 다음 할당 a_{i+1}까지를 잰다. 구간이 window 안에서 시작하지
+    않아도 겹치면 넣고, 끝을 window에서 자르지 않는다 - 몰림이 끝난 뒤 밀린 회수 호출을 처리하는 동안도 기아다.
+    """
+    normal = [r for r in rows if r.kind == 'normal']
+    assigns = sorted(r.assign for r in normal if r.assign is not None)
+    w0, w1 = window
+    longest = 0.0
+    previous = float('-inf')
+    for end in assigns + [cutoff]:
+        waiting = [r.request for r in normal if (r.assign is None or r.assign > previous) and r.request < end]
+        if waiting:
+            start = max(previous, min(waiting))
+            if start < w1 and end > w0:
+                longest = max(longest, end - start)
+        previous = end
+    return longest
+
+
+def schedule_offset(outcomes: Sequence[dict], schedule: Sequence[dict]) -> float:
+    """작업 생성기 일정 시각(at_s) → 요청 시각으로 옮기는 값 (중앙값). 일정 시작 시각이다."""
+    at = {t['task_id']: float(t['at_s']) for t in schedule}
+    diffs = sorted(float(o['request_time']) - at[o['task_id']] for o in outcomes
+                   if o['task_id'] in at and o['request_time'])
+    return diffs[len(diffs) // 2]
+
+
+def run_condition(params: dict, restaurant_rate: float) -> tuple[str, float]:
+    """meta.json params → (부하, aging_rate). 첫 측정 실행은 load가 없어 overload다.
+
+    aging_rate를 직접 주지 않았으면 aging off는 0.0, on은 식당 설정 파일 값이다.
+    """
+    load = params.get('load') or 'overload'
+    rate = params.get('aging_rate')
+    if rate not in (None, ''):
+        return load, float(rate)
+    return load, restaurant_rate if str(params.get('aging')) == 'on' else 0.0
+
+
 def load_run(run: Path) -> tuple[list[TaskRow], float, int]:
     """하네스 결과 폴더 → (TaskRow 목록, 관측 마감, seed)."""
     meta = json.loads((run / 'meta.json').read_text(encoding='utf-8'))
@@ -79,3 +121,12 @@ def load_run(run: Path) -> tuple[list[TaskRow], float, int]:
         outcomes = list(csv.DictReader(f))
     schedule = json.loads((run / 'tasks.json').read_text(encoding='utf-8'))['tasks']
     return task_rows(outcomes, schedule, cutoff), cutoff, int(meta['seed'])
+
+
+def load_run_info(run: Path) -> tuple[dict, float]:
+    """(meta.json params, 일정 시작 시각). 몰림 구간(일정 시각)을 요청 시각으로 옮길 때 쓴다."""
+    meta = json.loads((run / 'meta.json').read_text(encoding='utf-8'))
+    with (run / 'task_outcomes.csv').open(encoding='utf-8') as f:
+        outcomes = list(csv.DictReader(f))
+    schedule = json.loads((run / 'tasks.json').read_text(encoding='utf-8'))['tasks']
+    return meta.get('params', {}), schedule_offset(outcomes, schedule)
