@@ -11,19 +11,19 @@ pytest.importorskip('ament_index_python')
 import launch  # noqa: E402
 from ament_index_python.packages import get_package_share_directory  # noqa: E402
 from launch.actions import IncludeLaunchDescription, TimerAction  # noqa: E402
-from launch.utilities import perform_substitutions  # noqa: E402
+from launch.utilities import normalize_to_list_of_substitutions, perform_substitutions  # noqa: E402
 from launch_ros.actions import Node  # noqa: E402
 
 # 이 launch가 include하는 파일. 이름이 바뀌면 여기서 먼저 깨진다
 INCLUDED = [
-    ('amr_gazebo', 'world.launch.py'),
-    ('amr_gazebo', 'dynamic_obstacles.launch.py'),
+    ('amr_gazebo', 'world'),
+    ('amr_gazebo', 'config'),
     ('amr_gazebo', 'spawn_robot.launch.py'),
     ('amr_odometry', 'odometry.launch.py'),
     ('amr_odometry', 'sensor_filters.launch.py'),
     ('amr_localization', 'localization.launch.py'),
     ('amr_bt', 'amr_bt.launch.py'),
-    ('amr_fleet_manager', 'fleet_manager.launch.py'),
+    ('amr_fleet_manager', 'cost_fn'),
     ('amr_bringup', 'nav2.launch.py'),
     ('amr_zone_client', 'zone_client.launch.py'),
     ('amr_tracking', 'tracking.launch.py'),
@@ -115,15 +115,20 @@ def test_docking_spawns_markers_once():
     assert sum(isinstance(a, TimerAction) for a in actions) == 3 + 1
 
 
-def include_args(context, actions, launch_file):
-    """actions 중 launch_file을 include하는 것의 인자 {이름: 값}."""
+def include_args(context, actions, key):
+    """actions(로봇 스택 TimerAction 제외) 중 인자 key를 받는 include의 인자 {이름: 값}.
+
+    include 경로는 Substitution으로만 들고 있어(launch Humble) 인자 이름으로 찾는다.
+    """
     for action in actions:
         for sub in getattr(action, 'get_sub_entities', lambda: [])():
-            if isinstance(sub, IncludeLaunchDescription) and \
-                    sub.launch_description_source.location.endswith(launch_file):
-                return {perform_substitutions(context, k): perform_substitutions(context, v)
+            if isinstance(sub, IncludeLaunchDescription):
+                args = {perform_substitutions(context, normalize_to_list_of_substitutions(k)):
+                        perform_substitutions(context, normalize_to_list_of_substitutions(v))
                         for k, v in sub.launch_arguments}
-    raise AssertionError(f'{launch_file} include 없음')
+                if key in args:
+                    return args
+    raise AssertionError(f'{key} 인자를 받는 include 없음')
 
 
 def test_restaurant_args_reach_world_obstacles_and_fleet():
@@ -133,19 +138,19 @@ def test_restaurant_args_reach_world_obstacles_and_fleet():
         module, num_robots=1, world='restaurant.sdf', dynamic_obstacles=True,
         dynamic_obstacles_file='dynamic_obstacles_restaurant_peak.yaml', cost_fn='congestion', congestion_weight=2.0)
     actions = module._system(context)
-    assert include_args(context, actions, 'world.launch.py')['world'] == 'restaurant.sdf'
-    config = include_args(context, actions, 'dynamic_obstacles.launch.py')['config']
+    assert include_args(context, actions, 'world')['world'] == 'restaurant.sdf'
+    config = include_args(context, actions, 'config')['config']
     assert config == os.path.join(get_package_share_directory('amr_gazebo'), 'config',
                                   'dynamic_obstacles_restaurant_peak.yaml')
     assert os.path.exists(config)
-    fleet = include_args(context, actions, 'fleet_manager.launch.py')
+    fleet = include_args(context, actions, 'cost_fn')
     assert (fleet['cost_fn'], fleet['congestion_weight']) == ('congestion', '2.0')
     # 기본값은 물류센터 그대로 (손님 파일을 비우면 dynamic_obstacles.launch.py 기본 파일)
     context = context_with_defaults(module, num_robots=1, dynamic_obstacles=True)
     actions = module._system(context)
-    assert include_args(context, actions, 'world.launch.py')['world'] == 'warehouse.sdf'
-    assert include_args(context, actions, 'dynamic_obstacles.launch.py')['config'] == ''
-    assert include_args(context, actions, 'fleet_manager.launch.py')['cost_fn'] == 'euclidean'
+    assert include_args(context, actions, 'world')['world'] == 'warehouse.sdf'
+    assert include_args(context, actions, 'config')['config'] == ''
+    assert include_args(context, actions, 'cost_fn')['cost_fn'] == 'euclidean'
 
 
 def test_nav2_launch_description_builds():
