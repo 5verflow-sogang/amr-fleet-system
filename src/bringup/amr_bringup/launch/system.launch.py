@@ -6,6 +6,11 @@
     ros2 launch amr_bringup system.launch.py delay_ms:=200.0 loss_pct:=5.0 seed:=3 dynamic_obstacles:=true
     ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true                         # 2단계
     ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true tracking:=true safety:=true  # 3단계
+    ros2 launch amr_bringup system.launch.py world:=restaurant.sdf body:=serving nav2:=true \
+        robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant.yaml \
+        map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:='[0, 0, 0]' \
+        dynamic_obstacles:=true dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak.yaml \
+        cost_fn:=congestion                                                 # 식당 5대 (혼잡도 켬)
 
 기본은 1단계라 BT의 이동이 가짜(stub)여서 로봇이 움직이지 않는다. nav2 등은 꺼 둔 채로 시작해, 패키지가 준비되는 대로 인자로 켠다 (README "단계").
 nav2:=true면 BT의 이동(MoveTo)도 Nav2를 부르고(amr_bt use_nav2), docking:=true면 도킹(Dock)이 도킹 서버를 부른다(use_docking).
@@ -74,7 +79,7 @@ def _system(context):
         zones_file=arg('zones_file'), body=arg('body'))
     opt.validate()
 
-    actions = [_launch('amr_gazebo', 'world.launch.py', gui=arg('gui'))]
+    actions = [_launch('amr_gazebo', 'world.launch.py', gui=arg('gui'), world=arg('world'))]
     if opt.localization:
         # world → map 정적 TF. 지도 원점(map_origin_in_world)을 여기 한 곳에서만 발행하고, world 좌표 설정
         # (zones.yaml 등)을 쓰는 노드는 이 TF로 바꾼다. 원점 값을 노드마다 복사하지 않기 위해서다
@@ -82,7 +87,12 @@ def _system(context):
             package='tf2_ros', executable='static_transform_publisher', name='world_to_map',
             arguments=world_to_map_tf_args(origin), parameters=[{'use_sim_time': True}], output='screen'))
     if flag('dynamic_obstacles'):
-        actions.append(_launch('amr_gazebo', 'dynamic_obstacles.launch.py', seed=seed, use_sim_time='true'))
+        # 상대 이름이면 amr_gazebo config/ 아래 파일 (식당: dynamic_obstacles_restaurant_peak.yaml 등)
+        obstacles = arg('dynamic_obstacles_file')
+        if obstacles and not os.path.isabs(obstacles):
+            obstacles = os.path.join(get_package_share_directory('amr_gazebo'), 'config', obstacles)
+        actions.append(_launch('amr_gazebo', 'dynamic_obstacles.launch.py', seed=seed, use_sim_time='true',
+                               config=obstacles))
 
     for i, robot in enumerate(robots):
         pose = (robot.x, robot.y, robot.yaw)
@@ -101,7 +111,8 @@ def _system(context):
             algorithm=arg('algorithm'), assignments_csv=arg('assignments_csv'), epoch_file=arg('epoch_file'),
             kill_at_s=arg('kill_at_s'), restart_after_s=arg('restart_after_s'),
             fault_events_file=arg('fault_events_file'), zones_file=arg('zones_file'),
-            deadlock_strategy=arg('deadlock_strategy'), use_sim_time='true'))
+            deadlock_strategy=arg('deadlock_strategy'), cost_fn=arg('cost_fn'),
+            congestion_weight=arg('congestion_weight'), use_sim_time='true'))
         injector_config = os.path.join(
             get_package_share_directory('amr_fault_injector'), 'config', 'fault_injector.yaml')
         actions.append(Node(
@@ -129,11 +140,13 @@ def generate_launch_description():
 
     args = [
         # 로봇·시뮬레이터
+        ('world', 'warehouse.sdf', '월드 (amr_gazebo worlds/ 아래 이름 또는 절대 경로). 식당은 restaurant.sdf'),
         ('num_robots', '5', '로봇 수. robots_file 앞에서부터 쓴다'),
         ('robots_file', os.path.join(share, 'config', 'robots.yaml'), '로봇 이름과 스폰 자세 (world)'),
         ('gui', 'false', 'Gazebo 화면. 러너·CI에서는 false'),
         ('enable_camera', 'false', 'RGBD 카메라. CPU로 5대를 그리면 RTF 0.37로 떨어진다 (명세서 11-3절)'),
         ('dynamic_obstacles', 'false', '동적 장애물 5개'),
+        ('dynamic_obstacles_file', '', '동적 장애물 yaml (amr_gazebo config/ 아래 이름 또는 절대 경로). 비우면 물류센터 기본'),
         ('spawn_interval_s', '3.0', '로봇 스폰 시차 (실제 시간, s)'),
         ('payload_mass', '0.0', '모든 로봇의 적재물 질량 [kg] (연구 2 Gazebo 평가)'),
         ('body', 'amr', '몸체: amr(물류 0.6 x 0.4 m) 또는 serving(식당 0.565 x 0.537 m). 스폰 몸체와 Nav2 footprint(nav2_profile)가 같이 바뀐다'),
@@ -156,6 +169,8 @@ def generate_launch_description():
         # Fleet
         ('fleet', 'true', 'Fleet 서버 + 장애 주입기'),
         ('algorithm', 'nearest', '할당 알고리즘'),
+        ('cost_fn', 'euclidean', '할당 비용: euclidean 또는 congestion (식당 혼잡도, 혼잡도 노드가 따로 떠 있어야 한다)'),
+        ('congestion_weight', '3.0', '혼잡도 1.0인 구역 1 m를 (1 + 이 값) m로 본다 (cost_fn:=congestion일 때)'),
         ('delay_ms', '100.0', '서버 → 로봇 지연 (원 명세 "통신 지연 100ms 반영")'),
         ('loss_pct', '0.0', '서버 → 로봇 손실률'),
         ('relay_auction', 'false', '분산 경매 토픽도 중계 (분산·하이브리드 비교군)'),
