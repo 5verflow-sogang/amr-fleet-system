@@ -346,7 +346,8 @@ ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_
 - 서빙 로봇(`body:=serving`, amr_description README)은 키가 1.29 m라 테이블 상판(0.73 m)에 걸려 밑으로 못 들어간다. LiDAR(0.38 m)에는 테이블 다리만 보이므로, 경로 계획은 테이블 상판까지 점유로 칠한 식당 지도(`amr_mapping/maps/restaurant_gt`)로 막는다. 이 지도로 로봇 크기에서 정차 자세 40곳에 모두 갈 수 있는지도 잰다 (amr_mapping README)
 - 확인 (Docker Desktop, GUI 이미지 Xvfb CPU 렌더링, 서빙 로봇 1대 + 걷는 사람 11명): 실시간 대비 약 0.4배(카메라 켬), 로봇 없이는 1.0배. LiDAR 최근접 0.91 m(타워가 스캔에 안 잡힘), 걷는 손님 GT 속도 0.47–0.85 m/s
 - 참고 자료: [Oak Street 좌석 배치 가이드](https://www.oakstreetmfg.com/the-ultimate-restaurant-seating-layout-guide-with-real-numbers/), [MityLite 테이블 간격](https://mitylite.com/blog/restaurant-table-spacing), [dimensions.com 식당 좌석 배치](https://dimensions.com/element/restaurant-seating-arrangements), [Pudu Academy BellaBot 사양](https://academy.pudutech.com/en/docs/huan-le-song-chan-pin-jian-jie)
-- 아직 없는 것: 식당용 Nav2 설정(footprint·지도), 구역 설정(`zones.yaml`), 충전소 ArUco 마커, 로봇 여러 대 스폰 목록
+- 몸체·footprint: `system.launch.py body:=serving`이면 스폰 몸체와 Nav2 footprint(0.565 x 0.537 m, nav2.launch.py `nav2_profile:=restaurant`)가 같이 바뀐다
+- 아직 없는 것: 식당 지도를 system.launch 기본으로 쓰는 설정(`map:=`·`map_origin_in_world:=[0, 0, 0]`을 직접 준다), 구역 설정(`zones.yaml`), 충전소 ArUco 마커, 로봇 여러 대 스폰 목록
 
 ## 파라미터
 

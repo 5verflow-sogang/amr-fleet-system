@@ -71,7 +71,7 @@ def _system(context):
         zone_client=flag('zone_client'), tracking=flag('tracking'), safety=flag('safety'),
         detection=flag('detection'), docking=flag('docking'), enable_camera=flag('enable_camera'),
         payload_mass=arg('payload_mass'), seed=seed, map=arg('map'), use_imu=arg('use_imu'),
-        zones_file=arg('zones_file'))
+        zones_file=arg('zones_file'), body=arg('body'))
     opt.validate()
 
     actions = [_launch('amr_gazebo', 'world.launch.py', gui=arg('gui'))]
@@ -136,6 +136,7 @@ def generate_launch_description():
         ('dynamic_obstacles', 'false', '동적 장애물 5개'),
         ('spawn_interval_s', '3.0', '로봇 스폰 시차 (실제 시간, s)'),
         ('payload_mass', '0.0', '모든 로봇의 적재물 질량 [kg] (연구 2 Gazebo 평가)'),
+        ('body', 'amr', '몸체: amr(물류 0.6 x 0.4 m) 또는 serving(식당 0.565 x 0.537 m). 스폰 몸체와 Nav2 footprint(nav2_profile)가 같이 바뀐다'),
         ('seed', '0', '실행 seed. 엔코더 노이즈·동적 장애물·손실 난수에 쓴다. 하네스는 1부터 준다'),
         # 위치추정
         ('localization', 'true', 'AMCL + EKF. 끄면 DiffDrive odom TF를 쓴다'),
