@@ -313,36 +313,37 @@ ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_
 
 | 구역 | 내용 |
 | --- | --- |
-| 매장 (북쪽) | 한식·분식·양식·카페 4곳. 앞 카운터에서 픽업(`stall_1~4`), 간판은 색으로 구분. 동쪽은 직원 통로(문 x 7.0–8.2) |
+| 매장 (북쪽) | 한식·분식·양식·카페 4곳. 앞 카운터에서 픽업(`stall_1~4`), 한글 간판. 동쪽은 직원 통로(문 x 7.0–8.2, 양옆 화분) |
 | 배식대 (북서쪽) | 직원이 만든 음식을 올려 두는 배식 라인(`restaurant_buffet_station`, 3.73 x 1.14 m, 상판 0.89 m). 홀 쪽으로 열려 있고 로봇은 `buffet_1·2`에서 받는다. 뒤에 직원 조리대 |
-| 홀 | 4인 타원 테이블 15개(`t01~t15`, 3행 x 5열), 2인 원형 테이블 3개(`c01~c03`), 서쪽 벽 셀프 코너. 테이블 `restaurant_table`, 의자 `restaurant_chair`. 치수는 아래 표 |
-| 남쪽 | 키오스크·자판기(나중에 계산 카운터로 바꿀 자리), 퇴식구 반납 카트 2개(`restaurant_dish_return`, `return_1·2`), 충전소 3개, 동쪽 벽 대기 위치(`wait_1~5`) |
+| 홀 | 100석. 4인 타원 테이블 15개(`t01~t15`, 3행 x 5열), 6인 테이블 4개(`L01~L04`, 동서 등받이 벤치, 2 x 2로 붙여 사이에 1.0 m 십자 통로: 서빙 로봇 한 대만 지나가고 두 대는 엇갈리지 못한다), 동쪽 벽 부스 3개(`b01~b03`), 2인 테이블 2개(`c01·c02`), 서쪽 벽 셀프 코너. 구조 기둥 4개, 3행 남쪽 화분 칸막이(남쪽 통로와 좌석을 나눔). 테이블 `restaurant_foodcourt_table`(흰 상판 + 금속 U자 다리), 의자 `restaurant_wooden_chair`, 벤치 `restaurant_foodcourt_bench`. 치수는 아래 표 |
+| 남쪽 | 키오스크·자판기(나중에 계산 카운터로 바꿀 자리), 퇴식대(스테인리스 5단 선반 2개 `return_1·2` + 흰 카운터 + 불투명 유리창, 옆에 예비 회수 카트 `restaurant_dish_return`), 정수대(정수기 3대·개수대·WATER 간판, 퇴식대 동쪽), 충전소 3개, 동쪽 벽 대기 위치(`wait_1~5`) |
 
 치수: 애슐리·쿠우쿠우·대형마트 푸드코트의 실제 도면은 공개된 것이 없어, 식당 설계 자료의 권장값과 서빙로봇 사양에 맞췄다. 로봇은 `body:=serving`(Pudu BellaBot 크기 0.565 x 0.537 x 1.29 m, 공식 최소 통로 0.8 m) 기준이다.
 
 | 항목 | 이 월드 | 근거 |
 | --- | --- | --- |
-| 4인 테이블 | 1.2 x 0.75 m (Fuel `FoodCourtTable1` 0.61 x 0.93 m를 늘림), 긴 변에 의자 2개 0.6 m 간격 | 4인 직사각형 120–140 x 75–85 cm, 1인당 테이블 가장자리 50–60 cm |
+| 4인 테이블 | 1.2 x 0.75 m (Fuel `FoodCourtTable1` 0.61 x 0.93 m를 늘림, 상판 0.727 m), 긴 변에 의자 2개 0.6 m 간격 | 4인 직사각형 120–140 x 75–85 cm, 1인당 테이블 가장자리 50–60 cm |
 | 앉은 자리 | 테이블 끝에서 의자 등받이까지 0.45 m (+ 의자 뺄 여유 0.1 m) | 의자를 빼면 테이블에서 45–50 cm(18–20 in) 나온다 |
-| 테이블 열 사이 (서비스 통로) | 의자 등받이 사이 1.4 m, 앉아 있으면 약 1.2 m | 보조 통로 0.9–1.1 m(36–44 in). 서빙로봇 최소 통로 0.8 m(Pudu BellaBot 공식) |
+| 테이블 열 사이 (서비스 통로) | 의자 등받이 사이 1.37 m, 앉아 있으면 약 1.2 m. x −4.225·1.875 통로는 1·3행에 기둥이 있어 2행 높이에서만 지나간다 | 보조 통로 0.9–1.1 m(36–44 in). 서빙로봇 최소 통로 0.8 m(Pudu BellaBot 공식) |
 | 테이블 행 사이 | 테이블 끝 사이 1.8 m (테이블 끝에 정차한 로봇 옆으로 약 1.08 m 남아 다른 로봇이 지나간다) | 로봇 최소 통로 0.8 m + 정차 로봇 0.72 m(정차 간격 0.15 m 포함) |
-| 주 통로 | 매장 앞 1.57 m(테이블 정차 로봇이 있으면 0.85 m), 셀프 코너 앞 1.6 m, 남쪽 입구–퇴식구 1.4 m, 4인석–2인석 사이 2.4 m | 주 통로 1.2–1.5 m(48–60 in) |
+| 주 통로 | 매장 앞 1.57 m(테이블 정차 로봇이 있으면 0.85 m), 셀프 코너 앞 1.56 m, 4인석–6인석 사이 1.0 m, 6인석–부스 사이 1.09 m, 6인석 2 x 2 사이 한 대 통로 1.0 m(로봇 폭 0.537 m, 두 대 나란히 1.07 m라 못 엇갈림. Nav2 inflation 0.55 기준 가운데 비용 약 126으로 경로가 잡힌다), 남쪽 통로(화분 칸막이–퇴식구 정차 로봇) 1.07 m | 주 통로 1.2–1.5 m(48–60 in) |
 
 사람 (전부 충돌체 있음):
 
 | 종류 | 수 | 구현 |
 | --- | --- | --- |
-| 앉은 손님 | 12 | 정지 모델 OpenRobotics `VisitorKidSit` (어른 앉은 모델은 Fuel에 없어 아이 모델) |
-| 서 있는 손님 | 7 | 정지 모델 OpenRobotics `FemaleVisitor`. 매장 카운터 옆(픽업 자리와 0.5 m 이상), 셀프 코너, 창가, 입구 |
+| 앉은 손님 | 17 | 정지 모델 OpenRobotics `VisitorKidSit` (어른 앉은 모델은 Fuel에 없어 아이 모델) |
+| 서 있는 손님 | 9 | 정지 모델 OpenRobotics `FemaleVisitor`. 매장 카운터 옆(픽업 자리와 0.5 m 이상), 배식대 앞, 셀프 코너, 입구 |
 | 걷는 손님 | 7 (피크 13) | 동적 장애물 `customer` 타입(`models/dynamic_customer`), [`config/dynamic_obstacles_restaurant.yaml`](config/dynamic_obstacles_restaurant.yaml). 통로 가운데로 직선·곡선·무작위, 0.4–1.0 m/s. 피크 몰림 [`_peak.yaml`](config/dynamic_obstacles_restaurant_peak.yaml)은 서쪽 통로·배식대 앞에 6명을 더한다 (혼잡 구역 `amr_fleet_manager/config/congestion_zones_restaurant.yaml`의 `west_aisle` 3/3, `buffet_line` 3–4/4 확인). 손님 파일에는 손님만 넣는다 (혼잡도 노드가 전부 사람으로 센다) |
 | 매장·배식대 직원 | 5 | 같은 동적 장애물로 칸막이 안 주방과 배식대 뒤를 왕복. 따로 [`_staff.yaml`](config/dynamic_obstacles_restaurant_staff.yaml), 같이 띄울 때 `name:=staff_obstacles` |
 
-- 저장소 모델: `restaurant_table`(Fuel "Cafe table", CC0, 기둥 색만 검게), `restaurant_chair`(Fuel "Dining Chair", CC-BY 4.0, 텍스처 1024 px), `restaurant_buffet_station`·`restaurant_dish_return`(민지 #295, Sketchfab CC-BY 4.0), `dynamic_customer`. Fuel 메시 URL을 바로 쓰면 메시 옆 텍스처를 못 찾아 테이블이 회색으로 나와서 테이블·의자는 저장소로 옮겼다
+- 저장소 모델: `restaurant_foodcourt_table`·`restaurant_wooden_chair`·`restaurant_foodcourt_bench`(Fuel OpenRobotics "FoodCourtTable1"·"WoodenChair"·"FoodCourtBenchLong", Wan Yi Seow, CC-BY 4.0, 충돌체는 상자), `restaurant_table`·`restaurant_chair`(Fuel "Cafe table" CC0·"Dining Chair" CC-BY 4.0, 지금 식당 월드에서는 안 씀), `restaurant_buffet_station`·`restaurant_dish_return`(민지 #295, Sketchfab CC-BY 4.0), `dynamic_customer`. Fuel 메시 URL을 바로 쓰면 메시 옆 텍스처를 못 찾아 테이블이 회색으로 나와서 테이블·의자는 저장소로 옮겼다
+- `restaurant_decor`: 홀 나무 마루·주방 타일 바닥 메시와 한글 간판 10개(매장 4, 배식대, 셀프 수저·반찬, 출입구, 퇴식대, 정수기, 로봇 충전·대기). 텍스처는 스크립트로 직접 만들었다(CC0, 간판 글꼴 맑은 고딕). 긴 테이블·부스·기둥·화분·퇴식대·정수대·테이블 위 쟁반·그릇·컵은 월드에 상자·원기둥으로 직접 넣었다(소품은 시각 전용)
 - 나머지(조리대·키오스크·자판기·쓰레기통·앉은·서 있는 사람)는 Gazebo Fuel(OpenRobotics, CC-BY 4.0)에서 처음 실행할 때 내려받는다(인터넷 필요, 이후 캐시)
 - **충돌체는 메시 대신 상자·원기둥**이다. Fuel 원본을 그대로 `<include>`하면 조리대·자판기 충돌체가 겉모습 메시(3천–9천 면)라 물리가 실시간의 0.1배로 느렸다 → 1.0배
 - **Gazebo actor(걷기 애니메이션)는 쓰지 않는다.** actor가 있으면 로봇 LiDAR·카메라를 CPU 렌더링(llvmpipe)할 때 시뮬레이션이 멈췄다(actor만 빼면 같은 월드가 1.0배). 그래서 걷는 사람은 다리가 움직이지 않고 미끄러지듯 이동한다
 - 손님은 로봇을 피하지 않는다(정해진 경로만 따른다). 매장 앞 통로(y 3.45)는 테이블 정차 로봇이 있으면 좁아져 픽업·테이블 정차 로봇과 겹칠 수 있다
-- 서빙 로봇(`body:=serving`, amr_description README)은 키가 1.29 m라 테이블 상판(0.73 m)에 걸려 밑으로 못 들어간다. LiDAR(0.38 m)에는 테이블 다리만 보이므로, 경로 계획은 테이블 상판까지 점유로 칠한 식당 지도(`amr_mapping/maps/restaurant_gt`)로 막는다. 이 지도로 로봇 크기에서 정차 자세 32곳에 모두 갈 수 있는지도 잰다 (amr_mapping README)
+- 서빙 로봇(`body:=serving`, amr_description README)은 키가 1.29 m라 테이블 상판(0.73 m)에 걸려 밑으로 못 들어간다. LiDAR(0.38 m)에는 테이블 다리만 보이므로, 경로 계획은 테이블 상판까지 점유로 칠한 식당 지도(`amr_mapping/maps/restaurant_gt`)로 막는다. 이 지도로 로봇 크기에서 정차 자세 40곳에 모두 갈 수 있는지도 잰다 (amr_mapping README)
 - 확인 (Docker Desktop, GUI 이미지 Xvfb CPU 렌더링, 서빙 로봇 1대 + 걷는 사람 11명): 실시간 대비 약 0.4배(카메라 켬), 로봇 없이는 1.0배. LiDAR 최근접 0.91 m(타워가 스캔에 안 잡힘), 걷는 손님 GT 속도 0.47–0.85 m/s
 - 참고 자료: [Oak Street 좌석 배치 가이드](https://www.oakstreetmfg.com/the-ultimate-restaurant-seating-layout-guide-with-real-numbers/), [MityLite 테이블 간격](https://mitylite.com/blog/restaurant-table-spacing), [dimensions.com 식당 좌석 배치](https://dimensions.com/element/restaurant-seating-arrangements), [Pudu Academy BellaBot 사양](https://academy.pudutech.com/en/docs/huan-le-song-chan-pin-jian-jie)
 - 아직 없는 것: 식당용 Nav2 설정(footprint·지도), 구역 설정(`zones.yaml`), 충전소 ArUco 마커, 로봇 여러 대 스폰 목록

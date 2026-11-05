@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!-- 푸드코트 테이블 (0.61 x 0.926 m, 상판 0.727 m, 금속 U자 다리). 식당 월드는 메시를 늘려 4인(1.2 x 0.75 m)·6인(1.8 x 0.8 m)으로도 쓴다.
+     메시: Gazebo Fuel OpenRobotics "FoodCourtTable1" (Wan Yi Seow), CC-BY 4.0. Fuel 메시 URL을 바로 쓰면 텍스처를 못 찾아 저장소로 옮겼다. 쓰지 않는 충돌 메시·PBR 맵은 뺐다. 충돌체는 상자 (지도 restaurant_map.py가 상자·원기둥만 읽는다) -->
+<sdf version="1.8">
+  <model name="restaurant_foodcourt_table">
+    <static>true</static>
+    <link name="link">
+      <visual name="visual"><geometry><mesh><uri>model://restaurant_foodcourt_table/meshes/FoodCourtTable1.obj</uri></mesh></geometry></visual>
+      <collision name="top"><pose>0 0 0.712 0 0 0</pose><geometry><box><size>0.61 0.926 0.03</size></box></geometry></collision><collision name="leg_s"><pose>0 -0.42 0.35 0 0 0</pose><geometry><box><size>0.55 0.04 0.7</size></box></geometry></collision><collision name="leg_n"><pose>0 0.42 0.35 0 0 0</pose><geometry><box><size>0.55 0.04 0.7</size></box></geometry></collision>
+    </link>
+  </model>
+</sdf>

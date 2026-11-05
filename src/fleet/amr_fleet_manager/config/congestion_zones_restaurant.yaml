@@ -30,9 +30,9 @@ zones:
     capacity: 6
     description: 홀 동쪽 반 (t04·t05, t09·t10, t14·t15 주변)
   - id: cafe
-    area: [5.41, 10.5, -3.5, 2.99]
-    capacity: 3
-    description: 4인석-2인석 사이 통로와 2인석 (c01~c03)
+    area: [5.41, 11.9, -4.5, 2.99]
+    capacity: 4
+    description: 동쪽 좌석 (4인석 동쪽 통로, 6인 테이블 L01~L04와 사이 좁은 통로, 부스 b02·b03, 2인석 c01·c02). b01은 매장 앞 높이라 구역 밖
   - id: south
     area: [-11.9, 4.0, -7.3, -5.01]
     capacity: 5

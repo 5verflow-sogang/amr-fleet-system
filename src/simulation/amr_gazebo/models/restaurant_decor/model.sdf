@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!-- 식당 바닥 미리보기용. 식당 월드(restaurant.sdf)는 meshes/의 OBJ를 직접 쓴다. 마루 2 m, 타일 1.2 m마다 반복 (UV), 충돌체 없음 -->
+<sdf version="1.8">
+  <model name="restaurant_decor">
+    <static>true</static>
+    <link name="link">
+      <visual name="hall_floor"><geometry><mesh><uri>model://restaurant_decor/meshes/hall_floor.obj</uri></mesh></geometry></visual>
+      <visual name="kitchen_floor"><pose>0 0 0.001 0 0 0</pose><geometry><mesh><uri>model://restaurant_decor/meshes/kitchen_floor.obj</uri></mesh></geometry></visual>
+    </link>
+  </model>
+</sdf>

@@ -1,0 +1,14 @@
+# restaurant_decor kitchen_floor (amr_gazebo 식당 월드, 직접 생성 CC0)
+mtllib kitchen_floor.mtl
+o kitchen_floor
+v -12.0000 5.0000 0.0000
+v 12.0000 5.0000 0.0000
+v 12.0000 8.0000 0.0000
+v -12.0000 8.0000 0.0000
+vt -10.0000 4.1667
+vt 10.0000 4.1667
+vt 10.0000 6.6667
+vt -10.0000 6.6667
+vn 0.0 0.0 1.0
+usemtl kitchen_floor
+f 1/1/1 2/2/1 3/3/1 4/4/1

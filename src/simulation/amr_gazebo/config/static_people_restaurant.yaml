@@ -11,9 +11,8 @@ people:
   - {id: standing_2, x: -0.45, y: 4.11, zone: stall_front}   # 매장 2(분식) 카운터 동쪽
   - {id: standing_3, x: -2.35, y: 4.16, zone: stall_front}   # 매장 2(분식) 카운터 서쪽
   - {id: standing_4, x: 2.55, y: 4.11, zone: stall_front}   # 매장 3(양식) 카운터 옆
-  - {id: standing_5, x: 5.55, y: 4.11, zone: stall_front}   # 매장 4(카페) 카운터 옆
+  - {id: standing_5, x: 5.3, y: 4.11, zone: stall_front}   # 매장 4(카페) 카운터 옆
   - {id: standing_6, x: -10.96, y: -0.1, zone: west_aisle}   # 셀프 코너 앞
-  - {id: standing_7, x: 10.64, y: 1.0, zone: null}   # 동쪽 창가
   - {id: standing_8, x: -9.277, y: -6.405, zone: south}   # 남서쪽 입구
   - {id: standing_9, x: -8.9, y: 4.21, zone: buffet_line}   # 배식대 앞 (buffet_1·2 사이)
   - {id: standing_10, x: -10.65, y: 4.26, zone: buffet_line}   # 배식대 앞 서쪽 끝
