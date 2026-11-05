@@ -86,6 +86,9 @@ Python은 `colcon test --pytest-with-coverage`, C++는 `--coverage` 빌드 + gco
 | `amr_safety` | 63.3% | 90.3% | 13.4% | ✅ |
 | `amr_tracking` | 20.7% | 100.0% | 14.6% | ✅ |
 | `amr_zone_client` | 89.5% | 98.4% | 73.8% | ✅ |
+
+**70% 미만 로직 파일** (패키지는 70% 이상이지만 파일 단위로 낮은 것)
+
 | 파일 | 커버리지 |
 | --- | --- |
 | `navigation/amr_control/include/amr_control/core/path_tracker.hpp` | 33.3% (1/3) |
