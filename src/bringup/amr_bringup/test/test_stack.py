@@ -81,6 +81,15 @@ def test_docking_server_drives_through_same_chain():
     assert args(items, 'docking.launch.py')['cmd_vel_topic'] == args(items, 'nav2.launch.py')['cmd_vel_topic']
 
 
+def test_body_picks_spawn_body_and_nav2_profile():
+    items = stack(nav2=True)
+    assert (args(items, 'spawn_robot.launch.py')['body'], args(items, 'nav2.launch.py')['nav2_profile']) \
+        == ('amr', 'warehouse')
+    items = stack(nav2=True, body='serving')
+    assert (args(items, 'spawn_robot.launch.py')['body'], args(items, 'nav2.launch.py')['nav2_profile']) \
+        == ('serving', 'restaurant')
+
+
 def test_map_server_only_on_first_robot():
     assert args(stack(index=0), 'localization.launch.py')['start_map_server'] == 'true'
     assert args(stack(index=1), 'localization.launch.py')['start_map_server'] == 'false'
@@ -97,6 +106,7 @@ def test_localization_off_uses_diffdrive_tf():
     ({'detection': True}, 'enable_camera'),
     ({'docking': True, 'enable_camera': True}, 'nav2'),
     ({'docking': True, 'nav2': True}, 'enable_camera'),
+    ({'body': 'forklift'}, 'body'),
 ])
 def test_invalid_options(flags, message):
     with pytest.raises(RuntimeError, match=message):

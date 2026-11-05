@@ -40,7 +40,7 @@ PLOT = Path('plots') / 'timeline.png'
 
 def group_status(group: dict) -> str:
     """조건 묶음 하나의 판정. 완료가 없으면 FAIL, KPI FAIL이 있으면 FAIL,
-    MARGINAL이나 실패한 반복이 있으면 MARGINAL, KPI가 모두 PASS면 PASS, KPI가 없으면 NONE."""
+    MARGINAL이나 실패한 반복이 있으면 MARGINAL, 보류한 KPI가 있으면 NONE, KPI가 모두 PASS면 PASS, KPI가 없으면 NONE."""
     if not group['runs']:
         return 'FAIL'
     verdicts = [d['kpi'] for d in group['metrics'].values() if d.get('kpi')]
@@ -48,6 +48,8 @@ def group_status(group: dict) -> str:
         return 'FAIL'
     if 'MARGINAL' in verdicts or group['failed']:
         return 'MARGINAL'
+    if any(d.get('kpi_note') for d in group['metrics'].values()):
+        return 'NONE'   # 보류한 KPI가 있으면 나머지가 PASS여도 PASS로 보이지 않는다
     return 'PASS' if verdicts else 'NONE'
 
 
@@ -104,7 +106,7 @@ def build_payload(summary: dict, context: str = '', plot: Optional[tuple[str, st
         status = group_status(group)
         fields = []
         for metric, d in group['metrics'].items():
-            if not d.get('kpi') and metric not in HEADLINE and metric not in WORST_KPI:
+            if not d.get('kpi') and not d.get('kpi_note') and metric not in HEADLINE and metric not in WORST_KPI:
                 continue
             if metric in WORST_KPI:
                 # 최악값 판정이라 평균·CI가 아니라 가장 나쁜 실행을 보여 준다. 보류 사유도 붙인다
@@ -113,7 +115,7 @@ def build_payload(summary: dict, context: str = '', plot: Optional[tuple[str, st
                 ci = ('' if d['ci_low'] is None
                       else f" (95% CI {_fmt(d['ci_low'], metric)} ~ {_fmt(d['ci_high'], metric)})")
                 value = f"{_fmt(d['mean'], metric)}{ci}"
-            verdict = d.get('kpi') or (d.get('kpi_note') if metric in WORST_KPI else None)
+            verdict = d.get('kpi') or d.get('kpi_note')
             label = f"{metric} · {verdict}" if verdict else metric
             fields.append({'name': label[:256], 'value': value[:1024], 'inline': True})
         description = f"완료 {len(group['runs'])}회, 실패 {len(group['failed'])}회"

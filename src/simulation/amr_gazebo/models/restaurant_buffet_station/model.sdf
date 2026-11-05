@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!-- 뷔페 배식대. 스테인리스 배식 라인 위에 음식 담긴 보온 용기 줄을 올렸다. 길이 방향이 x축, 상판 0.89 m. 모델 원점은 바닥 중심이다.
+     메시: "Buffet" by nicolas saude (https://sketchfab.com/3d-models/55a5f4ddffc04e609e44bd8bb4bdd450); "Buffets (food warmer), Foods, and Plates" by sakigakefuruzawa (https://sketchfab.com/3d-models/aa3a0d1b9baf4006a7ecf9e9f905ee9d), CC BY 4.0. glTF를 OBJ(Z-up, m)로 바꾸고 텍스처를 줄였다 (docs/restaurant_assets.md). -->
+<sdf version="1.8">
+  <model name="restaurant_buffet_station">
+    <static>true</static>
+    <link name="link">
+      <!-- 충돌체는 바닥까지 꽉 찬 박스 (D2). 라이다가 다리 사이를 빈 곳으로 보지 않게 한다 -->
+      <collision name="collision">
+        <pose>0 0 0.45 0 0 0</pose>
+        <geometry><box><size>3.73 1.14 0.9</size></box></geometry>
+      </collision>
+      <visual name="buffet_line">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><mesh><uri>model://restaurant_buffet_station/meshes/buffet_line.obj</uri></mesh></geometry>
+      </visual>
+      <visual name="buffet_food_warmers">
+        <pose>0.21 0 0.892 0 0 0</pose>
+        <geometry><mesh><uri>model://restaurant_buffet_station/meshes/buffet_food_warmers.obj</uri></mesh></geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>

@@ -44,6 +44,8 @@ cmd_vel 체인: `cmd_vel_nav` (Nav2·`amr_control`) → `amr_zone_client` → `c
 - **진행 경로 판정 (긴급정지):** 명령 (v, ω)대로 `반응 0.2 s + |v| / 1.0 m/s²`(최소 0.5 s) 동안 움직일 때 차체가 지나갈 자리를 본다. 진행 방향 차체 앞(후진이면 뒤) 0.3 m 띠, 또는 차체 0.05 m 안으로 **가까워지는** 점이 있으면 정지. 멀어지는 명령(벽 앞에서 후진)과 나란히 지나가는 벽(0.6 m 좁은 통로)은 막지 않는다.
 - **TTC·근접은 움직이는 트랙만:** 정적 장애물은 진행 경로 판정이 지킨다. 정적 장애물에 TTC를 걸면 벽·랙으로 다가가기만 해도 0.5 m 앞에서 선다.
 - **근접 저속:** 움직이는 트랙이 차체 0.5 m(`dynamic_slow_distance`) 안이면 방향과 상관없이 0.15 m/s(`dynamic_slow_speed_limit`)까지. 바로 옆에서 멀어지던 사람이 돌아서면 추적 속도가 따라오는 약 0.5 s 동안 TTC가 무한이라, 그 사이 출발한 로봇에 부딪혔다(I17 시드 1019·1029). 풀릴 때는 0.5 s 뒤에 0.6으로 돌아간다. 근거는 [perception.md](../../../docs/algorithms/perception.md) 2절
+  - 차체 뒤 끝보다 뒤에 있고 로봇에서 멀어지는 트랙은 뺀다(`dynamic_slow_skip_receding_behind`). 마주 오던 사람을 비켜 지나친 뒤에도 0.15 m/s에 묶여 처음 경로로 늦게 돌아왔다(정면 접근 시험 11/4)
+  - 동적 확정 전 트랙도 사람 크기·속력(반경 ≤ 0.35 m, 0.5~1.8 m/s)이면 0.5 m 안에서 저속(`dynamic_slow_unconfirmed_*`). 돌아선 작업자가 새 트랙으로 잡힌 뒤 0.6 s 동안 정적이라 저속이 안 걸렸다(가로지르기 로컬 시드 1004, 11/4). TTC·1.5 m 경고는 그대로 동적 트랙만
 - 위험해지면 바로 올라가고, 내려갈 때는 조건이 0.5 s 계속 풀려 있어야 내려온다.
 - 판정은 명령·스캔이 올 때마다와 20 Hz 타이머로 한다. 명령이 0.5 s 없으면 정지 명령으로 보고 판정한다.
 
@@ -118,7 +120,7 @@ launch는 안전 노드와 함께 E-Stop 버튼 노드(`estop_button`)도 띄운
 - 보고서에는 무효 사유별·하네스 실패 outcome별 실행 수와, 유효 실행 합격률의 Clopper-Pearson 95% 신뢰구간을 함께 낸다(`pass_rate`). 판정에는 쓰지 않는 참고값이다. 30/30이어도 구간은 88.4~100%라 실패율 상한이 약 12%다.
 - 하네스 요약(`tools/harness` `avoid.*` 지표)은 판정하지 않고 분포만 보여 준다. `pass`는 유효 실행만 넣고(무효는 `valid` 0), 복귀 못 한 회피 수는 `unreturned`로 늘 넣는다.
 
-기준값은 모두 노드 파라미터(`AvoidanceParams` 필드 이름 그대로, 실수 파라미터는 `5.0`처럼 소수점을 붙인다)이고 `avoidance_summary.json`의 `params`에 남는다. 0.1·0.2 m·1.0 s는 초안이다. DWA 회피 모드가 들어간 뒤 장애물 없는 주행의 추종 오차 분포를 보고 확정한다(추종 오차가 0.1 m를 자주 넘으면 회피 구간이 잘게 쪼개진다).
+기준값은 모두 노드 파라미터(`AvoidanceParams` 필드 이름 그대로, 실수 파라미터는 `5.0`처럼 소수점을 붙인다)이고 `avoidance_summary.json`의 `params`에 남는다. 0.1·0.2 m·1.0 s는 장애물 없는 주행의 추종 오차를 보고 확정했다(11/3): 아래 등록 코드로 돌린 로컬 30회에서 장애물이 1.5 m 밖일 때 이탈은 중앙 0.8 cm, p99 6.5 cm였고, 장애물과 무관한 추종 오차 구간은 0개였다(추종 오차가 0.1 m를 자주 넘으면 회피 구간이 잘게 쪼개진다).
 
 **출력** (`output_dir`, 기본 `/tmp/amr_avoidance/<로봇>_<시각>`)
 
@@ -132,9 +134,12 @@ launch는 안전 노드와 함께 E-Stop 버튼 노드(`estop_button`)도 띄운
 **실행**
 
 ```bash
-# 하네스 (초안 시나리오, 아직 미실행): 30회 → 판정
-python3 tools/harness/run.py nav_avoidance -n 30
-ros2 run amr_safety avoidance_report tools/harness/results/nav_avoidance_<시각>_* --out i17.md --json i17.json
+# 본 측정 (아래 "본 측정 등록"): GCP는 한 번에 15회까지라 시드 2001~2015, 2016~2030 두 번 → 받아서 판정
+tools/harness/gcp_run.sh nav_avoidance -n 15 --seed-base 2001 --label main --pr 262 --slot b1
+tools/harness/gcp_run.sh nav_avoidance -n 15 --seed-base 2016 --label main --pr 262 --slot b2
+ros2 run amr_safety avoidance_report <실행 폴더 30개> --runs 30 --out i17.md --json i17.json
+# 로컬 (Mac Docker 등, 튜닝은 연습 시드 1001~)
+tools/harness/docker_run.sh nav_avoidance -n 30 --seed-base 1001 --label dev
 
 # 손으로: 주행 스택을 띄운 뒤
 ros2 run amr_safety avoidance_eval --ros-args -r __ns:=/amr_01 -p use_sim_time:=true \
@@ -145,10 +150,42 @@ ros2 service call /amr_01/avoidance_eval/save std_srvs/srv/Trigger
 ros2 run amr_safety avoidance_eval_offline /tmp/amr_avoidance/run1 --set return_deviation=0.15 --out /tmp/re
 ```
 
-- `map_origin_in_world`: world에서 본 map 원점 `[x, y, yaw]`. 전역 경로(map)를 GT 좌표계(world)로 옮기는 데만 쓴다. `nav_avoidance`가 띄우는 `nav2_dwa_demo`는 map->odom 항등이라 map 원점이 스폰 위치와 같은 `[0.0, 1.5, 0.0]`이다. 위치 추정(AMCL·EKF)을 켠 스택으로 재면 지도 정렬값(0.025 m 지도 `[-0.0562, 1.5317, 0.00009]`, [amr_localization README](../../localization/amr_localization/README.md))을 쓴다. 틀리면 그 차이(약 6 cm)가 경로 이탈에 섞인다.
+- `map_origin_in_world`: world에서 본 map 원점 `[x, y, yaw]`. 전역 경로(map)를 GT 좌표계(world)로 옮기는 데만 쓴다. 스택이 쓰는 지도의 정렬값과 같아야 한다. 틀리면 그 차이가 경로 이탈에 그대로 섞인다(v1·v2 0.025 m 정렬값은 약 6 cm 차이로, 회피 구간 시작 기준 0.1 m의 절반이 넘는다). `nav_avoidance`는 지도와 정렬값을 params `map`·`map_origin` 한 곳에 두고 스택과 이 노드에 같이 넘긴다(기본 v2 0.025 m `[-0.0439, 1.4712, -0.00088]`, [amr_mapping README](../../localization/amr_mapping/README.md)). 손으로 `nav2_dwa_demo`(map->odom 항등)에 붙이면 map 원점이 스폰 위치와 같은 `[0.0, 1.5, 0.0]`(노드 기본값)이다.
 - `nav_avoidance` 시나리오의 장애물은 실행마다 시드로 만든다(`ros2 run amr_safety avoidance_obstacles --seed <시드> --out <파일>`, [`avoidance_eval/obstacles.py`](amr_safety/avoidance_eval/obstacles.py)). 작업자 1명이 x 2.5~4.0 m 중 한 곳에서 통로를 건너고, 방향·처음 위치(만나는 시점)·속도가 시드마다 다르다. 속도는 시드 3개 중 1개가 원 명세 1.0 m/s, 나머지는 0.5~1.5 m/s다. 같은 시드면 같은 시험이다. 만든 설정은 실행 폴더 `obstacles.yaml`에 남는다.
+  - 작업자는 로봇을 피하지 않는다. 다만 로봇이 멈춘 채 앞길을 막으면 약 0.5 m 앞에서 서고, 로봇이 5 s 넘게 계속 멈춰 있으면 돌아선다(`yield_to_robots: [amr_01]`, [amr_gazebo README](../../simulation/amr_gazebo/README.md)). 사람은 멈춘 로봇에 걸어 들어가지 않는다. 로봇을 보지 않던 작업자로 돌린 시험 30회(11/1)에서는 충돌 29건 중 22건이 서 있는 로봇에 작업자가 걸어 들어간 것이었다.
 - 손으로 돌릴 때 쓰는 고정 예시는 [`config/avoidance_eval_obstacles.yaml`](config/avoidance_eval_obstacles.yaml)(x = 3에서 1.0 m/s)이다.
 - 정적 장애물(벽·랙)과의 충돌은 보지 않는다. GT에 정적 물체 모양이 없어서다.
+
+### 본 측정 등록 (11/3, 결과 전, 이진·연우)
+
+결과를 보기 전에 정한다. 측정 전에 무엇이든 바꾸면 이 절을 먼저 고치고 잰다.
+
+- **코드**: 이 절을 넣은 #262 커밋 하나로 고정한다. #260(추적기: 돌아선 사람 보조 연관, 클래스 없는 동적 트랙 최소 반경 0.25 m), #263(작업자 비킴), #268(DWA 회피 모드 대체 탐색), #277(안전 노드 근접 저속, dev에 머지됨)과 dev 3200aeb가 들어 있다. 측정 중에는 push하지 않는다 (11/5 고침: #260이 목록에서 빠져 있었다. 측정 커밋에는 #260의 추적기 커밋 c2ea030·3412ca9·01a5e24가 들어 있다)
+  - 결과에 측정 커밋 번호를 적는다. #260·#263·#268이 dev에 머지된 뒤, 그 dev 커밋과 측정 커밋의 I17 관련 코드(`src/navigation`, `src/perception`, `src/simulation/amr_gazebo`, `src/bringup`, `tools/harness/scenarios/nav_avoidance.yaml`)가 같은지 `git diff`로 확인해 결과에 적는다
+  - 빌드는 RelWithDebInfo(-O2, dev #269)다. 11/1 GCP 시험 30회와 11/2 로컬 확인 일부는 그 전(최적화 없음)이라 본 측정과 조건이 다르다
+- **시나리오**: `nav_avoidance` (지도 v2 0.025 m, 원점 `[-0.0439,1.4712,-0.00088]`). Nav2(DWA 회피 모드) + 추적 + 안전 노드, 로봇 world (0, 1.5) → map (6, 0). 작업자 1명, 시드 3개 중 1개는 1.0 m/s, 나머지 0.5~1.5 m/s (위 장애물 설명)
+  - **주행 중 장애물 인식은 LiDAR만 쓴다** (지수·이진과 정한 구성): 카메라 끔(`enable_camera:=false`), Nav2 global·local costmap은 `scan`만, Depth 포인트클라우드는 costmap에 붙이지 않는다. 추적의 사람 반경은 `dynamic_min_radius` 0.25 m
+- **시드**: 2001~2030 (`gcp_run.sh --seed-base 2001`·`2016`으로 15회씩 두 번, #283). 1~30은 11/1 시험, 1001~은 튜닝에 썼다. 실행마다 `meta.json`의 `seed`·`scene_seed`가 2001~2030인지 본다
+- **판정**: `avoidance_report` 최악값(위 "I17 판정"). 30회 모두 충돌 0, 최대 이탈 ≤ 1.0 m, 복귀 ≤ 5.0 s, 목표 도착. 충돌은 로봇이 서 있든 움직이든 모두 센다
+  - 시간 지표(복귀 시간 등)는 GT 메시지 시각, 곧 시뮬레이션 시간으로 잰다(`use_sim_time`). RTF와 상관없다(#272는 실제 시간으로 기다리는 시나리오에서 하네스 RTF가 늘 1.0으로 찍히던 표시 문제였다)
+- **무효 실행**: `avoidance_eval`이 무효로 본 실행과 하네스 `error`(예: Nav2 시작 단계 통신 문제로 전역 경로가 안 나옴)는 같은 시드로 다시 돌린다. 다시 돌린 시드·횟수·이유를 결과에 적는다
+- **러너**: GCP c2d-standard-8 (슬롯 b1~b4, 11/1 시험과 같은 종류). RTF를 결과에 함께 적는다
+- **설정**: 바꾸지 않는다
+  - DWA 회피 모드: `avoid_ttc_enter_s` 3.0, `avoid_margin_add` 0.4, `avoid_weight_scale` 2.0, `avoid_rollout_time` 3.0, 궤적이 없으면 평소 여유로 다시 탐색(#268)
+  - 안전 노드: `dynamic_slow_distance` 0.5 m, `dynamic_slow_speed_limit` 0.15 m/s(#277), 그 밖은 `config/safety.yaml`
+  - 평가: `start_deviation` 0.1 m, `return_deviation` 0.2 m, `return_hold_s` 1.0 s, `collision_margin` 0.01 m (기본값)
+- **이 코드로 한 로컬 확인** (Mac Docker, RTF 0.96, 연습 시드 1001~1030, 무효는 같은 시드로 다시): `avoidance_report` PASS, 유효 30/30 충돌 0, 최대 이탈 0.147 m, 최대 복귀 0 s, 최소 이격 0.058 m. #268·#277 없이는 27/30, #268만은 28/30이었고 충돌 5건이 모두 "작업자가 로봇 옆 0.2~0.3 m에서 돌아선 직후 로봇 출발"이었다(#277 본문)
+
+### 본 측정 결과 (11/3, GCP)
+
+**I17 PASS** (`avoidance_report`, 최악값): 유효 30/30회, 충돌 0건, 최대 경로 이탈 0.082 m, 복귀 못 한 회피 0, 목표 미도착 0. 최소 이격 0.079 m. 합격률 30/30의 Clopper-Pearson 95% 구간은 88.4~100%(참고).
+
+- 조건: 위 등록 그대로다. 커밋 23e461c, GCP c2d-standard-8, 시드 2001~2030(실행 41584943322·41584964100), RTF 0.938~0.955
+- 다시 돌린 실행 1회: 시드 2028. bt_navigator가 목표 응답을 보내다 시간 초과로 놓쳐(`Failed to send goal response (timeout)`) 로봇이 출발하지 못했다(하네스 `error`). 등록대로 같은 시드로 다시 돌렸고(실행 41588707469) 통과했다(최소 이격 0.099 m)
+- 작업자 속력별: 1.0 m/s(원 명세 조건) 10/10, 1.0 m/s 미만 10/10, 초과 10/10
+- 회피 방식 (참고, 판정에 안 씀): 30회 모두 경로 이탈이 0.1 m 안이라 회피 구간이 생기지 않았다. 그래서 복귀 시간은 잰 값이 없다(KPI 조건은 만족하지만 복귀 5초는 이 장면에서 검증되지 않은 셈이다. 옆으로 비키는 회피와 복귀는 작업자가 마주 오는 정면 접근 장면에서 따로 잰다). 로봇은 옆으로 비키지 않고(옆 이동 최대 9 cm) 늦추거나 서서 피했다. DWA 회피 모드가 켜진 실행 24회, 근접 저속 28회, 안전 노드 정지(TTC) 23회, 작업자가 1.5 m 안일 때 서 있던 시간 중앙 1.5 s(최대 5.8 s). 작업자가 로봇 길을 가로지르는 장면이라 옆으로 비키면 작업자가 걷는 선 위로 들어가고, 로봇 선이 통로 남쪽 벽에서 1.1 m라 비킬 자리도 좁다. 0.3 m 안까지 스친 실행은 23회다
+- 남은 것: #260·#263이 dev에 머지된 뒤(#268은 11/4 머지) 그 dev 커밋과 23e461c의 I17 관련 코드가 같은지 확인해 여기 적는다(등록)
+- 원자료: 버킷 `gs://amr-fleet-results/runs/nav_avoidance-main/` (실행 3개 폴더)
 
 ## 테스트
 

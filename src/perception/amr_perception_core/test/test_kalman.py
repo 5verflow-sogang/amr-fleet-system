@@ -170,3 +170,49 @@ def test_mahalanobis_sq_many_matches_single():
     zs = np.array([[1.0, 2.0], [1.4, 1.7], [3.0, -1.0]])
     np.testing.assert_allclose(kf.mahalanobis_sq_many(zs), [kf.mahalanobis_sq(z) for z in zs])
     assert kf.mahalanobis_sq_many(np.empty((0, 2))).shape == (0,)
+
+
+def test_restart_sets_state_from_two_measurements():
+    rng = np.random.default_rng(3)
+    times = np.arange(0.0, 2.0, 0.1)
+    _, measurements = simulate_cv((0.0, 0.0), (1.0, 0.0), times, 0.05, rng)
+    kf = ConstantVelocityKF((0.0, 0.0), timestamp=0.0)
+    run(kf, times, measurements)
+    kf.predict(2.0)
+    kf.restart((1.8, 0.1), previous_z=(1.9, 0.0), elapsed=0.1)
+    np.testing.assert_allclose(kf.position, [1.8, 0.1])
+    np.testing.assert_allclose(kf.velocity, [-1.0, 1.0])
+    assert kf.t == 2.0
+    r = 0.05 ** 2
+    np.testing.assert_allclose(kf.position_covariance, r * np.eye(2))
+    np.testing.assert_allclose(kf.velocity_covariance, 2.0 * r / 0.01 * np.eye(2))
+    np.testing.assert_allclose(kf.P, kf.P.T)
+    assert np.all(np.linalg.eigvalsh(kf.P) > 0.0)
+
+
+def test_restart_then_updates_converge_to_new_velocity():
+    # 두 관측 차이라 처음 속도는 시끄럽지만(σ 0.7 m/s) 공분산이 그만큼 커서 다음 관측들이 빨리 고친다
+    rng = np.random.default_rng(4)
+    kf = ConstantVelocityKF((0.0, 0.0), timestamp=0.0)
+    kf.predict(0.1)
+    kf.restart((0.0, 0.04), previous_z=(0.1, -0.03), elapsed=0.1)
+    restarted = kf.velocity_covariance[0, 0]
+    times = np.arange(0.2, 1.1, 0.1)
+    _, measurements = simulate_cv((0.0, 0.0), (-1.0, 0.0), times - 0.1, 0.05, rng)
+    run(kf, times, measurements)
+    np.testing.assert_allclose(kf.velocity, [-1.0, 0.0], atol=0.25)
+    assert kf.velocity_covariance[0, 0] < restarted / 10.0
+
+
+@pytest.mark.parametrize('kwargs', [
+    {'elapsed': 0.0},
+    {'elapsed': -0.1},
+    {'elapsed': float('nan')},
+    {'z': (float('nan'), 0.0)},
+    {'previous_z': (0.0,)},
+])
+def test_restart_rejects_bad_input(kwargs):
+    kf = ConstantVelocityKF((0.0, 0.0), timestamp=0.0)
+    args = {'z': (0.1, 0.0), 'previous_z': (0.0, 0.0), 'elapsed': 0.1, **kwargs}
+    with pytest.raises(ValueError):
+        kf.restart(**args)

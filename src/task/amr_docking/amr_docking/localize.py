@@ -7,9 +7,9 @@
 n = u를 −90° 돌린 것. 판의 world 자세(앞면 중심, 바라보는 방향)를 알면 로봇 world 자세가 나온다.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
-from typing import Tuple
+from typing import Dict, Tuple
 
 Point = Tuple[float, float]
 
@@ -81,3 +81,25 @@ class SigmaModel:
         d = max(0.0, distance)
         yaw = self.yaw0 + self.yaw1 * d * self.ref_spacing / max(spacing, 1e-3)
         return self.xy0 + self.xy2 * d * d + d * yaw, yaw
+
+
+@dataclass
+class Agreement:
+    """같은 판을 window_s 안에 n번 연달아 비슷한 자리(위치 tol_m 안)로 읽었을 때만 믿는다.
+
+    멀리서 비스듬히 본 판은 PnP가 판 법선 둘레로 뒤집힌 해를 가끔 낸다. 그러면 로봇 위치가 판을 기준으로 거울 쪽
+    수 m로 튄다 (Kidnapped far seed 5: rack_c4 판으로 x −4.55·+4.84, 정답 +4.97). 한 번 튄 값은 다음 장면과 안 맞아서
+    걸러진다. 위치만 비교한다: 복구 중 제자리 회전에서는 방향이 바뀌어도 위치는 그대로다
+    """
+    n: int = 2
+    tol_m: float = 0.4
+    window_s: float = 2.0
+    _runs: Dict[str, Tuple[float, float, float, int]] = field(default_factory=dict)
+
+    def check(self, now: float, board: str, x: float, y: float) -> bool:
+        last = self._runs.get(board)
+        count = 1
+        if last is not None and now - last[0] <= self.window_s and math.hypot(x - last[1], y - last[2]) <= self.tol_m:
+            count = last[3] + 1
+        self._runs[board] = (now, x, y, count)
+        return count >= self.n

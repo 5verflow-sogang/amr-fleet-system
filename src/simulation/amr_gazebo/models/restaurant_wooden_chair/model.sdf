@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!-- 나무 살 의자 (0.40 x 0.36 m, 좌판 0.435 m, 등받이 0.79 m). 정면 = +x, 등받이 -x.
+     메시: Gazebo Fuel OpenRobotics "WoodenChair" (Wan Yi Seow), CC-BY 4.0. Fuel 메시 URL을 바로 쓰면 텍스처를 못 찾아 저장소로 옮겼다. 쓰지 않는 충돌 메시·PBR 맵은 뺐다. 충돌체는 상자 (지도 restaurant_map.py가 상자·원기둥만 읽는다) -->
+<sdf version="1.8">
+  <model name="restaurant_wooden_chair">
+    <static>true</static>
+    <link name="link">
+      <visual name="visual"><geometry><mesh><uri>model://restaurant_wooden_chair/meshes/WoodenChair.obj</uri></mesh></geometry></visual>
+      <collision name="seat"><pose>-0.02 0 0.2175 0 0 0</pose><geometry><box><size>0.40 0.36 0.435</size></box></geometry></collision><collision name="back"><pose>-0.19 0 0.61 0 0 0</pose><geometry><box><size>0.06 0.36 0.36</size></box></geometry></collision>
+    </link>
+  </model>
+</sdf>

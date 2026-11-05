@@ -45,6 +45,7 @@ from rosbags.typesys import get_types_from_msg, get_typestore, Stores
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src/perception/amr_perception_core'))
+from amr_perception_core.association import published_radius, UNKNOWN_CLASS  # noqa: E402
 from amr_perception_core.clustering import ClusteringConfig, detect_obstacles, transform_points_2d  # noqa: E402
 from amr_perception_core.free_space import FreeSpaceGrid  # noqa: E402
 from amr_perception_core.kalman import KalmanConfig  # noqa: E402
@@ -72,13 +73,14 @@ PRED_COLS = {'pred_err_1s': 1.0, 'hold_err_1s': 1.0, 'pred_err_2s': 2.0, 'hold_e
 # 벤치가 쓰는 tracking.yaml 이름 (노드의 설정 읽기와 같아야 한다. --check-node로 확인)
 KALMAN_KEYS = ('accel_noise_std', 'measurement_noise_std', 'initial_velocity_std')
 TRACKER_KEYS = ('gate_mahalanobis_sq', 'confirm_hits', 'max_coast_time', 'dynamic_speed_threshold',
-                'dynamic_confirm_frames', 'dynamic_evidence_frames', 'radius_smoothing')
+                'dynamic_confirm_frames', 'dynamic_evidence_frames', 'radius_smoothing',
+                'maneuver_max_speed', 'maneuver_margin', 'maneuver_max_age', 'maneuver_max_radius')
 CLUSTER_KEYS = ('breakpoint_lambda_deg', 'range_noise_std', 'max_gap_beams', 'min_points', 'max_obstacle_extent',
                 'leg_max_extent', 'leg_merge_distance')
 FREE_KEYS = {'free_space_resolution': 'resolution', 'free_space_size': 'size', 'free_space_max_range': 'max_range',
              'free_space_endpoint_margin': 'endpoint_margin', 'free_space_memory': 'free_memory',
              'free_space_hit_quiet': 'hit_quiet', 'free_space_hit_clearance': 'hit_clearance'}
-OTHER_KEYS = ('use_free_space', 'free_evidence_min_points', 'obstacle_radius')
+OTHER_KEYS = ('use_free_space', 'free_evidence_min_points', 'obstacle_radius', 'dynamic_min_radius')
 # 노드에서만 쓰는 값 (좌표계·TTC·발행·지도 대조·카메라 연관). 지도 대조가 켜져 있으면 스캔 점이 달라져 벤치가 멈춘다.
 # 카메라 연관은 기본으로 켜져 있지만 카메라를 끈 녹화에는 검출이 없어 영향이 없다 (검출이 녹화돼 있으면 경고)
 NODE_ONLY_KEYS = ('measurement_source', 'fixed_frame', 'tf_timeout', 'base_frame', 'robot_length', 'robot_width',
@@ -216,15 +218,17 @@ def replay(rec: Recording, p: dict):
             angles = syaw + a0 + da * np.arange(len(ranges))
             free.integrate((sx, sy), np.c_[np.cos(angles), np.sin(angles)], np.asarray(ranges, dtype=float), t)
         tracks = tracker.step(t, points, [c.radius for c in clusters], evidence)
-        frames.append((t, [track_obs(tr, p['obstacle_radius']) for tr in tracks]))
+        frames.append((t, [track_obs(tr, p) for tr in tracks]))
     return frames
 
 
-def track_obs(track, default_radius):
+def track_obs(track, p):
+    """노드가 내보내는 값과 같게. 반경은 노드와 같은 규칙(published_radius)이고, 카메라 연관이 없어 클래스는 unknown이다."""
     kf = track.kf
+    radius = published_radius(track.radius, p['obstacle_radius'], UNKNOWN_CLASS, track.is_dynamic, {},
+                              p['dynamic_min_radius'])
     return TrackObs(int(track.track_id), *map(float, kf.position), *map(float, kf.velocity), bool(track.is_dynamic),
-                    np.asarray(kf.position_covariance), np.asarray(kf.velocity_covariance),
-                    float(track.radius if track.radius is not None else default_radius))
+                    np.asarray(kf.position_covariance), np.asarray(kf.velocity_covariance), radius)
 
 
 class _Evaluator(TrackingEvaluator):

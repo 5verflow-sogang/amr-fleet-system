@@ -67,3 +67,14 @@ def test_lidar_is_level(extrinsics):
     # 틀린 위치를 조용히 낸다 (#266 연우 리뷰)
     roll, pitch, _ = extrinsics['lidar']['rpy']
     assert (roll, pitch) == (0.0, 0.0)
+
+
+def test_serving_camera_matches_extrinsics(extrinsics):
+    """body:=serving이면 카메라 조인트가 camera_serving 값을 쓴다 (serving.xacro 타워 머리)."""
+    doc = xacro.process_file(os.path.join(PKG, 'urdf', 'amr.urdf.xacro'),
+                             mappings={'namespace': 'amr_01', 'body': 'serving'})
+    joints = {j.find('child').get('link'): j for j in ET.fromstring(doc.toxml()).iter('joint')}
+    e = extrinsics['camera_serving']
+    origin = joints[PREFIX + e['child']].find('origin')
+    assert _floats(origin.get('xyz')) == pytest.approx(e['xyz'])
+    assert _floats(origin.get('rpy')) == pytest.approx(e['rpy'])

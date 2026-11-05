@@ -76,8 +76,12 @@ REASON_DEADLOCK_RESOLUTION = 3
 # 교착 판정 (4주차 하연, 10/13 결정. 측정 뒤 조정할 수 있는 제안값)
 # 구역 허가를 이 시간 넘게 못 받으면 "장기 대기". 서버 release_timeout_s(30 s)와 같다
 ZONE_LONG_WAIT_S = 30.0
-# 이동 단계(phase move_*)인데 이 시간 넘게 멈춰 있으면 "정체". 구역 정상 대기(5 m 통로 약 10 s)보다 넉넉하게
+# 이동 단계(phase move_*)인데 STALL_S 동안 STALL_DISP_M 안에서만 움직이면 "정체". 구역 정상 대기(5 m 통로 약 10 s)보다
+# 넉넉하게. 속도로 재면 마주친 두 로봇이 0.02 m/s로 밀고 밀리거나 제자리에서 돌 때 못 잡았다 (11/2 release_build amr_02·05)
 STALL_S = 60.0
+STALL_DISP_M = 2.0
+# 같은 때 이 거리 안에서 같이 정체한 로봇은 서로 막은 것으로 본다 (stalls.csv with 열, 로봇 0.6 m가 마주 선 거리보다 넉넉하게)
+STALL_PAIR_M = 1.5
 
 # 응답 판정 임계값 (tools/harness/README.md response_time.csv, 초안)
 LINEAR_THRESHOLD = 0.01   # m/s
@@ -88,7 +92,7 @@ FLEET_LATENCY_HEADER = ['topic', 'robot', 'key', 'send_time', 'recv_time', 'late
 TASK_OUTCOMES_HEADER = ['task_id', 'request_time', 'first_assign_time', 'robots', 'final_state', 'end_time',
                         'task_time_s', 'distance_m', 'error_code', 'runners', 'request_sim', 'end_sim']
 ZONE_WAITS_HEADER = ['robot', 'zone', 'request_id', 'request_time', 'grant_time', 'wait_s', 'outcome', 'release_time']
-STALLS_HEADER = ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s']
+STALLS_HEADER = ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s', 'with']
 FLEET_MODES_HEADER = ['robot', 'mode', 'start_time', 'end_time', 'duration_s']
 RECOVERY_HEADER = ['robot', 'kill_time', 'task_id', 'reassign_time', 'reassigned_robot', 'recovery_s', 'completed']
 # latency_ms: 서버 발행 → 첫 움직임 (원 명세 측정 표 "작업 명령 발행"). 통신 지연 포함
@@ -446,42 +450,67 @@ def zone_waits(records: Sequence[Record], end: float, clock: Optional[SimClock] 
     return rows
 
 
-def stalls(records: Sequence[Record], min_s: float = STALL_S, clock: Optional[SimClock] = None) -> list[list]:
-    """stalls.csv 행. 작업 이동 단계(IN_PROGRESS, phase move_*)인데 min_s 넘게 멈춘 구간 1개마다 1행.
+def stalls(records: Sequence[Record], min_s: float = STALL_S, disp_m: float = STALL_DISP_M,
+           pair_m: float = STALL_PAIR_M, clock: Optional[SimClock] = None) -> list[list]:
+    """stalls.csv 행. 작업 이동 단계(IN_PROGRESS, phase move_*)에서 min_s 동안 위치가 그 구간 시작점에서 disp_m 안에만
+    있었던 구간 1개마다 1행. 시작은 그 min_s 창의 처음이라 duration_s는 min_s 이상이다.
 
-    구역 안팎 어디서 생긴 교착이든 로봇이 못 움직이는 것으로 잡는다. 판정은 /<robot>/odom 속도(_moving).
-    멈춘 시간과 min_s는 시뮬레이션 시간이다 (Gazebo가 느리면 실제 시간으로는 같은 정지가 더 길어 보인다).
+    위치는 RobotState(map 기준, 로봇끼리 비교 가능)로 본다. 구역 안팎 어디서 생긴 교착이든, 서 있든 꿈틀거리든 잡는다.
+    with: 같은 때 pair_m 안에서 같이 정체한 로봇 (';'로 잇는다). 비어 있으면 혼자 막힌 것이다.
+    창(min_s)과 duration_s는 시뮬레이션 시간이다 (Gazebo가 느리면 실제 시간으로는 같은 정지가 더 길어 보인다).
+    start_time·end_time은 다른 파일처럼 수신 시각(실제 시간)이다.
     """
     clock = clock or _wall_clock()
     status: dict[str, list[tuple[float, int, str, str]]] = defaultdict(list)
-    odom: dict[str, list[Record]] = defaultdict(list)
+    # (시뮬레이션 시각, 수신 시각, x, y)
+    poses: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
     for r in records:
         if r.topic == STATUS_TOPIC:
-            status[r.msg.robot_id].append((r.t, r.msg.state, r.msg.phase, r.msg.task_id))
-        else:
-            m = ODOM_TOPIC.match(r.topic)
-            if m:
-                odom[m['robot']].append(r)
-    rows = []
-    for robot, series in sorted(odom.items()):
+            status[r.msg.robot_id].append((clock(r.t), r.msg.state, r.msg.phase, r.msg.task_id))
+        elif r.topic == STATES_TOPIC:
+            p = r.msg.pose.position
+            poses[r.msg.robot_id].append((clock(r.t), r.t, p.x, p.y))
+    found = []   # (robot, task_id, phase, 시작 sim, 끝 sim, 시작 수신, 끝 수신)
+    for robot, series in sorted(poses.items()):
+        series.sort()
         events = sorted(status.get(robot, []))
         times = [e[0] for e in events]
-        series.sort(key=lambda r: r.t)
-        start = current = None
-        for r in series:
-            i = bisect.bisect_right(times, r.t) - 1
-            moving_phase = i >= 0 and events[i][1] == STATE_IN_PROGRESS and events[i][2].startswith('move_')
-            stalled = moving_phase and not _moving(r.msg)
-            if stalled and start is None:
-                start, current = r.t, events[i]
-            elif not stalled and start is not None:
-                stopped_s = clock.span(start, r.t)
-                if stopped_s >= min_s:
-                    rows.append([robot, current[3], current[2], _fmt(start), _fmt(r.t), _fmt(stopped_s, 3)])
-                start = None
-        if start is not None and clock.span(start, series[-1].t) >= min_s:
-            rows.append([robot, current[3], current[2], _fmt(start), _fmt(series[-1].t),
-                         _fmt(clock.span(start, series[-1].t), 3)])
+        cur = None
+        j = 0
+        for k, (t, w, x, y) in enumerate(series):
+            i = bisect.bisect_right(times, t) - 1
+            moving = i >= 0 and events[i][1] == STATE_IN_PROGRESS and events[i][2].startswith('move_')
+            stuck = False
+            if moving:
+                while series[j][0] < t - min_s:
+                    j += 1
+                # 창이 이 이동 단계 안에 다 들어와야 한다 (단계가 바뀐 직후의 짧은 정지는 보지 않는다)
+                t0, w0, x0, y0 = series[j]
+                stuck = (t0 >= times[i] and t - t0 >= min_s * 0.9
+                         and all(math.hypot(wx - x0, wy - y0) < disp_m for _, _, wx, wy in series[j:k + 1]))
+            if stuck and cur is None:
+                cur = [robot, events[i][3], events[i][2], t0, t, w0, w]
+            elif stuck:
+                cur[4], cur[6] = t, w
+            elif cur is not None:
+                found.append(cur)
+                cur = None
+        if cur is not None:
+            found.append(cur)
+
+    def pose_at(robot, t):
+        series = poses[robot]
+        k = min(bisect.bisect_left(series, (t,)), len(series) - 1)
+        return series[k][2], series[k][3]
+
+    rows = []
+    for robot, task_id, phase, start, end, w_start, w_end in found:
+        with_robots = sorted({
+            other for other, _, _, s2, e2, _, _ in found
+            if other != robot and s2 < end and start < e2
+            and math.dist(pose_at(robot, (max(start, s2) + min(end, e2)) / 2),
+                          pose_at(other, (max(start, s2) + min(end, e2)) / 2)) <= pair_m})
+        rows.append([robot, task_id, phase, _fmt(w_start), _fmt(w_end), _fmt(end - start, 3), ';'.join(with_robots)])
     return rows
 
 

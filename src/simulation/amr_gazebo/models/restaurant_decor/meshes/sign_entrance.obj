@@ -1,0 +1,14 @@
+# restaurant_decor sign_entrance (amr_gazebo 식당 월드, 직접 생성 CC0)
+mtllib sign_entrance.mtl
+o sign_entrance
+v -0.6000 0.0000 -0.1500
+v 0.6000 0.0000 -0.1500
+v 0.6000 0.0000 0.1500
+v -0.6000 0.0000 0.1500
+vt 0.0000 0.0000
+vt 1.0000 0.0000
+vt 1.0000 1.0000
+vt 0.0000 1.0000
+vn 0.0 -1.0 0.0
+usemtl sign_entrance
+f 1/1/1 2/2/1 3/3/1 4/4/1

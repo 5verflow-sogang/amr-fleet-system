@@ -26,3 +26,8 @@
     sigma_xy2: 0.005
     sigma_yaw0_deg: 1.0
     sigma_yaw1_deg: 2.0
+    # 같은 판을 confirm_window_s 안에 confirm_n번 연달아 confirm_tol_m 안의 자리로 읽었을 때만 낸다.
+    # 멀리서 비스듬히 본 판은 PnP가 뒤집힌 해(판 기준 거울 쪽으로 수 m)를 가끔 낸다 (Kidnapped far 10회, 10/25)
+    confirm_n: 2
+    confirm_tol_m: 0.4
+    confirm_window_s: 2.0

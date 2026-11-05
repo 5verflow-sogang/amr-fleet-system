@@ -8,6 +8,7 @@ from amr_perception_core.association import (
     AssociationConfig,
     ClassLabeler,
     FixedDetection,
+    published_radius,
     TrackSnapshot,
     UNKNOWN_CLASS,
 )
@@ -142,3 +143,23 @@ def test_label_query_out_of_order_time_does_not_break():
 def test_rejects_bad_config(kwargs):
     with pytest.raises(ValueError):
         AssociationConfig(**kwargs)
+
+
+CLASS_MIN = {'person': 0.25}
+
+
+@pytest.mark.parametrize('track_radius, class_name, dynamic, expected', [
+    (0.11, UNKNOWN_CLASS, True, 0.25),     # 카메라 없이 다리만 보인 사람: 바닥값
+    (0.11, UNKNOWN_CLASS, False, 0.11),    # 정적 트랙은 그대로
+    (0.11, 'person', False, 0.25),         # 클래스 최소 반경은 정적이어도 (예전 규칙 그대로)
+    (0.70, UNKNOWN_CLASS, True, 0.70),     # 지게차처럼 큰 동적 트랙은 그대로
+    (0.11, 'forklift', True, 0.11),        # 클래스가 붙으면 그 클래스 규칙만 (목록에 없으면 바닥 없음)
+    (None, UNKNOWN_CLASS, True, 0.30),     # 반경 없는 측정은 기본 반경 (바닥보다 크면 그대로)
+])
+def test_published_radius(track_radius, class_name, dynamic, expected):
+    r = published_radius(track_radius, 0.3, class_name, dynamic, CLASS_MIN, dynamic_min_radius=0.25)
+    assert r == pytest.approx(expected)
+
+
+def test_published_radius_floor_off_by_default():
+    assert published_radius(0.11, 0.3, UNKNOWN_CLASS, True, CLASS_MIN) == pytest.approx(0.11)

@@ -71,6 +71,49 @@ def test_fleet_metrics(tmp_path):
     assert 'fleet.response_ms.mean' not in m   # 가짜 로봇: odom 없음
 
 
+def test_i12_verdict(tmp_path):
+    def run(name, scenario, lost, latency, commands=True):
+        d = tmp_path / name
+        d.mkdir()
+        (d / 'meta.json').write_text(json.dumps({'scenario': scenario, 'outcome': 'completed',
+                                                 'fault': {'delay_ms': 100.0, 'loss_pct': 5.0}}))
+        with (d / 'fleet_latency.csv').open('w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['topic', 'robot', 'key', 'send_time', 'recv_time', 'latency_ms', 'delivered'])
+            for i in range(100):
+                if i < lost:
+                    w.writerow(['heartbeat', 'amr_01', f'1:{i}', '1.0', '', '', '0'])
+                else:   # 재전송으로 늦게 닿은 하나가 평균을 끌어올려도 중앙값은 그대로
+                    w.writerow(['heartbeat', 'amr_01', f'1:{i}', '1.0', '1.1', '3000.0' if i == 99 else latency, '1'])
+        with (d / 'response_time.csv').open('w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms',
+                        'assignment_id', 'ack_time', 'ack_rtt_ms', 'resends'])
+            if commands:
+                w.writerow(['1.0', '', '', 'amr_01', 't1', '', '1', '1.25', '250.0', '1'])
+        return d
+    ok = summarize([run(f'ok{i}', 'fleet_i12', 5, '101.0') for i in range(3)])['fleet_i12']['metrics']
+    assert ok['i12.loss_err_pp']['mean'] == pytest.approx(0.0)
+    assert ok['i12.latency_err_ms']['mean'] == pytest.approx(1.0)
+    assert all(ok[k]['kpi'] == 'PASS' for k in ('i12.loss_err_pp', 'i12.latency_err_ms', 'i12.ack_rate'))
+    bad = summarize([run(f'bad{i}', 'fleet_i12', 10, '120.0') for i in range(3)])['fleet_i12']['metrics']
+    assert bad['i12.loss_err_pp']['kpi'] == 'FAIL' and bad['i12.latency_err_ms']['kpi'] == 'FAIL'
+    # 명령이 0건인 실행이 있으면 Ack 비율 0으로 FAIL (빼고 나머지로 PASS를 주지 않는다)
+    runs = [run(f'ack{i}', 'fleet_i12', 5, '101.0', commands=i > 0) for i in range(3)]
+    assert summarize(runs)['fleet_i12']['metrics']['i12.ack_rate']['kpi'] == 'FAIL'
+    # 지연을 못 잰 실행이 있으면 보류, 모든 실행에서 못 재도 지표를 남겨 보류
+    runs = [run(f'lat{i}', 'fleet_i12', 100 if i == 0 else 5, '101.0') for i in range(3)]
+    lat = summarize(runs)['fleet_i12']['metrics']['i12.latency_err_ms']
+    assert 'kpi' not in lat and lat['kpi_note'] == '보류 (값 없는 실행 1회)'
+    lost = summarize([run(f'lost{i}', 'fleet_i12', 100, '101.0') for i in range(3)])['fleet_i12']['metrics']
+    assert lost['i12.latency_err_ms'] == {'n': 0, 'mean': None, 'std': None, 'min': None, 'max': None,
+                                          'ci_low': None, 'ci_high': None, 'kpi_note': '보류 (값 없는 실행 3회)'}
+    assert '보류 (값 없는 실행 1회)' in to_markdown(summarize([run('lost9', 'fleet_i12', 100, '101.0')]))
+    # 연구 1 fleet_fake 실행에는 I12 지표를 만들지 않는다
+    other = summarize([run('fake0', 'fleet_fake', 5, '101.0')])['fleet_fake']['metrics']
+    assert not any(k.startswith('i12.') for k in other)
+
+
 def test_render_and_fault_meta():
     params = {'run_dir': '/r/x', 'seed': 3}
     assert render({'cmd': 'a {seed} {run_dir}/f', 'l': ['{seed}']}, params) == {'cmd': 'a 3 /r/x/f', 'l': ['3']}
@@ -225,14 +268,21 @@ def test_fleet_stack_metrics(tmp_path):
           ['amr_02', 'narrow_01', '1', '0', '', '45.0', 'waiting', ''],
           ['amr_03', 'narrow_02', '1', '0', '', '0.0', 'rejected', ''],
           ['amr_04', 'narrow_02', '2', '0', '1', '0.0', 'revoked', '9']])
-    _csv(tmp_path / 'stalls.csv', ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s'], [])
+    _csv(tmp_path / 'stalls.csv', ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s', 'with'], [])
     m = fleet_metrics(tmp_path)
     assert m['fleet.response_ms.mean'] == pytest.approx(275.0)
     assert m['fleet.response_recv_ms.mean'] == pytest.approx(175.0)
     assert (m['fleet.task_time_s.mean'], m['fleet.distance_m.total']) == (pytest.approx(80.0), pytest.approx(60.0))
     assert (m['fleet.zone_requests'], m['fleet.zone_long_waits']) == (4, 1)
     assert (m['fleet.deadlock_rejects'], m['fleet.deadlock_revokes']) == (1, 1)
-    assert m['fleet.stalls'] == 0 and 'fleet.stall_s.max' not in m
+    assert m['fleet.stalls'] == 0 and m['fleet.stalls_paired'] == 0 and 'fleet.stall_s.max' not in m
+    # 마주친 두 대 + 혼자 막힌 한 대
+    _csv(tmp_path / 'stalls.csv', ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s', 'with'],
+         [['amr_02', 't9', 'move_to_dropoff', '0', '134', '134.0', 'amr_05'],
+          ['amr_05', 't13', 'move_to_pickup', '1', '129', '128.0', 'amr_02'],
+          ['amr_01', 't1', 'move_to_pickup', '0', '66', '66.0', '']])
+    m2 = fleet_metrics(tmp_path)
+    assert (m2['fleet.stalls'], m2['fleet.stalls_paired'], m2['fleet.stall_s.max']) == (3, 2, 134.0)
     # KPI: 수신 기준 200 ms 안, 장기 대기 1건은 FAIL, 정체 0건은 PASS
     assert kpi_verdict('fleet.response_recv_ms.mean', 175.0, 190.0) == 'PASS'
     assert kpi_verdict('fleet.zone_long_waits', 1.0, 1.0) == 'FAIL'
@@ -342,7 +392,7 @@ def test_avoidance_metrics(tmp_path):
     assert m['avoid.amr_01.collisions'] == 1
 
 
-def track_summary(pred=0.2, hold=0.6, vel=0.1, approach=None, false_safety=None):
+def track_summary(pred=0.2, hold=0.6, vel=0.1, vel_in=None, approach=None, false_safety=None):
     """tracking_eval summary.json에서 tracking_metrics가 읽는 부분만 (amr_perception_core.tracking_eval 형식)."""
     def st(rmse=None, mean=None, n=100, mx=None):
         return {'n': n if rmse is not None or mean is not None else 0, 'rmse': rmse, 'mean': mean,
@@ -352,6 +402,8 @@ def track_summary(pred=0.2, hold=0.6, vel=0.1, approach=None, false_safety=None)
                'nees_vel': dict(st(mean=3.0), within_chi2_95=0.9),
                'pred_1': st(pred), 'hold_1': st(hold), 'pred_2': st(0.5), 'hold_2': st(1.2),
                'match_rate_in_range': 0.95, 'id_switches': 2}
+    if vel_in is not None:              # 센서 범위 안 짝 (P2). 전 평가 결과에는 없다
+        overall['vel_in_range'] = st(vel_in)
     by_speed = {b: {'seen': 1, 'classified': 1, 'from_seen': st(mean=1.2)} for b in ('<0.6', '0.6-1.0', '>=1.0')}
     return {'overall': overall, 'false_dynamic_per_frame': 0.01, 'duplicate_dynamic_per_frame': 0.0,
             'latency': {'from_seen': st(mean=1.2, mx=2.0), 'not_classified': 0, 'by_speed': by_speed},
@@ -382,6 +434,10 @@ def test_tracking_metrics(tmp_path):
     m = tracking_metrics(run)
     assert m['track.pred_gain_1s'] == pytest.approx(0.40) and m['track.pred_1s.n'] == 100
     assert m['track.vel.rmse'] == 0.12 and m['track.vel.n'] == 100
+    assert 'track.vel_in_range.rmse' not in m                        # 전 평가 결과 (센서 범위 안 값 없음)
+    m = tracking_metrics(make_track_run(tmp_path, 'a2', 'tracking_kpi_a', vel=0.3, vel_in=0.12))
+    assert m['track.vel_in_range.rmse'] == 0.12 and m['track.vel_in_range.n'] == 100 and m['track.vel.rmse'] == 0.3
+    m = tracking_metrics(run)
     assert m['track.radial.mean'] == -0.1 and m['track.nees_pos.within95'] == 0.8
     assert m['track.latency.ge1_0.mean'] == 1.2 and m['track.id_switches'] == 2
     assert not [k for k in m if k.startswith('track.d1_')]          # 물체가 여럿인 기록 (approach 없음)
@@ -418,21 +474,23 @@ def test_tracking_metrics(tmp_path):
 
 
 def test_tracking_p1_p2_verdict_only_in_scenes_abde(tmp_path):
-    a = [make_track_run(tmp_path, f'a{i}', 'tracking_kpi_a', pred=0.2, hold=0.6 + 0.01 * i, vel=0.1 + 0.01 * i)
-         for i in range(10)]
+    # P2는 센서 범위 안 짝으로 판정한다: 전체 거리 값이 기준을 넘어도 범위 안이 기준 안이면 PASS
+    a = [make_track_run(tmp_path, f'a{i}', 'tracking_kpi_a', pred=0.2, hold=0.6 + 0.01 * i, vel=0.4 + 0.01 * i,
+                        vel_in=0.1 + 0.01 * i) for i in range(10)]
     c = [make_track_run(tmp_path, f'c{i}', 'tracking_kpi_c10', approach=approach(4.0)) for i in range(10)]
     s = summarize(a + c)
     ma, mc = s['tracking_kpi_a/main']['metrics'], s['tracking_kpi_c10/main']['metrics']
-    assert ma['track.pred_gain_1s']['kpi'] == 'PASS' and ma['track.vel.rmse']['kpi'] == 'PASS'
-    assert 'kpi' not in ma['track.pos.rmse']                         # 참고 지표
+    assert ma['track.pred_gain_1s']['kpi'] == 'PASS' and ma['track.vel_in_range.rmse']['kpi'] == 'PASS'
+    assert 'kpi' not in ma['track.pos.rmse'] and 'kpi' not in ma['track.vel.rmse']   # 참고 지표
     assert 'kpi' not in mc['track.pred_gain_1s'] and 'kpi' not in mc['track.vel.rmse']
     # P1은 CI 하한이 0보다 커야 한다. 추정 속도가 0이면 예측 = 정지 가정이라 차가 정확히 0이다
     assert kpi_verdict('track.pred_gain_1s', 0.0, 0.0, 0.0, 'tracking_kpi_b') == 'FAIL'
     assert kpi_verdict('track.pred_gain_1s', 0.05, 0.1, -0.01, 'tracking_kpi_d') == 'MARGINAL'
     assert kpi_verdict('track.pred_gain_1s', -0.1, 0.0, -0.2, 'tracking_kpi_e') == 'FAIL'
-    assert kpi_verdict('track.vel.rmse', 0.18, 0.22, 0.15, 'tracking_kpi_e') == 'MARGINAL'
-    assert kpi_verdict('track.vel.rmse', 0.25, 0.3, 0.21, 'tracking_kpi_a') == 'FAIL'
-    assert kpi_verdict('track.vel.rmse', 0.1, 0.12, 0.08, 'tracking_kpi') is None   # 공통 틀
+    assert kpi_verdict('track.vel_in_range.rmse', 0.18, 0.22, 0.15, 'tracking_kpi_e') == 'MARGINAL'
+    assert kpi_verdict('track.vel_in_range.rmse', 0.25, 0.3, 0.21, 'tracking_kpi_a') == 'FAIL'
+    assert kpi_verdict('track.vel_in_range.rmse', 0.1, 0.12, 0.08, 'tracking_kpi') is None   # 공통 틀
+    assert kpi_verdict('track.vel.rmse', 0.25, 0.3, 0.21, 'tracking_kpi_a') is None   # 전체 거리는 참고 지표
 
 
 def test_kpi_holds_when_some_runs_have_no_value(tmp_path):
@@ -454,11 +512,13 @@ def test_kpi_holds_when_some_runs_have_no_value(tmp_path):
 
 
 def test_tracking_p1_p2_hold_below_ten_runs(tmp_path):
-    a = [make_track_run(tmp_path, f'a{i}', 'tracking_kpi_a', hold=0.6 + 0.01 * i, vel=0.1 + 0.01 * i)
+    a = [make_track_run(tmp_path, f'a{i}', 'tracking_kpi_a', hold=0.6 + 0.01 * i, vel=0.3, vel_in=0.1 + 0.01 * i)
          for i in range(9)]
     m = summarize(a)['tracking_kpi_a/main']['metrics']
-    for metric in ('track.pred_gain_1s', 'track.vel.rmse'):
+    # P2는 센서 범위 안 RMSE (#264). 전체 거리 track.vel.rmse는 참고 지표라 판정도 보류도 없다
+    for metric in ('track.pred_gain_1s', 'track.vel_in_range.rmse'):
         assert 'kpi' not in m[metric] and m[metric]['kpi_note'] == '보류 (n=9<10)'
+    assert 'kpi' not in m['track.vel.rmse'] and 'kpi_note' not in m['track.vel.rmse']
 
 
 def test_tracking_d1_worst_case_verdict(tmp_path):

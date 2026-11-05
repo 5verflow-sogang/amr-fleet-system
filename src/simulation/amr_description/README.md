@@ -22,8 +22,9 @@ Gazebo 쪽 토픽(`cmd_vel`, `odom`, odom TF, 센서 `scan_raw`·`imu/data_raw`�
 
 | 파일 | 내용 |
 | --- | --- |
-| `amr.urdf.xacro` | 조립. 인자 `namespace`(TF 접두어·Gazebo 토픽), `payload_mass`(적재 질량 kg), `gt_rate`(GT 토픽 주기 Hz), `enable_camera`(카메라 센서 생성 여부), `max_linear_acceleration`(DiffDrive 선가속 상한, 기본 1.0. RL 평가 환경은 10으로 풀어 바퀴 토크 한계가 질량에 따라 가감속을 정하게 한다) |
+| `amr.urdf.xacro` | 조립. 인자 `namespace`(TF 접두어·Gazebo 토픽), `payload_mass`(적재 질량 kg), `gt_rate`(GT 토픽 주기 Hz), `enable_camera`(카메라 센서 생성 여부), `max_linear_acceleration`(DiffDrive 선가속 상한, 기본 1.0. RL 평가 환경은 10으로 풀어 바퀴 토크 한계가 질량에 따라 가감속을 정하게 한다), `body`(몸체 종류, 기본 `amr`. `serving`이면 `serving.xacro`를 붙인다) |
 | `properties.xacro` | 치수·질량·동역학 제한, 관성 매크로. **값은 여기서만 바꾼다** |
+| `serving.xacro` | 서빙 로봇 (`body:=serving`, 식당 월드). 실제 서빙로봇 Pudu BellaBot 크기에 맞춰 바닥 0.565 x 0.537 m(`properties.xacro`), 키 1.29 m(테이블 상판 0.73–0.78 m보다 높다), 트레이 3단(지면 0.55·0.80·1.05 m). 기둥이 LiDAR 바로 위(0.405 m)에서 시작해 스캔 평면(0.38 m)을 가리지 않는다. 카메라는 타워 머리(지면 약 1.23 m)에서 20° 아래를 본다(`config/extrinsics.yaml` `camera_serving`). 바퀴 간격·LiDAR 자리·질량(25 kg)은 기본 AMR과 같다(BellaBot 실물은 약 55 kg). 지금 Nav2 설정(`nav2_params.yaml`)의 footprint는 0.6 x 0.4 m라, 식당에서 Nav2를 돌릴 때 0.565 x 0.537 m로 바꿔야 한다 |
 | `base.xacro` | `base_footprint`, `base_link` |
 | `wheels.xacro` | 좌우 구동 바퀴, 앞뒤 캐스터 |
 | `sensors.xacro` | `lidar_link`, `camera_link` → `camera_optical_frame`, `imu_link`. LiDAR(`gpu_lidar`)·RGBD 카메라(`rgbd_camera` 1개)·IMU 센서. 위치는 `config/extrinsics.yaml`, 사양·노이즈는 `config/sensors.yaml`에서 읽음 |
@@ -186,7 +187,7 @@ amr_01/odom                         (발행: Gazebo DiffDrive 기본, EKF를 띄
 - Gazebo IMU는 메시지 공분산을 0으로 보낸다. `/imu/data`(필터 출력)에서 채운다.
 - RGB와 Depth는 `rgbd_camera` 센서 하나라 주기·클립 거리(0.3~10 m)를 공유한다. 명세(RGB 30 Hz, Depth 15 Hz 이상)는 30 Hz로 둘 다 만족한다.
 - Fortress `rgbd_camera`는 Depth 노이즈를 RGB에도 같이 넣는다. RGB 흔들림은 σ 약 0.5/255(1단계 미만)라 인식에 영향이 없다고 보고 그대로 둔다.
-- Gazebo 포인트클라우드(`camera/points`)는 점 좌표가 x 전방인데 frame_id가 광학 프레임이라 쓰지 않는다. 포인트클라우드는 Depth 영상과 `camera_info`로 만든다 (작업: Depth 포인트클라우드 변환·다운샘플링).
+- Gazebo 포인트클라우드(`camera/points`)는 점 좌표가 x 전방인데 frame_id가 광학 프레임이라 쓰지 않는다. 포인트클라우드는 Depth 영상과 `camera_info`로 만든다 ([amr_odometry](../../localization/amr_odometry/README.md) `depth_cloud_node` → `camera/depth/points`, 복셀 다운샘플).
 
 ### 센서 캘리브레이션
 
@@ -205,7 +206,7 @@ amr_01/odom                         (발행: Gazebo DiffDrive 기본, EKF를 띄
 - 실제 로봇이면 ①은 CAD·실측 장착 위치로 파일을 채우고, ③은 체커보드·벽 평면으로 LiDAR–카메라 상대 위치를 맞추는 단계가 된다. ④는 `camera_calibration` 체커보드, ⑦은 UMBmark 결과로 좌우 반지름 비·간격을 고친다. 시뮬에서는 값이 정확하므로 확인만 한다
 - 광학 프레임 회전 (−π/2, 0, −π/2)은 좌표축 관례라 `extrinsics.yaml`에 두지 않고 `sensors.xacro`에 고정했다
 
-launch 인자 (`description.launch.py`): `namespace`(기본 `amr_01`), `payload_mass`(기본 `0.0`), `gt_rate`(기본 `100`), `enable_camera`(기본 `true`), `max_linear_acceleration`(기본 `1.0`), `use_sim_time`(기본 `true`)
+launch 인자 (`description.launch.py`): `namespace`(기본 `amr_01`), `payload_mass`(기본 `0.0`), `gt_rate`(기본 `100`), `enable_camera`(기본 `true`), `max_linear_acceleration`(기본 `1.0`), `body`(기본 `amr`, 서빙 로봇은 `serving`), `use_sim_time`(기본 `true`)
 
 ## 실행
 

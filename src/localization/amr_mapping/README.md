@@ -61,6 +61,22 @@ ros2 run amr_mapping map_quality ~/maps/warehouse.yaml \
 - **지도를 인계할 때 매핑 시작 자세(world 기준 x, y, yaw)를 같이 기록한다** (amr_gazebo README "GT 사용 시 주의"). slam_toolbox는 시작 자세를 `map` 원점으로 잡는다.
 - `slam_toolbox`·`nav2_map_server`를 새 의존성으로 넣었다. 이미지를 다시 빌드해야 한다: `docker compose build`
 
+## 식당 정답 지도 (`maps/restaurant_gt.*`, 프로토타입)
+
+식당 월드(`amr_gazebo/worlds/restaurant.sdf`)용. 서빙 로봇(`body:=serving`, 키 1.29 m)보다 **낮은 물체를 전부 점유로 칠한다 - 테이블 상판 포함**. LiDAR(0.38 m)에는 테이블 다리만 보여 스캔 높이로 자른 지도나 SLAM 지도로는 테이블 밑이 빈 곳이 되고, 경로가 테이블 밑으로 잡혀 상판에 부딪힌다. 실제 서빙로봇이 지도에 가상 벽(금지 구역)을 그리는 것과 같은 효과를 Nav2 static layer로 낸다. AMCL은 스캔 점(다리)이 점유 칸 안에 떨어지므로 그대로 맞는다.
+
+```bash
+cd src/localization/amr_mapping
+python3 tools/restaurant_map.py ../../simulation/amr_gazebo/worlds/restaurant.sdf maps/restaurant_gt.yaml     --stations ../../fleet/amr_fleet_manager/config/stations_restaurant.yaml --png maps/restaurant_gt.png
+```
+
+- 좌표: map = world (`map_origin_in_world` [0, 0, 0]). 0.05 m 칸, 원점 [−12.5, −8.5], 500×340칸
+- 칠하는 것: 충돌체 높이 구간이 [3 cm, 1.29 m)와 겹치는 것 전부 (테이블·의자·부스·기둥·화분·앉은·서 있는 손님·조리대·칸막이·충전기 본체·외벽). 뺀 것: 바닥 표시, 충전 패드(2 mm)
+- `--stations`: 점유 칸을 로봇 반폭(0.269 m, Nav2 통과 불가 거리)만큼 부풀린 뒤 `wait_1`에서 모든 정차 자세까지 이어지는지 잰다. 지금 40/40곳 (외접원 0.39 m로 부풀려도 40/40). 못 가는 곳이 있으면 종료 코드 1
+- 식당에서 띄우기: `system.launch.py body:=serving map:=<이 지도 yaml> map_origin_in_world:=[0, 0, 0]` (footprint 0.565 x 0.537 m는 body가 맞춘다). 식당 월드·로봇 스폰 목록을 고르는 인자는 아직 없다
+
+![restaurant_gt](maps/restaurant_gt.png)
+
 ## 정답 지도 (`maps/warehouse_gt.*`, 5주차, #183 후속)
 
 월드 SDF의 물체를 LiDAR 스캔 높이에서 잘라 그린 지도다 (SLAM 아님). SLAM 지도의 휨(v1 서쪽·북쪽 끝 14–22 cm, #183)과 벽 띠 두께(좁은 통로가 22칸으로 좁아짐) 없이 내비·Fleet 실험을 하려고 만들었다. **위치추정 KPI(맵 품질·위치 오차)는 SLAM 지도(기본 v2)로 잰다.**

@@ -190,6 +190,12 @@ noVNC로 확인해보니 광원 바로 아래만 동그랗게 밝고 사이가 �
   - `random`: 경유점이 이루는 사각 영역 안 무작위 목표점으로 직선 이동 (random waypoint)
   - 속도는 구간(왕복 한 번, 무작위 목표점 하나)마다 `speed_range_mps` 안에서 무작위. `obstacle_seed`로 재현한다 (0이면 실행마다 무작위)
   - 몸체는 진행 방향을 보도록 돈다 (최대 1.5 rad/s). 이동 자체는 방향과 상관없이 경로를 따른다
+  - `yield_to_robots` (선택, 로봇 네임스페이스 목록): 그 로봇이 멈춘 채(GT 속력 0.05 m/s 미만) 앞길을 막으면,
+    즉 몸이 0.5 m 더 가면 차체에 0.05 m 안으로 닿으면 선다 (몸과 차체 사이 약 0.5~0.55 m). 한번 서면 로봇이 다시
+    움직여도 이번 구간(다음 경유점까지) 길에서 비킬 때까지 기다린다. 막은 로봇이 5 s 동안 계속 멈춰 있으면 온 쪽으로
+    돌아선다 (로봇이 작업자가 이미 옆에 왔을 때 서면 서로 기다리기만 한다). 움직이는 로봇에는 비키지 않는다
+    (로봇이 피하는지 보는 시험용). straight·random 패턴만. 로봇 GT `/<ns>/ground_truth/odom`을 받는다.
+    기본 `config/dynamic_obstacles.yaml`에는 없고, I17 회피 시나리오(`amr_safety` `avoidance_obstacles`)가 쓴다
 - Gazebo 쪽: `VelocityControl`(속도 명령) + `OdometryPublisher`(GT). 중력을 끄고 충돌체를 바닥에서 2.5 cm 띄웠다.
   바닥에 닿으면 마찰이 발밑을 잡아 키 큰 작업자가 넘어졌다. 로봇과는 충돌한다
 - `VelocityControl`은 마지막 명령을 유지한다. 노드만 죽으면 장애물이 계속 같은 방향으로 가니 sim도 같이 다시 띄운다
@@ -293,6 +299,56 @@ ros2 launch amr_gazebo rl_eval.launch.py mode:=brake_sweep payload_mass:=10.0 cs
 - 2D 소스는 `research2_dir` 파라미터, `AMR_RESEARCH2_DIR`, compose 마운트(`/ros2_ws/src/experiments/research2`) 순으로 찾는다. `payload_nav` 패키지 `__init__`은 Python 3.11(tomllib)·gymnasium이 필요해서 `dynamics.py`·`scenarios.py`만 읽는다
 - 2D와의 비교 결과: [experiments/rl_gazebo_eval](../../../experiments/rl_gazebo_eval/README.md)
 
+## 식당 월드 (`worlds/restaurant.sdf`, 프로토타입)
+
+24 x 16 m 푸드코트. 물류센터 월드는 그대로 두고 따로 둔다. 배치도는 파일 머리말, 로봇 정차 자세는 [`amr_fleet_manager/config/stations_restaurant.yaml`](../../fleet/amr_fleet_manager/config/stations_restaurant.yaml).
+
+```bash
+ros2 launch amr_gazebo world.launch.py world:=restaurant.sdf
+ros2 launch amr_gazebo spawn_robot.launch.py body:=serving x:=11.2 y:=-7.0 yaw:=3.14159   # 서빙 로봇(BellaBot 크기), wait_1
+C=$(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/config
+ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant.yaml seed:=1        # 평상시 손님 7명 (피크: _peak.yaml, 13명)
+ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant_staff.yaml name:=staff_obstacles   # 직원 5명
+```
+
+| 구역 | 내용 |
+| --- | --- |
+| 매장 (북쪽) | 한식·분식·양식·카페 4곳. 앞 카운터에서 픽업(`stall_1~4`), 한글 간판. 동쪽은 직원 통로(문 x 7.0–8.2, 양옆 화분) |
+| 배식대 (북서쪽) | 직원이 만든 음식을 올려 두는 배식 라인(`restaurant_buffet_station`, 3.73 x 1.14 m, 상판 0.89 m). 홀 쪽으로 열려 있고 로봇은 `buffet_1·2`에서 받는다. 뒤에 직원 조리대 |
+| 홀 | 100석. 4인 타원 테이블 15개(`t01~t15`, 3행 x 5열), 6인 테이블 4개(`L01~L04`, 동서 등받이 벤치, 2 x 2로 붙여 사이에 1.0 m 십자 통로: 서빙 로봇 한 대만 지나가고 두 대는 엇갈리지 못한다), 동쪽 벽 부스 3개(`b01~b03`), 2인 테이블 2개(`c01·c02`), 서쪽 벽 셀프 코너. 구조 기둥 4개, 3행 남쪽 화분 칸막이(남쪽 통로와 좌석을 나눔). 테이블 `restaurant_foodcourt_table`(흰 상판 + 금속 U자 다리), 의자 `restaurant_wooden_chair`, 벤치 `restaurant_foodcourt_bench`. 치수는 아래 표 |
+| 남쪽 | 키오스크·자판기(나중에 계산 카운터로 바꿀 자리), 퇴식대(스테인리스 5단 선반 2개 `return_1·2` + 흰 카운터 + 불투명 유리창, 옆에 예비 회수 카트 `restaurant_dish_return`), 정수대(정수기 3대·개수대·WATER 간판, 퇴식대 동쪽), 충전소 3개, 동쪽 벽 대기 위치(`wait_1~5`) |
+
+치수: 애슐리·쿠우쿠우·대형마트 푸드코트의 실제 도면은 공개된 것이 없어, 식당 설계 자료의 권장값과 서빙로봇 사양에 맞췄다. 로봇은 `body:=serving`(Pudu BellaBot 크기 0.565 x 0.537 x 1.29 m, 공식 최소 통로 0.8 m) 기준이다.
+
+| 항목 | 이 월드 | 근거 |
+| --- | --- | --- |
+| 4인 테이블 | 1.2 x 0.75 m (Fuel `FoodCourtTable1` 0.61 x 0.93 m를 늘림, 상판 0.727 m), 긴 변에 의자 2개 0.6 m 간격 | 4인 직사각형 120–140 x 75–85 cm, 1인당 테이블 가장자리 50–60 cm |
+| 앉은 자리 | 테이블 끝에서 의자 등받이까지 0.45 m (+ 의자 뺄 여유 0.1 m) | 의자를 빼면 테이블에서 45–50 cm(18–20 in) 나온다 |
+| 테이블 열 사이 (서비스 통로) | 의자 등받이 사이 1.37 m, 앉아 있으면 약 1.2 m. x −4.225·1.875 통로는 1·3행에 기둥이 있어 2행 높이에서만 지나간다 | 보조 통로 0.9–1.1 m(36–44 in). 서빙로봇 최소 통로 0.8 m(Pudu BellaBot 공식) |
+| 테이블 행 사이 | 테이블 끝 사이 1.8 m (테이블 끝에 정차한 로봇 옆으로 약 1.08 m 남아 다른 로봇이 지나간다) | 로봇 최소 통로 0.8 m + 정차 로봇 0.72 m(정차 간격 0.15 m 포함) |
+| 주 통로 | 매장 앞 1.57 m(테이블 정차 로봇이 있으면 0.85 m), 셀프 코너 앞 1.56 m, 4인석–6인석 사이 1.0 m, 6인석–부스 사이 1.09 m, 6인석 2 x 2 사이 한 대 통로 1.0 m(로봇 폭 0.537 m, 두 대 나란히 1.07 m라 못 엇갈림. Nav2 inflation 0.55 기준 가운데 비용 약 126으로 경로가 잡힌다), 남쪽 통로(화분 칸막이–퇴식구 정차 로봇) 1.07 m | 주 통로 1.2–1.5 m(48–60 in) |
+
+사람 (전부 충돌체 있음):
+
+| 종류 | 수 | 구현 |
+| --- | --- | --- |
+| 앉은 손님 | 18 | 정지 모델 OpenRobotics `VisitorKidSit` (어른 앉은 모델은 Fuel에 없어 아이 모델) |
+| 서 있는 손님 | 9 | 정지 모델 OpenRobotics `FemaleVisitor`. 매장 카운터 옆(픽업 자리와 0.5 m 이상), 배식대 앞, 셀프 코너, 입구 |
+| 걷는 손님 | 7 (피크 13) | 동적 장애물 `customer` 타입(`models/dynamic_customer`), [`config/dynamic_obstacles_restaurant.yaml`](config/dynamic_obstacles_restaurant.yaml). 통로 가운데로 직선·곡선·무작위, 0.4–1.0 m/s. 피크 몰림 [`_peak.yaml`](config/dynamic_obstacles_restaurant_peak.yaml)은 서쪽 통로·배식대 앞에 6명을 더한다 (혼잡 구역 `amr_fleet_manager/config/congestion_zones_restaurant.yaml`의 `west_aisle` 3/3, `buffet_line` 3–4/4 확인). 손님 파일에는 손님만 넣는다 (혼잡도 노드가 전부 사람으로 센다) |
+| 매장·배식대 직원 | 5 | 같은 동적 장애물로 칸막이 안 주방과 배식대 뒤를 왕복. 따로 [`_staff.yaml`](config/dynamic_obstacles_restaurant_staff.yaml), 같이 띄울 때 `name:=staff_obstacles` |
+
+- 저장소 모델: `restaurant_foodcourt_table`·`restaurant_wooden_chair`·`restaurant_foodcourt_bench`(Fuel OpenRobotics "FoodCourtTable1"·"WoodenChair"·"FoodCourtBenchLong", Wan Yi Seow, CC-BY 4.0, 충돌체는 상자), `restaurant_table`·`restaurant_chair`(Fuel "Cafe table" CC0·"Dining Chair" CC-BY 4.0, 지금 식당 월드에서는 안 씀), `restaurant_buffet_station`·`restaurant_dish_return`(민지 #295, Sketchfab CC-BY 4.0), `dynamic_customer`. Fuel 메시 URL을 바로 쓰면 메시 옆 텍스처를 못 찾아 테이블이 회색으로 나와서 테이블·의자는 저장소로 옮겼다
+- `restaurant_decor`: 홀 나무 마루·주방 타일 바닥 메시와 한글 간판 10개(매장 4, 배식대, 셀프 수저·반찬, 출입구, 퇴식대, 정수기, 로봇 충전·대기). 텍스처는 스크립트로 직접 만들었다(CC0, 간판 글꼴 맑은 고딕). 긴 테이블·부스·기둥·화분·퇴식대·정수대·테이블 위 쟁반·그릇·컵은 월드에 상자·원기둥으로 직접 넣었다(소품은 시각 전용)
+- 나머지(조리대·키오스크·자판기·쓰레기통·앉은·서 있는 사람)는 Gazebo Fuel(OpenRobotics, CC-BY 4.0)에서 처음 실행할 때 내려받는다(인터넷 필요, 이후 캐시)
+- **충돌체는 메시 대신 상자·원기둥**이다. Fuel 원본을 그대로 `<include>`하면 조리대·자판기 충돌체가 겉모습 메시(3천–9천 면)라 물리가 실시간의 0.1배로 느렸다 → 1.0배
+- **Gazebo actor(걷기 애니메이션)는 쓰지 않는다.** actor가 있으면 로봇 LiDAR·카메라를 CPU 렌더링(llvmpipe)할 때 시뮬레이션이 멈췄다(actor만 빼면 같은 월드가 1.0배). 그래서 걷는 사람은 다리가 움직이지 않고 미끄러지듯 이동한다
+- 손님은 로봇을 피하지 않는다(정해진 경로만 따른다). 매장 앞 통로(y 3.45)는 테이블 정차 로봇이 있으면 좁아져 픽업·테이블 정차 로봇과 겹칠 수 있다
+- 서빙 로봇(`body:=serving`, amr_description README)은 키가 1.29 m라 테이블 상판(0.73 m)에 걸려 밑으로 못 들어간다. LiDAR(0.38 m)에는 테이블 다리만 보이므로, 경로 계획은 테이블 상판까지 점유로 칠한 식당 지도(`amr_mapping/maps/restaurant_gt`)로 막는다. 이 지도로 로봇 크기에서 정차 자세 40곳에 모두 갈 수 있는지도 잰다 (amr_mapping README)
+- 확인 (Docker Desktop, GUI 이미지 Xvfb CPU 렌더링, 서빙 로봇 1대 + 걷는 사람 11명): 실시간 대비 약 0.4배(카메라 켬), 로봇 없이는 1.0배. LiDAR 최근접 0.91 m(타워가 스캔에 안 잡힘), 걷는 손님 GT 속도 0.47–0.85 m/s
+- 참고 자료: [Oak Street 좌석 배치 가이드](https://www.oakstreetmfg.com/the-ultimate-restaurant-seating-layout-guide-with-real-numbers/), [MityLite 테이블 간격](https://mitylite.com/blog/restaurant-table-spacing), [dimensions.com 식당 좌석 배치](https://dimensions.com/element/restaurant-seating-arrangements), [Pudu Academy BellaBot 사양](https://academy.pudutech.com/en/docs/huan-le-song-chan-pin-jian-jie)
+- 몸체·footprint: `system.launch.py body:=serving`이면 스폰 몸체와 Nav2 footprint(0.565 x 0.537 m, nav2.launch.py `nav2_profile:=restaurant`)가 같이 바뀐다
+- 아직 없는 것: 식당 지도를 system.launch 기본으로 쓰는 설정(`map:=`·`map_origin_in_world:=[0, 0, 0]`을 직접 준다), 구역 설정(`zones.yaml`), 충전소 ArUco 마커, 로봇 여러 대 스폰 목록
+
 ## 파라미터
 
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
@@ -305,10 +361,10 @@ launch 파일과 인자:
 | launch | 인자 (기본값) | 설명 |
 | --- | --- | --- |
 | `world.launch.py` | `world` (`warehouse.sdf`), `gui` (`true`), `verbosity` (`2`) | 월드만. `gui:=false`면 서버만 |
-| `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `label_camera` (`false`), `max_linear_acceleration` (`1.0`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
+| `spawn_robot.launch.py` | `namespace` (`amr_01`), `x` (`0.0`), `y` (`1.5`), `z` (`0.01`), `yaw` (`0.0`), `payload_mass` (`0.0`), `gt_rate` (`100`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `label_camera` (`false`), `max_linear_acceleration` (`1.0`), `body` (`amr`, 식당은 `serving`) | 실행 중인 Gazebo에 로봇 1대 스폰 + 브리지 |
 | `rl_eval.launch.py` | `payload_mass` (`0.0`), `eval_list` (`0`), `episodes` (`5`), `start_episode` (`0`), `scenarios` (`S1,S2`), `policy` (`brake`), `csv`, `research2_dir`, `gui` (`false`), `mode` (`episodes`), `sweep_speeds` (`0.5,1.0,1.5,2.0`), `sweep_repeats` (`3`) | 연구 2 RL 평가: 빈 월드 + 로봇 1대 + 에피소드 실행 (위 절). `mode:=brake_sweep`이면 속도별 급정지 |
 | `sim.launch.py` | `gui` (`true`), `rviz` (`true`), `namespace`, `x`, `y`, `yaw`, `payload_mass` (`0.0`), `publish_odom_tf` (`true`), `enable_camera` (`true`), `label_camera` (`false`), `dynamic_obstacles` (`false`), `obstacle_seed` (`0`), `cargo` (`false`) | 월드 + 로봇 1대 + RViz (+ 동적 장애물, 화물 상자) |
-| `dynamic_obstacles.launch.py` | `config` (`config/dynamic_obstacles.yaml`), `only` (전부, 쉼표로 id), `seed` (`0`), `use_sim_time` (`true`) | 실행 중인 Gazebo에 동적 장애물 스폰 + 브리지 + 이동 노드 |
+| `dynamic_obstacles.launch.py` | `config` (`config/dynamic_obstacles.yaml`, 식당은 `config/dynamic_obstacles_restaurant*.yaml`), `only` (전부, 쉼표로 id), `seed` (`0`), `use_sim_time` (`true`), `name` (`dynamic_obstacles`, 파일 두 개를 같이 띄울 때 하나를 바꾼다) | 실행 중인 Gazebo에 동적 장애물 스폰 + 브리지 + 이동 노드 |
 | `cargo_boxes.launch.py` | `config` (`config/cargo_boxes.yaml`) | 실행 중인 Gazebo에 화물 상자 스폰 (LiDAR 높이에 걸리면 실패) |
 
 ## 실행

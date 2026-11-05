@@ -9,6 +9,9 @@ from typing import List, NamedTuple
 
 from amr_bringup.robots import cmd_vel_chain, encoder_seed
 
+# 몸체(spawn_robot body) → Nav2 프로필(nav2.launch.py nav2_profile). serving이면 footprint가 서빙 로봇 크기가 된다
+NAV2_PROFILE = {'amr': 'warehouse', 'serving': 'restaurant'}
+
 
 class Include(NamedTuple):
     """다른 패키지의 launch 하나와 넘길 인자."""
@@ -35,8 +38,11 @@ class Options:
     map: str = ''
     use_imu: str = 'true'
     zones_file: str = ''
+    body: str = 'amr'
 
     def validate(self) -> None:
+        if self.body not in NAV2_PROFILE:
+            raise RuntimeError(f'body는 {", ".join(NAV2_PROFILE)} 중 하나: {self.body!r}')
         if self.nav2 and not self.localization:
             raise RuntimeError('nav2:=true는 map → odom TF를 내는 위치추정이 필요하다 (localization:=true)')
         if self.docking and not self.nav2:
@@ -61,7 +67,8 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
             namespace=name, x=x, y=y, yaw=yaw,
             # EKF(ekf_local)가 odom → base_footprint를 내므로 DiffDrive TF는 끈다 (docs/api.md 2-1절)
             publish_odom_tf='false' if opt.localization else 'true',
-            enable_camera=str(opt.enable_camera).lower(), payload_mass=opt.payload_mass, use_sim_time='true')),
+            enable_camera=str(opt.enable_camera).lower(), payload_mass=opt.payload_mass, body=opt.body,
+            use_sim_time='true')),
         Include('amr_odometry', 'odometry.launch.py', dict(
             namespace=name, encoder_seed=encoder_seed(opt.seed, index), use_sim_time='true')),
         Include('amr_odometry', 'sensor_filters.launch.py', dict(namespace=name, use_sim_time='true')),
@@ -76,7 +83,8 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
             use_nav2='true' if opt.nav2 else 'false', use_docking='true' if opt.docking else 'false')))
     if opt.nav2:
         stack.append(Include('amr_bringup', 'nav2.launch.py', dict(
-            namespace=name, cmd_vel_topic=chain['nav_out'], use_sim_time='true')))
+            namespace=name, cmd_vel_topic=chain['nav_out'], nav2_profile=NAV2_PROFILE[opt.body],
+            use_sim_time='true')))
     if opt.zone_client:
         # 서버와 같은 구역 목록. zones.yaml은 world 좌표라 TF map ← world(system.launch가 발행)로
         # 바꿔 쓰게 한다 (구역 1.5 m 어긋남 수정). 로봇 위치는 네임스페이스 안 상대 토픽

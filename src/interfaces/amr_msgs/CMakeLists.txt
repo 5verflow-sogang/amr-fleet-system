@@ -35,6 +35,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/TaskAuction.msg"
   "msg/TaskBid.msg"
   "msg/RobotFleetMode.msg"
+  # fleet: 혼잡도
+  "msg/ZoneCongestion.msg"
+  "msg/ZoneCongestionArray.msg"
   # task
   "action/Dock.action"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs

@@ -36,6 +36,17 @@ def test_kpi_scenarios_extend_loc_basic(name, origin):
     assert s['params']['dynamic_obstacles'] == base['params']['dynamic_obstacles']
 
 
+def test_nav_avoidance_stack_and_eval_share_map_origin():
+    # 스택(지도·AMCL 초기 위치)과 회피 평가(기준 경로 map → world)가 같은 원점을 써야 경로 이탈에 원점 차이가 안 섞인다.
+    # #249로 기본 지도가 v2가 됐을 때 평가만 v1 원점으로 남았다 (#262 이진 리뷰)
+    s = run.load_scenario('nav_avoidance')
+    params = apply_param_sets(s, {**s['params'], 'run_dir': '/tmp/r', 'seed': 1, 'repeat': 0, 'label': ''})
+    cmds = {p['name']: p['cmd'] for p in render(s['processes'], params)}
+    origin = s['params']['map_origin']
+    assert f'map:={s["params"]["map"]} map_origin_in_world:="{origin}"' in cmds['system']
+    assert f'"map_origin_in_world:={origin}"' in cmds['avoidance_eval']
+
+
 def test_config_patch_values_are_filled_from_params():
     # 규모 곡선 B안: 10대면 120건·5초
     sets = run.load_scenario('fleet_fake')['config_patch']['amr_fleet_manager/config/scenarios/basic.yaml']

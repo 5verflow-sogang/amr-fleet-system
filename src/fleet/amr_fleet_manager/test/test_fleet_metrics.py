@@ -380,14 +380,37 @@ def test_zone_waits_outcomes():
 def test_stalls_only_long_stops_while_moving_phase():
     records = [rec('/fleet/task_status', 0.0, status('t1', 'amr_01', IN_PROGRESS, 'move_to_pickup')),
                rec('/fleet/task_status', 200.0, status('t1', 'amr_01', IN_PROGRESS, 'loading'))]
-    # 0~10 s 움직임, 10~80 s 멈춤(70 s → 정체), 80~100 s 움직임, 100~110 s 멈춤(10 s → 정상 대기),
-    # 110~200 s 움직임, 200~300 s 멈춤이지만 loading 단계라 정체 아님
+    # 0~10 s 0.5 m/s로 감, 10~80 s 멈춤(정체), 80~100 s 감, 100~110 s 멈춤(10 s → 정상 대기),
+    # 110~200 s 감, 200~300 s 멈춤이지만 loading 단계라 정체 아님
+    x = 0.0
     for t in range(0, 300):
         stopped = 10 <= t < 80 or 100 <= t < 110 or t >= 200
-        records.append(rec('/amr_01/odom', float(t), odom(0.0 if stopped else 0.5, t)))
+        records.append(rec('/fleet/robot_states', float(t), robot_state('amr_01', x, 0.0)))
+        x += 0.0 if stopped else 0.5
     rows = [dict(zip(STALLS_HEADER, r)) for r in stalls(records)]
-    assert [(r['task_id'], r['phase'], r['start_time'], r['duration_s']) for r in rows] == \
-        [('t1', 'move_to_pickup', '10.000000', '70.000')]
+    # 이동 거리로 재므로 앞뒤로 2 m 미만 움직인 때까지 정체에 들어간다: 7 s(3.5 m)~멈춤(5 m)~83 s(6.5 m)
+    assert [(r['task_id'], r['phase'], r['start_time'], r['end_time'], r['with']) for r in rows] == \
+        [('t1', 'move_to_pickup', '7.000000', '83.000000', '')]
+
+
+def test_stalls_catch_creeping_head_on_pair_and_lone_spin():
+    """속도로는 못 잡던 것 (11/2 release_build): 마주친 두 로봇이 0.02 m/s로 같이 밀려가고, 다른 로봇은 제자리에서 돈다."""
+    records = [rec('/fleet/task_status', 0.0, status(f't{n}', f'amr_0{n}', IN_PROGRESS, 'move_to_dropoff'))
+               for n in (2, 5, 3)]
+    for t in range(0, 200):
+        if t < 50:   # 서로 마주 보고 다가온다
+            a, b = -10.0 + 0.2 * t, 10.0 - 0.2 * t
+        else:        # 0.7 m 떨어져 같이 서쪽으로 0.02 m/s
+            a, b = -0.35 - 0.02 * (t - 50), 0.35 - 0.02 * (t - 50)
+        records.append(rec('/fleet/robot_states', float(t), robot_state('amr_02', a, 9.0)))
+        records.append(rec('/fleet/robot_states', float(t), robot_state('amr_05', b, 9.0)))
+        # amr_03은 멀리서 혼자 제자리 회전 (위치가 0.1 m 안에서 흔들린다)
+        records.append(rec('/fleet/robot_states', float(t), robot_state('amr_03', 20.0 + 0.1 * (t % 2), -5.0)))
+    rows = {r[0]: dict(zip(STALLS_HEADER, r)) for r in stalls(records)}
+    assert set(rows) == {'amr_02', 'amr_03', 'amr_05'}
+    assert (rows['amr_02']['with'], rows['amr_05']['with'], rows['amr_03']['with']) == ('amr_05', 'amr_02', '')
+    # 밀려가는 중에도 60 s 창 안의 이동이 2 m 미만이라 끝까지 정체
+    assert rows['amr_02']['end_time'] == '199.000000'
 
 
 def test_convert_writes_zone_and_stall_files_only_when_recorded(tmp_path):
@@ -455,3 +478,21 @@ def test_durations_in_sim_time_when_gazebo_is_slow(tmp_path):
         assert list(csv.DictReader(f)) == []
     meta = json.loads((tmp_path / 'meta.json').read_text())
     assert meta['fleet_clock'] == {'durations': 'sim', 'rtf': 0.5}
+
+
+def test_stalls_window_and_duration_in_sim_time():
+    """정체 창(60 s)과 duration_s는 시뮬레이션 시간이다 (#280 이동 거리 판정 + #285 SimClock).
+    RTF 0.5에서 실제 100 s 정지는 시뮬레이션 50 s라 정체가 아니고, 실제 160 s 정지는 80 s라 정체다"""
+    def run(stop_wall_s):
+        records = slow_sim_odom(rtf=0.5, until=400)
+        records.append(rec('/fleet/task_status', 0.0, status('t1', 'amr_01', IN_PROGRESS, 'move_to_pickup')))
+        x = 0.0
+        for t in range(0, 400):
+            records.append(rec('/fleet/robot_states', float(t), robot_state('amr_01', x, 0.0)))
+            x += 0.0 if 100 <= t < 100 + stop_wall_s else 1.0
+        return [dict(zip(STALLS_HEADER, r)) for r in stalls(records, clock=SimClock(records))]
+    assert run(100) == []
+    [row] = run(160)
+    # 시각 열은 수신 시각(실제), 길이는 시뮬레이션: 앞뒤 2 m(실제 2 s씩) 포함 99~261 s → 81 s
+    assert (row['start_time'], row['end_time']) == ('99.000000', '261.000000')
+    assert float(row['duration_s']) == pytest.approx(81.0, abs=0.01)

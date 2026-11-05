@@ -96,7 +96,8 @@ private:
   // 이번 회피 모드에 들어갈 때의 DwaPlanner::avoidFallbackCount() - 끌 때 이번 회피 동안 대체 탐색 주기 수를 남긴다
   std::size_t avoid_fallback_count_at_enter_ = 0;
 
-  // Nav2 speed_limit 관례: 음수면 제한 없음. percentage면 config().max_v에 대한 비율.
+  // Nav2 speed_limit 관례: 0 이하면 제한 없음 (Nav2 Humble NO_SPEED_LIMIT = 0.0).
+  // percentage면 config().max_v에 대한 비율.
   double speed_limit_ = -1.0;
   bool speed_limit_is_percentage_ = false;
 };

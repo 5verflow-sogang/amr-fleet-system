@@ -1,33 +1,42 @@
-# 동적 장애물 회피 KPI 시나리오 (test-plan I17, 연우·이진). **초안: 아직 한 번도 돌려 보지 않았다.**
-# DWA 회피 모드(TTC 3 s 미만, 이진)와 안전 노드 cmd_vel 체인 통합 뒤 실행해 고친다.
+# 동적 장애물 회피 KPI 시나리오 (test-plan I17, 연우·이진). 통합 스택: 위치추정(AMCL·EKF) + Nav2(DWA 회피 모드)
+# + 추적 + 안전 노드. cmd_vel 체인은 Nav2 → cmd_vel_nav → 안전 노드 → cmd_vel (amr_bringup system.launch.py 3단계)
 #
-#   python3 tools/harness/run.py nav_avoidance -n 30
-#   ros2 run amr_safety avoidance_report tools/harness/results/nav_avoidance_<시각>_*   # 30회 판정 (README)
+#   tools/harness/gcp_run.sh nav_avoidance -n 3 --label smoke --pr <번호>      # 첫 시험
+#   ... -n 15 --seed-base <첫 시드> --label <라벨> / -n 15 --seed-base <첫 시드 + 15> ...  # 30회 (GCP는 한 번에 15회까지)
+#   ros2 run amr_safety avoidance_report <실행 폴더…> --runs 30                   # 30회 판정 (amr_safety README)
 #
 # 로봇 1대가 world (0, 1.5) → map (goal_x, goal_y)로 가는 동안 작업자 1명이 경로를 가로지른다.
 # 장애물 설정은 실행마다 시드로 만든다 (amr_safety avoidance_obstacles): 건너는 위치 x 2.5~4.0 m, 방향, 처음 위치,
 # 속도(시드 3개 중 1개는 원 명세 1.0 m/s, 나머지 0.5~1.5 m/s). avoidance_eval이 GT로 충돌·경로 이탈·복귀 시간을 잰다.
 #
-# 확인할 것 (첫 실행 때):
-# - 목표는 Nav2가 active가 된 뒤 드라이버가 보낸다(send_goal:=false, nav_compare와 같은 방식). avoidance_eval을
-#   먼저 띄워 첫 전역 경로(/amr_01/plan)를 놓치지 않게 했다
-# - 데모는 지도 warehouse_v1(0.05 m)에 map->odom 항등이라 map 원점 = 스폰 위치 = world (0, 1.5)다(map_origin).
-#   위치 추정(AMCL·EKF)을 켠 전체 스택으로 재면 정렬값(0.025 m 지도 [-0.0562, 1.5317, 0.00009],
-#   amr_localization README)으로 바꾼다. 안 바꾸면 약 6 cm가 경로 이탈에 섞인다
-# - 데모에는 EKF가 없어 odom이 diff_drive/odom이다. 추적 노드 odom을 그쪽으로 돌렸다
-# - 안전 노드(amr_safety)는 아직 이 데모의 cmd_vel 체인에 없다 (I17은 DWA + 추적 + 안전 노드). 통합 launch가 생기면 바꾼다
+# - 목표는 Nav2가 active가 된 뒤 드라이버가 보낸다(nav_kpi와 같은 방식). avoidance_eval을 먼저 띄워
+#   첫 전역 경로(/amr_01/plan)를 놓치지 않게 했다
+# - 지도와 그 정렬 원점(map 원점의 world 자세)은 params map·map_origin 한 곳에 두고 스택(map:=·map_origin_in_world:=)과
+#   avoidance_eval에 같이 넘긴다. 둘이 다르면 그 차이가 경로 이탈에 섞인다 (nav_kpi와 같은 방식)
+# - 추적 노드는 system.launch.py가 amr_tracking tracking.yaml로 띄운다 (카메라 끔: 사람 반경은 dynamic_min_radius)
+# - 녹화(record, 기본 켬): 회피 모드(dwa/avoid_mode)·안전 단계(safety/status)·트랙·위험·cmd_vel 두 단계·스캔.
+#   avoidance_eval은 GT·경로만 남기므로, 회피 모드가 켜졌는지·안전 노드가 멈췄는지는 녹화로 본다.
+#   스캔·TF가 있어 experiments/tracking_kpi 재생 벤치로 추적을 다시 돌릴 수 있다
 name: nav_avoidance
+packages: amr_bringup
 num_robots: 1
 use_sim_time: true
 seed_base: 1
 timeout_s: 600
 params:
-  # 목표 (map 기준). world = map + (0, 1.5) (warehouse_v1, 데모의 map->odom 항등)
+  # 목표 (map 기준)
   goal_x: 6.0
   goal_y: 0.0
-  map_origin: "[0.0, 1.5, 0.0]"
+  # 지도와 그 정렬 원점 = map 원점의 world 자세 [x, y, yaw] (v2 0.025 m, amr_mapping README). 지도를 바꾸면 둘을
+  # 같이 바꾼다 (v1 0.025 m: [-0.0562,1.5317,0.00009]). GCP --set 값에는 공백을 못 쓴다
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/warehouse_v2_0025.yaml
+  map_origin: "[-0.0439,1.4712,-0.00088]"
   # 목표 결과를 받은 뒤 더 기록하는 시간 [s] (복귀 판정 return_hold_s 1.0 s + 여유)
   after_goal_s: 5
+  record: "true"
+  # 시드 = 하네스 seed + seed_offset (장애물·시뮬레이션). 30회는 gcp_run.sh --seed-base로 첫 시드를 나눠 두 번 넣는다
+  # (#283부터 GCP도 seed_base를 받는다). seed_offset은 처음 방식(0과 15)과 호환하려고 남겨 둔다
+  seed_offset: "0"
 processes:
   # 기록을 가장 먼저 띄운다: 첫 전역 경로가 기준 경로다. 장애물 토픽은 1초마다 찾아 붙는다
   - name: avoidance_eval
@@ -37,29 +46,40 @@ processes:
     stop_first: true
     wait_files: ["{run_dir}/avoidance/avoidance_summary.json"]
     settle_s: 2
-  - name: nav
-    cmd: ros2 launch amr_bringup nav2_dwa_demo.launch.py gui:=false send_goal:=false
-    ready_topic: /amr_01/ground_truth/odom
+  - name: system
+    # 로봇 1대 + 위치추정 + Nav2 + 추적 + 안전 노드 (Fleet·BT 끔: Nav2가 바로 주행한다, amr_bringup README)
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:=1 gui:=false enable_camera:=false
+      fleet:=false bt:=false nav2:=true tracking:=true safety:=true seed:=$(( {seed} + {seed_offset} ))
+      robots_file:=/repo/experiments/nav_kpi/robots.yaml
+      map:={map} map_origin_in_world:="{map_origin}"
+    ready_topic: /amr_01/odometry/filtered
+    # 시뮬레이터 + 위치추정 + Nav2 기동. ready_cmds도 이 시간 안에
     ready_timeout_s: 300
-    # 컨트롤러·플래너·BT가 active여야 목표를 받는다 (nav_compare와 같다)
+    # 컨트롤러·플래너·BT가 active여야 목표를 받는다. 추적·안전 노드가 내기 시작해야 회피가 성립한다
     ready_cmds:
-      - ros2 lifecycle get /amr_01/controller_server | grep -q '^active'
-      - ros2 lifecycle get /amr_01/planner_server | grep -q '^active'
-      - ros2 lifecycle get /amr_01/bt_navigator | grep -q '^active'
       - ros2 lifecycle get /map_server | grep -q '^active'
-    settle_s: 3
+      - ros2 lifecycle get /amr_01/amcl | grep -q '^active'
+      - ros2 lifecycle get /amr_01/planner_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/controller_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/bt_navigator | grep -q '^active'
+      - timeout 5 ros2 topic echo --once /amr_01/perception/obstacles > /dev/null
+      - timeout 5 ros2 topic echo --once /amr_01/safety/status > /dev/null
+    settle_s: 5
+  - name: rosbag
+    cmd: >-
+      if [ "{record}" = true ];
+      then exec ros2 bag record -o {run_dir}/rosbag
+      -e '^/(tf|tf_static|amr_01/(scan|ground_truth/odom|odom|plan|cmd_vel|cmd_vel_nav|dwa/avoid_mode|safety/status|perception/(obstacles|collision_risks))|dynamic_obstacles/.*/ground_truth/odom)$';
+      else exec sleep infinity; fi
+    stop_first: true
   - name: obstacles
     # 실행마다 시드로 장애물 설정을 만들어 띄운다 (실행 폴더에 남는다)
     cmd: >-
-      ros2 run amr_safety avoidance_obstacles --seed {seed} --out {run_dir}/obstacles.yaml
+      ros2 run amr_safety avoidance_obstacles --seed $(( {seed} + {seed_offset} )) --out {run_dir}/obstacles.yaml
       && exec ros2 launch amr_gazebo dynamic_obstacles.launch.py config:={run_dir}/obstacles.yaml
-      seed:={seed} use_sim_time:=true
+      seed:=$(( {seed} + {seed_offset} )) use_sim_time:=true
     ready_topic: /dynamic_obstacles/worker_cross/ground_truth/odom
-  - name: tracking
-    cmd: >-
-      ros2 run amr_tracking tracking_node --ros-args -r __ns:=/amr_01 -r __node:=tracking -r odom:=diff_drive/odom
-      --params-file $(ros2 pkg prefix amr_tracking)/share/amr_tracking/config/tracking.yaml -p use_sim_time:=true
-    ready_topic: /amr_01/perception/obstacles
 driver:
   # 목표를 보내고 결과(도착·실패)를 기다린 뒤 조금 더 기록한다. 목표가 실패해도 기록은 남긴다(판정은 avoidance_report)
   mode: command

@@ -79,7 +79,8 @@
   <joint name="${prefix}camera_joint" type="fixed">
     <parent link="${prefix}base_link"/>
     <child link="${prefix}camera_link"/>
-    <xacro:extrinsic_origin name="camera"/>
+    <!-- body:=serving이면 타워 머리 카메라 (extrinsics.yaml camera_serving) -->
+    <xacro:extrinsic_origin name="${'camera_serving' if body == 'serving' else 'camera'}"/>
   </joint>
 
   <link name="${prefix}camera_optical_frame"/>

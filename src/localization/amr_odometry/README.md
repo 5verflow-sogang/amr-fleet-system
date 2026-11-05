@@ -14,9 +14,11 @@
 | Publish | `/tf` | `tf2_msgs/msg/TFMessage` | `<ns>/odom` → `<ns>/base_footprint`. **`publish_tf:=true`일 때만** (기본 꺼짐, D4) |
 | Publish | `/<ns>/scan` | `sensor_msgs/msg/LaserScan` | 필터 적용 스캔 (거리·각도·아웃라이어), 10 Hz, frame `<ns>/lidar_link` |
 | Publish | `/<ns>/imu/data` | `sensor_msgs/msg/Imu` | 바이어스 보정·저역통과, 100 Hz, 각속도·가속도 공분산 채움, orientation 없음 |
+| Publish | `/<ns>/camera/depth/points` | `sensor_msgs/msg/PointCloud2` | Depth 포인트클라우드 (역투영·복셀 5 cm 다운샘플), 최대 10 Hz, xyz float32, frame `<ns>/camera_optical_frame`. **`depth_cloud:=true`일 때만** |
 | Subscribe | `/<ns>/joint_states` | `sensor_msgs/msg/JointState` | 좌우 바퀴 각도 (Gazebo에서 브리지, `amr_gazebo` joint_state_throttle이 1 kHz → 50 Hz로 줄임) |
 | Subscribe | `/<ns>/scan_raw` | `sensor_msgs/msg/LaserScan` | LiDAR 원본 (amr_gazebo 브리지) |
 | Subscribe | `/<ns>/imu/data_raw` | `sensor_msgs/msg/Imu` | IMU 원본 (amr_gazebo 브리지) |
+| Subscribe | `/<ns>/camera/depth/image_raw`, `/<ns>/camera/camera_info` | `sensor_msgs/msg/Image` (32FC1·16UC1), `CameraInfo` | Depth 원본과 내부 파라미터 K (amr_gazebo 브리지, `enable_camera:=true`) |
 
 - 인계 계약(명세서 8-2절): `/odom`은 공분산을 채워 민지(EKF)에게 넘긴다. EKF는 `vx`, `vy`, `vyaw`를 쓴다 ([localization.md](../../../docs/algorithms/localization.md)).
 - TF: D4(A안)에 따라 `odom → base_footprint`는 `ekf_local`이 발행한다. 이 노드는 EKF 없이 단독으로 시험할 때만 TF를 낸다.
@@ -33,7 +35,8 @@
 | `wheel_odometry_node.py` | `joint_states` 구독 → `odom` 발행 |
 | `scan_filter.py` | LiDAR 거리·각도·아웃라이어 필터 (ROS 비의존) |
 | `imu_filter.py` | IMU 바이어스 보정·저역통과 (ROS 비의존) |
-| `scan_filter_node.py`, `imu_filter_node.py` | `scan_raw` → `scan`, `imu/data_raw` → `imu/data` |
+| `depth_cloud.py` | Depth 영상 → 포인트클라우드 역투영, 복셀 다운샘플 (ROS 비의존) |
+| `scan_filter_node.py`, `imu_filter_node.py`, `depth_cloud_node.py` | `scan_raw` → `scan`, `imu/data_raw` → `imu/data`, `camera/depth/image_raw` → `camera/depth/points` |
 
 ### LiDAR 필터 (`config/sensor_filters.yaml`)
 
@@ -81,6 +84,27 @@
 5. 자기장 센서가 없어 방향은 추정하지 않는다 (`orientation_covariance[0] = -1`, REP 145).
 
 Gazebo 자이로 바이어스(7.5e-6 rad/s)는 2초 보정 정밀도(σ/√200 ≈ 1.4e-5)보다 작아 사실상 구분되지 않는다. 가속도 바이어스(0.1 m/s²)는 제거된다.
+
+### Depth 포인트클라우드 (`config/sensor_filters.yaml`, 명세 2영역 "Depth 포인트클라우드 변환 + 다운샘플링")
+
+1. **솎기**: 가로·세로 `stride` 2픽셀마다 하나 (640×480 → 320×240). 10 m에서 픽셀 간격이 약 6 cm라 복셀 5 cm와 비슷해 잃는 정보가 적다
+2. **거리 필터**: 깊이 z가 0.3~10 m 밖이거나 NaN·inf인 픽셀을 뺀다 (`sensors.yaml` `rgbd_camera` 클립 거리)
+3. **역투영 (Pinhole)**: x = (u − cx)·z/fx, y = (v − cy)·z/fy. K는 `camera_info`에서 받는다 (fx = fy = 337.2, cx 320, cy 240). 점은 광학 프레임(z 전방·x 오른쪽·y 아래) 기준이고 받는 쪽이 TF로 바꾼다
+4. **복셀 다운샘플**: 5 cm 복셀마다 점들의 평균 하나 (`voxel_size`, costmap 해상도와 같게). `min_points_per_voxel`을 올리면 튄 픽셀이 지워지지만 먼 면도 같이 지워져 기본 1
+5. **주기**: Depth는 30 Hz로 오지만 `max_rate_hz` 10 Hz까지만 처리한다 (Nav2 costmap 갱신 5~10 Hz)
+
+- Gazebo의 `camera/points`는 점 좌표축이 frame_id(광학 프레임)와 달라 쓰지 않는다 (amr_description README "센서 검증")
+- **launch 기본은 끈다** (`depth_cloud:=true`로 켠다). 받는 노드가 아직 없고(Nav2 costmap은 LiDAR만, 인지는 Depth 영상을 바로 씀), 5대 스택은 카메라를 끄고 CPU를 잰다. 낮은 장애물(팔레트·포크)용 costmap 레이어로 붙일지는 이진과 정한다
+
+| 측정 (노트북, 640×480 합성 영상: 바닥 0.3~10 m + 정면 3 m 면, 노이즈 σ 2 cm) | 점 | 처리 시간 |
+| --- | --- | --- |
+| 원본 | 307,200 | — |
+| 솎기만 (stride 2) | 65,702 | 4.1 ms |
+| **기본 (stride 2 + 복셀 5 cm)** | **12,756 (원본의 4.2%)** | **14.4 ms** |
+| stride 1 + 복셀 5 cm | 17,752 | 62.1 ms |
+
+- 노드 확인 (Docker, sim 없이 합성 Depth 320×240 + `camera_info`를 27 Hz로 발행): `camera/depth/points` 8.7 Hz(상한 10 Hz), 12 ms/장, frame `amr_01/camera_optical_frame`, 2 m 벽의 평균 z 2.000 m
+- 640×480(1.2 MB)는 이 시험의 Python 발행기에서 DDS 전달이 대부분 빠져 노드 주기를 재지 못했다. Gazebo 브리지(C++) 입력으로 sim에서 주기·점 수를 확인하는 것이 남았다
 
 ### 엔코더 측정 모델
 
@@ -224,6 +248,9 @@ ros2 launch amr_odometry odometry.launch.py encoder_noise:=false    # 이상적 
 ```bash
 # LiDAR·IMU 필터 (센서 브리지가 떠 있어야 한다). 시작 후 2초 동안 로봇을 움직이지 않는다
 ros2 launch amr_odometry sensor_filters.launch.py
+# Depth 포인트클라우드도 (sim을 enable_camera:=true로). RViz PointCloud2 표시에 camera/depth/points
+ros2 launch amr_odometry sensor_filters.launch.py depth_cloud:=true
+ros2 topic hz /amr_01/camera/depth/points
 ```
 
 ## 테스트
@@ -233,4 +260,5 @@ colcon test --packages-select amr_odometry
 ```
 
 `test_kinematics.py`(직진·제자리 회전·원호 닫힌 해, 공분산 대칭·증가·주기 무관), `test_encoder_model.py`(양자화, ±π 넘김, 계통 오차 재현·분포, 누적 σ = k·√D가 주기와 무관).
+`test_depth_cloud.py`(벽 역투영이 Pinhole 좌표·FOV와 맞음, 범위 밖·NaN·inf 제거, 솎기, 복셀 평균·끔·고립 복셀 제거, 벽이 복셀 칸 수로 줄어듦, 32FC1 행 패딩·16UC1 mm·0 = 측정 없음, 설정 검사),
 `test_scan_filter.py`(REP 117 표시, 각도 마스크, 외톨이 점·먼 비스듬한 벽·노이즈 벽), `test_imu_filter.py`(저역통과 시정수, 자이로 저역통과 기본 꺼짐(지연 없음), 보정 후 분산·하한, 바이어스 복원, 움직이면 재보정, 보정 전 출력 없음).

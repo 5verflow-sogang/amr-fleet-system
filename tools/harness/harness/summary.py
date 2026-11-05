@@ -43,15 +43,21 @@ NAV_KPI = {'navkpi.plan_success_rate': (0.98, 'min'), 'navkpi.replan_p95_ms': (5
            'navkpi.cte_curve_mean_m': (0.10, 'max')}
 # 추적 정확도 KPI (docs/algorithms/perception.md 1-7): (기준, 방향). gt = 기준보다 커야 함 (CI 하한으로 판정).
 # P1은 0과 같아도 불합격이다 (추정 속도가 0이면 예측과 정지 가정이 같아진다). 장면 A·B·D·E에서만 판정한다
-TRACK_KPI = {'track.pred_gain_1s': (0.0, 'gt'), 'track.vel.rmse': (0.2, 'max')}
+# P2는 센서 범위(12 m) 안 짝의 속도 RMSE다 (3막 재측정부터. 1차 결과 후·재측정 전 등록, perception.md 1-7 P2 보완).
+# 전체 거리 track.vel.rmse는 참고 지표 (1차 본 측정 판정은 이 값)
+TRACK_KPI = {'track.pred_gain_1s': (0.0, 'gt'), 'track.vel_in_range.rmse': (0.2, 'max')}
 TRACK_KPI_SCENARIOS = {'tracking_kpi_a', 'tracking_kpi_b', 'tracking_kpi_d', 'tracking_kpi_e'}
 # 평균·CI로 판정하는 KPI의 최소 실행 수. 모자라면 보류다 (P1·P2는 장면마다 10회로 미리 정했다, perception.md 1-7)
-KPI_MIN_RUNS = {'track.pred_gain_1s': 10, 'track.vel.rmse': 10}
+# TRACK_KPI에서 만든다: P2 지표 이름이 바뀌어도(전체 → 센서 범위 안) 보류 규칙이 같이 따라가게
+KPI_MIN_RUNS = {metric: 10 for metric in TRACK_KPI}
 # 최악값으로 판정하는 KPI: 지표 → (기준 하한, 최소 실행 수, 판정할 시나리오). 안전 기준이라 평균·CI가 아니라
 # 모든 실행이 기준 이상이어야 한다 (D1, perception.md 1-7)
 WORST_KPI = {'track.d1_ttc_s': (3.0, 10, {'tracking_kpi_c10', 'tracking_kpi_c15'})}
 # tracking_eval 판정 지연 속력 구간 → 지표 이름
 TRACK_SPEED_BINS = {'<0.6': 'lt0_6', '0.6-1.0': '0_6to1_0', '>=1.0': 'ge1_0'}
+# I12 (docs/test-plan.md, fleet_i12만): 측정 손실률·지연 중앙값이 주입값과 맞고, 할당 명령이 모두 Ack된다.
+# 손실 1 %p: 10/16 손실 30% 10회가 29.1~30.5%. 지연 5 ms: 지연 100 ms 10회 평균이 101 ms (DDS 전달 몫)
+I12_KPI = {'i12.loss_err_pp': (1.0, 'max'), 'i12.latency_err_ms': (5.0, 'max'), 'i12.ack_rate': (1.0, 'min')}
 
 
 def load_meta(run_dir: Path) -> dict:
@@ -88,15 +94,16 @@ def _floats(rows: Iterable[dict], key: str) -> list[float]:
 
 
 def _put_dist(out: dict, prefix: str, values: list[float], *stats: str) -> None:
-    """values의 통계(mean·p95·p99·max·n)를 out[f'{prefix}.{통계}']에 넣는다. 비어 있으면 아무것도 넣지 않는다.
+    """values의 통계(mean·p50·p95·p99·max·n)를 out[f'{prefix}.{통계}']에 넣는다. 비어 있으면 아무것도 넣지 않는다.
 
     평균은 받은 순서대로 더한다 (부동소수점 합은 순서에 따라 끝자리가 달라져, 예전 요약 값과 같게 둔다).
     """
     if not values:
         return
     ordered = sorted(values)
-    calc = {'mean': lambda: sum(values) / len(values), 'p95': lambda: percentile(ordered, 0.95),
-            'p99': lambda: percentile(ordered, 0.99), 'max': lambda: ordered[-1], 'n': lambda: len(values)}
+    calc = {'mean': lambda: sum(values) / len(values), 'p50': lambda: percentile(ordered, 0.5),
+            'p95': lambda: percentile(ordered, 0.95), 'p99': lambda: percentile(ordered, 0.99),
+            'max': lambda: ordered[-1], 'n': lambda: len(values)}
     for stat in stats:
         out[f'{prefix}.{stat}'] = calc[stat]()
 
@@ -109,7 +116,7 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
     if judged:
         out['fleet.loss_rate'] = sum(r['delivered'] == '0' for r in judged) / len(judged)
         lat = sorted(_floats((r for r in judged if r['delivered'] == '1'), 'latency_ms'))
-        _put_dist(out, 'fleet.latency_ms', lat, 'mean', 'p95', 'p99', 'max')
+        _put_dist(out, 'fleet.latency_ms', lat, 'mean', 'p50', 'p95', 'p99', 'max')
     resp_rows = _read_csv(run_dir / 'response_time.csv')
     if resp_rows:
         out['fleet.commands'] = len(resp_rows)
@@ -184,6 +191,8 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
     if (run_dir / 'stalls.csv').exists():
         stalled = _read_csv(run_dir / 'stalls.csv')
         out['fleet.stalls'] = len(stalled)
+        # 같은 때 가까이서 같이 정체한 로봇이 있는 행 (마주침 교착 → 교통 관리). 11/2 전 파일에는 with 열이 없다
+        out['fleet.stalls_paired'] = sum(1 for r in stalled if r.get('with'))
         if stalled:
             out['fleet.stall_s.max'] = max(_floats(stalled, 'duration_s'))
     # 로봇 장애 회수 (fault_events.csv에 robot_kill이 있을 때만 파일이 있다)
@@ -342,7 +351,7 @@ def tracking_metrics(run_dir: Path) -> dict[str, float]:
 
     판정하는 지표 (TRACK_KPI, WORST_KPI):
       track.pred_gain_1s  정지 가정 RMSE − 등속 예측 RMSE (+1 s, 움직이는 GT). P1
-      track.vel.rmse      속도 벡터 오차 RMSE. P2
+      track.vel_in_range.rmse  센서 범위(12 m) 안 짝의 속도 벡터 오차 RMSE. P2
       track.d1_ttc_s      접근 판정 TTC (GT 물체가 하나인 기록만, approach.ttc_s). D1. 판정 없이 최근접까지 오면 0이고,
                           잴 수 없는 실행(None)은 넣지 않는다. 그 실행이 빠진 것은 최악값 판정이 보류로 드러낸다
     나머지는 참고 지표다. 표본이 없어 비어 있는 값은 넣지 않고, P1·P2의 표본 수(.n)는 늘 넣는다.
@@ -363,6 +372,9 @@ def tracking_metrics(run_dir: Path) -> dict[str, float]:
         out['track.pred_1s.n'] = o['pred_1']['n']
         put('vel.rmse', o['vel']['rmse'])
         out['track.vel.n'] = o['vel']['n']
+        if 'vel_in_range' in o:          # 전 평가 결과에는 없다
+            put('vel_in_range.rmse', o['vel_in_range']['rmse'])
+            out['track.vel_in_range.n'] = o['vel_in_range']['n']
         put('match_rate', o['match_rate_in_range'])
         put('pos.rmse', o['pos']['rmse'])
         put('radial.mean', o['radial']['mean'])          # 센서 방향 편향 (음수 = 센서 쪽)
@@ -400,11 +412,27 @@ def tracking_metrics(run_dir: Path) -> dict[str, float]:
     return out
 
 
+def i12_metrics(meta: dict, fleet: dict[str, float]) -> dict[str, float]:
+    """I12: 주입값과 측정값의 차이. 지연은 중앙값으로 본다 (재전송으로 늦게 닿은 메시지가 평균을 끌어올린다)."""
+    if meta.get('scenario') != 'fleet_i12':
+        return {}
+    fault = meta.get('fault') or {}
+    # 명령이 0건이면 Ack 비율 0 (FAIL). 손실·지연은 잴 메시지가 없으면 비워 두고 summarize가 보류로 드러낸다
+    out = {'i12.ack_rate': fleet.get('fleet.ack_rate', 0.0)}
+    if 'fleet.loss_rate' in fleet:
+        out['i12.loss_err_pp'] = abs(fleet['fleet.loss_rate'] * 100 - float(fault.get('loss_pct', 0)))
+    if 'fleet.latency_ms.p50' in fleet:
+        out['i12.latency_err_ms'] = abs(fleet['fleet.latency_ms.p50'] - float(fault.get('delay_ms', 0)))
+    return out
+
+
 def run_metrics(run_dir: Path) -> dict[str, float]:
     meta = load_meta(run_dir)
-    out = {**localization_metrics(run_dir), **fleet_metrics(run_dir), **nav_metrics(run_dir),
+    fleet = fleet_metrics(run_dir)
+    out = {**localization_metrics(run_dir), **fleet, **nav_metrics(run_dir),
            **kidnap_metrics(run_dir), **nav_kpi_metrics(run_dir), **cpu_metrics(run_dir),
-           **avoidance_metrics(run_dir), **tracking_metrics(run_dir)}
+           **avoidance_metrics(run_dir), **tracking_metrics(run_dir),
+           **i12_metrics(meta, fleet)}
     rtf = meta.get('real_time_factor')
     if isinstance(rtf, (int, float)):
         out['run.real_time_factor'] = float(rtf)
@@ -450,8 +478,8 @@ def kpi_rule(metric: str, scenario: str = '') -> Optional[tuple[float, str]]:
         return 0.0, 'max'
     if metric == 'sys.cpu_pct.mean':
         return CPU_KPI_PCT, 'max'
-    if metric in NAV_KPI:
-        return NAV_KPI[metric]
+    if metric in NAV_KPI or metric in I12_KPI:
+        return NAV_KPI.get(metric) or I12_KPI[metric]
     if metric in TRACK_KPI and scenario in TRACK_KPI_SCENARIOS:
         return TRACK_KPI[metric]
     return None
@@ -525,6 +553,11 @@ def summarize(run_dirs: Iterable[Path]) -> dict:
             elif note:
                 d['kpi_note'] = note
             metrics[metric] = d
+        if g.get('scenario') == 'fleet_i12' and g['runs']:
+            # 모든 실행에서 못 잰 I12 지표도 보류로 남긴다 (빠지면 나머지 지표만으로 PASS가 된다)
+            for metric in sorted(set(I12_KPI) - set(metrics)):
+                metrics[metric] = {**dict.fromkeys(('mean', 'std', 'min', 'max', 'ci_low', 'ci_high')), 'n': 0,
+                                   'kpi_note': f"보류 (값 없는 실행 {len(g['runs'])}회)"}
         result[name] = {'runs': g['runs'], 'failed': g['failed'], 'metrics': metrics}
     return result
 

@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!-- 배식 카트 (대안·보조). 덮개 달린 이동식 배식대. 모델 원점은 바닥 중심이다.
+     메시: "Buffet" by nicolas saude (https://sketchfab.com/3d-models/55a5f4ddffc04e609e44bd8bb4bdd450), CC BY 4.0. glTF를 OBJ(Z-up, m)로 바꾸고 텍스처를 줄였다 (docs/restaurant_assets.md). -->
+<sdf version="1.8">
+  <model name="restaurant_buffet_cart">
+    <static>true</static>
+    <link name="link">
+      <!-- 충돌체는 바닥까지 꽉 찬 박스 (D2). 라이다가 다리 사이를 빈 곳으로 보지 않게 한다 -->
+      <collision name="collision">
+        <pose>0 0 0.45 0 0 0</pose>
+        <geometry><box><size>2.22 1.58 0.9</size></box></geometry>
+      </collision>
+      <visual name="buffet_cart">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry><mesh><uri>model://restaurant_buffet_cart/meshes/buffet_cart.obj</uri></mesh></geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>

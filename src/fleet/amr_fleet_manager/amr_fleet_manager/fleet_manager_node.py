@@ -14,7 +14,8 @@ from builtin_interfaces.msg import Time
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
 from amr_fleet_core.traffic import Decision, ZoneManager
 from amr_msgs.msg import (ErrorInfo, FleetHeartbeat, FleetTaskTable, RobotFleetMode, RobotState, Task,
-                          TaskAssignment, TaskAssignmentAck, TaskRecord, TaskStatus, ZoneGrant, ZoneRequest)
+                          TaskAssignment, TaskAssignmentAck, TaskRecord, TaskStatus, ZoneCongestionArray, ZoneGrant,
+                          ZoneRequest)
 from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -64,6 +65,9 @@ class FleetManager(Node):
             failed_retries=self.declare_parameter('assignment.failed_retries', 1).value,
             reclaim_timeout_s=self.declare_parameter('assignment.reclaim_timeout_s', 5.0).value,
             station_clearance_m=self.declare_parameter('assignment.station_clearance_m', 1.0).value,
+            cost_fn=self.declare_parameter('assignment.cost_fn', 'euclidean').value,
+            congestion_weight=self.declare_parameter('assignment.congestion_weight', 3.0).value,
+            congestion_timeout_s=self.declare_parameter('assignment.congestion_timeout_s', 3.0).value,
         ))
         heartbeat_period_s = self.declare_parameter('heartbeat_period_s', 0.2).value
         task_table_period_s = self.declare_parameter('task_table_period_s', 1.0).value
@@ -95,6 +99,9 @@ class FleetManager(Node):
         self.create_subscription(ZoneRequest, '/fleet/zone_requests', self._on_zone_request, qos)
         # 하이브리드: 서버와 끊겨 분산 모드로 도는 로봇 (amr_fleet_decentralized, architecture.md 5-2절)
         self.create_subscription(RobotFleetMode, '/fleet/robot_modes', self._on_robot_mode, qos)
+        # 혼잡도 반영 할당 (식당 시연 1-1, api.md 4-5절). 끈 쪽은 구독하지 않아 켬/끔 조건이 섞이지 않는다
+        if self._dispatcher.config.cost_fn == 'congestion':
+            self.create_subscription(ZoneCongestionArray, '/fleet/congestion', self._on_congestion, qos)
 
         # 재전송·heartbeat 주기는 네트워크 쪽 시간이라 use_sim_time과 상관없이 실제 시간으로 잰다
         steady = Clock(clock_type=ClockType.STEADY_TIME)
@@ -160,6 +167,9 @@ class FleetManager(Node):
                 self.get_logger().warn(f'{msg.task_id} 실패로 남김 (재할당 {task.failures}회 뒤)')
         if handed_over or msg.state in (TaskStatus.STATE_COMPLETED, TaskStatus.STATE_FAILED):
             self._assign()
+
+    def _on_congestion(self, msg: ZoneCongestionArray):
+        self._dispatcher.set_congestion([(tuple(z.area), z.value) for z in msg.zones], time.monotonic())
 
     def _on_robot_mode(self, msg: RobotFleetMode):
         decentral = msg.mode == FleetHeartbeat.MODE_DECENTRALIZED

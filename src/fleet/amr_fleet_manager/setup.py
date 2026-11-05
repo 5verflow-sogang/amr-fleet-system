@@ -29,6 +29,7 @@ setup(
             'fleet_metrics = amr_fleet_manager.fleet_metrics_cli:main',
             'fleet_plot = amr_fleet_manager.fleet_plot:main',
             'task_generator = amr_fleet_manager.task_generator_node:main',
+            'congestion = amr_fleet_manager.congestion_node:main',
         ],
     },
 )

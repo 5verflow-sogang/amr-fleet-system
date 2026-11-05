@@ -1,0 +1,14 @@
+# restaurant_decor sign_charging (amr_gazebo 식당 월드, 직접 생성 CC0)
+mtllib sign_charging.mtl
+o sign_charging
+v -1.0000 0.0000 -0.2000
+v 1.0000 0.0000 -0.2000
+v 1.0000 0.0000 0.2000
+v -1.0000 0.0000 0.2000
+vt 0.0000 0.0000
+vt 1.0000 0.0000
+vt 1.0000 1.0000
+vt 0.0000 1.0000
+vn 0.0 -1.0 0.0
+usemtl sign_charging
+f 1/1/1 2/2/1 3/3/1 4/4/1

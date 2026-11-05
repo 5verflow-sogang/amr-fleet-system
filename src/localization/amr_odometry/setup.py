@@ -26,6 +26,7 @@ setup(
             'wheel_odometry_node = amr_odometry.wheel_odometry_node:main',
             'scan_filter_node = amr_odometry.scan_filter_node:main',
             'imu_filter_node = amr_odometry.imu_filter_node:main',
+            'depth_cloud_node = amr_odometry.depth_cloud_node:main',
         ],
     },
 )

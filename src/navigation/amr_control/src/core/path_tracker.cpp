@@ -69,6 +69,7 @@ TrackingResult PathTracker::compute(const Pose2D & pose, double measured_speed, 
   TrackingResult result;
   if (path_.empty()) {
     last_v_ = 0.0;
+    last_a_ = 0.0;
     return result;
   }
 
@@ -84,6 +85,7 @@ TrackingResult PathTracker::compute(const Pose2D & pose, double measured_speed, 
   if (goal_reached_ || reachedEnd(pose, result.projection)) {
     goal_reached_ = true;
     last_v_ = 0.0;
+    last_a_ = 0.0;
     result.status = TrackingStatus::kGoalReached;
     result.target = path_.back();
     return result;
@@ -95,6 +97,7 @@ TrackingResult PathTracker::compute(const Pose2D & pose, double measured_speed, 
     std::abs(heading_error) > config_.rotate_in_place_angle)
   {
     last_v_ = 0.0;
+    last_a_ = 0.0;
     result.status = TrackingStatus::kRotating;
     result.w = std::copysign(
       std::min(config_.rotate_in_place_speed, config_.max_angular_speed), heading_error);
@@ -104,11 +107,31 @@ TrackingResult PathTracker::compute(const Pose2D & pose, double measured_speed, 
 
   // 선속도: 순항 → 끝 감속 → 가속 제한
   const double remaining = std::max(cum_lengths_.back() - result.projection.s, 0.0);
-  double v = std::min(config_.desired_speed, config_.max_linear_speed);
-  v = std::min(
-    v, std::max(config_.min_approach_speed, std::sqrt(2.0 * config_.max_linear_decel * remaining)));
-  v = std::min(v, last_v_ + config_.max_linear_accel * std::max(dt, 0.0));
+  double v_cap = std::min(config_.desired_speed, config_.max_linear_speed);
+  v_cap = std::min(
+    v_cap,
+    std::max(config_.min_approach_speed, std::sqrt(2.0 * config_.max_linear_decel * remaining)));
+  double v = std::min(v_cap, last_v_ + config_.max_linear_accel * std::max(dt, 0.0));
   v = std::max(v, 0.0);
+
+  // 저크 제한: 가속도(= (v - last_v_)/dt) 자체가 한 틱에 바뀌는 양을 max_linear_jerk로 묶는다 -
+  // 적재물이 급격한 가속도 변화(저크)로 미끄러지거나 쏠리는 걸 줄인다(명세 5번, navigation.md
+  // 5-3절 근거). 0 이하면 끔(가속 제한만 쓰는 기존 동작과 같음). 끝 감속 상한(v_cap)은 저크와
+  // 무관하게 다시 한 번 씌워서, 저크가 느려서 못 따라가도 정지 정확도(그 상한이 보장하는 것)는
+  // 그대로 지킨다.
+  if (config_.max_linear_jerk > 0.0 && dt > 0.0) {
+    const double desired_a = (v - last_v_) / dt;
+    const double max_da = config_.max_linear_jerk * dt;
+    const double a_cmd = std::clamp(desired_a, last_a_ - max_da, last_a_ + max_da);
+    v = std::clamp(last_v_ + a_cmd * dt, 0.0, v_cap);
+  }
+
+  // 저크의 "직전 가속도" 기준(last_a_)은 여기(각속도 한계로 v가 더 깎이기 전)에서 정한다 - 커브에
+  // 들어가며 각속도 한계가 v를 갑자기 줄여도(예: 0.5 → 0.3) 그 감속을 가속도 이력으로 들고 가면,
+  // 커브를 빠져나와도 "아직 브레이크 거는 중"으로 오인해 저크가 회복을 계속 느리게 묶는다(#279
+  // 민지 리뷰 - κ=5에서 0.5 → 0.3 → 0.11 → 0으로 주저앉는 버그 재현됨). 각속도 한계는 그 틱만의
+  // 기하 제약(곡선을 벗어나지 않으려는 순간 클램프)이라 가속도 "이력"에는 넣지 않는다.
+  const double v_before_curvature_limit = v;
 
   double curvature = 0.0;
   if (config_.controller == ControllerType::kPurePursuit) {
@@ -133,6 +156,9 @@ TrackingResult PathTracker::compute(const Pose2D & pose, double measured_speed, 
     w = std::copysign(config_.max_angular_speed, w);
   }
 
+  if (dt > 0.0) {
+    last_a_ = (v_before_curvature_limit - last_v_) / dt;
+  }
   last_v_ = v;
   result.status = TrackingStatus::kTracking;
   result.v = v;
