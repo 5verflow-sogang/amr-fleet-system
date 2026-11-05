@@ -12,12 +12,18 @@ planner_server는 global_costmap만, controller_server는 local_costmap만 읽�
 속도 명령은 cmd_vel이 아니라 cmd_vel_nav로 낸다 (cmd_vel 체인: cmd_vel_nav → 구역 클라이언트 → cmd_vel_zone_limited → 안전 노드 → cmd_vel).
 전역 planner: 기본은 GridBased(NavFn). planner:=astar면 우리 A*(nav2_params.yaml planner_server.AStar)를 GridBased 이름에
 얹는다 - 비교용 (amr_bringup.planner, docs/algorithms/navigation.md 3절).
+
+nav2_profile:=restaurant면 footprint를 서빙 로봇 크기(#299)로, congestion_filter:=keepout|speed면 전역
+costmap에 민지 혼잡도 노드(#296)용 KeepoutFilter/SpeedFilter를 붙인다 (amr_bringup.nav2_profile). 둘 다
+기본(warehouse·none)은 바뀌는 게 없어 지금 물류센터 동작 그대로다 - nav2_params.yaml을 복사하지 않고
+controller_server override와 같은 방식(바뀌는 키만 임시 yaml에 더해 얹는다)으로 적용한다.
 """
 
 import os
 import tempfile
 
 import yaml
+from amr_bringup.nav2_profile import CONGESTION_FILTERS, PROFILES, build_overrides
 from amr_bringup.planner import PLANNERS, planner_overrides
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -44,13 +50,13 @@ def _nav2(context):
 
     with open(params_file) as f:
         nav2_params = yaml.safe_load(f)
-    dwa_config = nav2_params['controller_server']['ros__parameters']['DWA']
     planner_params_extra = planner_overrides(nav2_params, arg('planner'))
-    overrides = {ns: {'controller_server': {'ros__parameters': {
-        'controller_plugins': ['FollowPath'],
-        'FollowPath': dwa_config,
-        'odom_topic': odom_topic,
-    }}}}
+    # SpeedFilter 기본 토픽은 costmap 자신의 네임스페이스(<ns>/global_costmap/speed_limit)인데
+    # controller_server는 <ns>/speed_limit을 구독해서 절대 경로로 맞춰 줘야 만난다(실측 확인 -
+    # 안 맞추면 SpeedFilter publisher count 0, DWA가 평생 제한을 못 받는다)
+    overrides = {ns: build_overrides(
+        nav2_params, arg('nav2_profile'), arg('congestion_filter'), odom_topic,
+        speed_limit_topic=f'/{ns}/speed_limit')}
     # 로봇마다 다른 임시 파일이 필요하다 (프로세스가 끝나면 OS가 지운다)
     overrides_file = tempfile.NamedTemporaryFile(
         mode='w', prefix=f'nav2_{ns}_', suffix='.yaml', delete=False)
@@ -71,7 +77,8 @@ def _nav2(context):
     cmd_vel_remap = [('cmd_vel', cmd_vel_topic)]
     return [
         Node(package='nav2_planner', executable='planner_server', name='planner_server', namespace=ns,
-             parameters=[planner_params, use_sim_time, {'GridBased.use_astar': True}, planner_params_extra],
+             parameters=[planner_params, use_sim_time, {'GridBased.use_astar': True}, planner_params_extra,
+                         overrides_file.name],
              output='screen'),
         Node(package='nav2_controller', executable='controller_server', name='controller_server', namespace=ns,
              parameters=[controller_params, use_sim_time, overrides_file.name],
@@ -107,5 +114,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'cmd_vel_topic', default_value='cmd_vel_nav',
             description='Nav2 속도 명령 출력. 구역 클라이언트·안전 노드가 없으면 cmd_vel'),
+        DeclareLaunchArgument(
+            'nav2_profile', default_value='warehouse', choices=list(PROFILES),
+            description='footprint 등 로봇/장소 프로필. restaurant면 서빙 로봇 크기(#299)'),
+        DeclareLaunchArgument(
+            'congestion_filter', default_value='none', choices=list(CONGESTION_FILTERS),
+            description='전역 costmap에 붙일 혼잡도 필터(#296). keepout(돌아가기)·speed(느려짐)'),
         OpaqueFunction(function=_nav2),
     ])

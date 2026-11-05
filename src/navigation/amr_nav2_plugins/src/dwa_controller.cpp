@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "amr_nav2_plugins/obstacles.hpp"
+#include "amr_nav2_plugins/speed_limit.hpp"
 #include "nav2_util/node_utils.hpp"
 #include "tf2/exceptions.h"
 #include "tf2/utils.h"
@@ -345,10 +346,8 @@ geometry_msgs::msg::TwistStamped DwaController::computeVelocityCommands(
   double v = command.v;
   if (command.status == amr_planning_core::DwaStatus::kGoalReached) {
     v = 0.0;
-  } else if (speed_limit_ >= 0.0) {
-    const double limit = speed_limit_is_percentage_ ?
-      planner_->config().max_v * speed_limit_ / 100.0 : speed_limit_;
-    v = std::min(v, limit);
+  } else {
+    v = applySpeedLimit(v, planner_->config().max_v, speed_limit_, speed_limit_is_percentage_);
   }
 
   cmd_vel.twist.linear.x = v;

@@ -5,7 +5,7 @@ import random
 import pytest
 
 from amr_docking.geometry import dock_error
-from amr_docking.localize import (Pose2D, SigmaModel, board_in_base, inverse, robot_from_board, transform)
+from amr_docking.localize import (Agreement, Pose2D, SigmaModel, board_in_base, inverse, robot_from_board, transform)
 from amr_docking.markers import BOARDS, DockStation
 
 
@@ -87,3 +87,20 @@ def test_sigma_grows_with_distance_and_shrinks_with_board_size():
     assert m.sigma(0.0) == pytest.approx((m.xy0, m.yaw0))
     small, large = m.sigma(4.0, BOARDS['small'].spacing), m.sigma(4.0, BOARDS['large'].spacing)
     assert large[0] < small[0] and large[1] < small[1]
+
+
+def test_agreement_needs_two_close_readings_of_same_board():
+    a = Agreement(n=2, tol_m=0.4, window_s=2.0)
+    assert not a.check(0.0, 'rack_c4', 4.84, -6.96)        # 처음 한 번은 아직
+    assert a.check(0.3, 'rack_c4', 4.90, -6.90)            # 같은 판, 가까운 자리 → 믿음
+    assert not a.check(0.6, 'rack_c4', -4.55, -8.02)       # 뒤집힌 해로 튐 → 다시 처음부터
+    assert not a.check(0.9, 'rack_c4', 4.88, -6.92)        # 튄 값과 안 맞음
+    assert a.check(1.2, 'rack_c4', 4.86, -6.95)
+
+
+def test_agreement_is_per_board_and_expires():
+    a = Agreement(n=2, tol_m=0.4, window_s=2.0)
+    a.check(0.0, 'rack_b6', 11.6, -6.9)
+    assert not a.check(0.3, 'rack_c6', 11.6, -6.9)          # 다른 판이면 따로 센다
+    assert not a.check(5.0, 'rack_b6', 11.6, -6.9)          # 오래 지나면 처음부터
+    assert Agreement(n=1).check(0.0, 'rack_b6', 0.0, 0.0)   # n=1이면 거르지 않음
