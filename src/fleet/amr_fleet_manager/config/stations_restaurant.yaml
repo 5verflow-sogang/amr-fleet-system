@@ -1,5 +1,5 @@
 # 식당(푸드코트) 월드(amr_gazebo/worlds/restaurant.sdf, 프로토타입)용 스테이션: 로봇이 멈춰 서는 자세 [x, y, yaw] (m, rad, Gazebo world 좌표).
-# 상태: 프로토타입 (지수). 식당 지도가 아직 없어 map_origin_in_world를 정하지 않았다 - 지도를 만든 뒤 작업 생성기에 넘긴다.
+# 상태: 프로토타입 (지수). 식당 정답 지도(amr_mapping/maps/restaurant_gt)는 map = world라 map_origin_in_world [0, 0, 0]이다.
 #
 # 계산 근거 (restaurant.sdf 머리말 배치도, 서빙 로봇 body:=serving 0.565 x 0.537 m)
 # - 매장(stall): 카운터 앞면(y 4.63)에서 로봇 앞면까지 약 0.2 m, 북쪽(카운터)을 본다. 옆에 기다리는 손님과 0.4 m 이상

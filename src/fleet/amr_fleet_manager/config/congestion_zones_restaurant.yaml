@@ -34,6 +34,6 @@ zones:
     capacity: 4
     description: 동쪽 좌석 (4인석 동쪽 통로, 6인 테이블 L01~L04와 사이 좁은 통로, 부스 b02·b03, 2인석 c01·c02). b01은 매장 앞 높이라 구역 밖
   - id: south
-    area: [-11.9, 4.0, -7.3, -5.01]
+    area: [-11.9, 10.5, -7.3, -5.01]
     capacity: 5
-    description: 남쪽 입구-퇴식구 (return_1·2)
+    description: 남쪽 통로 (입구-퇴식대-정수대-충전소 앞, return_1·2). 동쪽 세로 통로(x 4.74) 손님의 남쪽 끝도 여기서 센다

@@ -332,7 +332,7 @@ ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_
 
 | 종류 | 수 | 구현 |
 | --- | --- | --- |
-| 앉은 손님 | 17 | 정지 모델 OpenRobotics `VisitorKidSit` (어른 앉은 모델은 Fuel에 없어 아이 모델) |
+| 앉은 손님 | 18 | 정지 모델 OpenRobotics `VisitorKidSit` (어른 앉은 모델은 Fuel에 없어 아이 모델) |
 | 서 있는 손님 | 9 | 정지 모델 OpenRobotics `FemaleVisitor`. 매장 카운터 옆(픽업 자리와 0.5 m 이상), 배식대 앞, 셀프 코너, 입구 |
 | 걷는 손님 | 7 (피크 13) | 동적 장애물 `customer` 타입(`models/dynamic_customer`), [`config/dynamic_obstacles_restaurant.yaml`](config/dynamic_obstacles_restaurant.yaml). 통로 가운데로 직선·곡선·무작위, 0.4–1.0 m/s. 피크 몰림 [`_peak.yaml`](config/dynamic_obstacles_restaurant_peak.yaml)은 서쪽 통로·배식대 앞에 6명을 더한다 (혼잡 구역 `amr_fleet_manager/config/congestion_zones_restaurant.yaml`의 `west_aisle` 3/3, `buffet_line` 3–4/4 확인). 손님 파일에는 손님만 넣는다 (혼잡도 노드가 전부 사람으로 센다) |
 | 매장·배식대 직원 | 5 | 같은 동적 장애물로 칸막이 안 주방과 배식대 뒤를 왕복. 따로 [`_staff.yaml`](config/dynamic_obstacles_restaurant_staff.yaml), 같이 띄울 때 `name:=staff_obstacles` |

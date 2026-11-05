@@ -3,7 +3,7 @@
 # 움직이지 않아 /dynamic_obstacles/<id>/ground_truth/odom 토픽이 없다. 혼잡도에 넣으려면 이 목록을 정답 위치로 그대로 읽는다.
 # 좌표: 몸 중심(충돌 원기둥 중심, 반지름 0.25 m), map = world (map_origin_in_world [0, 0, 0]) m.
 # zone: congestion_zones_restaurant.yaml에서 든 구역 (참고용, 월드나 구역이 바뀌면 다시 뽑는다).
-# 앉은 손님 12명(seated_*)은 넣지 않았다 - 테이블에 앉아 있어 통로 혼잡과 상관없다.
+# 앉은 손님 18명(seated_*)은 넣지 않았다 - 테이블에 앉아 있어 통로 혼잡과 상관없다.
 # 주의: 같이 세면 stall_front는 늘 5명(capacity 6, 0.83), buffet_line은 늘 2명이다. 그러면 capacity를 올려야 한다.
 
 people:
