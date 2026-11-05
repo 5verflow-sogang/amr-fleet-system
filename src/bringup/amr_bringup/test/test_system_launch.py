@@ -121,4 +121,5 @@ def test_nav2_launch_description_builds():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     names = {a.name for a in module.generate_launch_description().get_launch_arguments()}
-    assert {'namespace', 'use_sim_time', 'params_file', 'odom_topic', 'cmd_vel_topic'} <= names
+    assert {'namespace', 'use_sim_time', 'params_file', 'odom_topic', 'cmd_vel_topic',
+            'nav2_profile', 'congestion_filter'} <= names
