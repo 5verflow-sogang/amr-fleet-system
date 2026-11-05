@@ -1,0 +1,11 @@
+# 식당 월드(amr_gazebo worlds/restaurant.sdf)에서 system.launch.py가 띄우는 서빙 로봇. 앞에서부터 num_robots대를 쓴다.
+# 스폰 자세 [x, y, yaw] (m, rad, Gazebo world 좌표). 식당 지도는 map = world (map_origin_in_world [0, 0, 0]).
+#
+# 동쪽 벽 대기 위치 wait_1~5(amr_fleet_manager config/stations_restaurant.yaml, RETURN 목적지)와 같다. 홀(서쪽)을 본다.
+# 손님(평상시·피크) 경로와 6.4 m, 직원 경로와 10 m 넘게 떨어져 있다.
+robots:
+  amr_01: [11.2, -7.0, 3.14159265]
+  amr_02: [11.2, -5.8, 3.14159265]
+  amr_03: [11.2, -4.6, 3.14159265]
+  amr_04: [11.2, -3.4, 3.14159265]
+  amr_05: [11.2, -2.2, 3.14159265]

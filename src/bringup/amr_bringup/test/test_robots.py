@@ -27,6 +27,19 @@ def test_shipped_robots_in_waiting_zone():
     assert min(b - a for a, b in zip(xs, xs[1:])) >= 1.5
 
 
+def test_restaurant_robots_at_wait_stations():
+    # 식당 5대 (robots_restaurant.yaml): Fleet 대기 위치 wait_1~5에서 시작하고, 손님·직원 경로와 떨어져 있다
+    robots = load_robots(str(Path(ROBOTS).with_name('robots_restaurant.yaml')), 5)
+    root = Path(__file__).resolve().parents[3]
+    stations = yaml.safe_load((root / 'fleet' / 'amr_fleet_manager' / 'config' / 'stations_restaurant.yaml')
+                              .read_text(encoding='utf-8'))['stations']
+    assert [(r.x, r.y, r.yaw) for r in robots] == [tuple(stations[f'wait_{i}']) for i in range(1, 6)]
+    config = root / 'simulation' / 'amr_gazebo' / 'config'
+    for name in ('dynamic_obstacles_restaurant_peak.yaml', 'dynamic_obstacles_restaurant_staff.yaml'):
+        obstacles = yaml.safe_load((config / name).read_text(encoding='utf-8'))['obstacles']
+        assert all(obstacle_clearance(r.x, r.y, o) >= CLEARANCE_M for r in robots for o in obstacles), name
+
+
 def test_load_robots_count():
     assert len(load_robots(ROBOTS, 3)) == 3
     with pytest.raises(ValueError):
