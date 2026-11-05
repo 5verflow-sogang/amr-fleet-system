@@ -19,6 +19,13 @@ camera:
   child: camera_link
   xyz: [0.18, 0.0, 0.25]
   rpy: [0.0, 0.0, 0.0]
+# 서빙 로봇 몸체(body:=serving, serving.xacro)일 때의 카메라. 타워 머리 앞면(지면 약 1.23 m)에서 20° 아래를 봐
+# 테이블 상판·사람 상체를 본다. 기본 몸체에서는 쓰지 않는다
+camera_serving:
+  parent: base_link
+  child: camera_link
+  xyz: [0.225, 0.0, 1.05]
+  rpy: [0.0, 0.35, 0.0]
 imu:
   parent: base_link
   child: imu_link

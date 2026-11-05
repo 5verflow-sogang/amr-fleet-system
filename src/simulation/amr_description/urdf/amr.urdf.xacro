@@ -31,12 +31,16 @@
   <!-- 라벨 카메라(YOLO 학습 데이터 수집 전용). RGBD 카메라와 같은 자리·화각에서 라벨 붙은 물체의 화면 속 상자를 낸다.
        렌더링 부담이 있어 기본으로 끈다 (experiments/yolo) -->
   <xacro:arg name="label_camera" default="false"/>
+  <!-- 몸체 종류. amr: 기본 물류 AMR (0.3 m 높이). serving: 트레이 타워를 얹은 서빙 로봇 (약 1.16 m, 식당 월드).
+       serving이면 카메라가 타워 머리로 올라간다 (serving.xacro) -->
+  <xacro:arg name="body" default="amr"/>
 
   <xacro:property name="namespace" value="$(arg namespace)"/>
   <xacro:property name="payload_mass" value="$(arg payload_mass)"/>
   <xacro:property name="gt_rate" value="$(arg gt_rate)"/>
   <xacro:property name="enable_camera" value="$(arg enable_camera)"/>
   <xacro:property name="label_camera" value="$(arg label_camera)"/>
+  <xacro:property name="body" value="$(arg body)"/>
   <xacro:property name="prefix" value="${namespace + '/' if namespace else ''}"/>
   <xacro:property name="topic_ns" value="${'/' + namespace if namespace else ''}"/>
 
@@ -44,6 +48,9 @@
   <xacro:include filename="$(find amr_description)/urdf/base.xacro"/>
   <xacro:include filename="$(find amr_description)/urdf/wheels.xacro"/>
   <xacro:include filename="$(find amr_description)/urdf/sensors.xacro"/>
+  <xacro:if value="${body == 'serving'}">
+    <xacro:include filename="$(find amr_description)/urdf/serving.xacro"/>
+  </xacro:if>
   <xacro:include filename="$(find amr_description)/urdf/gazebo.xacro"/>
 
 </robot>
