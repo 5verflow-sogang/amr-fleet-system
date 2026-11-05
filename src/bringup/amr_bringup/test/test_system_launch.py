@@ -16,14 +16,14 @@ from launch_ros.actions import Node  # noqa: E402
 
 # 이 launch가 include하는 파일. 이름이 바뀌면 여기서 먼저 깨진다
 INCLUDED = [
-    ('amr_gazebo', 'world'),
-    ('amr_gazebo', 'config'),
+    ('amr_gazebo', 'world.launch.py'),
+    ('amr_gazebo', 'dynamic_obstacles.launch.py'),
     ('amr_gazebo', 'spawn_robot.launch.py'),
     ('amr_odometry', 'odometry.launch.py'),
     ('amr_odometry', 'sensor_filters.launch.py'),
     ('amr_localization', 'localization.launch.py'),
     ('amr_bt', 'amr_bt.launch.py'),
-    ('amr_fleet_manager', 'cost_fn'),
+    ('amr_fleet_manager', 'fleet_manager.launch.py'),
     ('amr_bringup', 'nav2.launch.py'),
     ('amr_zone_client', 'zone_client.launch.py'),
     ('amr_tracking', 'tracking.launch.py'),
