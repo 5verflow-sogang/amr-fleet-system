@@ -169,7 +169,7 @@ class FleetManager(Node):
         self.get_logger().info(
             f'Fleet 서버 시작: epoch={self._epoch}, algorithm={self._dispatcher.config.algorithm}, '
             f'resend={self._dispatcher.config.resend_interval_s}s x {self._dispatcher.config.max_resends}, '
-            f'zones={self._zones.zone_ids}')
+            f'aging_rate={self._dispatcher.config.aging_rate}/s, zones={self._zones.zone_ids}')
         if charging:
             c = self._dispatcher.config.charge
             self.get_logger().info(

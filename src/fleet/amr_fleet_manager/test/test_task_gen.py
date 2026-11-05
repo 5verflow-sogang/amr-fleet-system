@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from amr_fleet_manager.task_gen import (TaskSpec, count_ready, dump_tasks_json, expand, generate, load_stations,
-                                        load_tasks_json, world_to_map, yaw_to_quaternion)
+                                        load_tasks_json, select_load, world_to_map, yaw_to_quaternion)
 
 CONFIG = Path(__file__).resolve().parents[1] / 'config'
 
@@ -169,3 +169,37 @@ def test_profile_changes_interval_by_time(stations, basic):
     with pytest.raises(ValueError):
         generate(dict(scenario, profile=[{'until_s': 10, 'interval_s': 1}, {'until_s': 5, 'interval_s': 1}]),
                  stations, seed=1)
+
+
+def test_select_load_overlays_and_rejects_unknown():
+    scenario = {'count': 60, 'interval_s': 6.0, 'flows': [], 'loads': {'calm': {'interval_s': 12.5}, 'same': {}}}
+    assert select_load(scenario) == {'count': 60, 'interval_s': 6.0, 'flows': []}
+    assert select_load(scenario, 'same') == select_load(scenario)
+    assert select_load(scenario, 'calm')['interval_s'] == 12.5
+    with pytest.raises(ValueError):
+        select_load(scenario, 'storm')
+
+
+def test_burst_adds_only_its_flow_inside_the_window(stations, basic):
+    burst = {'start_s': 60.0, 'duration_s': 120.0, 'interval_s': 6.0,
+             'flow': {'type': 'collect', 'pickup': ['rack_c*'], 'dropoff': ['dock_b'], 'priority': [200, 200]}}
+    plain = generate(dict(basic, count=20), stations, seed=7)
+    tasks = generate(dict(basic, count=20, bursts=[burst]), stations, seed=7)
+    extra = [t for t in tasks if '_b' in t.task_id]
+    # 본 일정은 그대로이고, 몰림 작업은 구간 안에만 그 흐름으로 들어간다. 결과는 시각 순
+    assert [t for t in tasks if '_b' not in t.task_id] == plain
+    assert 10 <= len(extra) <= 35
+    assert all(60.0 <= t.at_s < 180.0 and t.type == 'collect' and t.priority == 200 for t in extra)
+    assert [t.at_s for t in tasks] == sorted(t.at_s for t in tasks)
+
+
+def test_collect_aging_loads(stations):
+    # 첫 측정(overload)은 loads 없이 만든 일정과 같다. normal은 간격 12.5 s, collect_burst는 normal + 60~180 s 회수 몰림
+    scenario = yaml.safe_load((CONFIG / 'scenarios' / 'collect_aging.yaml').read_text(encoding='utf-8'))
+    base = {k: v for k, v in scenario.items() if k != 'loads'}
+    assert generate(select_load(scenario, 'overload'), stations, seed=1) == generate(base, stations, seed=1)
+    normal = generate(select_load(scenario, 'normal'), stations, seed=1)
+    burst = generate(select_load(scenario, 'collect_burst'), stations, seed=1)
+    assert [t for t in burst if '_b' not in t.task_id] == normal
+    extra = [t for t in burst if '_b' in t.task_id]
+    assert extra and all(t.type == 'collect' and 60.0 <= t.at_s < 180.0 for t in extra)
