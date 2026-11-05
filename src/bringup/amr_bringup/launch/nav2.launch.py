@@ -51,7 +51,12 @@ def _nav2(context):
     with open(params_file) as f:
         nav2_params = yaml.safe_load(f)
     planner_params_extra = planner_overrides(nav2_params, arg('planner'))
-    overrides = {ns: build_overrides(nav2_params, arg('nav2_profile'), arg('congestion_filter'), odom_topic)}
+    # SpeedFilter 기본 토픽은 costmap 자신의 네임스페이스(<ns>/global_costmap/speed_limit)인데
+    # controller_server는 <ns>/speed_limit을 구독해서 절대 경로로 맞춰 줘야 만난다(실측 확인 -
+    # 안 맞추면 SpeedFilter publisher count 0, DWA가 평생 제한을 못 받는다)
+    overrides = {ns: build_overrides(
+        nav2_params, arg('nav2_profile'), arg('congestion_filter'), odom_topic,
+        speed_limit_topic=f'/{ns}/speed_limit')}
     # 로봇마다 다른 임시 파일이 필요하다 (프로세스가 끝나면 OS가 지운다)
     overrides_file = tempfile.NamedTemporaryFile(
         mode='w', prefix=f'nav2_{ns}_', suffix='.yaml', delete=False)

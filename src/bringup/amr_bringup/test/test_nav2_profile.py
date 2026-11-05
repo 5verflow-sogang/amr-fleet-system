@@ -58,6 +58,22 @@ def test_speed_filter_appends_to_base_plugins_and_uses_congestion_node_topic():
     assert overrides['plugins'] == ['static_layer', 'obstacle_layer', 'inflation_layer', 'speed_filter']
     assert overrides['speed_filter']['plugin'] == 'nav2_costmap_2d::SpeedFilter'
     assert overrides['speed_filter']['filter_info_topic'] == '/fleet/congestion_speed_info'
+    # 지정 안 하면 speed_limit_topic은 그대로 - SpeedFilter 기본값(costmap 네임스페이스 기준)을 쓴다
+    assert 'speed_limit_topic' not in overrides['speed_filter']
+
+
+def test_speed_filter_speed_limit_topic_can_be_pointed_at_controller():
+    # controller_server 기본 구독 토픽(<ns>/speed_limit)과 SpeedFilter 기본 발행 토픽
+    # (<ns>/global_costmap/speed_limit)이 서로 달라 안 맞으면 평생 제한이 안 걸린다(실측 확인) -
+    # nav2.launch.py가 로봇 네임스페이스로 만든 절대 경로를 넘겨줘야 한다
+    overrides = congestion_filter_overrides('speed', speed_limit_topic='/amr_01/speed_limit')
+    assert overrides['speed_filter']['speed_limit_topic'] == '/amr_01/speed_limit'
+
+
+def test_keepout_filter_ignores_speed_limit_topic():
+    # keepout은 속도 제한과 무관 - speed_limit_topic을 줘도 아무 효과 없어야 한다
+    overrides = congestion_filter_overrides('keepout', speed_limit_topic='/amr_01/speed_limit')
+    assert 'speed_limit_topic' not in overrides['keepout_filter']
 
 
 def test_unknown_filter_is_rejected():
@@ -87,3 +103,10 @@ def test_build_overrides_restaurant_keepout_combines_footprint_and_filter(nav2_p
     # DWA 블록의 다른 값(footprint 말고)은 기존 nav2_params.yaml 그대로다
     base_dwa = nav2_params['controller_server']['ros__parameters']['DWA']
     assert dwa['max_v'] == base_dwa['max_v']
+
+
+def test_build_overrides_speed_filter_threads_speed_limit_topic_through(nav2_params):
+    overrides = build_overrides(
+        nav2_params, 'warehouse', 'speed', 'odometry/local', speed_limit_topic='/amr_01/speed_limit')
+    gc = overrides['global_costmap']['global_costmap']['ros__parameters']
+    assert gc['speed_filter']['speed_limit_topic'] == '/amr_01/speed_limit'

@@ -52,11 +52,17 @@ _SPEED_INFO_TOPIC = '/fleet/congestion_speed_info'
 _BASE_GLOBAL_PLUGINS = ['static_layer', 'obstacle_layer', 'inflation_layer']
 
 
-def congestion_filter_overrides(filter_choice: str) -> dict:
+def congestion_filter_overrides(filter_choice: str, speed_limit_topic: str = '') -> dict:
     """global_costmap에 덧붙일 costmap_filters 플러그인(plugins 리스트 전체 + 플러그인 블록).
 
     plugins는 리스트라 항목만 더하는 병합이 안 되므로(YAML 오버레이는 키 단위) 전체 목록을
     새로 준다 - 그래도 바뀌는 건 이 키 하나뿐이다. none이면 빈 dict(물류센터 그대로).
+
+    speed_limit_topic: SpeedFilter가 속도 제한을 낼 절대 토픽. 비우면 SpeedFilter 기본값
+    ("speed_limit", costmap 자신의 노드 네임스페이스 기준 - 즉 <ns>/global_costmap/speed_limit)을
+    쓰는데, controller_server가 구독하는 기본 토픽은 <ns>/speed_limit라 서로 안 만난다(실측
+    확인 - SpeedFilter 쪽 publisher count 0). nav2.launch.py가 로봇 네임스페이스로 절대 경로를
+    만들어 넘겨준다.
     """
     if filter_choice not in CONGESTION_FILTERS:
         raise ValueError(f'congestion_filter는 {", ".join(CONGESTION_FILTERS)} 중 하나: {filter_choice!r}')
@@ -71,17 +77,19 @@ def congestion_filter_overrides(filter_choice: str) -> dict:
                 'filter_info_topic': _KEEPOUT_INFO_TOPIC,
             },
         }
-    return {
-        'plugins': _BASE_GLOBAL_PLUGINS + ['speed_filter'],
-        'speed_filter': {
-            'plugin': 'nav2_costmap_2d::SpeedFilter',
-            'enabled': True,
-            'filter_info_topic': _SPEED_INFO_TOPIC,
-        },
+    speed_filter = {
+        'plugin': 'nav2_costmap_2d::SpeedFilter',
+        'enabled': True,
+        'filter_info_topic': _SPEED_INFO_TOPIC,
     }
+    if speed_limit_topic:
+        speed_filter['speed_limit_topic'] = speed_limit_topic
+    return {'plugins': _BASE_GLOBAL_PLUGINS + ['speed_filter'], 'speed_filter': speed_filter}
 
 
-def build_overrides(nav2_params: dict, profile: str, filter_choice: str, odom_topic: str) -> dict:
+def build_overrides(
+    nav2_params: dict, profile: str, filter_choice: str, odom_topic: str, speed_limit_topic: str = '',
+) -> dict:
     """로봇 하나의 controller_server(FollowPath=DWA)·global_costmap·local_costmap에 덧붙일 오버레이 전체.
 
     nav2.launch.py가 {ns: 이 dict}로 감싸 임시 yaml에 써서, 로봇별 RewrittenYaml 뒤에 추가
@@ -93,7 +101,7 @@ def build_overrides(nav2_params: dict, profile: str, filter_choice: str, odom_to
     dwa_config.update(profile_over.get('DWA', {}))
 
     global_over = dict(profile_over.get('global_costmap', {}))
-    global_over.update(congestion_filter_overrides(filter_choice))
+    global_over.update(congestion_filter_overrides(filter_choice, speed_limit_topic))
     local_over = dict(profile_over.get('local_costmap', {}))
 
     return {
