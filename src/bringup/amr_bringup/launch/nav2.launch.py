@@ -17,6 +17,14 @@ nav2_profile:=restaurant면 footprint를 서빙 로봇 크기(#299)로, congesti
 costmap에 민지 혼잡도 노드(#296)용 KeepoutFilter/SpeedFilter를 붙인다 (amr_bringup.nav2_profile). 둘 다
 기본(warehouse·none)은 바뀌는 게 없어 지금 물류센터 동작 그대로다 - nav2_params.yaml을 복사하지 않고
 controller_server override와 같은 방식(바뀌는 키만 임시 yaml에 더해 얹는다)으로 적용한다.
+
+nav2_profile:=restaurant는 bt_navigator의 default_nav_to_pose_bt_xml도 nav2 제공 1초 재계획 BT
+(navigate_to_pose_w_replanning_and_recovery.xml)로 되돌린다. #292가 bt_navigator 기본 트리를
+"막혔을 때만 재계획" BT로 바꾸는데, 식당 혼잡 비용(229)으로는 그 BT가 재계획을 안 해 1-2 우회가
+안 나온다(로컬 비교 3회씩, #292 PR 댓글). warehouse는 #292가 정한 기본값을 그대로 쓴다 - 여기서
+덮어쓰는 bt_navigator ros__parameters가 빈 dict라 아무 영향이 없다. overrides_file을
+bt_navigator Node parameters 맨 뒤에 얹어서, #292가 그 앞에 dict로 넣은 값보다 이 값이 이기게 한다
+(ROS2 Node parameters는 나중 소스가 이긴다).
 """
 
 import os
@@ -54,9 +62,12 @@ def _nav2(context):
     # SpeedFilter 기본 토픽은 costmap 자신의 네임스페이스(<ns>/global_costmap/speed_limit)인데
     # controller_server는 <ns>/speed_limit을 구독해서 절대 경로로 맞춰 줘야 만난다(실측 확인 -
     # 안 맞추면 SpeedFilter publisher count 0, DWA가 평생 제한을 못 받는다)
+    replanning_bt_xml = os.path.join(
+        get_package_share_directory('nav2_bt_navigator'), 'behavior_trees',
+        'navigate_to_pose_w_replanning_and_recovery.xml')
     overrides = {ns: build_overrides(
         nav2_params, arg('nav2_profile'), arg('congestion_filter'), odom_topic,
-        speed_limit_topic=f'/{ns}/speed_limit')}
+        speed_limit_topic=f'/{ns}/speed_limit', bt_xml=replanning_bt_xml)}
     # 로봇마다 다른 임시 파일이 필요하다 (프로세스가 끝나면 OS가 지운다)
     overrides_file = tempfile.NamedTemporaryFile(
         mode='w', prefix=f'nav2_{ns}_', suffix='.yaml', delete=False)
@@ -88,9 +99,12 @@ def _nav2(context):
              remappings=cmd_vel_remap, output='screen'),
         Node(package='nav2_bt_navigator', executable='bt_navigator', name='bt_navigator', namespace=ns,
              # bt_loop_duration 50ms(20Hz) - 기본 10ms(100Hz)는 5대 통합 실행에서 "tick rate 100
-             # exceeded" 경고가 1,400번 나오고 로봇당 CPU를 0.25코어씩 더 썼다
+             # exceeded" 경고가 1,400번 나오고 로봇당 CPU를 0.25코어씩 더 썼다.
+             # overrides_file을 맨 뒤에 둬서 nav2_profile:=restaurant의 default_nav_to_pose_bt_xml이
+             # 이 dict(또는 #292가 넣을 다른 dict)보다 이긴다 - warehouse는 빈 dict라 영향 없음
              parameters=[{'global_frame': 'map', 'robot_base_frame': base_footprint,
-                          'odom_topic': odom_topic, 'bt_loop_duration': 50, **use_sim_time}],
+                          'odom_topic': odom_topic, 'bt_loop_duration': 50, **use_sim_time},
+                         overrides_file.name],
              output='screen'),
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
              name='lifecycle_manager_navigation', namespace=ns,

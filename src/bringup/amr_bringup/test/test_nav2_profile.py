@@ -41,6 +41,24 @@ def test_unknown_profile_is_rejected(nav2_params):
         profile_overrides(nav2_params, 'cafeteria')
 
 
+def test_restaurant_profile_without_bt_xml_adds_no_bt_navigator_key(nav2_params):
+    # bt_xml을 안 주면(기본 '') #292 BT를 되돌릴 값이 없다 - bt_navigator 키 자체가 없어야 한다
+    overrides = profile_overrides(nav2_params, 'restaurant')
+    assert 'bt_navigator' not in overrides
+
+
+def test_restaurant_profile_with_bt_xml_overrides_default_nav_to_pose_bt_xml(nav2_params):
+    # #292가 bt_navigator 기본 트리를 "막혔을 때만 재계획" BT로 바꾸면, 식당은 혼잡 비용(229)으로는
+    # 그 BT가 재계획을 안 해 우회가 안 나온다(로컬 비교 확인) - 1초 재계획 BT로 되돌린다
+    overrides = profile_overrides(nav2_params, 'restaurant', bt_xml='/opt/ros/humble/share/.../a.xml')
+    assert overrides['bt_navigator'] == {'default_nav_to_pose_bt_xml': '/opt/ros/humble/share/.../a.xml'}
+
+
+def test_warehouse_profile_ignores_bt_xml(nav2_params):
+    # warehouse는 #292가 정한 기본값을 그대로 쓴다 - bt_xml을 줘도 아무 영향 없어야 한다
+    assert profile_overrides(nav2_params, 'warehouse', bt_xml='/some/bt.xml') == {}
+
+
 def test_none_filter_adds_nothing():
     assert congestion_filter_overrides('none') == {}
 
@@ -88,6 +106,15 @@ def test_build_overrides_warehouse_none_keeps_existing_dwa_config_and_empty_cost
     assert overrides['controller_server']['ros__parameters']['odom_topic'] == 'odometry/local'
     assert overrides['global_costmap']['global_costmap']['ros__parameters'] == {}
     assert overrides['local_costmap']['local_costmap']['ros__parameters'] == {}
+    assert overrides['bt_navigator']['ros__parameters'] == {}
+
+
+def test_build_overrides_restaurant_sets_bt_xml_warehouse_does_not(nav2_params):
+    bt_xml = '/opt/ros/humble/share/nav2_bt_navigator/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml'
+    restaurant = build_overrides(nav2_params, 'restaurant', 'none', 'odometry/local', bt_xml=bt_xml)
+    warehouse = build_overrides(nav2_params, 'warehouse', 'none', 'odometry/local', bt_xml=bt_xml)
+    assert restaurant['bt_navigator']['ros__parameters']['default_nav_to_pose_bt_xml'] == bt_xml
+    assert warehouse['bt_navigator']['ros__parameters'] == {}
 
 
 def test_build_overrides_restaurant_keepout_combines_footprint_and_filter(nav2_params):
