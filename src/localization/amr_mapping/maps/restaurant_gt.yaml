@@ -1,0 +1,9 @@
+# 식당 정답 지도: 월드 SDF에서 서빙 로봇 키(1.29 m)보다 낮은 물체를 전부 칠했다 - 테이블 상판 포함
+# (amr_mapping tools/restaurant_map.py, SLAM 아님). map = world, map_origin_in_world [0, 0, 0]
+image: restaurant_gt.pgm
+mode: trinary
+resolution: 0.05
+origin: [-12.5, -8.5, 0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25

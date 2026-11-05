@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!-- 등받이 벤치 (길이 1.87 m, 깊이 0.47 m, 좌판 0.48 m, 등받이 0.87 m). 정면 = +x, 등받이 -x.
+     메시: Gazebo Fuel OpenRobotics "FoodCourtBenchLong" (Wan Yi Seow), CC-BY 4.0. Fuel 메시 URL을 바로 쓰면 텍스처를 못 찾아 저장소로 옮겼다. 쓰지 않는 충돌 메시·PBR 맵은 뺐다. 충돌체는 상자 (지도 restaurant_map.py가 상자·원기둥만 읽는다) -->
+<sdf version="1.8">
+  <model name="restaurant_foodcourt_bench">
+    <static>true</static>
+    <link name="link">
+      <visual name="visual"><geometry><mesh><uri>model://restaurant_foodcourt_bench/meshes/FoodCourtBenchLong.obj</uri></mesh></geometry></visual>
+      <collision name="seat"><pose>-0.0225 0 0.2385 0 0 0</pose><geometry><box><size>0.473 1.872 0.477</size></box></geometry></collision><collision name="back"><pose>-0.219 0 0.6735 0 0 0</pose><geometry><box><size>0.08 1.872 0.393</size></box></geometry></collision>
+    </link>
+  </model>
+</sdf>

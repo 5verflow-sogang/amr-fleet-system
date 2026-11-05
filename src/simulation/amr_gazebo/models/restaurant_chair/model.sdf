@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<!-- 식당 의자 (정면 -y, 등받이 +y). 메시: Gazebo Fuel OpenRobotics "Dining Chair" (원본 "Acorn Low Poly Armchair" by L_Krajewski, CC BY 4.0).
+     텍스처는 2048 → 1024 px로 줄였다. 충돌체는 원본 상자 6개(다리 4·앉는 면·등받이) -->
+<sdf version="1.8">
+  <model name="restaurant_chair">
+    <static>true</static>
+    <link name="link">
+      <visual name="visual">
+        <geometry><mesh><uri>model://restaurant_chair/meshes/diningchair.dae</uri></mesh></geometry>
+        <material>
+          <diffuse>1.0 1.0 1.0</diffuse>
+          <specular>1.0 1.0 1.0</specular>
+          <pbr><metal>
+            <albedo_map>model://restaurant_chair/materials/textures/DiningChair_Albedo.jpg</albedo_map>
+            <normal_map>model://restaurant_chair/materials/textures/DiningChair_Normal.jpg</normal_map>
+            <roughness_map>model://restaurant_chair/materials/textures/DiningChair_Roughness.jpg</roughness_map>
+          </metal></pbr>
+        </material>
+      </visual>
+      <collision name="leg_1"><pose>-0.146568 0.202837 0.217947 -0.0345933 0 0</pose><geometry><box><size>0.04 0.04 0.436154</size></box></geometry></collision>
+      <collision name="leg_2"><pose>-0.178948 -0.198708 0.217889 0.0415208 0 0</pose><geometry><box><size>0.04 0.04 0.436154</size></box></geometry></collision>
+      <collision name="leg_3"><pose>0.17895 -0.198708 0.217889 0.0415208 0 0</pose><geometry><box><size>0.04 0.04 0.436154</size></box></geometry></collision>
+      <collision name="leg_4"><pose>0.14657 0.202837 0.217947 -0.0345933 0 0</pose><geometry><box><size>0.04 0.04 0.436154</size></box></geometry></collision>
+      <collision name="seat"><pose>0 -0.000563771 0.372588 0 0 0</pose><geometry><box><size>0.3996 0.4468 0.148292</size></box></geometry></collision>
+      <collision name="back"><pose>0 0.246451 0.700029 -0.156988 0 0</pose><geometry><box><size>0.35964 0.0272995 0.52543</size></box></geometry></collision>
+    </link>
+  </model>
+</sdf>

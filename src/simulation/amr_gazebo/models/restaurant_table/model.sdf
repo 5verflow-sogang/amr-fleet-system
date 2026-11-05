@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!-- 식당 테이블 (원형 지름 0.913 m, 상판 0.775 m). 메시: Gazebo Fuel OpenRobotics "Cafe table", CC0 1.0.
+     충돌체는 원본과 같은 상자 3개(상판·기둥·받침). 식당 월드(restaurant.sdf)는 메시와 상자를 늘려 4인 타원 테이블로 인라인으로 넣는다. -->
+<sdf version="1.8">
+  <model name="restaurant_table">
+    <static>true</static>
+    <link name="link">
+      <collision name="surface"><pose>0 0 0.755 0 0 0</pose><geometry><box><size>0.913 0.913 0.04</size></box></geometry></collision>
+      <collision name="column"><pose>0 0 0.37 0 0 0</pose><geometry><box><size>0.042 0.042 0.74</size></box></geometry></collision>
+      <collision name="base"><pose>0 0 0.02 0 0 0</pose><geometry><box><size>0.56 0.56 0.04</size></box></geometry></collision>
+      <visual name="visual"><geometry><mesh><uri>model://restaurant_table/meshes/cafe_table.dae</uri></mesh></geometry></visual>
+    </link>
+  </model>
+</sdf>

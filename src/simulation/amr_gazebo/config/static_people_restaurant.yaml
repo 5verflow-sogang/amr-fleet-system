@@ -1,0 +1,18 @@
+# 식당 월드의 서 있는 손님 (정지 모델, worlds/restaurant.sdf의 standing_N). 상태: 프로토타입 (지수)
+#
+# 움직이지 않아 /dynamic_obstacles/<id>/ground_truth/odom 토픽이 없다. 혼잡도에 넣으려면 이 목록을 정답 위치로 그대로 읽는다.
+# 좌표: 몸 중심(충돌 원기둥 중심, 반지름 0.25 m), map = world (map_origin_in_world [0, 0, 0]) m.
+# zone: congestion_zones_restaurant.yaml에서 든 구역 (참고용, 월드나 구역이 바뀌면 다시 뽑는다).
+# 앉은 손님 18명(seated_*)은 넣지 않았다 - 테이블에 앉아 있어 통로 혼잡과 상관없다.
+# 주의: 같이 세면 stall_front는 늘 5명(capacity 6, 0.83), buffet_line은 늘 2명이다. 그러면 capacity를 올려야 한다.
+
+people:
+  - {id: standing_1, x: -5.35, y: 4.11, zone: stall_front}   # 매장 1(한식) 카운터 옆
+  - {id: standing_2, x: -0.45, y: 4.11, zone: stall_front}   # 매장 2(분식) 카운터 동쪽
+  - {id: standing_3, x: -2.35, y: 4.16, zone: stall_front}   # 매장 2(분식) 카운터 서쪽
+  - {id: standing_4, x: 2.55, y: 4.11, zone: stall_front}   # 매장 3(양식) 카운터 옆
+  - {id: standing_5, x: 5.3, y: 4.11, zone: stall_front}   # 매장 4(카페) 카운터 옆
+  - {id: standing_6, x: -10.96, y: -0.1, zone: west_aisle}   # 셀프 코너 앞
+  - {id: standing_8, x: -9.277, y: -6.405, zone: south}   # 남서쪽 입구
+  - {id: standing_9, x: -8.9, y: 4.21, zone: buffet_line}   # 배식대 앞 (buffet_1·2 사이)
+  - {id: standing_10, x: -10.65, y: 4.26, zone: buffet_line}   # 배식대 앞 서쪽 끝
