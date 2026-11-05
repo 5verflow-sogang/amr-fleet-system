@@ -2,6 +2,7 @@ import pytest
 
 from amr_fleet_core.assignment import (
     ALGORITHMS,
+    Aging,
     RobotInfo,
     TaskInfo,
     check_unique_ids,
@@ -105,6 +106,58 @@ def test_sort_by_priority():
     ]
     order = [t.task_id for t in sort_by_priority(tasks)]
     assert order == ['early', 'early_b', 'late', 'no_deadline', 'low']
+
+
+# 식당 시연 값 (config/fleet_manager_restaurant.yaml): 일반 작업 100이 60 s 기다리면 새 회수 호출 200과 같아진다
+RESTAURANT_RATE = 100.0 / 60.0
+
+
+def test_zero_aging_keeps_the_existing_order():
+    tasks = [
+        task('low', priority=1, created=0.0),
+        task('no_deadline', priority=5, created=50.0),
+        task('late', priority=5, deadline=20.0),
+        task('early', priority=5, deadline=10.0),
+        task('early_b', priority=5, deadline=10.0, created=1.0),
+    ]
+    plain = [t.task_id for t in sort_by_priority(tasks)]
+    assert [t.task_id for t in sort_by_priority(tasks, Aging(rate=0.0, now=1000.0))] == plain
+
+
+def test_collect_call_goes_before_normal_task():
+    tasks = [task('normal', priority=100, created=0.0), task('collect', priority=200, created=5.0)]
+    order = [t.task_id for t in sort_by_priority(tasks, Aging(RESTAURANT_RATE, now=10.0))]
+    assert order == ['collect', 'normal']
+
+
+def test_long_waiting_normal_task_goes_before_a_new_collect_call():
+    # 일반 작업이 회수 호출보다 60 s 넘게 먼저 들어왔으면, 지금 시각과 상관없이 일반 작업이 앞선다
+    tasks = [task('normal', priority=100, created=0.0), task('collect', priority=200, created=70.0)]
+    for now in (70.0, 75.0, 300.0):
+        order = [t.task_id for t in sort_by_priority(tasks, Aging(RESTAURANT_RATE, now=now))]
+        assert order == ['normal', 'collect'], now
+    # 딱 60 s 차이면 유효 우선순위가 같아지고, 먼저 들어온 쪽(created)이 앞선다
+    tie = [task('normal', priority=100, created=0.0), task('collect', priority=200, created=60.0)]
+    assert [t.task_id for t in sort_by_priority(tie, Aging(100.0 / 60.0, now=90.0))][0] == 'normal'
+
+
+def test_aging_counts_no_negative_wait():
+    # created가 지금보다 뒤(시계 차이)여도 우선순위를 깎지 않는다
+    aging = Aging(RESTAURANT_RATE, now=0.0)
+    assert aging.effective(task('future', priority=100, created=30.0)) == 100.0
+    with pytest.raises(ValueError):
+        Aging(rate=-1.0, now=0.0)
+
+
+@pytest.mark.parametrize('name', sorted(ALGORITHMS))
+def test_every_algorithm_orders_by_aged_priority(name):
+    # 로봇 1대: aging 없으면 회수 호출, 있으면 오래 기다린 일반 작업을 맡긴다
+    tasks = [task('normal', priority=100, created=0.0), task('collect', priority=200, created=70.0)]
+    robots = [robot('amr_01')]
+    assert ALGORITHMS[name](tasks, robots).assignments == {'collect': 'amr_01'}
+    aged = ALGORITHMS[name](tasks, robots, aging=Aging(RESTAURANT_RATE, now=75.0))
+    assert aged.assignments == {'normal': 'amr_01'}
+    assert aged.unassigned == ['collect']
 
 
 def test_check_unique_ids():

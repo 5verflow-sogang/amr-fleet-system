@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 from scipy.optimize import linear_sum_assignment
 
 from .common import check_unique_ids, sort_by_priority
 from .cost import euclidean_cost
-from .types import AssignmentResult, CostFn, FeasibleFn, RobotInfo, TaskInfo
+from .types import Aging, AssignmentResult, CostFn, FeasibleFn, RobotInfo, TaskInfo
 
 # 맡길 수 없는 짝의 비용. 다른 짝을 모두 합친 것보다 커서 가능한 짝이 있으면 그쪽을 고른다
 _INFEASIBLE = 1e12
@@ -19,6 +19,7 @@ def assign_hungarian(
     robots: Sequence[RobotInfo],
     cost_fn: CostFn = euclidean_cost,
     feasible: FeasibleFn = None,
+    aging: Optional[Aging] = None,
 ) -> AssignmentResult:
     """우선순위 순 상위 min(T, R)개 작업을 고른 뒤, 비용 합이 최소가 되게 매칭한다.
 
@@ -30,7 +31,7 @@ def assign_hungarian(
     매칭에 들어오면 버린다(그 작업은 unassigned).
     """
     check_unique_ids(tasks, robots)
-    ordered = sort_by_priority(tasks)
+    ordered = sort_by_priority(tasks, aging)
     robots = sorted(robots, key=lambda r: r.robot_id)
     infeasible = []
     if feasible is not None:

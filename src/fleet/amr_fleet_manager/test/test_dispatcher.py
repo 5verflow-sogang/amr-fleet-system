@@ -76,6 +76,27 @@ def test_stale_congestion_falls_back_to_distance():
         make(cost_fn='congestion', congestion_timeout_s=0.0)
 
 
+def _one_robot_picks(aging_rate, aging_now):
+    # 로봇 1대, 일반 작업(100, 0 s 접수)과 회수 호출(200, 70 s 접수). 할당 시각 now(실제 시간)와 aging_now(작업 시계)는 따로다
+    d = make(aging_rate=aging_rate)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('normal', (1.0, 0.0), priority=100, created=0.0))
+    d.add_task(task('collect', (2.0, 0.0), priority=200, created=70.0))
+    commands, _ = d.assign(0.0, aging_now=aging_now)
+    return commands[0].task_id
+
+
+def test_aging_lets_long_waiting_task_go_before_new_urgent_one():
+    assert _one_robot_picks(0.0, 75.0) == 'collect'          # 끔: 우선순위 그대로
+    assert _one_robot_picks(100.0 / 60.0, 75.0) == 'normal'  # 75 s 기다린 일반 작업(225) > 5 s 된 회수 호출(208)
+    assert _one_robot_picks(100.0 / 60.0, None) == 'collect'  # 작업 시계를 안 주면 aging 없음
+
+
+def test_negative_aging_rate_rejected():
+    with pytest.raises(ValueError):
+        make(aging_rate=-1.0)
+
+
 def test_no_call_without_tasks_or_robots():
     d = make()
     assert d.assign(0.0) == ([], [])

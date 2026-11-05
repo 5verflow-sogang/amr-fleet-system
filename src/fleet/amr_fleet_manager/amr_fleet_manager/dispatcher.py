@@ -10,7 +10,7 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Optional
 
-from amr_fleet_core.assignment import (ALGORITHMS, COST_FNS, CongestedArea, CostFn, RobotInfo, TaskInfo,
+from amr_fleet_core.assignment import (ALGORITHMS, COST_FNS, Aging, CongestedArea, CostFn, RobotInfo, TaskInfo,
                                        euclidean_cost, filter_candidates, make_congestion_cost, sort_by_priority)
 
 from amr_fleet_core.charging import (ChargeConfig, Station, charge_target, max_charging, nearest_free,
@@ -75,6 +75,10 @@ class DispatcherConfig:
     energy: EnergyModel = EnergyModel()
     # 비용 + battery_weight × (필요 배터리 / 남은 배터리) [m]. 배터리가 많은 로봇이 먼 작업을 맡게 한다. 0이면 끈다
     battery_weight: float = 0.0
+    # 우선순위 aging (인터럽트 관제): 큐에서 기다린 1초마다 우선순위에 이만큼 더해 줄 세운다(amr_fleet_core Aging).
+    # 0이면 끈다 (기본, 지금 순서와 같음). 대기 시간은 assign()의 aging_now(Task.created_time과 같은 시계)로 잰다.
+    # 서버가 직접 내는 충전·복귀(for_robot)는 할당 알고리즘을 거치지 않아 aging과 상관없다
+    aging_rate: float = 0.0
 
     def __post_init__(self):
         if self.algorithm not in ALGORITHMS:
@@ -85,6 +89,8 @@ class DispatcherConfig:
             raise ValueError(f'congestion_weight는 0 이상이어야 한다: {self.congestion_weight}')
         if not self.battery_weight >= 0:
             raise ValueError(f'battery_weight는 0 이상이어야 한다: {self.battery_weight}')
+        if not self.aging_rate >= 0:
+            raise ValueError(f'aging_rate는 0 이상이어야 한다: {self.aging_rate}')
         if not self.congestion_timeout_s > 0:
             raise ValueError(f'congestion_timeout_s는 0보다 커야 한다: {self.congestion_timeout_s}')
         if self.resend_interval_s <= 0:
@@ -311,11 +317,15 @@ class Dispatcher:
 
     # ---- 출력 ----
 
-    def assign(self, now: float) -> tuple[list[Outgoing], list[AssignmentRow]]:
+    def assign(self, now: float, aging_now: Optional[float] = None) -> tuple[list[Outgoing], list[AssignmentRow]]:
         """큐의 작업을 놀고 있는 로봇에 맡긴다. 작업이나 후보가 없으면 알고리즘을 부르지 않는다.
 
         이미 다른 로봇이 맡았다고 보고한 작업은 맡기지 않고 그 로봇(주인)에게 넘긴다.
+        aging_now: aging(DispatcherConfig.aging_rate)의 지금 시각. now(실제 시간, 재전송·생존 판정)와 달리
+        TaskInfo.created(Task.created_time)와 같은 시계여야 한다 - 시뮬레이션에서는 시뮬레이션 시간. None이면 aging 끔.
         """
+        aging = (Aging(self.config.aging_rate, aging_now)
+                 if self.config.aging_rate > 0 and aging_now is not None else None)
         for t in self.tasks.values():
             if t.state == STATE_PENDING and not t.assignee:
                 owner = self.claims.owner(t.info.task_id, now)
@@ -325,7 +335,8 @@ class Dispatcher:
         # 서버가 낸 충전을 먼저 보낸다 (그 로봇에게 다른 작업을 주지 않게). 복귀는 할당 알고리즘 뒤
         commands = self._assign_directed(TYPE_CHARGE, now)
         queued = self._station_free(
-            [t.info for t in self.tasks.values() if t.state == STATE_PENDING and not t.assignee and not t.for_robot])
+            [t.info for t in self.tasks.values() if t.state == STATE_PENDING and not t.assignee and not t.for_robot],
+            aging)
         reserved = self._reserved()
         free = [
             replace(r.info, load=r.load) for r in self.robots.values()
@@ -342,7 +353,7 @@ class Dispatcher:
             queue = self.charge_queue(now) if self.config.charging_enabled else None
             feasible = make_energy_feasible(self.config.chargers, self.config.energy, queue,
                                             self.config.charge.low_percent if queue is not None else None)
-        result = self._assign_fn(queued, candidates, cost_fn, feasible)
+        result = self._assign_fn(queued, candidates, cost_fn, feasible, aging=aging)
         call_id = self._next_call_id
         self._next_call_id += 1
         by_id = {r.robot_id: r for r in candidates}
@@ -596,7 +607,7 @@ class Dispatcher:
             commands.append(Outgoing(assignment_id, t.for_robot, task_id, first=True))
         return commands
 
-    def _station_free(self, queued: list[TaskInfo]) -> list[TaskInfo]:
+    def _station_free(self, queued: list[TaskInfo], aging: Optional[Aging] = None) -> list[TaskInfo]:
         """스테이션 예약(DispatcherConfig.station_clearance_m)에 걸리지 않는 작업만 남긴다 (순서는 그대로).
 
         맡겨진 작업의 스테이션은 끝날 때까지 잡혀 있다. 큐 안에서 같은 스테이션을 쓰는 작업끼리는 우선순위가 높은
@@ -608,7 +619,7 @@ class Dispatcher:
         taken = [xy for t in self.tasks.values() if t.assignee and t.state not in FINISHED
                  for xy in _stations(t.info)]
         allowed = set()
-        for info in sort_by_priority(queued):
+        for info in sort_by_priority(queued, aging):
             mine = _stations(info)
             if any(math.dist(a, b) <= clearance for a in mine for b in taken):
                 continue

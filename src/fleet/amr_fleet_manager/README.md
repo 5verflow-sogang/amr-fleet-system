@@ -281,6 +281,7 @@ ros2 launch amr_fleet_manager task_generator.launch.py
 | `charging.peak_target_percent` | `100.0` | 피크 중 충전 목표. 닿으면 서버가 충전을 끝낸다 (100이면 끝까지) |
 | `charging.wait_pattern` | `wait_*` | 충전을 마친 로봇을 보낼 대기 위치 패턴. 비우면 충전기 위에 그대로 둔다 |
 | `assignment.station_clearance_m` | `1.0` | 스테이션 예약 (m). 맡겨진 작업의 픽업·하역 위치에서 이 거리 안을 쓰는 작업은 그 작업이 끝날 때까지 큐에서 기다린다. 큐 안에서 겹치면 우선순위가 높은 하나만 맡긴다. 같은 도크로 가는 두 작업을 동시에 내보내 두 로봇이 한 자리에서 막혔다 (11/2). 0이면 끄기 (`fleet_fake`는 연구 1 조건대로 0) |
+| `assignment.aging_rate` | `0.0` | 우선순위 aging: 큐에서 기다린 1초마다 우선순위에 더하는 값. 유효 우선순위 = priority + aging_rate × (노드 시계 − `Task.created_time`). 0이면 끄기(지금 순서와 같음). 식당 시연은 `config/fleet_manager_restaurant.yaml`(100/60 ≈ 1.667: 일반 작업 100이 60 s 기다리면 새 회수 호출 200과 같아짐)을 launch 인자 `extra_params_file`로 얹는다. 근거는 amr_fleet_core README '우선순위 aging' |
 | `robot_timeout_s` | `3.0` | 이 시간 동안 `RobotState`가 없으면 후보에서 뺀다 (s) |
 | `resend.interval_s` | `1.0` | Ack 없을 때 재전송 간격 (s) launch 인자 `resend_interval_s`(연구 1 재시도 간격 비교) |
 | `resend.max_resends` | `5` | 재전송 한도. 첫 발송은 세지 않는다. launch 인자 `max_resends`(연구 1 재전송 비교) |

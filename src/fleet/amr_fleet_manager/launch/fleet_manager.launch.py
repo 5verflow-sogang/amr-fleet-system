@@ -55,7 +55,8 @@ def _server(context):
         return Node(
             package='amr_fleet_manager',
             executable='fleet_manager',
-            parameters=[config, {
+            # extra_params_file(시연별 덮어쓰기, 예: config/fleet_manager_restaurant.yaml)는 기본 설정 위에 얹는다
+            parameters=[config, *([arg('extra_params_file')] if arg('extra_params_file') else []), {
                 param: ParameterValue(arg(launch_arg), value_type=str) for param, launch_arg in SERVER_ARGS
             }, {
                 # 구역 lease는 로봇과 같은 시계로 잰다. Gazebo와 같이 돌리면 true (amr_bringup system.launch.py)
@@ -163,6 +164,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'assignments_csv', default_value='',
             description='할당 호출 기록 파일. 비우면 기록하지 않는다 (하네스가 실행마다 경로를 준다)'),
+        DeclareLaunchArgument(
+            'extra_params_file', default_value='',
+            description='fleet_manager.yaml 위에 얹을 파라미터 파일 (식당 시연: config/fleet_manager_restaurant.yaml). 비우면 없음'),
         DeclareLaunchArgument(
             'zones_file', default_value=os.path.join(share, 'config', 'zones.yaml'),
             description='구역 허가 대상 구역 목록'),

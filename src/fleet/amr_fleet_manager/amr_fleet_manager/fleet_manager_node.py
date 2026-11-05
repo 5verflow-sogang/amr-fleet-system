@@ -121,6 +121,7 @@ class FleetManager(Node):
                 charge_target_percent=self.declare_parameter('energy.charge_target_percent', 100.0).value,
             ),
             battery_weight=self.declare_parameter('assignment.battery_weight', 0.0).value,
+            aging_rate=self.declare_parameter('assignment.aging_rate', 0.0).value,
         ))
         self._charge_waiting: list[str] = []
         heartbeat_period_s = self.declare_parameter('heartbeat_period_s', 0.2).value
@@ -339,7 +340,9 @@ class FleetManager(Node):
 
     def _assign(self):
         self._plan_charging()
-        commands, rows = self._dispatcher.assign(self._now_sec())
+        # aging의 대기 시간도 같은 노드 시계로 잰다 (#322 리뷰, _now_sec 주석)
+        now = self._now_sec()
+        commands, rows = self._dispatcher.assign(now, aging_now=now)
         if rows and self._log is not None:
             self._log.write(stamp_to_sec(self.get_clock().now().to_msg()), rows)
         self._send(commands)
