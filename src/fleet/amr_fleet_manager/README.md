@@ -66,11 +66,13 @@
 - 인식 결과가 아니라 시뮬레이터 정답 위치를 센다. `obstacles_file`의 장애물은 종류와 상관없이 모두 "사람"으로 센다(물류센터 기본 설정이면 지게차·로봇도 들어간다). 식당에서는 손님만 담은 파일을 준다
 - `stale_s`(2 s) 넘게 위치가 안 온 손님은 세지 않는다
 - 마스크는 구역 둘레를 `mask.padding`(1 m)만큼 값 0 칸으로 감싼다. Nav2 Humble 속도 필터는 로봇이 마스크 밖이면 마지막 제한을 유지해서, 혼잡 구역에서 바로 마스크 밖으로 나가면 감속이 안 풀린다
-- 구역 파일 기본값(`config/congestion_zones.yaml`)은 식당 맵 전 물류센터 통로에 붙인 가짜 구역이다
+- `site`가 구역 파일·손님 파일·map 원점 기본값을 고른다. `warehouse`(기본)는 물류센터 통로에 붙인 가짜 구역(`config/congestion_zones.yaml`), `restaurant`는 `config/congestion_zones_restaurant.yaml` + amr_gazebo `dynamic_obstacles_restaurant(_peak).yaml` + 원점 [0, 0, 0]이다. 식당에 물류센터 원점이 들어가면 손님이 1.47 m 밀려 다른 구역에 세어진다
+- 식당의 서 있는 손님(`static_people_restaurant.yaml`)과 직원은 세지 않는다. 서 있는 손님까지 세면 카운터 앞이 늘 0.83이라 켬/끔 비교가 섞인다 (11/5 결정)
 
 ```bash
-ros2 launch amr_fleet_manager congestion.launch.py                         # 물류센터 가짜 구역 + 동적 장애물 5개
-ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<식당 구역> obstacles_file:=<손님 yaml> map_origin_in_world:='[x, y, yaw]'
+ros2 launch amr_fleet_manager congestion.launch.py                                  # 물류센터 가짜 구역 + 동적 장애물 5개
+ros2 launch amr_fleet_manager congestion.launch.py site:=restaurant guests:=peak    # 식당: 구역 7개, 피크 손님 13명, map = world
+ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<구역> obstacles_file:=<손님 yaml> map_origin_in_world:='[x, y, yaw]'
 ```
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
