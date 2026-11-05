@@ -99,9 +99,12 @@ struct TaskContext
 
   bool busy() const {return task.has_value();}
 
+  // 픽업 → 목적지 흐름인지 (DELIVERY, 빈 그릇 회수 COLLECT). 트리의 IsDelivery가 쓴다
   bool is_delivery() const
   {
-    return task.has_value() && task->task_type == amr_msgs::msg::Task::TYPE_DELIVERY;
+    return task.has_value() &&
+           (task->task_type == amr_msgs::msg::Task::TYPE_DELIVERY ||
+           task->task_type == amr_msgs::msg::Task::TYPE_COLLECT);
   }
 
   void assign(const amr_msgs::msg::Task & t)
