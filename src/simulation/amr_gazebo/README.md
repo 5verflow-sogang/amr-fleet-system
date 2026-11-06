@@ -337,6 +337,8 @@ ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_
 | 걷는 손님 | 7 (피크 13) | 동적 장애물 `customer` 타입(`models/dynamic_customer`), [`config/dynamic_obstacles_restaurant.yaml`](config/dynamic_obstacles_restaurant.yaml). 통로 가운데로 직선·곡선·무작위, 0.4–1.0 m/s. 피크 몰림 [`_peak.yaml`](config/dynamic_obstacles_restaurant_peak.yaml)은 서쪽 통로·배식대 앞에 6명을 더한다 (혼잡 구역 `amr_fleet_manager/config/congestion_zones_restaurant.yaml`의 `west_aisle` 3/3, `buffet_line` 3–4/4 확인). 손님 파일에는 손님만 넣는다 (혼잡도 노드가 전부 사람으로 센다) |
 | 매장·배식대 직원 | 5 | 같은 동적 장애물로 칸막이 안 주방과 배식대 뒤를 왕복. 따로 [`_staff.yaml`](config/dynamic_obstacles_restaurant_staff.yaml), 같이 띄울 때 `name:=staff_obstacles` |
 
+- 걷는 손님·직원의 충돌체는 무게중심에 놓은 구(반지름 0.25 m, 마찰 0)다. 원기둥이었을 때는 배식대 앞 줄(피크)에서 손님끼리·가구와 모서리로 부딪혀 기울었고, 중력을 꺼 둬서 누운 채 남았다 (피크 13명 + 직원 5명 4분: 원기둥 2명 누움, 구 0명). 구는 어디서 부딪혀도 힘이 무게중심을 지나 기울이는 회전력이 없다. LiDAR는 메시를 보므로 센서 모습은 같다
+
 - 저장소 모델: `restaurant_foodcourt_table`·`restaurant_wooden_chair`·`restaurant_foodcourt_bench`(Fuel OpenRobotics "FoodCourtTable1"·"WoodenChair"·"FoodCourtBenchLong", Wan Yi Seow, CC-BY 4.0, 충돌체는 상자), `restaurant_table`·`restaurant_chair`(Fuel "Cafe table" CC0·"Dining Chair" CC-BY 4.0, 지금 식당 월드에서는 안 씀), `restaurant_buffet_station`·`restaurant_dish_return`(민지 #295, Sketchfab CC-BY 4.0), `dynamic_customer`. Fuel 메시 URL을 바로 쓰면 메시 옆 텍스처를 못 찾아 테이블이 회색으로 나와서 테이블·의자는 저장소로 옮겼다
 - `restaurant_decor`: 홀 나무 마루·주방 타일 바닥 메시와 한글 간판 10개(매장 4, 배식대, 셀프 수저·반찬, 출입구, 퇴식대, 정수기, 로봇 충전·대기). 텍스처는 스크립트로 직접 만들었다(CC0, 간판 글꼴 맑은 고딕). 긴 테이블·부스·기둥·화분·퇴식대·정수대·테이블 위 쟁반·그릇·컵은 월드에 상자·원기둥으로 직접 넣었다(소품은 시각 전용)
 - 나머지(조리대·키오스크·자판기·쓰레기통·앉은·서 있는 사람)는 Gazebo Fuel(OpenRobotics, CC-BY 4.0)에서 처음 실행할 때 내려받는다(인터넷 필요, 이후 캐시)
