@@ -55,7 +55,7 @@ ros2 launch amr_localization localization.launch.py odom_topic:=wheel/odom   # D
 > **이 옵션으로 찍은 시연 영상은 정답 위치를 썼다는 것을 영상에 밝힌다.**
 
 식당 리허설에서 AMCL 오차 0.9~2.3 m 때문에 로봇이 테이블 안에 있다고 믿고 멈추거나 거짓 도착이
-났다(원인 분석·지도 분리는 pp 창에서 따로 진행 중). 시연 녹화 동안만 위치추정을 Gazebo 정답으로
+났다(원인: 손님·가구에 걸린 채 바퀴가 헛돌면 AMCL 파티클이 오도메트리를 따라 통째로 밀리고, recovery_alpha가 0이라 다시 퍼지지 않는다). 시연 녹화 동안만 위치추정을 Gazebo 정답으로
 대신해 이 문제를 피한다. `localization.launch.py`(AMCL+EKF)와 같은 토픽·TF를 내므로 Nav2·구역
 클라이언트 등 나머지 노드는 바뀐 걸 모른다 - `amr_bringup system.launch.py`는 이 launch를
 `localization:=ground_truth`로 고른다([amr_bringup README](../../bringup/amr_bringup/README.md)).

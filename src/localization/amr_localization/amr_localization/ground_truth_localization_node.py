@@ -1,7 +1,8 @@
 """시뮬레이터 정답 위치(ground_truth/odom, world 기준)를 AMCL+EKF 대신 쓴다 - 식당 시연 녹화용.
 
 리허설에서 AMCL 오차 0.9~2.3 m 때문에 로봇이 테이블 안에 있다고 믿고 멈추거나 거짓 도착이 났다
-(원인 분석·지도 분리는 pp 창에서 따로 진행). 위치추정 성능을 전혀 반영하지 않으므로 물류센터
+(원인: 손님·가구에 걸린 채 바퀴가 헛돌면 AMCL 파티클이 오도메트리를 따라 통째로 밀리고,
+recovery_alpha가 0이라 다시 퍼지지 않는다). 위치추정 성능을 전혀 반영하지 않으므로 물류센터
 KPI에는 쓰지 않는다 - localization.launch.py(AMCL+EKF)와 같은 토픽·TF를 내 나머지 노드(Nav2,
 구역 클라이언트 등)는 바뀐 걸 모른다:
     발행: odometry/local(odom 기준), odometry/filtered(map 기준), amcl_pose
