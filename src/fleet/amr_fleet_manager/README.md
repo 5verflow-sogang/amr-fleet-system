@@ -110,6 +110,20 @@ ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<구역> obstacle
   - 패턴 기본값은 `charger_*`, `wait_*`이다.
 - 로그에 충전·복귀를 낼 때와 충전 차례를 기다리는 로봇이 바뀔 때를 남긴다.
 
+### 피크 대비 충전 (`charging.peaks`, 4단계)
+
+자동 충전을 켜고 피크 시간대를 주면 시간대마다 충전 규칙을 바꾼다. 시각은 서버 시작부터 잰 노드 시계(s)이고, 작업 생성기 `profile`의 바쁜 구간과 같은 시각으로 맞춘다. 생성기는 서버가 뜬 뒤 수 초 늦게 시작한다.
+
+| 구간 | 동작 |
+| --- | --- |
+| 피크 `pre_peak_s` 전부터 시작까지 | `pre_peak_percent`(80) 밑인 놀고 있는 로봇도 미리 충전하러 보낸다. 최소 운영 대수 규칙은 그대로 |
+| 피크 중 | 동시 충전을 `peak_max_charging`대로 더 묶는다(0이면 최소 운영 대수 규칙만). 충전은 `peak_target_percent`까지만 한다 |
+| 그 밖 | 1단계와 같다 |
+
+- 피크 중 목표에 닿은 서버 충전 작업은 서버가 `ACTION_CANCEL`을 보내 끝낸다. 같은 명령 번호로 `resend.interval_s`마다 다시 보낸다.
+- 로봇이 취소 완료(FAILED + `ASSIGN_CANCELED`)를 보고하면 다시 할당하지 않고 대기 위치로 보낸다. `Task`에 충전 목표 필드가 없어서 메시지를 바꾸지 않으려고 이렇게 했다.
+- launch 인자는 `peaks:='[430, 730]'`, `pre_peak_s`, `peak_max_charging`, `peak_target_percent`이다.
+
 ### 에너지 예측 배정 (`energy.enabled`, 2단계)
 
 켜면 할당 알고리즘에 `amr_fleet_core.make_energy_feasible`을 넘긴다. 작업을 끝내고 가장 가까운 충전기까지 갈 배터리가 없는 로봇은 그 작업에서만 빠진다. `min_battery_percent` 하한은 그대로 둔다.
@@ -206,6 +220,7 @@ ros2 launch amr_fleet_manager task_generator.launch.py
 명세의 "JSON 형식 Task Description"을 받는 곳이자, 하네스가 같은 작업 일정을 반복해 넣는 도구다.
 
 - **일정 만들기**: 시나리오([config/scenarios/basic.yaml](config/scenarios/basic.yaml))의 작업 수·간격(`fixed`·`poisson`)·흐름(픽업 → 목적지 스테이션, `*` 패턴)·물품 비율·우선순위·마감으로 일정을 만든다. 같은 시나리오·`seed`면 같은 일정이다. `task_id`는 `task_s<seed>_<번호>`.
+- **시간대별 주문량**: 시나리오에 `profile: [{until_s, interval_s}, ...]`을 주면, 작업 시각이 `until_s` 전인 첫 구간의 간격으로 마지막 `until_s`까지 만든다. 이때 `count`는 상한이고, 없으면 제한이 없다. 배터리 실험의 한가함 → 피크 → 한가함 부하에 쓴다([battery_peak.yaml](config/scenarios/battery_peak.yaml), [battery_flat.yaml](config/scenarios/battery_flat.yaml)).
 - **JSON Task 파일**: `tasks_file`을 주면 시나리오 대신 그 일정을 그대로 발행한다. `schedule_out`으로 만든 일정을 같은 형식으로 남길 수 있어, 실행 폴더의 `tasks.json`을 다시 넣으면 그 실행을 재현한다.
 
 ```json
@@ -260,6 +275,10 @@ ros2 launch amr_fleet_manager task_generator.launch.py
 | `energy.reserve_percent` | `5.0` | 충전기에 닿았을 때 남길 여유 (%) |
 | `energy.charge_per_s`, `energy.charge_target_percent` | `0.5`, `100.0` | 충전 중인 로봇이 언제 끝날지(충전 차례 대기 시간) 추정에 쓴다. 로봇과 같게 |
 | `assignment.battery_weight` | `0.0` | 비용 + 이 값 × (필요 배터리 / 남은 배터리) [m]. 0이면 끔. launch 인자 `battery_weight` |
+| `charging.peaks` | `[0.0]` | 피크 시간대 `[시작, 끝, ...]` (서버 시작부터 노드 시계 s). `[0.0]`이면 끔. launch 인자 `peaks` |
+| `charging.pre_peak_s`, `charging.pre_peak_percent` | `0.0`, `80.0` | 피크 이만큼 전부터 이보다 낮은 놀고 있는 로봇도 미리 충전 |
+| `charging.peak_max_charging` | `0` | 피크 중 동시 충전 상한 (0이면 최소 운영 대수 규칙만) |
+| `charging.peak_target_percent` | `100.0` | 피크 중 충전 목표. 닿으면 서버가 충전을 끝낸다 (100이면 끝까지) |
 | `charging.wait_pattern` | `wait_*` | 충전을 마친 로봇을 보낼 대기 위치 패턴. 비우면 충전기 위에 그대로 둔다 |
 | `assignment.station_clearance_m` | `1.0` | 스테이션 예약 (m). 맡겨진 작업의 픽업·하역 위치에서 이 거리 안을 쓰는 작업은 그 작업이 끝날 때까지 큐에서 기다린다. 큐 안에서 겹치면 우선순위가 높은 하나만 맡긴다. 같은 도크로 가는 두 작업을 동시에 내보내 두 로봇이 한 자리에서 막혔다 (11/2). 0이면 끄기 (`fleet_fake`는 연구 1 조건대로 0) |
 | `robot_timeout_s` | `3.0` | 이 시간 동안 `RobotState`가 없으면 후보에서 뺀다 (s) |

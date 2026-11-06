@@ -306,16 +306,19 @@ def test_convert_writes_outcomes_and_recovery(tmp_path):
     assert not (other / 'recovery.csv').exists()
 
 
-def robot_state(robot, x, y, mode=0, task_id=''):
-    return NS(robot_id=robot, pose=NS(position=NS(x=x, y=y)), mode=mode, current_task_id=task_id)
+def robot_state(robot, x, y, mode=0, task_id='', battery=None):
+    msg = NS(robot_id=robot, pose=NS(position=NS(x=x, y=y)), mode=mode, current_task_id=task_id)
+    if battery is not None:
+        msg.battery_percent = battery
+    return msg
 
 
 def test_robot_states_sorted_by_time(tmp_path):
-    records = [rec('/fleet/robot_states', 2.0, robot_state('amr_02', 4.0, 2.0, mode=1, task_id='t1')),
+    records = [rec('/fleet/robot_states', 2.0, robot_state('amr_02', 4.0, 2.0, mode=1, task_id='t1', battery=87.456)),
                rec('/fleet/robot_states', 1.5, robot_state('amr_01', 1.23456, -2.0)),
                rec('/fleet/heartbeat', 1.0, heartbeat(0))]
-    assert robot_states(records) == [['1.500000', 'amr_01', '1.235', '-2.000', 0, ''],
-                                     ['2.000000', 'amr_02', '4.000', '2.000', 1, 't1']]
+    assert robot_states(records) == [['1.500000', 'amr_01', '1.235', '-2.000', 0, '', ''],
+                                     ['2.000000', 'amr_02', '4.000', '2.000', 1, 't1', '87.46']]
     convert(records, tmp_path, delay_ms=0.0)
     with (tmp_path / 'robot_states.csv').open(newline='') as f:
         assert next(csv.reader(f)) == ROBOT_STATES_HEADER

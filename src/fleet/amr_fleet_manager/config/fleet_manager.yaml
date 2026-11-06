@@ -41,6 +41,16 @@ fleet_manager:
       # 스테이션 이름 패턴. 충전을 마친 로봇은 빈 대기 위치로 보낸다 (wait_pattern을 비우면 충전기에 그대로 둔다)
       charger_pattern: charger_*
       wait_pattern: wait_*
+      # 피크 대비 (4단계). 피크 시간대 [시작, 끝, 시작, 끝, ...] (서버 시작부터 노드 시계 s). [0.0]이면 끈다.
+      # 작업 생성기 profile의 바쁜 구간과 같은 시각으로 맞춘다 (생성기는 서버가 뜬 뒤 수 초 늦게 시작한다)
+      peaks: [0.0]
+      # 피크 시작 이만큼 전부터 pre_peak_percent 밑인 놀고 있는 로봇도 미리 충전하러 보낸다 (s, 0이면 끔)
+      pre_peak_s: 0.0
+      pre_peak_percent: 80.0
+      # 피크 중 동시 충전 상한 (최소 운영 대수 규칙과 둘 중 작은 쪽, 0이면 더 묶지 않음)
+      peak_max_charging: 0
+      # 피크 중 충전 목표 (%). 닿으면 서버가 충전 작업을 취소해 끝내고 대기 위치로 보낸다. 100이면 끝까지
+      peak_target_percent: 100.0
     # 에너지 예측 배정 (배터리 인지 운영 2단계). 필요 배터리 = (현재 위치 → 픽업 → 배달지 → 가장 가까운 충전기) 직선 거리
     # × path_factor × (move_per_m + idle_per_s / speed_mps) + reserve_percent. 모자란 로봇은 그 작업에서만 뺀다.
     # 충전기는 charging.stations_file에서 고른다. 소모율은 로봇(amr_bt battery.* / 가짜 로봇)과 같게 둔다

@@ -1,0 +1,21 @@
+# 배터리 실험 1 (장시간 운영): 일정한 주문량을 길게. 하네스 fleet_battery load:=flat.
+# battery_peak.yaml과 같은 흐름·같은 총 길이(1020 s)이고, 간격은 피크 프로파일 평균(약 18 s)과 비슷한 20 s다
+start_delay_s: 5.0
+arrival: fixed
+profile:
+  - {until_s: 1020, interval_s: 20.0}
+flows:
+  - type: delivery
+    pickup: [dock_1, dock_2]
+    dropoff: [rack_*]
+    weight: 1.0
+  - type: delivery
+    pickup: [rack_*]
+    dropoff: [dock_a, dock_b]
+    weight: 1.0
+items:
+  small: 0.5
+  medium: 0.3
+  large: 0.2
+priority: [0, 0]
+deadline_s: 0.0

@@ -108,6 +108,47 @@ def _put_dist(out: dict, prefix: str, values: list[float], *stats: str) -> None:
         out[f'{prefix}.{stat}'] = calc[stat]()
 
 
+# 서버가 직접 만든 충전·복귀 작업 ID 앞부분 (amr_fleet_manager 자동 충전). 배송 지표에서 빼고 fleet.charges로 따로 센다
+SERVER_TASK_PREFIXES = ('charge_', 'return_')
+# 서빙 가능: 충전(하러 가는 중 포함)·복귀가 아니고 배터리가 이 이상인 로봇 (%). 서버 할당 하한(min_battery_percent)과 같다.
+# 10 %(로봇 거부 기준)로 두면 B0(충전 안 함)에서 할당받지 못하고 서 있는 로봇도 서빙 가능으로 셌다
+SERVICEABLE_MIN_PERCENT = 20.0
+MODE_CHARGING = '2'
+
+
+def battery_metrics(run_dir: Path) -> dict[str, float]:
+    """robot_states.csv(battery 열) → 배터리 실험 지표 (배터리 인지 운영, 식당 배터리 시나리오).
+
+    fleet.battery_min: 실행 중 가장 낮았던 배터리 / fleet.battery_depleted: 0 %에 닿은 로봇 수 (방전 정지) /
+    fleet.charging_max: 동시에 충전(하러 가는 중 포함)한 로봇 수 최대 / fleet.serviceable_min: 서빙 가능한 로봇 수 최소
+    (첫 RobotState를 다 받은 뒤부터). 상태는 로봇마다 마지막으로 받은 값으로 본다.
+    """
+    rows = [r for r in _read_csv(run_dir / 'robot_states.csv') if r.get('battery')]
+    if not rows:
+        return {}
+    out = {}
+    batteries = _floats(rows, 'battery')
+    out['fleet.battery_min'] = min(batteries)
+    out['fleet.battery_depleted'] = len({r['robot'] for r in rows if float(r['battery']) <= 0.0})
+    robots = {r['robot'] for r in rows}
+    latest: dict[str, dict] = {}
+    charging_max, serviceable_min = 0, math.inf
+    for r in sorted(rows, key=lambda r: float(r['time'])):
+        latest[r['robot']] = r
+        charging = {rid for rid, s in latest.items()
+                    if s['mode'] == MODE_CHARGING or s['task_id'].startswith(SERVER_TASK_PREFIXES[0])}
+        charging_max = max(charging_max, len(charging))
+        if len(latest) == len(robots):
+            serviceable = sum(1 for rid, s in latest.items() if rid not in charging
+                              and not s['task_id'].startswith(SERVER_TASK_PREFIXES)
+                              and float(s['battery']) >= SERVICEABLE_MIN_PERCENT)
+            serviceable_min = min(serviceable_min, serviceable)
+    out['fleet.charging_max'] = charging_max
+    if serviceable_min != math.inf:
+        out['fleet.serviceable_min'] = serviceable_min
+    return out
+
+
 def fleet_metrics(run_dir: Path) -> dict[str, float]:
     """fleet_latency.csv, response_time.csv, task_outcomes.csv, recovery.csv → 실행 하나의 요약 값."""
     out = {}
@@ -138,6 +179,11 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
                                                       if r.get('latency_ms'))
     # 작업 결과. 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로, 완료율은 같은 seed(같은 작업 일정)끼리 비교한다
     tasks = _read_csv(run_dir / 'task_outcomes.csv')
+    # 서버가 만든 충전·복귀 작업은 배송 지표(완료율·처리량·대기)에서 뺀다. 자동 충전을 끈 비교군과 같은 기준으로
+    charges = [r for r in tasks if r['task_id'].startswith(SERVER_TASK_PREFIXES[0])]
+    if charges:
+        out['fleet.charges'] = len(charges)
+    tasks = [r for r in tasks if not r['task_id'].startswith(SERVER_TASK_PREFIXES)]
     if tasks:
         done = sum(r['final_state'] == 'COMPLETED' for r in tasks)
         out['fleet.tasks_requested'] = len(tasks)
@@ -148,6 +194,13 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
         times = _floats(completed, 'task_time_s')
         if times:
             out['fleet.task_time_s.mean'] = sum(times) / len(times)
+            out['fleet.task_time_s.p95'] = percentile(sorted(times), 0.95)
+        # 주문 대기 (요청 → 첫 할당, 수신 시각). 배터리 실험의 "피크 구간 대기시간". 할당된 작업만 재므로,
+        # 실행 끝까지 할당받지 못한 작업 수(tasks_never_assigned)를 같이 본다 (적게 할당한 쪽 대기가 짧아 보인다)
+        waits = sorted(float(r['first_assign_time']) - float(r['request_time']) for r in tasks
+                       if r.get('first_assign_time') and r.get('request_time'))
+        _put_dist(out, 'fleet.assign_wait_s', waits, 'mean', 'p95', 'max')
+        out['fleet.tasks_never_assigned'] = sum(1 for r in tasks if not r.get('first_assign_time'))
         # 처리량(완료 작업/분): 첫 요청부터 마지막 완료까지. 투입이 로봇 처리 능력보다 느리면 투입 속도에 묶인다
         # (통계 설계 5절). 실행 끝까지가 아니라 마지막 완료까지라 꼬리의 미완료 작업 시간은 빠진다
         # 시뮬레이션 시각 열(request_sim·end_sim, fleet_metrics SimClock)이 있으면 그 시계로 낸다 (11/3 결정: 시간 KPI는
@@ -172,6 +225,7 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
         # task_outcomes.csv에 runners 열이 있을 때만
         if 'runners' in tasks[0]:
             out['fleet.duplicate_tasks'] = sum(len(r['runners'].split()) > 1 for r in tasks)
+    out.update(battery_metrics(run_dir))
     # 하이브리드 폴백 (architecture.md 5-2절): 로봇이 분산으로 넘어간 횟수와 분산 모드로 돈 시간(로봇별 합)
     if (run_dir / 'fleet_modes.csv').exists():
         decentral = [r for r in _read_csv(run_dir / 'fleet_modes.csv') if r['mode'] == 'decentral']

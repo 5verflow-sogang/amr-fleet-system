@@ -97,7 +97,8 @@ FLEET_MODES_HEADER = ['robot', 'mode', 'start_time', 'end_time', 'duration_s']
 RECOVERY_HEADER = ['robot', 'kill_time', 'task_id', 'reassign_time', 'reassigned_robot', 'recovery_s', 'completed']
 # latency_ms: 서버 발행 → 첫 움직임 (원 명세 측정 표 "작업 명령 발행"). 통신 지연 포함
 # latency_recv_ms: 로봇 수신(중계본 도착) → 첫 움직임 (원 명세 성능 요구사항 "명령 수신 ~ 로봇 반응"). 통신 지연 제외
-ROBOT_STATES_HEADER = ['time', 'robot', 'x', 'y', 'mode', 'task_id']
+# battery: RobotState.battery_percent (배터리 실험 지표, 하네스 summary fleet.battery_*). 없는 기록은 빈칸
+ROBOT_STATES_HEADER = ['time', 'robot', 'x', 'y', 'mode', 'task_id', 'battery']
 RESPONSE_TIME_HEADER = ['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms',
                         'assignment_id', 'ack_time', 'ack_rtt_ms', 'resends', 'recv_time', 'latency_recv_ms',
                         'moving_at_cmd']
@@ -584,7 +585,9 @@ def robot_states(records: Sequence[Record]) -> list[list]:
     rows = []
     for r in sorted((r for r in records if r.topic == STATES_TOPIC), key=lambda r: r.t):
         p = r.msg.pose.position
-        rows.append([_fmt(r.t), r.msg.robot_id, _fmt(p.x, 3), _fmt(p.y, 3), r.msg.mode, r.msg.current_task_id])
+        battery = getattr(r.msg, 'battery_percent', None)
+        rows.append([_fmt(r.t), r.msg.robot_id, _fmt(p.x, 3), _fmt(p.y, 3), r.msg.mode, r.msg.current_task_id,
+                     '' if battery is None else _fmt(float(battery), 2)])
     return rows
 
 

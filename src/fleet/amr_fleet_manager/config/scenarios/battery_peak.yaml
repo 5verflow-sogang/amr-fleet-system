@@ -1,0 +1,25 @@
+# 배터리 실험 2 (피크 부하): 한가함 → 피크(주문 3배) → 한가함. 하네스 fleet_battery load:=peak.
+# 가짜 로봇 5대 (config/fake_robots_battery.yaml 압축 소모율) 기준. 배송은 basic.yaml과 같은 도크 ↔ 랙 흐름이다.
+# 한가함 30 s 간격(분당 2건)은 5대가 여유 있게 받고, 피크 10 s 간격(분당 6건)은 처리 능력(배송 1건 약 90 s, 5대면 분당 약 3.3건)을
+# 넘어 줄이 쌓인다. 피크 시각은 서버 charging.peaks와 같게 둔다 (하네스 fleet_battery peaks_s)
+start_delay_s: 5.0
+arrival: fixed
+profile:
+  - {until_s: 420, interval_s: 30.0}
+  - {until_s: 720, interval_s: 10.0}
+  - {until_s: 1020, interval_s: 30.0}
+flows:
+  - type: delivery
+    pickup: [dock_1, dock_2]
+    dropoff: [rack_*]
+    weight: 1.0
+  - type: delivery
+    pickup: [rack_*]
+    dropoff: [dock_a, dock_b]
+    weight: 1.0
+items:
+  small: 0.5
+  medium: 0.3
+  large: 0.2
+priority: [0, 0]
+deadline_s: 0.0

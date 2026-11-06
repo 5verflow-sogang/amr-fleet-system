@@ -12,7 +12,8 @@ from typing import Any, Optional
 from amr_fleet_core.assignment import (ALGORITHMS, COST_FNS, CongestedArea, CostFn, RobotInfo, TaskInfo,
                                        euclidean_cost, filter_candidates, make_congestion_cost, sort_by_priority)
 
-from amr_fleet_core.charging import ChargeConfig, Station, max_charging, nearest_free, plan_charging
+from amr_fleet_core.charging import (ChargeConfig, Station, charge_target, max_charging, nearest_free,
+                                     plan_charging)
 from amr_fleet_core.claims import TaskClaims
 from amr_fleet_core.energy import (ChargeQueue, EnergyModel, charge_remaining_s, make_battery_cost,
                                    make_energy_feasible)
@@ -192,6 +193,9 @@ class Dispatcher:
         # 자동 충전: 만든 작업 번호, 충전을 마치고 대기 위치로 보낼 로봇, 마지막 계획에서 충전 차례를 기다리는 로봇
         self._next_charge = 1
         self._return_after: set[str] = set()
+        # 피크 대비: 마지막 plan_charging의 일정 시각, 일찍 끝내려고 취소를 보낸 충전 작업 → (명령 번호, 마지막 발송)
+        self.sched_t: Optional[float] = None
+        self._stopping: dict[str, tuple[int, float]] = {}
         self.charge_waiting: list[str] = []
 
     # ---- 입력 ----
@@ -297,9 +301,11 @@ class Dispatcher:
             robot = self.robots.get(robot_id)
             if robot is not None and robot.task_id == task_id:
                 robot.task_id = ''
-            if state == STATE_COMPLETED and task.for_robot and task.info.task_type == TYPE_CHARGE \
-                    and self.config.wait_stations:
+            # 충전을 마쳤거나 피크 목표에 닿아 서버가 끝낸 충전 → 대기 위치로
+            ended = state == STATE_COMPLETED or (error_code == ERROR_CANCELED and task_id in self._stopping)
+            if ended and task.for_robot and task.info.task_type == TYPE_CHARGE and self.config.wait_stations:
                 self._return_after.add(robot_id)
+            self._stopping.pop(task_id, None)
         return True
 
     # ---- 출력 ----
@@ -363,23 +369,25 @@ class Dispatcher:
                 call_id, self.config.algorithm, cost_name, task_id, '', None))
         return commands + self._assign_directed(TYPE_RETURN, now), rows
 
-    def plan_charging(self, now: float) -> list[ChargeTask]:
+    def plan_charging(self, now: float, t: Optional[float] = None) -> list[ChargeTask]:
         """자동 충전 (charging_enabled): 배터리 낮은 로봇에게 충전, 충전을 마친 로봇에게 대기 위치 복귀 작업을 만든다.
 
         만든 작업은 장부에 넣고(for_robot) 돌려준다. 노드가 payload를 붙인 뒤 assign()이 보낸다.
         보내기 전에 로봇이 죽으면(robot_timeout_s) 그 작업은 지운다. 충전 차례를 기다리는 로봇은 charge_waiting.
+        t는 피크 대비용 일정 시각이다 (ChargeConfig.peaks와 같은 시계, 없으면 피크 대비를 끈다).
         """
+        self.sched_t = t
         if not self.config.charging_enabled or not self.config.chargers:
             return []
         alive = {rid: r for rid, r in self.robots.items()
                  if not r.decentral and now - r.last_seen <= self.config.robot_timeout_s}
-        for task_id, t in list(self.tasks.items()):
-            if t.for_robot and not t.assignee and t.state == STATE_PENDING and t.for_robot not in alive:
+        for task_id, entry in list(self.tasks.items()):
+            if entry.for_robot and not entry.assignee and entry.state == STATE_PENDING and entry.for_robot not in alive:
                 del self.tasks[task_id]
         reserved = self._reserved()
         plan = plan_charging([r.info for r in alive.values()],
                              {rid for rid, r in alive.items() if self._free(r, now) and rid not in reserved},
-                             self._charging(), self.config.chargers, self.config.charge)
+                             self._charging(), self.config.chargers, self.config.charge, t)
         self.charge_waiting = plan.waiting
         by_name = {s.name: s for s in self.config.chargers}
         created = []
@@ -418,10 +426,38 @@ class Dispatcher:
         by_name = {s.name: s.xy for s in self.config.chargers}
         remaining = tuple(charge_remaining_s(self.robots[rid].info, by_name.get(name, self.robots[rid].info.xy), model)
                           for rid, name in charging.items() if rid in self.robots)
-        slots = max_charging(len(alive), self.config.charge) - len(charging)
+        slots = max_charging(len(alive), self.config.charge, self.sched_t) - len(charging)
         free_chargers = len(self.config.chargers) - len(set(charging.values()))
-        cycle = max(0.0, model.charge_target_percent - self.config.charge.low_percent) / model.charge_per_s
+        target = charge_target(self.sched_t, self.config.charge) or model.charge_target_percent
+        cycle = max(0.0, target - self.config.charge.low_percent) / model.charge_per_s
         return ChargeQueue(remaining, len(self.charge_waiting), max(0, min(slots, free_chargers)), cycle)
+
+    def stop_charging(self, now: float) -> list[Outgoing]:
+        """피크 중 충전 목표(peak_target_percent)에 닿은 서버 충전 작업을 끝낼 취소 명령 (마지막 plan_charging 시각 기준).
+
+        같은 작업에는 같은 명령 번호로 resend_interval_s마다 다시 보낸다 (로봇은 재전송으로 보고 같은 Ack만 낸다).
+        로봇이 취소 완료(FAILED + ASSIGN_CANCELED)를 보고하면 대기 위치로 보낸다.
+        """
+        target = charge_target(self.sched_t, self.config.charge)
+        out = []
+        for task_id, entry in self.tasks.items():
+            if not entry.for_robot or entry.info.task_type != TYPE_CHARGE or entry.state != STATE_IN_PROGRESS:
+                continue
+            robot = self.robots.get(entry.assignee)
+            if robot is None:
+                continue
+            sent = self._stopping.get(task_id)
+            if sent is None:
+                if target is None or robot.info.battery_percent < target:
+                    continue
+                assignment_id = self._next_assignment_id
+                self._next_assignment_id += 1
+                self._stopping[task_id] = (assignment_id, now)
+                out.append(Outgoing(assignment_id, entry.assignee, task_id, first=True))
+            elif now - sent[1] >= self.config.resend_interval_s:
+                self._stopping[task_id] = (sent[0], now)
+                out.append(Outgoing(sent[0], entry.assignee, task_id, first=False))
+        return out
 
     def charging_robots(self) -> dict[str, str]:
         """충전 작업을 맡았거나 맡을 로봇 → 충전기 (이동 중·충전 중 포함, 작업이 끝나면 빠진다)."""
