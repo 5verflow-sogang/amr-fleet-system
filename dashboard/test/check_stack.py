@@ -21,7 +21,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 HERE = Path(__file__).resolve().parent
-# fake_robots_restaurant.yaml 시작 위치 → 지도 px (K=24, X=(x+12)K, Y=(8-y)K)
+# fake_robots_restaurant.yaml 시작 위치 → 지도 px (K=28, X=(x+12)K, Y=(8-y)K)
 STARTS = {'amr_01': (-10.5, -5.6), 'amr_02': (11.2, -7.0), 'amr_03': (1.5, 4.15), 'amr_04': (11.2, -5.8), 'amr_05': (11.2, -4.6)}
 
 
@@ -59,7 +59,7 @@ def main():
         ok('3-1·3-3', 'rosbridge에 연결되고 모의 로봇 5대가 지도에 뜬다', t is not None, f'{t:.1f}s' if t else '60초 안에 안 됨')
         page.wait_for_timeout(1500)
         pos = page.evaluate("Object.fromEntries([...document.querySelectorAll('#map .bot')].map(b => [b.id.slice(4), b.style.transform]))")
-        want = {k: f'translate({(x + 12) * 24:g}px, {(8 - y) * 24:g}px)' for k, (x, y) in STARTS.items()}
+        want = {k: f'translate({(x + 12) * 28:g}px, {(8 - y) * 28:g}px)' for k, (x, y) in STARTS.items()}
         ok('3-3', '모의 로봇이 식당 시작 위치(정차 위치)에 보인다', pos == want, pos)
         page.screenshot(path=str(args.out / 'stack_0_시작.png'))
 
@@ -81,7 +81,7 @@ def main():
         done = page.evaluate(f"doneIds.has('{sent}')")
         page.wait_for_timeout(500)   # 다음 그리기(0.25초)까지
         tile = page.inner_text('.tile:nth-child(4) .v').replace('\n', ' ')
-        ok('3-6·3-2', '회수하는 로봇의 칩이 단계대로 바뀌고 끝나면 완료가 오른다 (서빙 0 · 회수 1)', done and {'가지러 감', '싣는 중', '옮기는 중', '내리는 중'} <= chips
+        ok('3-6·3-2', '회수하는 로봇의 칩이 단계대로 바뀌고 끝나면 완료가 오른다 (서빙 0 · 회수 1)', done and {'이동', '픽업', '운반', '전달'} <= chips
            and tile.startswith('1') and '회수 1' in tile and page.inner_text('#collect') == '빈 그릇 회수',
            f"{sorted(chips)}, 완료={done}, 칸={tile}, 버튼={page.inner_text('#collect')}")
         page.click(f'#rc-{robot}')
@@ -104,9 +104,9 @@ def main():
 
         if args.restart:
             subprocess.Popen(args.restart, shell=True)
-            t_off = wait_until(page, "document.getElementById('conn').textContent === '연결 끊김 · 다시 연결 중'", 20)
+            t_off = wait_until(page, "document.getElementById('conn').textContent === '연결 끊김 · 재연결 중'", 20)
             t_on = wait_until(page, "document.getElementById('conn').textContent === '연결됨'", 90)
-            ok('3-1', 'rosbridge를 껐다 켜면 "연결 끊김 · 다시 연결 중" → 다시 "연결됨"', t_off is not None and t_on is not None,
+            ok('3-1', 'rosbridge를 껐다 켜면 "연결 끊김 · 재연결 중" → 다시 "연결됨"', t_off is not None and t_on is not None,
                f'끊김 {t_off}, 다시 연결 {t_on}')
         ok('-', '페이지 오류 없음', not errors, errors[:3])
         browser.close()

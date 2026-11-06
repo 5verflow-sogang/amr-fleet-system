@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=1280">
-<title>푸드코트 관제</title>
+<title>푸드코트 로봇 관제</title>
 <!--
   관제 대시보드 + 직원 호출 (HTML 한 장, 외부 라이브러리 없음). 화면과 문구는 「관제 대시보드 개발 명세서」를 따른다.
   rosbridge_server(WebSocket)로 docs/api.md의 토픽만 쓴다.
@@ -12,15 +12,18 @@
     보내기 /fleet/task_requests
   주소 옵션: ws, collect_priority, collect_type, aging_rate, clock, min_hall (README.md)
   시험: window.dashTest.feed(topic, msg)로 rosbridge 없이 메시지를 넣는다 (test/)
-  색은 평소 회색, 관제가 방금 판단한 것은 파랑, 충전은 주황, 문제만 빨강 (ISA-101 고성능 HMI처럼 색을 아껴 쓴다)
+  어두운 바탕. 색은 평소 회색, 관제가 방금 판단한 것은 파랑, 직원이 누르는 것은 하늘색, 충전은 주황, 혼잡·문제만 빨강
+  (ISA-101 고성능 HMI처럼 색을 아껴 쓴다). 지도는 실내 지도 앱(Mappedin)의 2D 보기처럼 회색 한 계열로 조용하게 그린다
 -->
 <style>
+  /* 어두운 화면: 스크린·영상에서 밝기가 날아가도 글자가 보이게, 본문 글자는 바탕과 대비 5:1 이상.
+     파랑(--acc) = 관제가 판단한 것, 하늘색(--sky) = 직원이 누르는 것(테이블, 호출 버튼) */
   :root {
-    --bg: #eef0f3; --panel: #fff; --ink: #18202a; --ink2: #3b4452; --quiet: #6b7480; --faint: #9aa3ae;
-    --edge: #e3e6eb; --line: #cfd4db; --tint: #f3f4f6; --floor: #fbfbfa;
-    --acc: #2563eb; --acc-soft: #eaf1fe; --acc-line: #bcd0fb; --chg: #c2410c; --chg-soft: #fdeedd;
-    --hot: #dc2626; --hot-soft: #fdecec; --ok: #16a34a;
-    --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .04);
+    --bg: #0d1117; --panel: #161b22; --raise: #1c222b; --ink: #e8edf3; --ink2: #c3ccd6; --quiet: #a2adba; --faint: #8893a0;
+    --edge: #262e39; --line: #3a4452; --tint: #1f2630; --floor: #1d242d; --cell: #2c3440; --fill: #aab5c2;
+    --acc: #6ea8ff; --acc-soft: #1a2c4a; --acc-line: #3d62a0; --chg: #ffa94d; --chg-soft: #3a2914;
+    --hot: #ff6b6b; --sky: #7dd3fc; --sky-ink: #082f49; --sky-soft: #0d2a3a; --sky-line: #2f6b8a; --sky-text: #bae6fd; --sky-dis: #8cc4dc; --sky-hover: #a5e3fd; --sky-on-line: #e0f4ff; --hot-soft: #3c1c1f; --ok: #3ddc84;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .35);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; }
@@ -31,37 +34,43 @@
 
   header { height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--edge); }
   header h1 { margin: 0; font-size: 16.5px; letter-spacing: -.2px; display: flex; align-items: center; gap: 9px; }
-  header .logo { width: 24px; height: 24px; border-radius: 7px; background: var(--ink); color: #fff; display: grid; place-items: center; }
+  header .logo { width: 24px; height: 24px; border-radius: 7px; background: var(--ink); color: var(--bg); display: grid; place-items: center; }
   header .logo svg { width: 15px; height: 15px; }
   header .right { display: flex; gap: 14px; align-items: center; color: var(--quiet); }
   header .clock { color: var(--ink); font-weight: 650; font-size: 15px; letter-spacing: .2px; }
-  .conn { display: inline-flex; align-items: center; gap: 7px; padding: 3px 10px 3px 9px; border-radius: 999px; background: #edf7f0; color: #15803d; font-size: 13px; font-weight: 600; }
-  .conn::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 rgba(22, 163, 74, .5); animation: live 2s infinite; }
+  header .since { font-size: 12.5px; color: var(--faint); }
+  .conn { display: inline-flex; align-items: center; gap: 7px; padding: 3px 10px 3px 9px; border-radius: 999px; background: #10291c; color: var(--ok); font-size: 13px; font-weight: 600; }
+  .conn::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 rgba(61, 220, 132, .5); animation: live 2s infinite; }
   .conn.bad { background: var(--hot-soft); color: var(--hot); } .conn.bad::before { background: var(--hot); animation: none; }
-  @keyframes live { 70% { box-shadow: 0 0 0 6px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
+  @keyframes live { 70% { box-shadow: 0 0 0 6px rgba(61, 220, 132, 0); } 100% { box-shadow: 0 0 0 0 rgba(61, 220, 132, 0); } }
   body.offline .summary, body.offline .main { opacity: .5; }
 
   .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 10px 16px 0; }
-  .tile { height: 72px; background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: 9px 14px; box-shadow: var(--shadow); position: relative; }
+  .tile { height: 56px; background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: 6px 14px; box-shadow: var(--shadow); position: relative; }
   .tile .k { font-size: 12.5px; color: var(--quiet); display: flex; align-items: center; gap: 6px; font-weight: 500; }
-  .tile .k .sc { margin-left: auto; font-size: 11.5px; color: var(--faint); font-weight: 400; }
-  .tile .v { font-size: 29px; font-weight: 750; line-height: 1.1; margin-top: 3px; letter-spacing: -.5px; display: flex; align-items: baseline; }
+  .tile .v { font-size: 26px; font-weight: 750; line-height: 1.1; margin-top: 1px; letter-spacing: -.5px; display: flex; align-items: baseline; }
   .tile .v small { font-size: 14.5px; font-weight: 600; color: var(--quiet); margin-left: 3px; letter-spacing: 0; }
   .tile .v .goal, .tile .v .sub { font-size: 12.5px; font-weight: 500; color: var(--quiet); margin-left: 10px; letter-spacing: 0; }
   .tile.hot .v, .tile.hot .v small { color: var(--hot); }
   .tile.click { cursor: pointer; } .tile.click:hover { border-color: var(--line); }
-  .tile .spark { position: absolute; right: 14px; bottom: 7px; }
+  .tile .spark { position: absolute; right: 14px; bottom: 5px; display: flex; align-items: flex-end; gap: 6px; } .tile .spark .cap { font-size: 12px; color: var(--faint); line-height: 1; }
 
-  .main { display: grid; grid-template-columns: 600px 1fr; gap: 10px; padding: 10px 16px 16px; height: calc(720px - 44px - 82px); }
-  .col { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  /* 지도를 왼쪽에 크게(1 m = 32 px), 로봇은 맨 아래 한 줄. 오른쪽은 관제 판단·작업 순서·호출 */
+  .main { display: grid; grid-template-columns: 778px 1fr; grid-template-rows: 1fr 60px; gap: 8px 10px; padding: 10px 16px; height: calc(720px - 44px - 66px); }
+  #p-map { grid-row: 1; grid-column: 1; padding: 4px; position: relative; }
+  .mapchip { position: absolute; top: 20px; right: 24px; z-index: 2; font-size: 12.5px; font-weight: 600; color: var(--quiet); background: rgba(15, 20, 27, .85); border: 1px solid var(--line); padding: 3px 10px; border-radius: 999px; }
+  .col { grid-row: 1; grid-column: 2; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
   .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: 10px 12px; min-height: 0; box-shadow: var(--shadow); }
   .panel h2 { margin: 0 0 7px; font-size: 13.5px; font-weight: 650; display: flex; align-items: center; gap: 6px; color: var(--ink2); }
   .panel h2 small { margin-left: auto; font-size: 12.5px; color: var(--quiet); font-weight: 400; }
 
-  #map { display: block; user-select: none; border-radius: 6px; }
-  #map .table { cursor: pointer; } #map .table:hover rect, #map .table:hover ellipse { stroke: var(--acc); }
+  #map { display: block; user-select: none; border-radius: 8px; }
+  #map .table { cursor: pointer; } #map .table:hover rect, #map .table:hover ellipse { stroke: var(--sky); stroke-width: 2; }
   #map .bot { cursor: pointer; transition: transform .5s linear; }
-  #map .bot .body { filter: drop-shadow(0 1px 1.5px rgba(16, 24, 40, .35)); }
+  #map .bot .body { filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .7)); }
+  #map .glow { filter: drop-shadow(0 0 6px rgba(110, 168, 255, .75)); }
+  #map .flow { animation: flow .9s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -11; } }
   #map .bot .head { transition: transform .5s linear; }
   #map .blink { animation: blink .5s ease-in-out infinite alternate; }
   @keyframes blink { from { opacity: 1; } to { opacity: .15; } }
@@ -70,24 +79,28 @@
   #map .draw { animation: draw .8s ease-out forwards; }
   @keyframes draw { to { stroke-dashoffset: 0; } }
 
-  #p-robots { flex: 1; }
-  .robots { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
-  .rc { border: 1px solid var(--edge); border-radius: 10px; padding: 8px 7px 7px 8px; display: flex; flex-direction: column; gap: 3px; cursor: pointer; background: #fff; transition: border-color .2s, box-shadow .2s; }
+  #p-robots { grid-row: 2; grid-column: 1 / 3; display: flex; align-items: center; gap: 10px; padding: 6px 10px 6px 14px; }
+  #p-robots h2 { margin: 0; width: 82px; flex: none; flex-direction: column; align-items: flex-start; gap: 3px; }
+  #p-robots h2 .t { display: flex; align-items: center; gap: 6px; }
+  #p-robots h2 small { margin-left: 0; font-size: 12px; }
+  .robots { flex: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+  .rc { height: 44px; border: 1px solid var(--edge); border-radius: 10px; padding: 4px 10px 4px 11px; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; align-content: center; cursor: pointer; background: var(--raise); transition: border-color .2s, box-shadow .2s; }
   .rc:hover { border-color: var(--line); }
   .rc.acc { border-color: var(--acc); box-shadow: inset 0 0 0 1px var(--acc); }
-  .rc.hot { border-color: #f3b4b4; background: #fffafa; }
-  .rc .n { font-weight: 700; font-size: 14.5px; display: flex; align-items: center; gap: 4px; }
-  .st { margin-left: auto; font-size: 12px; font-weight: 650; padding: 1px 6px; letter-spacing: -.2px; border-radius: 999px; background: #eceef1; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .rc.hot { border-color: #7a2f35; background: #241719; }
+  .rc .n { grid-column: 1; font-weight: 700; font-size: 14.5px; display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .st { font-size: 12px; font-weight: 650; padding: 1px 7px; letter-spacing: -.2px; border-radius: 999px; background: #2a323d; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .st.idle { background: var(--tint); color: var(--quiet); } .st.acc { background: var(--acc-soft); color: var(--acc); }
   .st.chg { background: var(--chg-soft); color: var(--chg); } .st.hot { background: var(--hot-soft); color: var(--hot); }
   .st:empty { display: none; }
-  .rc .d { font-size: 12.5px; color: var(--quiet); min-height: 17px; padding-left: 1px; }
-  .bat { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--quiet); margin-top: 2px; }
+  .rc .d { grid-column: 1; font-size: 12.5px; color: var(--quiet); min-height: 17px; padding-left: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rc .bat { grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 4px; font-size: 12.5px; color: var(--ink2); }
+  .rc .bat .cells { width: 58px; flex: none; }
   /* 배터리 5칸: 한 칸 = 20%. 맨 아래(왼쪽) 칸만 남으면 충전할 때 */
-  .cells { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; flex: 1; height: 8px; }
-  .cells span { background: #e8eaee; border-radius: 2px; overflow: hidden; position: relative; }
-  .cells span i { position: absolute; left: 0; top: 0; bottom: 0; background: #98a1ad; }
-  .cells.chg span i { background: #f59e0b; } .cells.hot span i { background: var(--hot); }
+  .cells { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; height: 8px; }
+  .cells span { background: var(--cell); border-radius: 2px; overflow: hidden; position: relative; }
+  .cells span i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--fill); }
+  .cells.chg span i { background: var(--chg); } .cells.hot span i { background: var(--hot); }
   .bat .hot { color: var(--hot); font-weight: 700; }
 
   .decide { cursor: pointer; position: relative; overflow: hidden; }
@@ -107,42 +120,50 @@
   #p-queue { flex: 1; overflow: hidden; }
   .q { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   .q tr { cursor: pointer; }
-  .q td { padding: 6px 6px; border-bottom: 1px solid var(--edge); white-space: nowrap; }
-  .q tr:hover td { background: #fafbfc; }
+  .q td { height: 30px; padding: 0 6px; border-bottom: 1px solid var(--edge); white-space: nowrap; }
+  .q tr:hover td { background: var(--tint); }
   .q .rk { width: 24px; color: var(--faint); font-weight: 600; text-align: center; } .q .kind { width: 64px; }
   /* 작업 이름표: 회색 하나, 충전만 주황. 파랑·빨강은 판단·문제에 남겨 둔다 */
-  .tag { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 650; padding: 2px 8px 2px 6px; border-radius: 6px; background: #eef0f3; color: var(--ink2); vertical-align: 1px; }
+  .tag { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 650; padding: 2px 8px 2px 6px; border-radius: 6px; background: #2a323d; color: var(--ink2); vertical-align: 1px; }
   .tag svg.i { width: 13px; height: 13px; stroke-width: 2; }
   .tag.chg { background: var(--chg-soft); color: var(--chg); }
   .tl { display: inline-flex; align-items: center; gap: 7px; }
   .bot { font-weight: 700; color: var(--acc); margin-left: 7px; }
   .retry { color: var(--hot); font-weight: 700; margin-left: 7px; }
-  .q .w { width: 154px; } .wait { display: flex; align-items: center; gap: 9px; justify-content: flex-end; }
-  .wait .b { width: 92px; height: 6px; border-radius: 3px; background: #e8eaee; overflow: hidden; position: relative; }
-  .wait .b i { display: block; height: 100%; border-radius: 3px; background: #98a1ad; }
+  .q .w { width: 136px; } .wait { display: flex; align-items: center; gap: 9px; justify-content: flex-end; }
+  .wait .b { width: 76px; height: 6px; border-radius: 3px; background: var(--cell); overflow: hidden; position: relative; }
+  .wait .b i { display: block; height: 100%; border-radius: 3px; background: var(--fill); }
   .wait .t { width: 34px; text-align: right; }
   .q tr.late .wait .b i { background: var(--hot); } .q tr.late .wait .t { color: var(--hot); font-weight: 700; }
   .q tr.new td { background: var(--acc-soft); } .q tr.new .wait .b i { background: var(--acc); } .q tr.new .wait .t { color: var(--acc); font-weight: 700; }
   .q tr.more td { color: var(--quiet); cursor: default; background: none; }
   .empty { color: var(--faint); padding: 10px 2px; }
 
+  #p-call { height: 114px; flex: none; }
   .call .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .btn.big { display: inline-flex; gap: 7px; align-items: center; justify-content: center; font-weight: 700; padding: 9px 12px; }
+  .btn.big { display: inline-flex; gap: 7px; align-items: center; justify-content: center; font-weight: 700; padding: 8px 12px; }
   .btn.big svg.i { width: 17px; height: 17px; }
-  .btn.big.on { border-color: var(--acc); background: var(--acc-soft); color: var(--acc); }
-  .call .under { margin-top: 8px; min-height: 34px; display: flex; align-items: center; }
+  .call .under { margin-top: 7px; min-height: 32px; display: flex; align-items: center; }
   .call .stores { display: flex; gap: 6px; flex: 1; }
   .call .stores .btn { flex: 1; padding: 6px 4px; }
-  .btn { font: inherit; font-size: 13.5px; border-radius: 9px; border: 1.5px solid var(--line); background: #fff; padding: 8px 12px; white-space: nowrap; cursor: pointer; color: var(--ink); transition: background .15s, border-color .15s; }
-  .btn:hover:not(:disabled) { border-color: var(--acc-line); background: #f7f9ff; }
-  .btn.pill { border-radius: 999px; padding: 7px 12px; } .btn:disabled { opacity: .5; cursor: default; }
+  /* 호출 버튼은 직원이 누르는 것이라 하늘색. 테이블을 고르기 전에도 늘 보이고, 고르면 꽉 찬 하늘색 */
+  .call .btn.big { background: var(--sky-soft); border-color: var(--sky-line); color: var(--sky-text); }
+  .call .btn.big:disabled { opacity: 1; color: var(--sky-dis); }
+  .call .btn.big:not(:disabled) { background: var(--sky); border-color: var(--sky); color: var(--sky-ink); }
+  .call .btn.big:hover:not(:disabled) { background: var(--sky-hover); border-color: var(--sky-hover); }
+  .call .btn.big.on { background: var(--sky-text); border-color: var(--sky-on-line); color: var(--sky-ink); box-shadow: 0 0 0 3px rgba(125, 211, 252, .25); }
+  .call .stores .btn { border-color: var(--sky-line); color: var(--sky-text); background: var(--sky-soft); }
+  .call .stores .btn:hover:not(:disabled) { background: var(--sky); color: var(--sky-ink); border-color: var(--sky); }
+  .btn { font: inherit; font-size: 13.5px; border-radius: 9px; border: 1.5px solid var(--line); background: var(--raise); padding: 8px 12px; white-space: nowrap; cursor: pointer; color: var(--ink); transition: background .15s, border-color .15s; }
+  .btn:hover:not(:disabled) { border-color: var(--acc-line); background: #1d2635; }
+  .btn.pill { border-radius: 999px; padding: 7px 12px; } .btn:disabled { opacity: .45; cursor: default; }
   .toast { font-size: 13.5px; min-height: 18px; display: flex; align-items: center; gap: 6px; }
   .toast:not(:empty) { animation: rise .25s ease-out; }
-  .toast:not(:empty)::before { content: "i"; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--acc); color: #fff; font-size: 11px; font-weight: 700; }
+  .toast:not(:empty)::before { content: "i"; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--acc); color: var(--bg); font-size: 11px; font-weight: 700; }
   .toast.hot { color: var(--hot); } .toast.hot:not(:empty)::before { content: "!"; background: var(--hot); }
   @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
 
-  .pop { position: absolute; z-index: 8; width: 300px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 32px rgba(16, 24, 40, .18), 0 2px 6px rgba(16, 24, 40, .08); padding: 12px 14px; animation: pop .16s ease-out; }
+  .pop { position: absolute; z-index: 8; width: 300px; background: #1e252f; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 14px 36px rgba(0, 0, 0, .55), 0 2px 6px rgba(0, 0, 0, .35); padding: 12px 14px; animation: pop .16s ease-out; }
   @keyframes pop { from { opacity: 0; transform: scale(.97); } }
   .pop h3 { margin: 0 0 9px; font-size: 15px; display: flex; align-items: center; gap: 7px; }
   .pop h3 .st { margin-left: 0; }
@@ -154,11 +175,11 @@
   .pop .alert b { font-weight: 700; }
   .pop .steps { list-style: none; margin: 0; padding: 0; font-size: 13.5px; position: relative; }
   .pop .steps li { display: flex; justify-content: space-between; padding: 4px 0 4px 22px; position: relative; color: var(--faint); }
-  .pop .steps li::before { content: ""; position: absolute; left: 3px; top: 9px; width: 9px; height: 9px; border-radius: 50%; border: 1.8px solid var(--line); background: #fff; z-index: 1; }
+  .pop .steps li::before { content: ""; position: absolute; left: 3px; top: 9px; width: 9px; height: 9px; border-radius: 50%; border: 1.8px solid var(--line); background: #1e252f; z-index: 1; }
   .pop .steps li::after { content: ""; position: absolute; left: 7.4px; top: 17px; bottom: -8px; border-left: 1.5px solid var(--edge); }
   .pop .steps li:last-child::after { display: none; }
-  .pop .steps li.done { color: var(--ink); } .pop .steps li.done::before { background: #6b7480; border-color: #6b7480; }
-  .pop .steps li.done::after { border-color: #9aa3ae; }
+  .pop .steps li.done { color: var(--ink); } .pop .steps li.done::before { background: var(--quiet); border-color: var(--quiet); }
+  .pop .steps li.done::after { border-color: var(--faint); }
   .pop .steps li.now { color: var(--acc); font-weight: 700; } .pop .steps li.now::before { background: var(--acc); border-color: var(--acc); box-shadow: 0 0 0 3px var(--acc-soft); }
   .pop .kv .cells { height: 8px; width: 64px; flex: none; }
   .pop .batrow { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
@@ -168,14 +189,13 @@
   .vbars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; text-align: center; }
   .vbar { display: flex; flex-direction: column; align-items: center; gap: 6px; }
   .vcells { display: grid; grid-template-rows: repeat(5, 1fr); gap: 3px; width: 46px; height: 190px; }
-  .vcells span { background: #eceef1; border-radius: 4px; position: relative; overflow: hidden; }
-  .vcells span i { position: absolute; left: 0; right: 0; bottom: 0; background: #98a1ad; }
-  .vcells.chg span i { background: #f59e0b; } .vcells.hot span i { background: var(--hot); }
+  .vcells span { background: var(--cell); border-radius: 4px; position: relative; overflow: hidden; }
+  .vcells span i { position: absolute; left: 0; right: 0; bottom: 0; background: var(--fill); }
+  .vcells.chg span i { background: var(--chg); } .vcells.hot span i { background: var(--hot); }
   .vbar .who { font-weight: 700; font-size: 14.5px; margin-top: 2px; }
   .vbar .pct { font-size: 20px; font-weight: 750; letter-spacing: -.3px; }
   .vbar .pct.hot { color: var(--hot); }
-  .vbar .note { font-size: 12.5px; color: var(--quiet); min-height: 34px; line-height: 1.35; }
-  .vbar .note.chg { color: var(--chg); font-weight: 600; } .vbar .note.hot { color: var(--hot); font-weight: 600; }
+
 </style>
 </head>
 <body>
@@ -195,20 +215,18 @@
   <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5 5 6v5.5c0 4.2 3 7.6 7 9 4-1.4 7-4.8 7-9V6z"/><path d="M9.5 12.5 11.3 14.3 14.8 10.5"/></symbol>
 </svg>
 <header>
-  <h1><span class="logo"><svg class="i"><use href="#i-robot"/></svg></span>푸드코트 관제</h1>
-  <div class="right"><span class="clock num" id="clock"></span><span class="conn bad" id="conn">연결 끊김 · 다시 연결 중</span></div>
+  <h1><span class="logo"><svg class="i"><use href="#i-robot"/></svg></span>푸드코트 로봇 관제</h1>
+  <div class="right"><span class="since" id="since"></span><span class="clock num" id="clock"></span><span class="conn bad" id="conn">연결 끊김 · 재연결 중</span></div>
 </header>
 <div class="summary" id="summary"></div>
 <div class="main">
-  <div class="col">
-    <section class="panel" id="p-map"><h2><svg class="i"><use href="#i-map"/></svg>지도 <small id="mhint"></small></h2><svg id="map" width="576" height="384" viewBox="0 0 576 384" role="img" aria-label="식당 지도"></svg></section>
-    <section class="panel" id="p-robots"><h2><svg class="i"><use href="#i-robot"/></svg>로봇 <small id="rhint"></small></h2><div class="robots" id="robots"></div></section>
-  </div>
+  <section class="panel" id="p-map"><small id="mhint" class="mapchip"></small><svg id="map" width="768" height="512" viewBox="0 0 672 448" role="img" aria-label="식당 지도"></svg></section>
   <div class="col">
     <section class="panel decide" id="p-decide"></section>
     <section class="panel" id="p-queue"><h2><svg class="i"><use href="#i-list"/></svg>작업 순서 <small id="qhint"></small></h2><div id="qbody"></div></section>
-    <section class="panel call" id="p-call" style="height:126px"></section>
+    <section class="panel call" id="p-call"></section>
   </div>
+  <section class="panel" id="p-robots"><h2><span class="t"><svg class="i"><use href="#i-robot"/></svg>로봇</span><small id="rhint"></small></h2><div class="robots" id="robots"></div></section>
 </div>
 <div class="pop" id="pop" hidden></div>
 <script>
@@ -222,8 +240,8 @@ const OPT = {
   // compose에서는 화면이 8080(안에서는 8081), rosbridge가 9090(안에서는 9091)이다
   ws: query.get('ws') || `ws://${location.hostname || 'localhost'}:${location.port === '8081' ? 9091 : 9090}`,
   collectPriority: optNum('collect_priority', 200),
-  // #302(TYPE_COLLECT = 3)가 dev에 들어오기 전에는 회수를 TYPE_DELIVERY(0)로 보내고 task_id 접두사 collect_로 구분한다
-  collectType: optNum('collect_type', 0),
+  // 회수 작업 종류 TYPE_COLLECT(3, #302). 0이면 TYPE_DELIVERY로 보내고 task_id 접두사 collect_로 구분한다
+  collectType: optNum('collect_type', 3),
   agingRate: optNum('aging_rate', 0),
   clock: parseHms(query.get('clock')),
   minHall: optNum('min_hall', null),
@@ -281,18 +299,9 @@ const clockText = t => {
   if (simNow === null) { const d = new Date(t * 1000); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
   return hms((OPT.clock ?? 0) + t);
 };
-// 앞으로 걸릴 시간: 10분 아래는 1분 단위, 그 위는 10분 단위 (명세 3-8)
-const remainText = s => {
-  const m = s / 60;
-  if (m < 1) return '1분 안';
-  if (m < 10) return `${Math.round(m)}분`;
-  const total = Math.round(m / 10) * 10, h = Math.floor(total / 60), mm = total % 60;
-  return h ? `${h}시간${mm ? ` ${mm}분` : ''}` : `${mm}분`;
-};
-const durText = s => (s % 60 ? `${Math.floor(s / 60) ? `${Math.floor(s / 60)}분 ` : ''}${Math.round(s % 60)}초` : `${s / 60}분`);
 
 // ---- 상태 ----
-const robots = {};       // id → { msg, seenWall, modeSince, history: [[t, %]], stop, stops, heading, xy }
+const robots = {};       // id → { msg, seenWall, modeSince, stop, stops, heading, xy }
 const safety = {};       // id → { level, reason, at }
 let records = [];        // FleetTaskTable.records
 const tasks = {};        // task_id → { firstSeen, assignee, assignedAt, steps, phase, failed, freshAt, orderJudged, raised }
@@ -317,8 +326,10 @@ const botName = id => `${num(id)}호`;
 
 // ---- 작업 ----
 const isCollect = t => t.task_type === TYPE.COLLECT || /^(dash_)?collect_/.test(t.task_id);
-const kindOf = t => (t.task_type === TYPE.CHARGE ? '충전' : isCollect(t) ? '회수' : '서빙');
-const KIND_ICON = { 서빙: 'serve', 회수: 'dish', 충전: 'bolt' };
+// 복귀(TYPE_RETURN)는 충전을 마친 로봇을 서버가 대기 자리로 보내는 작업. 손님 일이 아니라 작업 순서·관제 판단·완료에 넣지 않고 로봇 칩으로만 보인다
+const isReturn = t => t.task_type === TYPE.RETURN;
+const kindOf = t => (t.task_type === TYPE.CHARGE ? '충전' : isReturn(t) ? '복귀' : isCollect(t) ? '회수' : '서빙');
+const KIND_ICON = { 서빙: 'serve', 회수: 'dish', 충전: 'bolt', 복귀: 'robot' };
 // 작업 이름표 + 경로. 이름표 모양은 어디서나 같다 (작업 순서, 관제 판단, 자세히 창)
 const tagOf = t => { const k = kindOf(t); return `<span class="tag ${k === '충전' ? 'chg' : ''}">${icon(KIND_ICON[k])}${k}</span>`; };
 const taskHtml = t => `<span class="tl">${tagOf(t)}<span>${esc(routeOf(t))}</span></span>`;
@@ -329,47 +340,46 @@ const createdOf = r => secOf(r.task.created_time) || tasks[r.task.task_id]?.firs
 // 로봇의 완료 보고(task_status)가 작업표보다 먼저 오므로 둘 중 하나라도 끝났으면 끝난 작업이다
 const finished = r => r.state === STATE.COMPLETED || r.state === STATE.FAILED || doneIds.has(r.task.task_id);
 const effOf = (r, t) => r.task.priority + OPT.agingRate * Math.max(0, t - createdOf(r));
-const STEPS = ['요청', '배정', '가지러 감', '싣는 중', '옮기는 중', '내리는 중', '완료'];
-const CHARGE_STEPS = ['요청', '배정', '충전하러 감', '충전 중', '완료'];
+// 문구 템플릿 1: 작업 단계와 로봇 상태는 2글자 명사 하나. 작업 창 단계와 로봇 칩이 같은 말을 쓴다
+const STEPS = ['요청', '배정', '이동', '픽업', '운반', '전달', '완료'];
+const CHARGE_STEPS = ['요청', '배정', '이동', '충전', '완료'];
 // TaskStatus.phase → 단계 이름 (로봇 칩과 같은 말)
 const stepOfPhase = (phase, info, charge) => {
   if (!phase) return null;
-  if (charge) return /charg/.test(phase) ? '충전 중' : '충전하러 감';
-  if (phase === 'move_to_pickup') return '가지러 감';
-  if (phase === 'loading') return '싣는 중';
-  if (phase === 'move_to_dropoff') return '옮기는 중';
-  if (phase === 'unloading') return '내리는 중';
-  if (phase === 'docking') return info.steps['옮기는 중'] ? '내리는 중' : '싣는 중';
+  if (charge) return /charg/.test(phase) ? '충전' : '이동';
+  if (phase === 'move_to_pickup') return '이동';
+  if (phase === 'loading') return '픽업';
+  if (phase === 'move_to_dropoff') return '운반';
+  if (phase === 'unloading') return '전달';
+  if (phase === 'docking') return info.steps['운반'] ? '전달' : '픽업';
   return null;
 };
 
 // 기다리는 작업(처리 순서대로)과 방금 배정된 작업 (명세 3-5)
 function queueOf(t = now()) {
-  const waiting = records.filter(r => !r.assignee_id && !finished(r))
+  const waiting = records.filter(r => !r.assignee_id && !finished(r) && !isReturn(r.task))
     .sort((a, b) => effOf(b, t) - effOf(a, t) || createdOf(a) - createdOf(b) || (a.task.task_id < b.task.task_id ? -1 : 1));
-  const assigned = records.filter(r => r.assignee_id && !finished(r) && tasks[r.task.task_id]?.assignedAt != null
+  const assigned = records.filter(r => r.assignee_id && !finished(r) && !isReturn(r.task) && tasks[r.task.task_id]?.assignedAt != null
     && t - tasks[r.task.task_id].assignedAt <= T.keepAssigned);
   return { waiting, assigned };
 }
 
 // ---- 메시지 받기 ----
 function onRobotState(m) {
-  const r = robots[m.robot_id] ??= { history: [], stops: 0, stop: null, modeSince: now(), heading: null };
+  const r = robots[m.robot_id] ??= { stops: 0, stop: null, modeSince: now(), heading: null };
   if (r.msg?.mode !== m.mode) r.modeSince = now();
   const x = m.pose.position.x, y = m.pose.position.y, q = m.pose.orientation;
   // 가는 방향: 움직였으면 움직인 쪽, 아니면 자세의 yaw
   if (r.xy && Math.hypot(x - r.xy[0], y - r.xy[1]) > 0.03) r.heading = Math.atan2(y - r.xy[1], x - r.xy[0]);
   else if (r.heading === null && q) r.heading = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
   r.xy = [x, y]; r.msg = m; r.seenWall = wall();
-  r.history.push([now(), m.battery_percent]);
-  while (r.history.length && now() - r.history[0][0] > 300) r.history.shift();
 }
 
 // /clock이 처음 오면 시간 기준이 벽시계에서 시뮬레이션 시간으로 바뀐다. 벽시계로 찍어 둔 시각을 버린다
 // (세는 숫자는 그대로 두고, 세기 시작한 시각만 시뮬레이션 시간으로)
 function onFirstClock() {
   countFrom = simNow; hallHistory.length = 0; lastHallSample = 0; decision = null;
-  for (const r of Object.values(robots)) { r.history = []; r.modeSince = simNow; r.stop = null; }
+  for (const r of Object.values(robots)) { r.modeSince = simNow; r.stop = null; }
   for (const info of Object.values(tasks)) { info.steps = {}; info.firstSeen = simNow; info.freshAt = -Infinity; info.assignedAt = null; }
 }
 
@@ -453,27 +463,31 @@ function robotView(id) {
     return { ...v, chip: '연결 끊김', tone: 'hot', problem: '연결 끊김', since: r ? now() - (wall() - r.seenWall) : now() - (wall() - pageOpen) };
   }
   const m = r.msg, task = currentTask(m);
-  if (m.mode === MODE.ESTOP) return { ...v, chip: '비상 정지', tone: 'hot', place: '버튼 눌림', problem: '버튼 눌림', since: r.modeSince, why: true };
+  if (m.mode === MODE.ESTOP) return { ...v, chip: '비상 정지', tone: 'hot', place: '비상 버튼', problem: '비상 버튼', since: r.modeSince };
   if (m.mode === MODE.ERROR) return { ...v, chip: '오류', tone: 'hot', problem: '오류', since: r.modeSince };
   if (r.stop && r.stop.counted) {
-    const why = r.stop.reason === 4 ? '센서 이상' : '앞이 막힘';
+    // SafetyStatus.reason: 1 근접·2 충돌 시간 → 장애물 감지, 3 E-Stop 요청 → 비상 버튼, 4 → 센서 이상
+    const why = r.stop.reason === 4 ? '센서 이상' : r.stop.reason === 3 ? '비상 버튼' : '장애물 감지';
     return { ...v, chip: '안전 정지', tone: 'hot', place: why, problem: why, since: r.stop.since, stopped: true };
   }
   let out;
-  if (m.mode === MODE.CHARGING) out = { ...v, chip: '충전 중', tone: 'chg' };
-  else if (task && task.task_type === TYPE.CHARGE) out = { ...v, chip: '충전하러 감', tone: 'chg' };
+  // 충전·충전하러 이동은 홀에서 빠진 로봇 (offHall)
+  if (m.mode === MODE.CHARGING) out = { ...v, chip: '충전', tone: 'chg', offHall: true };
+  else if (task && task.task_type === TYPE.CHARGE) out = { ...v, chip: '이동', tone: 'chg', place: NAME(task.dropoff_station_id), offHall: true };
+  else if (task && isReturn(task)) out = { ...v, chip: '복귀', tone: 'busy', place: NAME(task.dropoff_station_id) };
   else if (task) {
     const info = tasks[task.task_id] || { steps: {} };
-    const step = stepOfPhase(info.phase, info, false) || (task.pickup_station_id ? '가지러 감' : '옮기는 중');
-    const before = step === '가지러 감' || step === '싣는 중';
+    const step = stepOfPhase(info.phase, info, false) || (task.pickup_station_id ? '이동' : '운반');
+    const before = step === '이동' || step === '픽업';
     out = { ...v, chip: step, tone: 'busy', place: NAME(before ? task.pickup_station_id : task.dropoff_station_id) };
   } else out = { ...v, chip: '대기', tone: 'idle' };
   if (judgedRobot() === id) out.tone = 'acc';
   return out;
 }
 
-const OFF_HALL = ['충전 중', '충전하러 감', '오류', '비상 정지', '연결 끊김'];
-const hallCount = (except = null) => ROBOT_IDS.filter(id => id !== except && robots[id] && !OFF_HALL.includes(robotView(id).chip)).length;
+const OFF_HALL = ['오류', '비상 정지', '연결 끊김'];
+const offHall = v => v.offHall || OFF_HALL.includes(v.chip);
+const hallCount = (except = null) => ROBOT_IDS.filter(id => id !== except && robots[id] && !offHall(robotView(id))).length;
 // 사람이 가 봐야 하는 로봇: 오류, 비상 정지, 연결 끊김, 30초 넘은 안전 정지 (BrainOS "Robot Needs Assistance")
 const needsHelp = v => v.tone === 'hot' && (!v.stopped || now() - v.since >= T.stopHelp);
 
@@ -490,6 +504,8 @@ function updateStops() {
 }
 
 // ---- 관제 판단 (명세 3-4) ----
+// 문구 템플릿 2: 결정("N호 배정" / "{작업} N순위") · 작업(이름표 + 경로) · 근거(아래 이름 + 필요하면 " · 수치")
+const WHY = { nearest: '최단 거리', congestion: '혼잡 회피', only: '대기 로봇 1대', collect: '회수 우선', order: '요청 순서', aging: '장기 대기', charge: '교대 충전' };
 function assignDecision(r, robot, at) {
   const task = r.task, msg = decisionMsgs[task.task_id];
   const d = { kind: 'assign', at, taskId: task.task_id, robot, big: `${botName(robot)} 배정`, line: taskHtml(task), why: '', cmp: null, congestion: false, candidates: [] };
@@ -498,18 +514,18 @@ function assignDecision(r, robot, at) {
     const nearest = [...c].sort((a, b) => a.distance - b.distance)[0];
     d.candidates = c.map(x => x.robot_id);
     d.congestion = msg.cost_fn === 'congestion';
-    if (c.length === 1) d.why = '대기 로봇 1대뿐';
-    else if (nearest.robot_id === robot) d.why = '가장 가까움';
-    else if (d.congestion) d.why = `${botName(nearest.robot_id)}가 더 가깝지만 길이 붐빔`;
+    if (c.length === 1) d.why = WHY.only;
+    else if (nearest.robot_id === robot) d.why = WHY.nearest;
+    else if (d.congestion) d.why = WHY.congestion;
     d.cmp = c.slice(0, 3).map(x => ({ n: botName(x.robot_id), dist: x.distance, crowd: x.congested_length, pick: x.robot_id === robot }));
-  } else if (lastIdle.size === 1 && lastIdle.has(robot)) d.why = '대기 로봇 1대뿐';
+  } else if (lastIdle.size === 1 && lastIdle.has(robot)) d.why = WHY.only;
   return d;
 }
 
+// 충전 배정: 근거 수치는 이 로봇이 빠진 뒤 홀에 남는 대수
 function chargeDecision(r, robot, at) {
-  const b = robots[robot]?.msg?.battery_percent;
-  return { kind: 'charge', at, taskId: r.task.task_id, robot, big: `${botName(robot)} 충전 보냄`, line: taskHtml(r.task),
-    why: `${b != null ? `배터리 ${Math.round(b)}% · ` : ''}홀 투입 ${hallCount(robot)}대 유지`, cmp: null, candidates: [] };
+  return { kind: 'charge', at, taskId: r.task.task_id, robot, big: `${botName(robot)} 배정`, line: taskHtml(r.task),
+    why: `${WHY.charge} · 홀 투입 ${hallCount(robot)}대`, cmp: null, candidates: [] };
 }
 
 // 같은 순간에 여러 건이면 가장 늦게 들어온 작업의 판단을 보인다
@@ -523,11 +539,12 @@ function setDecision(d) {
 
 function onAssigned(r) {
   const robot = r.assignee_id;
+  if (isReturn(r.task)) return;
   setDecision(r.task.task_type === TYPE.CHARGE ? chargeDecision(r, robot, now()) : assignDecision(r, robot, now()));
 }
 
 // 회수가 들어와 선 자리. aging은 기다리던 작업끼리의 순서를 바꾸지 않고(모두 같은 속도로 오른다),
-// 새로 온 회수가 오래 기다린 서빙 뒤에 서는 순간에만 드러난다 → 서빙 먼저
+// 새로 온 회수가 오래 기다린 서빙 뒤에 서는 순간에만 드러난다 → 서빙 N순위 · 장기 대기
 function updateOrderDecisions(waiting) {
   const t = now(), order = (big, r, why) => ({ kind: 'order', at: t, taskId: r.task.task_id, robot: null, big, line: taskHtml(r.task), why, cmp: null, candidates: [] });
   waiting.forEach((r, i) => {
@@ -538,89 +555,139 @@ function updateOrderDecisions(waiting) {
       const deliveries = waiting.filter(x => !isCollect(x.task));
       if (deliveries.length && t - info.firstSeen <= T.recent) {
         const behind = deliveries.filter(x => waiting.indexOf(x) > i).length, ahead = deliveries.length - behind;
-        if (behind && !ahead) setDecision(order('회수 먼저', r, `서빙 ${behind}건보다 앞`));
-        else if (OPT.collectPriority <= DELIVER_PRIORITY) setDecision(order('요청 순서대로', r, `앞에 서빙 ${ahead}건`));
+        if (behind && !ahead) setDecision(order(`회수 ${i + 1}순위`, r, WHY.collect));
+        else if (OPT.collectPriority <= DELIVER_PRIORITY) setDecision(order(`회수 ${i + 1}순위`, r, WHY.order));
       }
     }
     if (!isCollect(r.task) && !info.raised && OPT.agingRate > 0 && r.task.priority < OPT.collectPriority
         && waiting.slice(i + 1).some(x => isCollect(x.task))) {
       info.raised = true; info.freshAt = t;
-      const gap = Math.round((OPT.collectPriority - r.task.priority) / OPT.agingRate);
-      setDecision(order('서빙 먼저', r, `회수보다 ${durText(gap)} 넘게 먼저 요청`));
+      setDecision(order(`서빙 ${i + 1}순위`, r, `${WHY.aging} · ${mmss(t - createdOf(r))}`));
     }
   });
 }
 
 // ---- 그리기: 지도 (명세 3-3) ----
-const K = 24, X = x => (x + 12) * K, Y = y => (8 - y) * K;
+// 실내 지도 앱(Mappedin)의 2D 보기. 바닥·벽·가구·테이블·장소 이름은 회색 한 계열로 조용하게 두고,
+// 색은 상태에만 쓴다: 파랑(판단·고른 것), 주황(충전), 빨강(혼잡·문제), 흰색(일하는 로봇).
+// 층 순서(뒤 → 앞): 바닥 · 가구 · 혼잡 칠 · 경로 · 장소 이름·테이블 번호 · 혼잡 이름표 · 로봇
+// 식당 24 × 16 m를 1 m = 28 px로 (viewBox 672 × 448, 화면에서는 768 × 512로 그린다)
+const K = 28, X = x => (x + 12) * K, Y = y => (8 - y) * K;
 const svg = document.getElementById('map'), NS = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs, parent = svg) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.appendChild(e); return e; };
 const rect = (x0, x1, y0, y1, attrs, parent) => el('rect', { x: X(x0), y: Y(y1), width: (x1 - x0) * K, height: (y1 - y0) * K, ...attrs }, parent);
-const label = (x, y, text, attrs = {}, parent = svg) => { const t = el('text', { x: X(x), y: Y(y), 'text-anchor': 'middle', 'font-size': 11.5, fill: '#6b7480', ...attrs }, parent); t.textContent = text; return t; };
-const TONE = { idle: ['#fff', '#18202a'], busy: ['#d6dae0', '#18202a'], acc: ['#dbe7fd', '#2563eb'], chg: ['#fde3c4', '#c2410c'], hot: ['#fecaca', '#dc2626'] };
-const PATH = { idle: '#9aa3ae', busy: '#9aa3ae', acc: '#2563eb', chg: '#c2410c', hot: '#dc2626' };
+const TONE = { idle: ['#1a1f26', '#aab5c2', '#e8edf3'], busy: ['#e8edf3', '#0f141b', '#0f141b'], acc: ['#6ea8ff', '#0f141b', '#0f141b'],
+  chg: ['#ffa94d', '#0f141b', '#0f141b'], hot: ['#ff6b6b', '#0f141b', '#0f141b'] };
+const PATH = { idle: '#8893a0', busy: '#8893a0', acc: '#6ea8ff', chg: '#ffa94d', hot: '#ff6b6b' };
+const MAP = { bg: '#0f141b', floor: '#1a1f26', kitchen: '#15191f', wallOut: '#0b0e12', wall: '#343c47',
+  fixture: '#252c35', fixtureLine: '#323b46', table: '#3a4350', tableLine: '#5a6676', seat: '#2b323c', plant: '#272d33', plantLine: '#333a42',
+  name: '#c3ccd6', num: '#dfe5ec', halo: '#0f141b' };
+svg.style.background = MAP.bg;
 
 const defs = el('defs', {});
-// 붐비는 구역 빗금 (강하게·약하게)
-[['hatch', .12, .32], ['hatch-weak', .05, .16]].forEach(([id, fillOp, lineOp]) => {
-  const p = el('pattern', { id, width: 8, height: 8, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
-  el('rect', { width: 8, height: 8, fill: '#dc2626', 'fill-opacity': fillOp }, p);
-  el('line', { x1: 0, y1: 0, x2: 0, y2: 8, stroke: '#dc2626', 'stroke-opacity': lineOp, 'stroke-width': 3 }, p);
+const shadow = (id, dy, blur, op) => { const f = el('filter', { id, x: '-30%', y: '-30%', width: '160%', height: '160%' }, defs); el('feDropShadow', { dx: 0, dy, stdDeviation: blur, 'flood-color': '#000', 'flood-opacity': op }, f); };
+shadow('lift', 1.2, 1, .55); shadow('wallsh', 1, 1.5, .7); shadow('pin', 2, 2, .7);
+// 혼잡 칠: 밝은 빨강 판(가운데가 조금 진함). 바탕이 회색이라 지도에서 가장 먼저 보인다
+[['crowd', .42, .26], ['crowd-weak', .2, .12]].forEach(([id, a0, a1]) => {
+  const g = el('radialGradient', { id, cx: '50%', cy: '50%', r: '75%' }, defs);
+  el('stop', { offset: '0%', 'stop-color': '#ff5a5a', 'stop-opacity': a0 }, g); el('stop', { offset: '100%', 'stop-color': '#ff5a5a', 'stop-opacity': a1 }, g);
 });
-const kitchen = el('pattern', { id: 'kitchen', width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(-45)' }, defs);
-el('rect', { width: 6, height: 6, fill: '#eef0f3' }, kitchen);
-el('line', { x1: 0, y1: 0, x2: 0, y2: 6, stroke: '#e1e4e9', 'stroke-width': 2 }, kitchen);
 
-rect(-12, 12, -8, 8, { fill: '#fbfbfa' });
-rect(-12, 6.5, 5.3, 8, { fill: 'url(#kitchen)' });                              // 주방
-const zoneLayer = el('g', {});
-rect(-11.2, -6.8, 4.63, 5.3, { fill: '#fff', stroke: '#cfd4db', rx: 3 }); label(-9, 6.2, '배식대', { fill: '#3b4452', 'font-weight': 600 });
-['한식', '분식', '양식', '카페'].forEach((n, i) => { const c = -4.5 + 3 * i; rect(c - 1.3, c + 1.3, 4.63, 5.3, { fill: '#fff', stroke: '#cfd4db', rx: 3 }); label(c, 6.2, n, { fill: '#3b4452', 'font-weight': 600 }); });
-rect(-12, -11.5, -3.5, 2.2, { fill: '#eef0f3' });                             // 셀프 코너
-[[-4.225, 1.7], [1.875, 1.7], [-4.225, -4.3], [1.875, -4.3]].forEach(([x, y]) => rect(x - .25, x + .25, y - .25, y + .25, { fill: '#aab1bb', rx: 1.5 }));
-[[-9.65, -7.9], [-6.6, -1.85], [-0.5, 4.25]].forEach(([a, b]) => rect(a, b, -5.2, -5.0, { fill: '#8e97a3', rx: 2 }));  // 화분 칸막이
-[-1.15, 1.15].forEach(x => rect(x - .85, x + .85, -8, -7.25, { fill: '#fff', stroke: '#cfd4db', rx: 2 })); label(0, -6.95, '퇴식구', { fill: '#3b4452', 'font-weight': 600 });
-[5, 6.5, 8].forEach(x => rect(x - .35, x + .35, -8, -7.7, { fill: '#fde7b0', stroke: '#e8c77a', rx: 1.5 })); label(9.25, -7.62, '충전소', { 'text-anchor': 'start', fill: '#3b4452', 'font-weight': 600 });
-label(-11.4, -7.3, '입구', { 'text-anchor': 'start', fill: '#3b4452', 'font-weight': 600 });
-rect(-12, 12, -8, 8, { fill: 'none', stroke: '#18202a', 'stroke-width': 3, rx: 4 });    // 바깥 벽
+rect(-12, 12, -8, 8, { fill: MAP.floor, rx: 6 });
+rect(-12, 6.5, 5.3, 8, { fill: MAP.kitchen });                                  // 주방
+// 가구 (살짝 뜬 그림자)
+const fur = el('g', { filter: 'url(#lift)' });
+const fixture = (x0, x1, y0, y1, rx = 3) => rect(x0, x1, y0, y1, { fill: MAP.fixture, stroke: MAP.fixtureLine, 'stroke-width': 1, rx }, fur);
+const STALLS = [[-9, 2.2, '배식대'], [-4.5, 1.3, '한식'], [-1.5, 1.3, '분식'], [1.5, 1.3, '양식'], [4.5, 1.3, '카페']];
+STALLS.forEach(([c, hw]) => fixture(c - hw, c + hw, 4.63, 5.3));
+fixture(-12, -11.5, -3.5, 2.2, 2);
+[[-4.225, 1.7], [1.875, 1.7], [-4.225, -4.3], [1.875, -4.3]].forEach(([x, y]) => fixture(x - .2, x + .2, y - .2, y + .2, 2));          // 기둥
+[[-9.65, -7.9], [-6.6, -1.85], [-0.5, 4.25]].forEach(([a, b]) => rect(a, b, -5.24, -4.96, { fill: MAP.plant, stroke: MAP.plantLine, rx: 3.5 }, fur));   // 화분 칸막이
+[-1.15, 1.15].forEach(x => fixture(x - .85, x + .85, -8, -7.3, 2));             // 퇴식구
+[5, 6.5, 8].forEach(x => fixture(x - .3, x + .3, -7.98, -7.75, 2));             // 충전기
+for (const [id, [cx, cy, w, h]] of Object.entries(TABLES)) {                    // 의자
+  const seat = (x0, x1, y0, y1) => rect(x0, x1, y0, y1, { fill: MAP.seat, rx: 2.5 }, fur);
+  if (id.startsWith('c')) { [1, -1].forEach(s => { const y = cy + s * (h / 2 + .1); seat(cx - .17, cx + .17, y - .08, y + .08); }); continue; }
+  if (id.startsWith('b')) { [1, -1].forEach(s => { const y = cy + s * (h / 2 + .1); seat(cx - w / 2 + .05, cx + w / 2 - .05, y - .08, y + .08); }); continue; }
+  const n = id.startsWith('L') ? 3 : 2, step = h / n;
+  for (let i = 0; i < n; i++) { const y = cy - h / 2 + step * (i + .5); [1, -1].forEach(s => { const x = cx + s * (w / 2 + .1); seat(x - .06, x + .06, y - .15, y + .15); }); }
+}
+const tableLayer = el('g', {});
+// 벽 (그림자)
+const wallG = el('g', { filter: 'url(#wallsh)' });
+rect(-12, 12, -8, 8, { fill: 'none', stroke: MAP.wallOut, 'stroke-width': 7, rx: 6 }, wallG); rect(-12, 12, -8, 8, { fill: 'none', stroke: MAP.wall, 'stroke-width': 4.5, rx: 6 }, wallG);
+el('line', { x1: X(6.5), y1: Y(8), x2: X(6.5), y2: Y(5.3), stroke: MAP.wallOut, 'stroke-width': 5, 'stroke-linecap': 'round' }, wallG);
+el('line', { x1: X(6.5), y1: Y(8), x2: X(6.5), y2: Y(5.3), stroke: MAP.wall, 'stroke-width': 3, 'stroke-linecap': 'round' }, wallG);
+const zoneLayer = el('g', {}), pathLayer = el('g', {}), nameLayer = el('g', { 'pointer-events': 'none' }), labelLayer = el('g', { 'pointer-events': 'none' }), botLayer = el('g', {});
+// 글자: 한 가지 색 + 어두운 테두리 (경로·혼잡 칠 위에서도 읽히게)
+const halo = { stroke: MAP.halo, 'stroke-width': 4, 'stroke-linejoin': 'round', 'paint-order': 'stroke' };
+const label = (x, y, text, attrs = {}, parent = nameLayer) => { const t = el('text', { x: X(x), y: Y(y), 'text-anchor': 'middle', 'font-size': 12.5, 'font-weight': 700, fill: MAP.name, ...halo, ...attrs }, parent); t.textContent = text; return t; };
+STALLS.forEach(([c, , n]) => label(c, 5.9, n, { 'font-size': 13 }));
+label(0, -6.85, '퇴식구'); label(9.55, -7.65, '충전소', { 'text-anchor': 'start' }); label(-10.8, -7.35, '입구');
+el('path', { d: `M${X(9.2) + 4} ${Y(-7.65) - 12} l-4 7 h4 l-2 6 l7 -9 h-4 l2 -4 z`, fill: '#ffa94d' }, nameLayer);    // 충전소 표시 (충전 = 주황)
 const tableEls = {};
 for (const [id, [cx, cy, w, h]] of Object.entries(TABLES)) {
-  const g = el('g', { class: 'table', 'data-table': id });
-  const shape = id.startsWith('c') ? el('ellipse', { cx: X(cx), cy: Y(cy), rx: w / 2 * K, ry: h / 2 * K }, g)
-    : rect(cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2, { rx: 3.5 }, g);
-  const text = label(cx, cy - 0.17, id.startsWith('t') ? String(Number(id.slice(1))) : id.replace(/^(.)0/, (m, c) => c.toUpperCase()), { 'pointer-events': 'none' }, g);
+  const g = el('g', { class: 'table', 'data-table': id }, tableLayer);
+  const shape = id.startsWith('c') ? el('ellipse', { cx: X(cx), cy: Y(cy), rx: w / 2 * K, ry: h / 2 * K, filter: 'url(#lift)' }, g)
+    : rect(cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2, { rx: 4, filter: 'url(#lift)' }, g);
+  const text = label(cx, cy - 0.14, id.startsWith('t') ? String(Number(id.slice(1))) : id.replace(/^(.)0/, (m, c) => c.toUpperCase()),
+    { 'font-size': 11.5, fill: MAP.num, class: 'tnum', 'data-table': id, 'stroke-width': 3 });
   g.addEventListener('click', e => { e.stopPropagation(); closePop(); selected = selected === id ? null : id; render(); });
-  tableEls[id] = { shape, text };
+  tableEls[id] = { g, shape, text };
 }
-const pathLayer = el('g', {}), botLayer = el('g', {}), labelLayer = el('g', { 'pointer-events': 'none' });
 const pathEls = {}, botEls = {};
+// 경로는 글자·이름표 자리를 비우고 그린다 (지도 앱처럼 선이 글자를 관통하지 않게)
+const pmask = el('mask', { id: 'pathmask', maskUnits: 'userSpaceOnUse', x: 0, y: 0, width: 672, height: 448 }, defs);
+el('rect', { x: 0, y: 0, width: 672, height: 448, fill: '#fff' }, pmask);
+const holes = el('g', {}, pmask), chipHoles = el('g', {}, pmask);
+const hole = (parent, b, pad = 3) => el('rect', { class: 'hole', x: b.x - pad, y: b.y - pad, width: b.width + pad * 2, height: b.height + pad * 2, rx: 3, fill: '#000' }, parent);
+for (const t of nameLayer.querySelectorAll('text')) hole(holes, t.getBBox());
+pathLayer.setAttribute('mask', 'url(#pathmask)');
 
 function drawTables() {
   for (const [id, { shape, text }] of Object.entries(tableEls)) {
     const sel = id === selected;
-    shape.setAttribute('fill', sel ? '#dbe7fd' : '#fff'); shape.setAttribute('stroke', sel ? '#2563eb' : '#cfd4db');
-    shape.setAttribute('stroke-width', sel ? 2.5 : 1.2);
-    text.setAttribute('fill', sel ? '#2563eb' : '#6b7480'); text.setAttribute('font-weight', sel ? 700 : 500);
+    shape.setAttribute('fill', sel ? '#0e3a52' : MAP.table); shape.setAttribute('stroke', sel ? '#7dd3fc' : MAP.tableLine);
+    shape.setAttribute('stroke-width', sel ? 2 : 1);
+    text.setAttribute('fill', sel ? '#7dd3fc' : MAP.num);
   }
 }
 
-// 붐비는 구역: 0.3 미만은 그리지 않고, 0.5 이상만 테두리와 "붐빔 N명" (명세 3-3)
+// 혼잡 이름표 자리: 구역 안 후보 자리(위·가운데·아래 × 왼·가운데·오른) 중 테이블·번호·이름·로봇·다른 이름표를 가장 덜 가리는 곳
+function chipSpot(area, w, h, taken) {
+  const [x0, x1, y0, y1] = area, L = X(x0) + 5, R = X(x1) - 5, T = Y(y1) + 5, B = Y(y0) - 5;
+  const xs = R - L >= w ? [L, (L + R - w) / 2, R - w] : [Math.max(4, Math.min(672 - w - 4, (L + R - w) / 2))];
+  const ys = []; for (let y = T; y <= B - h + .01; y += 6) ys.push(y); if (!ys.length) ys.push(Math.max(4, (T + B - h) / 2));
+  const boxes = [...Object.values(TABLES).map(([cx, cy, tw, th]) => [X(cx - tw / 2) - 3, Y(cy + th / 2) - 3, X(cx + tw / 2) + 3, Y(cy - th / 2) + 3]),
+    ...[...nameLayer.querySelectorAll('text')].map(t => { const b = t.getBBox(); return [b.x - 2, b.y - 2, b.x + b.width + 2, b.y + b.height + 2]; }),
+    ...ROBOT_IDS.filter(id => robots[id]?.xy).map(id => { const [x, y] = robots[id].xy; return [X(x) - 16, Y(y) - 16, X(x) + 16, Y(y) + 16]; }), ...taken];
+  let best = null;
+  for (const y of ys) for (const x of xs) {
+    const pen = boxes.reduce((s, [a, b, c, d]) => s + Math.max(0, Math.min(c, x + w) - Math.max(a, x)) * Math.max(0, Math.min(d, y + h) - Math.max(b, y)), 0);
+    if (!best || pen < best.pen - .5) best = { x, y, pen };
+  }
+  return best;
+}
+
+// 혼잡 구역: 0.3 미만은 그리지 않고, 0.3~0.5는 옅게, 0.5 이상은 진하게 + 빨간 이름표 "혼잡 N명" (명세 3-3)
 function drawZones() {
-  zoneLayer.replaceChildren(); labelLayer.replaceChildren();
+  zoneLayer.replaceChildren(); labelLayer.replaceChildren(); chipHoles.replaceChildren();
+  const taken = [];
   for (const z of zones) {
     if (z.value < 0.3) continue;
     const [x0, x1, y0, y1] = z.area, strong = z.value >= 0.5;
-    rect(x0, x1, y0, y1, { fill: `url(#${strong ? 'hatch' : 'hatch-weak'})`, stroke: strong ? '#dc2626' : 'none', 'stroke-width': 1.3, 'stroke-dasharray': '6 3', rx: 2 }, zoneLayer);
+    rect(x0, x1, y0, y1, { fill: `url(#${strong ? 'crowd' : 'crowd-weak'})`, stroke: strong ? '#ff7b7b' : 'none', 'stroke-width': 1.6, rx: 5 }, zoneLayer);
     if (!strong) continue;
-    const text = `붐빔 ${z.people_count}명`, w = 13 + text.length * 11;
-    const g = el('g', {}, labelLayer), bx = X(x0) + 4, by = Y(y0) - 22;
-    el('rect', { x: bx, y: by, width: w, height: 18, rx: 9, fill: '#dc2626' }, g);
-    const t = el('text', { x: bx + w / 2, y: by + 13, 'text-anchor': 'middle', 'font-size': 11.5, 'font-weight': 700, fill: '#fff' }, g);
+    const text = `혼잡 ${z.people_count}명`, w = 18 + text.length * 11.5, h = 21, s = chipSpot(z.area, w, h, taken);
+    taken.push([s.x - 3, s.y - 3, s.x + w + 3, s.y + h + 3]); hole(chipHoles, { x: s.x, y: s.y, width: w, height: h }, 2);
+    const g = el('g', {}, labelLayer);
+    el('rect', { x: s.x, y: s.y, width: w, height: h, rx: 6, fill: '#ef4444', filter: 'url(#pin)' }, g);
+    const t = el('text', { x: s.x + w / 2, y: s.y + 14.5, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 700, fill: '#fff' }, g);
     t.textContent = text;
   }
 }
 
-// 경로: /amr_0N/plan이 있으면 실선, 없으면 지금 목적지까지 점선. 목적지가 바뀌면 그려 나간다
+// 경로: /amr_0N/plan이 있으면 실선(그려 나감), 없으면 목적지까지 점선. 판단한 로봇은 굵은 파랑이고 점선이 흐른다. 나머지는 흐리게
 function drawPaths() {
   for (const id of ROBOT_IDS) {
     const r = robots[id], v = robotView(id), task = currentTask(r?.msg), stroke = PATH[v.tone];
@@ -630,7 +697,7 @@ function drawPaths() {
       if (plan && plan.taskId === task.task_id) want = { key: `p${plan.goalKey}`, pts: plan.pts, dashed: false };
       else {
         const info = tasks[task.task_id] || { steps: {} };
-        const before = task.pickup_station_id && !info.steps['옮기는 중'];
+        const before = task.pickup_station_id && !info.steps['운반'];
         const goal = before ? task.pickup_pose.position : task.dropoff_pose.position;
         want = { key: `g${goal.x.toFixed(1)},${goal.y.toFixed(1)}`, pts: [r.xy, [goal.x, goal.y]], dashed: true };
       }
@@ -641,17 +708,19 @@ function drawPaths() {
       if (cur) cur.g.remove();
       const g = el('g', {}, pathLayer);
       const line = el('polyline', { fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, g);
-      const dot = el('circle', { r: 4.5, fill: '#fff', 'stroke-width': 2 }, g);
+      const dot = el('circle', {}, g);
       cur = pathEls[id] = { key: want.key, g, line, dot, fresh: true };
     }
     const strong = v.tone === 'acc' || v.tone === 'hot';
     cur.line.setAttribute('points', want.pts.map(([x, y]) => `${X(x)},${Y(y)}`).join(' '));
-    cur.line.setAttribute('stroke', stroke); cur.line.setAttribute('stroke-width', strong ? 2.6 : 1.8);
-    cur.line.setAttribute('stroke-opacity', strong ? 1 : 0.85);
+    cur.line.setAttribute('stroke', stroke); cur.line.setAttribute('stroke-width', strong ? 4.5 : 2.2); cur.line.setAttribute('stroke-opacity', strong ? .95 : .5);
     const [gx, gy] = want.pts[want.pts.length - 1];
-    cur.dot.setAttribute('cx', X(gx)); cur.dot.setAttribute('cy', Y(gy)); cur.dot.setAttribute('stroke', stroke);
-    if (want.dashed) { cur.line.setAttribute('stroke-dasharray', '5 4'); cur.line.removeAttribute('stroke-dashoffset'); cur.line.classList.remove('draw'); }
-    else if (cur.fresh) {
+    cur.dot.setAttribute('cx', X(gx)); cur.dot.setAttribute('cy', Y(gy)); cur.dot.setAttribute('r', strong ? 5.5 : 3.5); cur.dot.setAttribute('fill', stroke);
+    cur.dot.setAttribute('fill-opacity', strong ? 1 : .6);
+    if (want.dashed) {
+      cur.line.setAttribute('stroke-dasharray', strong ? '9 7' : '1.5 6'); cur.line.removeAttribute('stroke-dashoffset'); cur.line.classList.remove('draw');
+      cur.line.classList.toggle('flow', v.tone === 'acc');
+    } else if (cur.fresh) {
       const len = cur.line.getTotalLength();
       cur.line.setAttribute('stroke-dasharray', len); cur.line.setAttribute('stroke-dashoffset', len); cur.line.classList.add('draw');
     }
@@ -659,35 +728,36 @@ function drawPaths() {
   }
 }
 
-// 로봇: 같은 원을 계속 써서 위치가 미끄러지듯 바뀐다. 앞쪽 삼각형은 가는 방향
+// 로봇: 동그란 번호 표시(그림자) + 가는 방향 삼각형. 같은 표시를 계속 써서 위치가 미끄러지듯 바뀐다
 function drawRobots() {
   const ringOn = decision && now() - decision.at <= T.ring ? new Set(decision.candidates) : new Set();
   for (const id of ROBOT_IDS) {
     const r = robots[id];
     if (!r?.msg) continue;
-    const v = robotView(id), [fill, stroke] = TONE[v.tone];
+    const v = robotView(id), [fill, ring, ink] = TONE[v.tone];
     let b = botEls[id];
     if (!b) {
       const g = el('g', { class: 'bot', id: `bot-${id}` }, botLayer);
       const rings = el('g', {}, g);
-      const head = el('path', { class: 'head', d: 'M15.5 0 L10.5 -4.2 L10.5 4.2 Z' }, g);
-      const body = el('circle', { class: 'body', r: 11, 'stroke-width': 2 }, g);
-      const text = el('text', { y: 4.5, 'text-anchor': 'middle', 'font-size': 12.5, 'font-weight': 750 }, g);
+      const head = el('path', { class: 'head', d: 'M20 0 L13 -5 L13 5 Z' }, g);
+      const body = el('circle', { class: 'body', r: 12, 'stroke-width': 2.4, filter: 'url(#pin)' }, g);
+      const text = el('text', { y: 4.5, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 800 }, g);
       text.textContent = num(id);
       g.addEventListener('click', e => { e.stopPropagation(); openPop('robot', id, 'bot'); });
       b = botEls[id] = { g, rings, head, body, text };
     }
     b.g.style.transform = `translate(${X(r.xy[0])}px, ${Y(r.xy[1])}px)`;
-    b.body.setAttribute('fill', fill); b.body.setAttribute('stroke', stroke); b.text.setAttribute('fill', stroke);
-    b.head.setAttribute('fill', stroke);
+    b.body.setAttribute('fill', fill); b.body.setAttribute('stroke', ring); b.text.setAttribute('fill', ink);
+    b.head.setAttribute('fill', v.tone === 'idle' || v.tone === 'busy' ? '#aab5c2' : fill);
     b.head.style.display = r.heading === null || v.chip === '대기' ? 'none' : '';
     b.head.style.transform = `rotate(${-(r.heading ?? 0) * 180 / Math.PI}deg)`;
-    const want = `${ringOn.has(id) && judgedRobot() !== id ? 'c' : ''}${judgedRobot() === id ? 'j' : ''}${pop?.kind === 'robot' && pop.id === id ? 's' : ''}`;
+    const want = `${ringOn.has(id) && judgedRobot() !== id ? 'c' : ''}${judgedRobot() === id ? 'j' : ''}${v.tone === 'hot' ? 'h' : ''}${pop?.kind === 'robot' && pop.id === id ? 's' : ''}`;
     if (b.ringKey !== want) {
       b.ringKey = want; b.rings.replaceChildren();
-      if (want.includes('c')) el('circle', { r: 17, fill: 'none', stroke: '#6b7480', 'stroke-width': 1.5, 'stroke-dasharray': '3 3', class: 'blink' }, b.rings);
-      if (want.includes('j')) { el('circle', { r: 16, fill: 'none', stroke: '#2563eb', 'stroke-width': 2, class: 'pulse' }, b.rings); el('circle', { r: 16.5, fill: 'none', stroke: '#2563eb', 'stroke-width': 1.5 }, b.rings); }
-      if (want.includes('s')) el('circle', { r: 18, fill: 'none', stroke: '#18202a', 'stroke-width': 2 }, b.rings);
+      if (want.includes('c')) el('circle', { r: 18.5, fill: 'none', stroke: '#aab5c2', 'stroke-width': 1.5, 'stroke-dasharray': '3 3', class: 'blink' }, b.rings);
+      if (want.includes('j')) { el('circle', { r: 19, fill: '#6ea8ff', opacity: .15 }, b.rings); el('circle', { r: 17, fill: 'none', stroke: '#6ea8ff', 'stroke-width': 2, class: 'pulse' }, b.rings); }
+      if (want.includes('h')) el('circle', { r: 17, fill: 'none', stroke: '#ff6b6b', 'stroke-width': 2, class: 'pulse' }, b.rings);
+      if (want.includes('s')) el('circle', { r: 19.5, fill: 'none', stroke: '#e8edf3', 'stroke-width': 2 }, b.rings);
     }
   }
 }
@@ -701,32 +771,32 @@ const setHtml = (node, html) => { if (node._html !== html) { node._html = html; 
 
 function drawHeader() {
   $('clock').textContent = clockText(now());
+  $('since').textContent = `집계 ${clockText(countFrom ?? now()).slice(0, 5)} ~ 지금`;   // 안전 정지·완료를 세기 시작한 시각
   const c = $('conn');
-  c.textContent = connected ? '연결됨' : '연결 끊김 · 다시 연결 중';
+  c.textContent = connected ? '연결됨' : '연결 끊김 · 재연결 중';
   c.classList.toggle('bad', !connected);
   document.body.classList.toggle('offline', !connected);
 }
 
-// 숫자 칸 4개. 왼쪽 위 이름, 오른쪽 위 범위(최근 3분·배정 전·몇 시부터), 문제일 때만 숫자가 빨갛다
+// 숫자 칸 4개. 왼쪽 위 이름, 가운데 숫자, 문제일 때만 숫자가 빨갛다. 세는 범위는 상단 바 "집계 12:07 ~ 지금" 한 곳에
 function drawSummary(waiting) {
   const hall = hallCount(), t = now(), min = OPT.minHall;
   const longest = waiting.reduce((m, r) => Math.max(m, t - createdOf(r)), 0);
   // 그래프: 10초 넘게 쌓인 뒤에 그린다 (점 몇 개로는 세로선처럼 보인다). 최소 대수 아래는 옅은 띠, 그 안에 들어간 선만 빨강
   const pts = !hallHistory.length || t - hallHistory[0][0] < 10 ? [] : hallHistory.map(([ht, n]) => `${Math.max(0, 100 - (t - ht) / 180 * 100).toFixed(1)},${30 - n * 5}`);
   const yMin = min != null ? 30 - min * 5 : null;
-  const band = yMin != null ? `<rect x="0" y="${yMin}" width="100" height="${32 - yMin}" fill="#eceef1"/><clipPath id="under"><rect x="0" y="${yMin + .6}" width="100" height="${32 - yMin}"/></clipPath>` : '';
-  const line = c => `<polyline points="${pts.join(' ')}" fill="none" stroke="${c}" stroke-width="1.8" stroke-linejoin="round"${c === '#dc2626' ? ' clip-path="url(#under)"' : ''}/>`;
-  const spark = `<div class="spark"><svg width="112" height="32" viewBox="0 0 100 32" preserveAspectRatio="none">${band}${line('#3b4452')}${yMin != null ? line('#dc2626') : ''}</svg></div>`;
-  const since = `${clockText(countFrom ?? t).slice(0, 5)}부터`;
+  const band = yMin != null ? `<rect x="0" y="${yMin}" width="100" height="${32 - yMin}" fill="#232b35"/><clipPath id="under"><rect x="0" y="${yMin + .6}" width="100" height="${32 - yMin}"/></clipPath>` : '';
+  const line = c => `<polyline points="${pts.join(' ')}" fill="none" stroke="${c}" stroke-width="1.8" stroke-linejoin="round"${c === '#ff6b6b' ? ' clip-path="url(#under)"' : ''}/>`;
+  const spark = `<div class="spark"><span class="cap">3분</span><svg width="112" height="26" viewBox="0 0 100 32" preserveAspectRatio="none">${band}${line('#c3ccd6')}${yMin != null ? line('#ff6b6b') : ''}</svg></div>`;
   // 완료는 서빙·회수만 센다 (충전 작업은 손님 일이 아니다)
   const byKind = k => Object.values(doneKinds).filter(x => x === k).length, serve = byKind('서빙'), collect = byKind('회수');
-  const tile = (ic, k, sc, v, u, o = {}) => `<div class="tile ${o.hot ? 'hot' : ''} ${o.click ? 'click' : ''}" ${o.click ? `data-tile="${o.click}"` : ''}>
-    <div class="k">${icon(ic)}${k}<span class="sc">${sc}</span></div><div class="v num">${v}<small>${u}</small>${o.after ?? ''}</div>${o.extra ?? ''}</div>`;
-  setHtml($('summary'), tile('robot', '홀 투입', '최근 3분', hall, `/ ${ROBOT_IDS.length}대`,
+  const tile = (ic, k, v, u, o = {}) => `<div class="tile ${o.hot ? 'hot' : ''} ${o.click ? 'click' : ''}" ${o.click ? `data-tile="${o.click}"` : ''}>
+    <div class="k">${icon(ic)}${k}</div><div class="v num">${v}<small>${u}</small>${o.after ?? ''}</div>${o.extra ?? ''}</div>`;
+  setHtml($('summary'), tile('robot', '홀 투입', hall, `/ ${ROBOT_IDS.length}대`,
       { hot: min != null && hall < min, click: 'hall', after: min != null ? `<span class="goal">최소 ${min}대</span>` : '', extra: spark })
-    + tile('clock', '최장 대기', '배정 전', mmss(longest), '', { hot: longest >= T.waitLine })
-    + tile('shield', '안전 정지', since, stopTotal, '회')
-    + tile('check', '완료', since, serve + collect, '건', { after: serve + collect ? `<span class="sub">서빙 ${serve} · 회수 ${collect}</span>` : '' }));
+    + tile('clock', '최장 대기', mmss(longest), '', { hot: longest >= T.waitLine })
+    + tile('shield', '안전 정지', stopTotal, '회')
+    + tile('check', '완료', serve + collect, '건', { after: serve + collect ? `<span class="sub">서빙 ${serve} · 회수 ${collect}</span>` : '' }));
 }
 
 // 배터리 5칸 (한 칸 = 20%): 칸마다 찬 만큼. 충전 중 주황, 20% 아래 빨강
@@ -734,18 +804,18 @@ const cellsOf = (b, tone, vertical = false) => [0, 1, 2, 3, 4].map(i => {
   const f = Math.max(0, Math.min(1, (b - i * 20) / 20)) * 100;
   return `<span><i style="${vertical ? 'height' : 'width'}:${f.toFixed(1)}%"></i></span>`;
 });
-const batTone = (b, chip) => (chip === '충전 중' ? 'chg' : b < T.low ? 'hot' : '');
+const batTone = (b, chip) => (chip === '충전' ? 'chg' : b < T.low ? 'hot' : '');
 
 // 로봇 (명세 3-6)
 function drawRobotCards() {
   setHtml($('robots'), ROBOT_IDS.map(id => {
     const v = robotView(id), b = robots[id]?.msg?.battery_percent;
     const tone = b == null ? '' : batTone(b, v.chip);
-    const bat = b == null ? '' : `<div class="bat"><span class="cells ${tone}">${cellsOf(b, tone).join('')}</span>
-      <span class="num ${tone === 'hot' ? 'hot' : ''}">${Math.round(b)}%</span></div>`;
+    const bat = b == null ? '' : `<div class="bat"><span class="num ${tone === 'hot' ? 'hot' : ''}">${Math.round(b)}%</span>
+      <span class="cells ${tone}">${cellsOf(b, tone).join('')}</span></div>`;
     return `<div class="rc ${v.tone === 'acc' || v.tone === 'hot' ? v.tone : ''}" id="rc-${id}" data-robot="${id}">
-      <div class="n">${v.n}<span class="st ${v.tone}">${v.chip}</span></div>
-      <div class="d">${esc(v.place)}</div>${bat}</div>`;
+      <div class="n">${v.n}<span class="st ${v.tone}">${v.chip}</span></div>${bat}
+      <div class="d">${esc(v.place)}</div></div>`;
   }).join(''));
 }
 
@@ -758,23 +828,24 @@ function drawDecision() {
   const agoText = ago < 10 ? '방금' : ago < 60 ? `${Math.floor(ago)}초 전` : `${Math.floor(ago / 60)}분 전`;
   const title = `<h2>${icon('spark')}관제 판단${d ? ` <small class="num">${agoText}</small>` : ''}</h2>`;
   if (!d) { setHtml(p, `${title}<div class="empty">아직 판단 없음</div>`); return; }
-  const cmp = d.cmp ? `<table class="cmp"><tr><th>로봇</th><th>거리</th>${d.congestion ? '<th>붐비는 길</th>' : ''}</tr>${d.cmp.map(c =>
+  const cmp = d.cmp ? `<table class="cmp"><tr><th>로봇</th><th>거리</th>${d.congestion ? '<th>혼잡 구간</th>' : ''}</tr>${d.cmp.map(c =>
     `<tr class="${c.pick ? 'pick' : ''}"><td>${c.n}</td><td class="num">${c.dist.toFixed(1)} m</td>${d.congestion ? `<td class="num">${c.crowd.toFixed(1)} m</td>` : ''}</tr>`).join('')}</table>` : '';
   setHtml(p, `${title}<div class="big">${esc(d.big)}</div><div class="line">${d.line}</div>
     ${d.why ? `<div class="why">${icon('why')}${esc(d.why)}</div>` : ''}${cmp}`);
 }
 
 // 작업 순서 (명세 3-5). 행은 task_id로 다시 써서 순서가 바뀌면 미끄러지게 한다
-const rowEls = {};
+const rowEls = {}, ROW_H = 31;   // .q td 높이 30 + 선 1
 function drawQueue(q) {
   const t = now(), body = $('qbody');
-  // 비었을 때의 안내는 본문 한 곳에만 쓴다
-  $('qhint').textContent = q.waiting.length ? `${q.waiting.length}건 · 위부터 처리` : '';
+  // 제목 오른쪽은 늘 "대기 N건"(배정을 기다리는 작업 수, 0건 포함). 비었을 때 본문은 비운다 (같은 말 두 번 쓰지 않게)
+  $('qhint').textContent = `대기 ${q.waiting.length}건`;
   const items = [...q.assigned.map(r => ({ r, assigned: true })), ...q.waiting.map((r, i) => ({ r, rank: i + 1 }))];
-  if (!items.length) { body._html = null; body.innerHTML = '<div class="empty">대기 작업 없음</div>'; for (const k in rowEls) delete rowEls[k]; return; }
+  if (!items.length) { body._html = null; body.innerHTML = ''; for (const k in rowEls) delete rowEls[k]; return; }
   let table = body.querySelector('table.q');
   if (!table) { body.innerHTML = '<table class="q"><tbody></tbody></table>'; table = body.querySelector('table.q'); }
-  const tbody = table.tBodies[0], shown = items.slice(0, items.length > 7 ? 6 : 7), before = {};
+  const fit = Math.max(1, Math.floor(($('p-queue').getBoundingClientRect().bottom - body.getBoundingClientRect().top - 11) / ROW_H));
+  const tbody = table.tBodies[0], shown = items.slice(0, items.length > fit ? fit - 1 : fit), before = {};
   let prev = null;
   for (const [k, tr] of Object.entries(rowEls)) before[k] = tr.getBoundingClientRect().top;
   const keep = new Set();
@@ -788,7 +859,7 @@ function drawQueue(q) {
     tr.className = `${fresh ? 'new' : ''} ${late ? 'late' : ''}`;
     // 막대는 1분에 꽉 찬다 (기준선 없이 "꽉 참 = 1분")
     setHtml(tr, `<td class="rk num">${it.assigned ? '' : it.rank}</td><td class="kind">${tagOf(it.r.task)}</td>
-      <td>${esc(routeOf(it.r.task))}${it.assigned ? `<span class="bot">${botName(it.r.assignee_id)} 배정</span>` : ''}${!it.assigned && info.failed ? '<span class="retry">다시 배정 대기</span>' : ''}</td>
+      <td>${esc(routeOf(it.r.task))}${it.assigned ? `<span class="bot">${botName(it.r.assignee_id)} 배정</span>` : ''}${!it.assigned && info.failed ? '<span class="retry">재배정 대기</span>' : ''}</td>
       <td class="w"><div class="wait"><span class="b">${wait >= 1 ? `<i style="width:${Math.min(100, wait / T.waitLine * 100)}%"></i>` : ''}</span><span class="num t">${mmss(wait)}</span></div></td>`);
     const want = prev ? prev.nextSibling : tbody.firstChild;   // 순서가 바뀐 줄만 옮긴다
     if (tr !== want) tbody.insertBefore(tr, want);
@@ -824,8 +895,8 @@ function drawCall() {
   const under = open
     ? `<div class="stores">${STORES.map(([sid, n]) => `<button class="btn pill" data-store="${sid}" ${!activeCall('delivery', sid, selected) ? '' : 'disabled'}>${n}</button>`).join('')}</div>`
     : `<div class="toast ${showToast && toast.hot ? 'hot' : ''}">${showToast ? esc(toast.text) : ''}</div>`;
-  $('p-call').innerHTML = `<h2>${icon('bell')}호출 <small style="${name ? 'color:var(--acc);font-weight:700' : ''}">${name ?? '지도에서 테이블을 고르세요'}</small></h2>
-    <div class="two"><button class="btn big" id="collect" ${selected && !busy ? '' : 'disabled'}>${icon('dish')}${busy ? '회수 요청됨' : '빈 그릇 회수'}</button>
+  $('p-call').innerHTML = `<h2>${icon('bell')}호출 <small style="${name ? 'color:var(--sky);font-weight:700' : ''}">${name ?? '지도에서 테이블을 고르세요'}</small></h2>
+    <div class="two"><button class="btn big" id="collect" ${selected && !busy ? '' : 'disabled'}>${icon('dish')}${busy ? '회수 요청 완료' : '빈 그릇 회수'}</button>
     <button class="btn big ${open ? 'on' : ''}" id="serve" ${selected ? '' : 'disabled'}>${icon('serve')}음식 서빙</button></div>
     <div class="under">${under}</div>`;
 }
@@ -834,46 +905,34 @@ function drawCall() {
 function openPop(kind, id, from) { pop = { kind, id, from }; render(); }
 function closePop() { if (pop) { pop = null; $('pop').hidden = true; } }
 
-// 빨간 상자: 상태 이름은 제목 칩에 있으므로 이유와 지난 시간만. 안전 정지가 30초를 넘으면 할 일
+// 빨간 상자: "이유 · 지난 시간"(m:ss), 도움이 필요해지면(안전 정지는 30초 뒤) 아래 줄에 할 일
+const HELP = { '장애물 감지': '로봇 앞 통로를 확보하세요', '센서 이상': '로봇 센서를 점검하세요', '비상 버튼': '현장에서 해제하세요',
+  '오류': '현장에서 로봇을 점검하세요', '연결 끊김': '로봇 전원과 네트워크를 점검하세요' };
 function problemBox(v) {
   if (v.tone !== 'hot' || !v.problem) return '';
-  const held = now() - v.since, help = v.stopped && held >= T.stopHelp ? '<br>로봇 앞을 확인하세요' : '';
-  return `<div class="alert"><b>${v.stopped || v.why ? `${esc(v.problem)} · ` : ''}${mmss(held)}째</b>${help}</div>`;
-}
-
-// 배터리 남은 시간: 충전까지(20%) 또는 완충까지. 기록이 모자라면 빈 글. br이면 두 줄로 (배터리 창)
-function batteryLeft(id, br = false) {
-  const r = robots[id], b = r.msg.battery_percent, t = now();
-  const charging = r.msg.mode === MODE.CHARGING, span = charging ? 60 : 300;
-  const old = r.history.find(([ht]) => t - ht <= span);
-  if (!old || t - old[0] < (charging ? 20 : 60)) return '';
-  const rate = (b - old[1]) / (t - old[0]), sep = br ? '<br>' : ' ';
-  const left = (what, s) => { const x = remainText(s); return `${what}${sep}${x === '1분 안' ? x : `약 ${x}`}`; };
-  if (charging && rate > 0.0005) return left('완충까지', (100 - b) / rate);
-  if (!charging && rate < -0.0005 && b > T.low) return left('충전까지', (b - T.low) / -rate);
-  return '';
+  const help = needsHelp(v) ? HELP[v.problem] : '';
+  return `<div class="alert"><b>${esc(v.problem)} · ${mmss(now() - v.since)}</b>${help ? `<br>${help}` : ''}</div>`;
 }
 
 // 로봇 창: 작업 줄은 맡은 작업이 있을 때만 (대기·충전은 제목 칩이 이미 말한다)
 function robotPop(id) {
   const v = robotView(id), r = robots[id], task = currentTask(r?.msg), b = r?.msg?.battery_percent;
-  const tone = b == null ? '' : batTone(b, v.chip), left = b == null ? '' : batteryLeft(id);
+  const tone = b == null ? '' : batTone(b, v.chip);
   const bat = b == null ? '' : `<span class="k">배터리</span><span class="batrow"><span class="cells ${tone}">${cellsOf(b, tone).join('')}</span>
-    <span class="num ${tone === 'hot' ? 'hot' : ''}">${Math.round(b)}%${left ? ` · ${left}` : ''}</span></span>`;
+    <span class="num ${tone === 'hot' ? 'hot' : ''}">${Math.round(b)}%</span></span>`;
   return `<h3>${v.n} <span class="st ${v.tone}">${v.chip}</span><span class="x" data-close>✕</span></h3>${problemBox(v)}
-    <div class="kv">${task && task.task_type !== TYPE.CHARGE ? `<span class="k">작업</span><span>${taskHtml(task)}</span>` : ''}${bat}</div>`;
+    <div class="kv">${task && task.task_type !== TYPE.CHARGE && !isReturn(task) ? `<span class="k">작업</span><span>${taskHtml(task)}</span>` : ''}${bat}</div>`;
 }
 
 // 배터리 창: 5대를 세로 5칸 막대로 (스토리보드 3-02·3-04). 홀 투입 칸을 누르면 뜬다
+// 막대·이름·%만 쓴다. 충전 중은 주황, 20% 아래는 빨강이고, 무엇을 하는지는 맨 아래 로봇 줄에 있다
 function batteryPop() {
   const cols = ROBOT_IDS.map(id => {
     const r = robots[id], v = robotView(id), b = r?.msg?.battery_percent;
-    if (b == null) return `<div class="vbar"><div class="vcells">${'<span></span>'.repeat(5)}</div><div class="who">${botName(id)}</div><div class="pct">-</div><div class="note"></div></div>`;
-    const tone = batTone(b, v.chip), going = v.chip === '충전하러 감';
-    const note = v.chip === '충전 중' || going ? `<div class="note chg">${going ? v.chip : batteryLeft(id, true) || v.chip}</div>`
-      : `<div class="note">${batteryLeft(id, true)}</div>`;
+    if (b == null) return `<div class="vbar"><div class="vcells">${'<span></span>'.repeat(5)}</div><div class="who">${botName(id)}</div><div class="pct">-</div></div>`;
+    const tone = batTone(b, v.chip);
     return `<div class="vbar"><div class="vcells ${tone}">${cellsOf(b, tone, true).reverse().join('')}</div>
-      <div class="who">${botName(id)}</div><div class="pct num ${tone === 'hot' ? 'hot' : ''}">${Math.round(b)}%</div>${note}</div>`;
+      <div class="who">${botName(id)}</div><div class="pct num ${tone === 'hot' ? 'hot' : ''}">${Math.round(b)}%</div></div>`;
   }).join('');
   return `<h3>배터리<span class="x" data-close>✕</span></h3><div class="vbars">${cols}</div>`;
 }
@@ -968,7 +1027,7 @@ function showToast(text, hot = false) { toast = { text, hot, until: hot ? Infini
 // 호출 보내기 (명세 6-3)
 function send(kind, store) {
   if (!selected) return;
-  if (!connected) { showToast('요청 보내지 못함 · 연결되면 다시 누르세요', true); render(); return; }
+  if (!connected) { showToast('요청 실패 · 연결되면 다시 누르세요', true); render(); return; }
   const [from, to] = kind === 'collect' ? [selected, nearestReturn(selected)] : [store, selected];
   if (activeCall(kind, from, kind === 'collect' ? null : to)) return;
   const task = {
@@ -979,7 +1038,7 @@ function send(kind, store) {
   dashTest.sent.push({ topic: '/fleet/task_requests', msg: task });
   if (sock?.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ op: 'publish', topic: '/fleet/task_requests', msg: task }));
   pendingSends.push({ id: task.task_id, kind, from, to: kind === 'collect' ? null : to, at: wall() });
-  showToast(kind === 'collect' ? `${NAME(from)} 회수 요청됨` : `${NAME(from)} → ${NAME(to)} 서빙 요청됨`);
+  showToast(kind === 'collect' ? `회수 요청 완료 · ${NAME(from)}` : `서빙 요청 완료 · ${NAME(from)} → ${NAME(to)}`);
   render();
 }
 
@@ -995,10 +1054,11 @@ function tick() {
   lastIdle = new Set(ROBOT_IDS.filter(id => robots[id]?.msg?.mode === MODE.IDLE && !robots[id].msg.current_task_id));
   render(q);
 }
-// 영역 제목 오른쪽: 지도 = 붐비는 곳 수, 로봇 = 사람이 가 봐야 하는 로봇 수 (평소엔 비움)
+// 영역 제목 오른쪽: 지도 = 혼잡 발생·없음 (어디인지는 지도에), 로봇 = 사람이 가 봐야 하는 로봇 수 (평소엔 비움)
 function drawHints() {
-  const crowded = zones.filter(z => z.value >= 0.5).length;
-  $('mhint').textContent = crowded ? `붐빔 ${crowded}곳` : '붐빔 없음';
+  const crowded = zones.some(z => z.value >= 0.5);
+  $('mhint').textContent = crowded ? '혼잡 발생' : '혼잡 없음';
+  $('mhint').style.cssText = crowded ? 'color:var(--hot);font-weight:700' : '';
   const help = ROBOT_IDS.filter(id => robots[id] && needsHelp(robotView(id))).length;
   $('rhint').textContent = help ? `도움 필요 ${help}대` : '';
   $('rhint').style.cssText = help ? 'color:var(--hot);font-weight:700' : '';

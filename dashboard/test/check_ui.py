@@ -51,12 +51,9 @@ window.H = {
     dashTest.feed('/fleet/assignment_decisions', { task_id: task, robot_id: robot, cost_fn, congestion_weight: 3,
       candidates: cands.map(([robot_id, distance, congested_length, cost]) => ({ robot_id, distance, congested_length, cost })) });
   },
-  // 배터리 기록을 미리 채워 남은 시간이 바로 보이게 한다 (rate: 분당 줄어드는 %, 충전 중이면 음수)
+  // 배터리가 있는 로봇 (rate: 장면 표에 남겨 둔 분당 줄어드는 %. 화면은 %와 색만 쓴다)
   bat(id, x, y, mode, task, b, rate) {
     H.robot(id, x, y, mode, task, b);
-    const r = robots[id], t = now();
-    r.history = [];
-    for (let s = 300; s >= 0; s -= 10) r.history.push([t - s, b + rate * s / 60]);
   },
   // 홀 투입 그래프 3분 기록: [[몇 초 전부터, 대수], ...]
   hall(segs) {
@@ -92,7 +89,10 @@ window.H = {
 # 화면에 쓰지 않는 말 (5장 용어 표, 설계안 v6 문구표)
 FORBIDDEN = ['amr_0', '1번 로봇', '배달', '배송', '수거', '할당', '지정', '유휴', '쉬는 중', '큐', '지연', '혼잡도', '혼잡 구역',
              '환산', '비용', 'cost', '7번 좌석', '반납', '매장 3', '우선순위', 'priority', '놀고 있는', '가용', 'ETA',
-             '멈춤', '신호 없음', '홀 운영', '작업표', '하는 일', '다 차기', '기다림', '기다리는', '점선', '부족', '→ 2호']
+             '멈춤', '신호 없음', '홀 운영', '작업표', '하는 일', '다 차기', '기다림', '기다리는', '점선', '부족', '→ 2호',
+             '붐빔', '붐비는', '가지러', '싣는', '옮기는', '내리는', '하러 감', '먼저', '보냄', '순서대로', '1대뿐',
+             '째', '앞이 막힘', '버튼 눌림', '확인하세요', '요청됨', '보내지 못함', '다시 연결', '충전까지', '완충까지',
+             '위부터', '대기 작업 없음', '최근 3분', '배정 전']
 
 
 class Check:
@@ -149,23 +149,24 @@ def test_header(browser, c):
     page = open_page(browser, 'ws=ws://127.0.0.1:9', clock=False)
     page.evaluate('dashTest.setConnected(false)')
     page.wait_for_timeout(1000)
-    c.ok('3-1', 'rosbridge가 없으면 "연결 끊김 · 다시 연결 중"과 흐린 화면', page.inner_text('#conn') == '연결 끊김 · 다시 연결 중'
+    c.ok('3-1', 'rosbridge가 없으면 "연결 끊김 · 재연결 중"과 흐린 화면', page.inner_text('#conn') == '연결 끊김 · 재연결 중'
          and page.evaluate("document.body.classList.contains('offline')"), page.inner_text('#conn'))
     page.close()
     page = open_page(browser, 'ws=off&clock=12:07:00')
     ev(page, "dashTest.feed('/clock', { clock: { sec: 42, nanosec: 0 } }); dashTest.tick();")
-    c.ok('3-1', '?clock=12:07:00이면 시뮬레이션 42초에 12:07:42, 세기 시작한 시각도 시뮬레이션 시간 (12:07부터)',
-         page.inner_text('#clock') == '12:07:42' and page.inner_text('.tile:nth-child(3) .sc') == '12:07부터',
-         f"{page.inner_text('#clock')} / {page.inner_text('.tile:nth-child(3) .sc')}")
+    c.ok('3-1', '?clock=12:07:00이면 시뮬레이션 42초에 12:07:42, 세기 시작한 시각도 시뮬레이션 시간 ("집계 12:07 ~ 지금")',
+         page.inner_text('#clock') == '12:07:42' and page.inner_text('#since') == '집계 12:07 ~ 지금',
+         f"{page.inner_text('#clock')} / {page.inner_text('#since')}")
+    c.ok('3-1', '화면 이름 "푸드코트 로봇 관제"', page.inner_text('header h1') == '푸드코트 로봇 관제' and page.title() == '푸드코트 로봇 관제', page.inner_text('header h1'))
     c.ok('3-1', '연결되면 "연결됨"', page.inner_text('#conn') == '연결됨', page.inner_text('#conn'))
     page.close()
 
 
 def test_summary(browser, c):
     page = open_page(browser)
-    names = page.evaluate("[...document.querySelectorAll('.tile .k')].map(k => [k.childNodes[1].textContent, k.querySelector('.sc').textContent])")
-    c.ok('3-2', '숫자 칸: 홀 투입·최근 3분 / 최장 대기·배정 전 / 안전 정지·12:00부터 / 완료·12:00부터',
-         names == [['홀 투입', '최근 3분'], ['최장 대기', '배정 전'], ['안전 정지', '12:00부터'], ['완료', '12:00부터']], names)
+    names = page.evaluate("[...document.querySelectorAll('.tile .k')].map(k => k.textContent.trim())")
+    c.ok('3-2', '숫자 칸 이름만 (범위 글은 상단 바 한 곳): 홀 투입 / 최장 대기 / 안전 정지 / 완료',
+         names == ['홀 투입', '최장 대기', '안전 정지', '완료'], names)
 
     five = "['amr_01','amr_02','amr_03','amr_04','amr_05'].forEach((id, i) => H.robot(id, -6 + 3 * i, 0));"
     for _ in range(11):   # 그래프는 10초 넘게 쌓인 뒤에 그린다. 로봇 상태는 계속 온다
@@ -175,7 +176,9 @@ def test_summary(browser, c):
         ev(page, five + "H.robot('amr_02', 6.5, -7.0, 2, '', 40);"); run(page, 1000)
     hall4 = page.inner_text('.tile:nth-child(1) .v')
     last_y = page.evaluate("document.querySelector('.tile:nth-child(1) polyline').getAttribute('points').trim().split(' ').pop().split(',')[1]")
-    c.ok('3-2', '충전 중이 되면 홀 투입 5 → 4 / 5대, 그래프가 내려간다', hall5.startswith('5') and hall4.startswith('4') and float(last_y) == 10, f'{hall5} → {hall4}, 끝점 y={last_y}')
+    cap = page.inner_text('.tile:nth-child(1) .spark .cap')
+    c.ok('3-2', '충전 중이 되면 홀 투입 5 → 4 / 5대, 그래프("3분")가 내려간다', hall5.startswith('5') and hall4.startswith('4') and float(last_y) == 10 and cap == '3분',
+         f'{hall5} → {hall4}, 끝점 y={last_y}, {cap}')
 
     page3 = open_page(browser, 'ws=off&min_hall=3')
     out3 = five + "H.robot('amr_02', 6.5, -7, 2, '', 40); H.robot('amr_04', 8, -7, 2, '', 40); H.robot('amr_05', 5, -7, 2, '', 40);"
@@ -231,33 +234,34 @@ def test_map(browser, c):
     ev(page, "H.robot('amr_03', S.stall_3[0], S.stall_3[1]); dashTest.tick();")
     run(page, 600)
     tf = page.evaluate("document.getElementById('bot-amr_03').style.transform")
-    c.ok('3-3', '정차 위치(양식 앞)에 서면 지도에서도 그 자리', tf == 'translate(324px, 92.4px)', tf)
+    c.ok('3-3', '정차 위치(양식 앞)에 서면 지도에서도 그 자리', tf == 'translate(378px, 107.8px)', tf)
 
     ev(page, "H.zones([['buffet_line', [-11.9, -6.1, 3.0, 4.63], 4, 1.0]]); dashTest.tick();")
-    strong = page.evaluate("[...document.querySelectorAll('#map text')].some(t => t.textContent === '붐빔 4명')")
+    strong = page.evaluate("[...document.querySelectorAll('#map text')].some(t => t.textContent === '혼잡 4명')")
     hint1 = page.inner_text('#mhint')
     ev(page, "H.zones([['buffet_line', [-11.9, -6.1, 3.0, 4.63], 2, 0.4]]); dashTest.tick();")
-    weak = page.evaluate("[...document.querySelectorAll('#map rect')].some(r => r.getAttribute('fill') === 'url(#hatch-weak)')"
-                         " && ![...document.querySelectorAll('#map text')].some(t => t.textContent.startsWith('붐빔'))")
+    weak = page.evaluate("[...document.querySelectorAll('#map rect')].some(r => r.getAttribute('fill') === 'url(#crowd-weak)')"
+                         " && ![...document.querySelectorAll('#map text')].some(t => t.textContent.startsWith('혼잡'))")
     ev(page, "H.zones([['buffet_line', [-11.9, -6.1, 3.0, 4.63], 1, 0.2]]); dashTest.tick();")
-    gone = page.evaluate("![...document.querySelectorAll('#map rect')].some(r => /hatch/.test(r.getAttribute('fill') || ''))")
+    gone = page.evaluate("![...document.querySelectorAll('#map rect')].some(r => /crowd/.test(r.getAttribute('fill') || ''))")
     hint0 = page.inner_text('#mhint')
-    c.ok('3-3', '혼잡도 1.0 → "붐빔 4명", 0.4 → 옅은 빗금만, 0.2 → 사라짐. 제목 오른쪽 "붐빔 1곳" / "붐빔 없음"', strong and weak and gone
-         and hint1 == '붐빔 1곳' and hint0 == '붐빔 없음', f'{strong} {weak} {gone} / {hint1} / {hint0}')
+    c.ok('3-3', '혼잡도 1.0 → "혼잡 4명", 0.4 → 옅은 빗금만, 0.2 → 사라짐. 제목 오른쪽 "혼잡 발생"(빨강) / "혼잡 없음"', strong and weak and gone
+         and hint1 == '혼잡 발생' and hint0 == '혼잡 없음', f'{strong} {weak} {gone} / {hint1} / {hint0}')
 
     page.close()
     page = open_page(browser)
     ev(page, """const busy = H.scene11(); const t = H.task('d11', 'buffet_1', 't07');
       H.decision('d11', 'amr_03', 'congestion', [['amr_03', 11.4, 3.8, 22.8], ['amr_01', 9.8, 9.2, 37.3]]);
       t.assignee_id = 'amr_03'; H.table([...busy, t]); H.robot('amr_03', 1.2, 4.15, 1, 'd11'); dashTest.tick();""")
-    blink = page.evaluate("!!document.querySelector('#bot-amr_01 .blink') && !!document.querySelector('#bot-amr_03 .pulse')")
+    blue = "#bot-amr_03 .pulse[stroke='#6ea8ff']"   # 문제 로봇의 빨간 고리와 구분
+    blink = page.evaluate(f"!!document.querySelector('#bot-amr_01 .blink') && !!document.querySelector(\"{blue}\")")
     run(page, 3500)
-    blink_off = page.evaluate("!document.querySelector('#bot-amr_01 .blink') && !!document.querySelector('#bot-amr_03 .pulse')")
+    blink_off = page.evaluate(f"!document.querySelector('#bot-amr_01 .blink') && !!document.querySelector(\"{blue}\")")
     run(page, 7500)
-    pulse_off = page.evaluate("!document.querySelector('#bot-amr_03 .pulse')")
+    pulse_off = page.evaluate(f"!document.querySelector(\"{blue}\")")
     c.ok('3-3', '판단이 오면 후보 고리가 3초 깜빡이고, 고른 로봇 파란 고리가 10초', blink and blink_off and pulse_off, f'{blink} {blink_off} {pulse_off}')
 
-    dashed = page.evaluate("[...document.querySelectorAll('#map polyline')].some(l => l.getAttribute('stroke-dasharray') === '5 4')")
+    dashed = page.evaluate("[...document.querySelectorAll('#map polyline')].some(l => l.getAttribute('stroke-dasharray') === '9 7')")   # 판단한 로봇의 굵은 점선
     ev(page, "dashTest.feed('/amr_03/plan', { poses: [[1.2, 4.15], [-3, 4.0], [-9.9, 4.0], [-9.9, 4.15]].map(([x, y]) => ({ pose: H.P(x, y) })) }); dashTest.tick();")
     drawn = page.evaluate("[...document.querySelectorAll('#map polyline')].some(l => l.classList.contains('draw'))")
     c.ok('3-3', '경로 토픽이 없으면 목적지까지 점선, 오면 그려지는 효과로 실선', dashed and drawn, f'{dashed} {drawn}')
@@ -272,8 +276,8 @@ def test_decision(browser, c):
     big, why = page.inner_text('#p-decide .big'), page.inner_text('#p-decide .why')
     th = page.evaluate("[...document.querySelectorAll('#p-decide th')].map(t => t.textContent)")
     line = page.evaluate("[document.querySelector('#p-decide .line .tag').textContent, document.querySelector('#p-decide .line .tl > span:last-child').textContent]")
-    c.ok('3-4', '붐빔 반영 배정: "3호 배정", 이름표 서빙 + 경로, "1호가 더 가깝지만 길이 붐빔", 로봇·거리·붐비는 길', big == '3호 배정' and why == '1호가 더 가깝지만 길이 붐빔'
-         and th == ['로봇', '거리', '붐비는 길'] and line == ['서빙', '배식대 → 7번 테이블'], f'{big} / {why} / {th} / {line}')
+    c.ok('3-4', '혼잡 반영 배정: "3호 배정", 이름표 서빙 + 경로, 근거 "혼잡 회피", 로봇·거리·혼잡 구간', big == '3호 배정' and why == '혼잡 회피'
+         and th == ['로봇', '거리', '혼잡 구간'] and line == ['서빙', '배식대 → 7번 테이블'], f'{big} / {why} / {th} / {line}')
     now_text = page.inner_text('#p-decide h2 small')
     run(page, 12300)   # 다시 그리기(0.25초마다)가 12초를 지난 뒤에 한 번 오게
     later = page.inner_text('#p-decide h2 small')
@@ -285,7 +289,7 @@ def test_decision(browser, c):
       H.decision('d11', 'amr_01', 'euclidean', [['amr_01', 9.8, 0, 9.8], ['amr_03', 11.4, 0, 11.4]]);
       t.assignee_id = 'amr_01'; H.table([...busy, t]); dashTest.tick();""")
     th = page.evaluate("[...document.querySelectorAll('#p-decide th')].map(t => t.textContent)")
-    c.ok('3-4', '끔(euclidean): 붐비는 길 열 없이 거리만, "가장 가까움"', th == ['로봇', '거리'] and page.inner_text('#p-decide .why') == '가장 가까움', th)
+    c.ok('3-4', '끔(euclidean): 혼잡 구간 열 없이 거리만, 근거 "최단 거리"', th == ['로봇', '거리'] and page.inner_text('#p-decide .why') == '최단 거리', th)
     page.close()
 
     page = open_page(browser)
@@ -296,10 +300,10 @@ def test_decision(browser, c):
 
     page = open_page(browser)
     ev(page, "const recs = H.allBusy(); H.robot('amr_02', -0.6, 1.0, 0); dashTest.tick(); const t = H.task('c1', 't03', 'return_1', { type: 0, pr: 200 }); t.task.task_id = 'collect_c1'; t.assignee_id = 'amr_02'; H.table([...recs.filter(r => r.assignee_id !== 'amr_02'), t]); dashTest.tick();")
-    c.ok('3-4', '대기 로봇이 1대뿐이면 "대기 로봇 1대뿐"', page.inner_text('#p-decide .why') == '대기 로봇 1대뿐', page.inner_text('#p-decide'))
+    c.ok('3-4', '대기 로봇이 1대뿐이면 근거 "대기 로봇 1대"', page.inner_text('#p-decide .why') == '대기 로봇 1대', page.inner_text('#p-decide'))
     page.close()
 
-    for query, want, why_want, rank in (('ws=off', '회수 먼저', '서빙 4건보다 앞', '1'), ('ws=off&collect_priority=100', '요청 순서대로', '앞에 서빙 4건', '5')):
+    for query, want, why_want, rank in (('ws=off', '회수 1순위', '회수 우선', '1'), ('ws=off&collect_priority=100', '회수 5순위', '요청 순서', '5')):
         page = open_page(browser, query)
         pr = 100 if 'collect_priority' in query else 200
         ev(page, f"""const busy = H.allBusy(); const ds = [40, 35, 30, 25].map((a, i) => H.task(`d${{i}}`, 'stall_1', ['t09', 't15', 't04', 't02'][i], {{ age: a }}));
@@ -314,8 +318,8 @@ def test_decision(browser, c):
       H.table([...busy, d]); dashTest.tick(); const col = H.task('collect_y', 't06', 'return_1', { pr: 200 }); H.table([...busy, d, col]); dashTest.tick();""")
     first = page.evaluate("document.querySelector('#qbody tr').dataset.task")
     fresh = page.evaluate("document.querySelector('#qbody tr').classList.contains('new')")
-    c.ok('3-4·3-5', 'aging_rate=1.667: 1분 넘게 먼저 요청한 서빙 뒤에 새 회수가 서면 "서빙 먼저 · 회수보다 1분 넘게 먼저 요청"', page.inner_text('#p-decide .big') == '서빙 먼저'
-         and page.inner_text('#p-decide .why') == '회수보다 1분 넘게 먼저 요청' and first == 'd_c1' and fresh, f"{flat(page.inner_text('#p-decide'))} / 1번={first}")
+    c.ok('3-4·3-5', 'aging_rate=1.667: 1분 넘게 기다린 서빙 뒤에 새 회수가 서면 "서빙 1순위", 근거 "장기 대기 · 1:10"', page.inner_text('#p-decide .big') == '서빙 1순위'
+         and page.inner_text('#p-decide .why') == '장기 대기 · 1:10' and first == 'd_c1' and fresh, f"{flat(page.inner_text('#p-decide'))} / 1번={first}")
     page.close()
 
 
@@ -326,16 +330,27 @@ def test_charge(browser, c):
       H.table([H.charge('charge_2', 'amr_02')]); H.robot('amr_02', -3, 0, 1, 'charge_2', 24); dashTest.tick();""")
     big, why, chip = page.inner_text('#p-decide .big'), page.inner_text('#p-decide .why'), page.inner_text('#rc-amr_02 .st')
     line = page.evaluate("[document.querySelector('#p-decide .line .tag').textContent, document.querySelector('#p-decide .line .tag').classList.contains('chg'), document.querySelector('#p-decide .line .tl > span:last-child').textContent]")
-    c.ok('3-4·3-6', '충전 작업 배정 → "2호 충전 보냄", "배터리 24% · 홀 투입 3대 유지", 주황 이름표 충전 + 충전소, 칩 "충전하러 감"(둘째 줄 비움)', big == '2호 충전 보냄'
-         and why == '배터리 24% · 홀 투입 3대 유지' and chip == '충전하러 감' and line == ['충전', True, '충전소'] and page.inner_text('#rc-amr_02 .d') == '',
+    c.ok('3-4·3-6', '충전 작업 배정 → "2호 배정", 근거 "교대 충전 · 홀 투입 3대", 주황 이름표 충전 + 충전소, 칩 "이동 · 충전소"', big == '2호 배정'
+         and why == '교대 충전 · 홀 투입 3대' and chip == '이동' and line == ['충전', True, '충전소'] and page.inner_text('#rc-amr_02 .d') == '충전소',
          f'{big} / {why} / {chip} / {line}')
+
+    # 충전을 마치면 서버가 대기 자리로 보내는 복귀 작업(TYPE_RETURN, #312): 칩으로만 보이고 작업 순서·관제 판단·완료에는 없다
+    ev(page, """H.status('charge_2', 'amr_02', 2); const back = H.charge('return_amr_02_0001', 'amr_02', { type: 2 });
+      back.task.dropoff_station_id = 'wait_2'; back.task.dropoff_pose = H.P(-10, -6);
+      H.table([back]); H.robot('amr_02', 6.5, -7, 1, 'return_amr_02_0001', 100); dashTest.tick();""")
+    ret = (page.inner_text('#rc-amr_02 .st'), page.inner_text('#rc-amr_02 .d'), page.query_selector('#row-return_amr_02_0001') is None,
+           page.inner_text('#p-decide .big'))
+    ev(page, "H.status('return_amr_02_0001', 'amr_02', 2); H.robot('amr_02', -10, -6, 0, '', 100); dashTest.tick();")
+    done = page.evaluate("document.querySelectorAll('.tile')[3].querySelector('.v').innerText.replace(/\\s+/g, '')")
+    c.ok('3-4·3-6', '충전 뒤 복귀 작업 → 칩 "복귀 · 대기 자리", 작업 순서·관제 판단에 없고 완료에 세지 않는다',
+         ret == ('복귀', '대기 자리', True, '2호 배정') and done == '0건', f'{ret} / 완료 {done}')
     page.close()
 
 
 def test_queue(browser, c):
     page = open_page(browser)
     empty = (page.inner_text('#qhint'), page.inner_text('#qbody'))
-    c.ok('3-5', '비었을 때 제목 오른쪽은 비우고 본문에 "대기 작업 없음"', empty == ('', '대기 작업 없음'), empty)
+    c.ok('3-5', '비었을 때 제목 오른쪽 "대기 0건", 본문은 비움', empty == ('대기 0건', ''), empty)
     ev(page, "const busy = H.allBusy(); H.table([...busy, H.task('q1', 'stall_1', 't04', { age: 10 })]); dashTest.tick();")
     tag = page.evaluate("document.querySelector('#row-q1 .tag')?.textContent")
     ev(page, "const busy = H.allBusy(); H.table([...busy, H.task('q1', 'stall_1', 't04', { age: 10, who: 'amr_02' })]); dashTest.tick();")
@@ -353,8 +368,11 @@ def test_queue(browser, c):
 
     ev(page, "const busy = H.allBusy(); H.table([...busy, ...[...Array(9)].map((_, i) => H.task(`m${i}`, 'stall_1', 't0' + (i % 9 + 1), { age: 50 - i }))]); dashTest.tick();")
     more = page.evaluate("document.querySelector('#qbody tr.more')?.innerText.trim()")
+    rows = page.evaluate("document.querySelectorAll('#qbody tr[data-task]').length")
+    fits = page.evaluate("document.querySelector('#qbody table').getBoundingClientRect().bottom <= document.getElementById('p-queue').getBoundingClientRect().bottom")
     hint = page.inner_text('#qhint')
-    c.ok('3-5', '7건이 넘으면 6줄 + "외 3건", 제목 오른쪽 "9건 · 위부터 처리"', more == '외 3건' and hint == '9건 · 위부터 처리', f'{more} / {hint}')
+    c.ok('3-5', '칸에 다 안 들어가면 들어가는 만큼 + "외 n건"(합 9건, 칸 밖으로 넘치지 않음), 제목 오른쪽 "대기 9건"',
+         more == f'외 {9 - rows}건' and rows >= 4 and fits and hint == '대기 9건', f'{rows}줄 + {more} / 넘침 없음={fits} / {hint}')
     page.close()
 
 
@@ -367,7 +385,7 @@ def test_robots(browser, c):
         chips.append(page.inner_text('#rc-amr_01 .st'))
     ev(page, "H.status('r1', 'amr_01', 2); H.robot('amr_01', 0, 0, 0, ''); dashTest.tick();")
     chips.append(page.inner_text('#rc-amr_01 .st'))
-    c.ok('3-6', '단계마다 칩이 바뀐다 (가지러 감 → 싣는 중 → 옮기는 중 → 내리는 중 → 대기)', chips == ['가지러 감', '싣는 중', '옮기는 중', '내리는 중', '대기'], chips)
+    c.ok('3-6', '단계마다 칩이 바뀐다 (이동 → 픽업 → 운반 → 전달 → 대기)', chips == ['이동', '픽업', '운반', '전달', '대기'], chips)
 
     for _ in range(4):
         ev(page, "H.safety('amr_01', 2); H.robot('amr_01', 0, 0, 0, '');")
@@ -375,7 +393,7 @@ def test_robots(browser, c):
     stop = (page.inner_text('#rc-amr_01 .st'), page.inner_text('#rc-amr_01 .d'))
     ev(page, "H.safety('amr_01', 0); dashTest.tick();")
     back = page.inner_text('#rc-amr_01 .st')
-    c.ok('3-6', '안전 상태 정지 2초 → "안전 정지 · 앞이 막힘", 풀리면 원래대로', stop == ('안전 정지', '앞이 막힘') and back == '대기', f'{stop} → {back}')
+    c.ok('3-6', '안전 상태 정지 2초 → "안전 정지 · 장애물 감지", 풀리면 원래대로', stop == ('안전 정지', '장애물 감지') and back == '대기', f'{stop} → {back}')
 
     ev(page, "H.robot('amr_02', 1, 1, 0, '', 19); H.robot('amr_03', 6.5, -7, 2, '', 40); dashTest.tick();")
     low = (page.inner_text('#rc-amr_02 .bat .num'), page.evaluate("document.querySelector('#rc-amr_02 .bat .num').classList.contains('hot')"),
@@ -399,19 +417,23 @@ def test_call(browser, c):
     hint = page.inner_text('#p-call h2 small')
     off = page.is_disabled('#collect') and page.is_disabled('#serve')
     w = page.evaluate("['collect', 'serve'].map(id => Math.round(document.getElementById(id).getBoundingClientRect().width))")
-    c.ok('3-7', '고르기 전: "지도에서 테이블을 고르세요", 회수·서빙 버튼이 같은 크기로 흐림', hint == '지도에서 테이블을 고르세요' and off and w[0] == w[1], f'{hint} / 흐림={off} / 폭={w}')
+    shown = page.evaluate("['collect', 'serve'].every(id => document.getElementById(id).offsetHeight > 30)")
+    c.ok('3-7', '고르기 전: "지도에서 테이블을 고르세요", 회수·서빙 버튼은 늘 보이고 같은 크기, 누를 수 없음', hint == '지도에서 테이블을 고르세요' and off and shown and w[0] == w[1],
+         f'{hint} / 못 누름={off} / 보임={shown} / 폭={w}')
     page.click('[data-table="t03"]')
+    sky = page.evaluate("[getComputedStyle(document.getElementById('collect')).backgroundColor, document.querySelector('[data-table=\"t03\"] rect').getAttribute('stroke')]")
+    c.ok('3-7', '테이블을 고르면 테이블 테두리와 호출 버튼이 하늘색(직원이 누르는 것)', sky == ['rgb(125, 211, 252)', '#7dd3fc'], sky)
     page.click('#collect')
     sent = page.evaluate('dashTest.sent')
     toast = page.inner_text('#p-call .toast')
     m = sent[0]['msg'] if sent else {}
-    c.ok('3-7', '테이블 고르고 "빈 그릇 회수" → 1건 (task_type 0, priority 200, collect_, 3번 → 퇴식구)', len(sent) == 1 and m['task_type'] == 0 and m['priority'] == 200
+    c.ok('3-7', '테이블 고르고 "빈 그릇 회수" → 1건 (task_type 3, priority 200, collect_, 3번 → 퇴식구)', len(sent) == 1 and m['task_type'] == 3 and m['priority'] == 200
          and m['task_id'].startswith('collect_') and m['pickup_station_id'] == 't03' and m['dropoff_station_id'] == 'return_1', m.get('task_id'))
-    c.ok('5-3', '보낸 뒤 "3번 테이블 회수 요청됨"', toast == '3번 테이블 회수 요청됨', toast)
+    c.ok('5-3', '보낸 뒤 "회수 요청 완료 · 3번 테이블"', toast == '회수 요청 완료 · 3번 테이블', toast)
     ev(page, f"const busy = H.allBusy(); const t = H.task('{m['task_id']}', 't03', 'return_1', {{ pr: 200 }}); H.table([...busy, t]); dashTest.tick();")
     in_table = page.query_selector(f"#row-{m['task_id']}") is not None
     btn = (page.inner_text('#collect'), page.is_disabled('#collect'))
-    c.ok('3-7', '작업 순서에 나오고, 끝나기 전에는 "회수 요청됨"(누를 수 없음)', in_table and btn == ('회수 요청됨', True), f'{in_table} {btn}')
+    c.ok('3-7', '작업 순서에 나오고, 끝나기 전에는 "회수 요청 완료"(누를 수 없음)', in_table and btn == ('회수 요청 완료', True), f'{in_table} {btn}')
     page.click('#serve')
     stores = page.evaluate("[...document.querySelectorAll('[data-store]')].map(b => b.textContent)")
     on = page.evaluate("document.getElementById('serve').classList.contains('on')")
@@ -421,7 +443,7 @@ def test_call(browser, c):
     c.ok('3-7', '"음식 서빙"을 누르면 매장 5개가 펼쳐지고, 고르면 서빙 1건(task_type 0, priority 100, 한식 → 3번)을 보내고 닫힌다',
          stores == ['배식대', '한식', '분식', '양식', '카페'] and on and m2['task_type'] == 0 and m2['priority'] == 100 and m2['pickup_station_id'] == 'stall_1'
          and m2['dropoff_station_id'] == 't03' and closed, f'{stores} 파랑={on} 닫힘={closed}')
-    c.ok('5-3', '서빙 보낸 뒤 "한식 → 3번 테이블 서빙 요청됨"', page.inner_text('#p-call .toast') == '한식 → 3번 테이블 서빙 요청됨', page.inner_text('#p-call .toast'))
+    c.ok('5-3', '서빙 보낸 뒤 "서빙 요청 완료 · 한식 → 3번 테이블"', page.inner_text('#p-call .toast') == '서빙 요청 완료 · 한식 → 3번 테이블', page.inner_text('#p-call .toast'))
     page.close()
 
     page = open_page(browser, 'ws=off&collect_priority=100')
@@ -429,7 +451,7 @@ def test_call(browser, c):
     c.ok('3-7', '?collect_priority=100이면 회수 priority 100', page.evaluate('dashTest.sent[0].msg.priority') == 100, page.evaluate('dashTest.sent[0].msg.priority'))
     page.evaluate('dashTest.setConnected(false)')
     page.click('[data-table="t05"]'); page.click('#collect')
-    c.ok('5-3', '연결이 끊겼으면 "요청 보내지 못함 · 연결되면 다시 누르세요"', page.inner_text('#p-call .toast') == '요청 보내지 못함 · 연결되면 다시 누르세요', page.inner_text('#p-call .toast'))
+    c.ok('5-3', '연결이 끊겼으면 "요청 실패 · 연결되면 다시 누르세요"', page.inner_text('#p-call .toast') == '요청 실패 · 연결되면 다시 누르세요', page.inner_text('#p-call .toast'))
     page.close()
 
 
@@ -462,8 +484,8 @@ def test_popups(browser, c):
             early = page.inner_text('#pop .alert')
     late = page.inner_text('#pop .alert')
     kv = flat(page.inner_text('#pop .kv'))
-    c.ok('3-8', '안전 정지 40초: 상자는 "앞이 막힘 · 0:3n째"(칩 이름 반복 없음), 30초 전에는 할 일 없음, 지나면 "로봇 앞을 확인하세요". 작업 줄에 이름표 + 경로',
-         early and '로봇 앞을 확인하세요' not in early and late.startswith('앞이 막힘 · 0:3') and late.endswith('로봇 앞을 확인하세요')
+    c.ok('3-8', '안전 정지 40초: 상자는 "장애물 감지 · 0:3n"(칩 이름 반복 없음), 30초 전에는 할 일 없음, 지나면 "로봇 앞 통로를 확보하세요". 작업 줄에 이름표 + 경로',
+         early and '확보하세요' not in early and late.startswith('장애물 감지 · 0:3') and late.endswith('로봇 앞 통로를 확보하세요')
          and kv.startswith('작업 서빙 배식대 → 11번 테이블'), f'{early!r} → {late!r} / {kv}')
     page.close()
 
@@ -479,25 +501,42 @@ def test_popups(browser, c):
         run(page, 2000)
         steps.append(page.evaluate("[...document.querySelectorAll('#pop li.now')].map(l => l.innerText.split('\\n')[0])[0]"))
     done_times = page.evaluate("[...document.querySelectorAll('#pop li.done span.num')].filter(s => s.textContent).length")
-    c.ok('3-8', '작업 창: 배정 전 "배정 대기", 단계가 차례로 바뀌고 지난 단계에 시각', wait_step == ['배정 대기'] and steps == ['가지러 감', '싣는 중', '옮기는 중']
+    c.ok('3-8', '작업 창: 배정 전 "배정 대기", 단계가 차례로 바뀌고 지난 단계에 시각', wait_step == ['배정 대기'] and steps == ['이동', '픽업', '운반']
          and done_times == 4, f'{wait_step} / {steps} / 시각 {done_times}개')
     page.close()
 
+    # 도움이 필요한 상태마다 "이유 · 지난 시간"과 할 일 (비상 정지·오류·연결 끊김은 바로, 센서 이상은 안전 정지라 30초 뒤)
     page = open_page(browser)
-    ev(page, "H.robot('amr_04', 0, 0, 0, '', 60); dashTest.tick();")
-    for i in range(31):
-        ev(page, f"H.robot('amr_04', 0, 0, 0, '', {60 - i * 0.5});")
-        run(page, 10000)
-    page.click('#rc-amr_04')
-    drain = flat(page.inner_text('#pop .kv'))
-    page.keyboard.press('Escape')
-    for i in range(13):
-        ev(page, f"H.robot('amr_04', 6.5, -7, 2, '', {45 + i * 0.5});")
-        run(page, 5000)
-    page.click('#rc-amr_04')
-    charge = flat(page.inner_text('#pop .kv'))
-    c.ok('3-8', '배터리가 줄면 "충전까지 약 …", 충전 중이면 "완충까지 약 …". 대기·충전 중이면 작업 줄 없음',
-         drain.startswith('배터리 45% · 충전까지 약') and charge.startswith('배터리 51% · 완충까지 약'), f'{drain!r} / {charge!r}')
+    ev(page, "H.robot('amr_01', 0, 0, 4, '', 70); H.robot('amr_02', 1, 0, 3, '', 70); H.robot('amr_03', 2, 0, 0, '', 70); dashTest.tick();")
+    boxes = {}
+    for _ in range(64):
+        ev(page, "H.robot('amr_01', 0, 0, 4, '', 70); H.robot('amr_02', 1, 0, 3, '', 70); H.safety('amr_03', 2, 4); H.robot('amr_03', 2, 0, 0, '', 70);")
+        run(page, 500)
+    for rid in ('amr_01', 'amr_02', 'amr_03', 'amr_04'):
+        if rid == 'amr_04':
+            ev(page, "H.robot('amr_04', 3, 0, 0, '', 70); dashTest.tick();")
+            for _ in range(14):
+                ev(page, "H.robot('amr_01', 0, 0, 4, '', 70); H.robot('amr_02', 1, 0, 3, '', 70); H.safety('amr_03', 2, 4); H.robot('amr_03', 2, 0, 0, '', 70);")
+                run(page, 500)
+        page.click(f'#rc-{rid}')
+        boxes[rid] = page.inner_text('#pop .alert').replace('\n', ' / ')
+        page.keyboard.press('Escape')
+    place = page.inner_text('#rc-amr_01 .d')
+    want = {'amr_01': ('비상 버튼 · 0:3', '현장에서 해제하세요'), 'amr_02': ('오류 · 0:3', '현장에서 로봇을 점검하세요'),
+            'amr_03': ('센서 이상 · 0:3', '로봇 센서를 점검하세요'), 'amr_04': ('연결 끊김 · 0:', '로봇 전원과 네트워크를 점검하세요')}
+    good = all(boxes[k].startswith(a) and boxes[k].endswith(b) for k, (a, b) in want.items())
+    c.ok('3-8', '도움 필요 상태마다 "이유 · m:ss"와 할 일: 비상 버튼(현장에서 해제), 오류(현장 점검), 센서 이상(센서 점검), 연결 끊김(전원·네트워크 점검)',
+         good and place == '비상 버튼', f'{boxes} / 카드 {place}')
+    page.close()
+
+    page = open_page(browser)
+    ev(page, "H.robot('amr_04', 0, 0, 0, '', 45); H.robot('amr_05', 6.5, -7, 2, '', 51); dashTest.tick();")
+    run(page, 60000)
+    ev(page, "H.robot('amr_04', 0, 0, 0, '', 45); H.robot('amr_05', 6.5, -7, 2, '', 51); dashTest.tick();")
+    page.click('#rc-amr_04'); drain = flat(page.inner_text('#pop .kv')); page.keyboard.press('Escape')
+    page.click('#rc-amr_05'); charge = flat(page.inner_text('#pop .kv'))
+    c.ok('3-8', '로봇 창 배터리는 칸과 %만 (남은 시간 추정 없음). 대기·충전 중이면 작업 줄 없음',
+         drain == '배터리 45%' and charge == '배터리 51%', f'{drain!r} / {charge!r}')
     page.close()
 
 
@@ -509,13 +548,52 @@ def test_battery(browser, c):
     page.click('[data-tile="hall"]')
     run(page, 300)
     title = page.evaluate("document.querySelector('#pop h3').childNodes[0].textContent")
-    cols = page.evaluate("[...document.querySelectorAll('#pop .vbar')].map(b => [b.querySelector('.who').textContent, b.querySelector('.pct').textContent, "
-                         "b.querySelector('.note').innerText.replace(/\\s+/g, ' ').trim(), b.querySelector('.vcells').className.replace('vcells', '').trim(), b.querySelectorAll('.vcells span').length])")
-    want = [['1호', '24%', '충전까지 약 7분', '', 5], ['2호', '46%', '완충까지 약 30분', 'chg', 5], ['3호', '25%', '충전까지 약 8분', '', 5],
-            ['4호', '18%', '충전하러 감', 'hot', 5], ['5호', '38%', '완충까지 약 30분', 'chg', 5]]
-    c.ok('3-8', '배터리 창: 제목 "배터리"만, 5대 세로 5칸, 충전까지/완충까지 남은 시간, 20% 아래 빨강, 충전 중 주황, 충전하러 감',
+    cols = page.evaluate("[...document.querySelectorAll('#pop .vbar')].map(b => [b.innerText.replace(/\\s+/g, ' ').trim(), "
+                         "b.querySelector('.vcells').className.replace('vcells', '').trim(), b.querySelectorAll('.vcells span').length])")
+    want = [['1호 24%', '', 5], ['2호 46%', 'chg', 5], ['3호 25%', '', 5], ['4호 18%', 'hot', 5], ['5호 38%', 'chg', 5]]
+    c.ok('3-8', '배터리 창: 제목 "배터리"만, 5대 세로 5칸 + 이름 + %만 (남은 시간 없음), 20% 아래 빨강, 충전 중 주황',
          title == '배터리' and cols == want, f'{title} / {cols}')
     page.close()
+
+
+# 지도 위 글자·표시가 서로 겹치거나 경로 선이 글자를 지나가는지 (화면 좌표로 잰다. 경로가 비워 둔 글자 자리는 빼고)
+OVERLAP_JS = r"""(() => {
+  const svg = document.getElementById('map'), R = e => e.getBoundingClientRect(), items = [];
+  svg.querySelectorAll('g.bot .body').forEach(b => items.push({ n: b.closest('g').id, k: 'bot', r: R(b) }));
+  svg.querySelectorAll('rect[fill="#ef4444"]').forEach(r => items.push({ n: r.parentNode.textContent, k: 'chip', r: R(r) }));
+  svg.querySelectorAll('text.tnum').forEach(t => items.push({ n: `테이블 ${t.textContent}`, k: 'num', r: R(t) }));
+  svg.querySelectorAll('text:not(.tnum)').forEach(t => { if (!t.closest('g.bot') && !t.parentNode.querySelector('rect[fill="#ef4444"]')) items.push({ n: t.textContent, k: 'label', r: R(t) }); });
+  const bad = { bot: ['num', 'label', 'chip', 'bot'], chip: ['num', 'label', 'chip'], label: ['num', 'label'] };
+  const area = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left) - 1) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) - 1);
+  const out = [];
+  items.forEach((a, i) => items.slice(i + 1).forEach(b => { if (((bad[a.k] || []).includes(b.k) || (bad[b.k] || []).includes(a.k)) && area(a.r, b.r) > 6) out.push(`${a.n} × ${b.n}`); }));
+  const sc = svg.getScreenCTM(), holes = [...svg.querySelectorAll('mask rect.hole')].map(h => [+h.getAttribute('x'), +h.getAttribute('y'), +h.getAttribute('width'), +h.getAttribute('height')])
+    .map(([x, y, w, h]) => ({ left: x * sc.a + sc.e, top: y * sc.d + sc.f, right: (x + w) * sc.a + sc.e, bottom: (y + h) * sc.d + sc.f }));
+  const inside = (x, y, b) => x > b.left + 1 && x < b.right - 1 && y > b.top + 1 && y < b.bottom - 1;
+  svg.querySelectorAll('polyline').forEach(pl => {
+    const ctm = pl.getScreenCTM(), pts = pl.getAttribute('points').trim().split(/\s+/).map(s => s.split(',').map(Number)).map(([x, y]) => [x * ctm.a + ctm.e, y * ctm.d + ctm.f]);
+    for (let k = 0; k + 1 < pts.length; k++) { const [x0, y0] = pts[k], [x1, y1] = pts[k + 1], n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 2);
+      for (let s = 0; s <= n; s++) { const x = x0 + (x1 - x0) * s / n, y = y0 + (y1 - y0) * s / n;
+        if (Math.hypot(x - pts[0][0], y - pts[0][1]) < 18 || holes.some(b => inside(x, y, b))) continue;
+        items.forEach(it => { if (it.k !== 'bot' && inside(x, y, it.r) && !out.includes(`경로 × ${it.n}`)) out.push(`경로 × ${it.n}`); }); } }
+  });
+  return out;
+})()"""
+
+
+def test_overlap(browser, c):
+    scenes = {'1-1 켬': ('amr_03', 'congestion', "[['amr_03', 11.4, 3.8, 22.8], ['amr_01', 9.8, 9.2, 37.3]]", [1.2, 4.15]),
+              '1-1 끔': ('amr_01', 'euclidean', "[['amr_01', 9.8, 0, 9.8], ['amr_03', 11.4, 0, 11.4]]", [-10.5, -5.3])}
+    found = {}
+    for name, (r, fn, cands, xy) in scenes.items():
+        page = open_page(browser)
+        ev(page, f"""const busy = H.scene11(); const t = H.task('d11', 'buffet_1', 't07'); H.decision('d11', '{r}', '{fn}', {cands});
+          t.assignee_id = '{r}'; H.table([...busy, t]); H.robot('{r}', {xy[0]}, {xy[1]}, 1, 'd11'); H.status('d11', '{r}', 1, 'move_to_pickup'); dashTest.tick();""")
+        run(page, 600)
+        page.wait_for_timeout(700)   # 로봇이 미끄러지는 효과(실제 시간 0.5초)가 끝난 자리에서 잰다
+        found[name] = page.evaluate(OVERLAP_JS)
+        page.close()
+    c.ok('3-3', '지도 글자·표시 겹침 0건 (1-1 켬·끔: 로봇 번호, 테이블 번호, 장소 이름, 혼잡 이름표, 경로)', not any(found.values()), found)
 
 
 def test_style(browser, c):
@@ -634,7 +712,7 @@ def shots(browser, out):
     ev(page, """const busy = H.allBusy(); busy[1].assignee_id = ''; busy[1].state = 2; H.robot('amr_02', -1.3, 2.5, 1, 'collect_x');
       const ds = [74, 66, 57, 48].map((a, i) => H.task(`d${i}`, ['stall_1', 'stall_2', 'stall_3', 'stall_4'][i], ['t09', 't15', 't04', 't02'][i], { age: a }));
       const col = H.task('collect_x', 't03', 'return_1', { pr: 200, age: 28, who: 'amr_02', state: 1 }); H.table([...busy.filter((_, i) => i !== 1), ...ds, col]);
-      tasks['collect_x'] = { firstSeen: now() - 28, tableSeen: true, steps: { '요청': now() - 28, '배정': now() - 27, '가지러 감': now() - 27 }, phase: 'move_to_pickup', assignee: 'amr_02' };
+      tasks['collect_x'] = { firstSeen: now() - 28, tableSeen: true, steps: { '요청': now() - 28, '배정': now() - 27, '이동': now() - 27 }, phase: 'move_to_pickup', assignee: 'amr_02' };
       H.status('collect_x', 'amr_02', 1, 'move_to_pickup'); dashTest.tick();""")
     run(page, 600)
     page.evaluate("() => openPop('task', 'collect_x', 'decide')")
@@ -651,7 +729,7 @@ def main():
     c = Check()
     with sync_playwright() as p:
         browser = p.chromium.launch(channel=args.channel, headless=True)
-        for test in (test_header, test_summary, test_map, test_decision, test_charge, test_queue, test_robots, test_call, test_popups, test_battery, test_style):
+        for test in (test_header, test_summary, test_map, test_decision, test_charge, test_queue, test_robots, test_call, test_popups, test_battery, test_overlap, test_style):
             try:
                 test(browser, c)
             except Exception as e:  # 시험 하나가 깨져도 나머지는 돈다
