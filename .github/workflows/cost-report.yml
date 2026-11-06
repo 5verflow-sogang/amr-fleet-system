@@ -1,0 +1,35 @@
+# GCP 비용 일일 보고: 매일 09:00 KST에 어제 비용·이번 달 누적·실험별 비용을 디스코드로 보낸다.
+# 예산(BUDGET_KRW)의 50·90·100 %를 넘은 날은 맨 위에 알림 줄이 붙는다 (tools/infra/gcp/cost_report.py).
+# 필요: secrets.COST_DISCORD_WEBHOOK(받을 채널 웹훅), vars.GCP_WIF_PROVIDER·GCP_GHA_SA(fleet-test와 같음),
+# vars.GCP_BUDGET_KRW(없으면 100000). GitHub Actions 계정의 BigQuery 권한은 tools/infra/gcp/monitoring.tf.
+name: GCP Cost Report
+
+on:
+  schedule:
+    - cron: "0 0 * * *"   # 00:00 UTC = 09:00 KST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_GHA_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Report
+        env:
+          COST_DISCORD_WEBHOOK: ${{ secrets.COST_DISCORD_WEBHOOK }}
+          BUDGET_KRW: ${{ vars.GCP_BUDGET_KRW }}
+          GCP_PROJECT: amr-fleet
+        run: python3 tools/infra/gcp/cost_report.py

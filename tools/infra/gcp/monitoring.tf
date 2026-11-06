@@ -100,3 +100,31 @@ resource "google_bigquery_dataset" "billing" {
 
   depends_on = [google_project_service.this]
 }
+
+# 매일 아침 비용 보고(.github/workflows/cost-report.yml): GitHub Actions 계정이 결제 내보내기·실행 목록을 읽어
+# 디스코드로 보낸다. 예산 알림 메일과 같은 문턱(50·90·100 %)을 넘은 날은 따로 알린다
+resource "google_project_iam_member" "gha_bigquery_jobs" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.gha.email}"
+}
+
+resource "google_bigquery_dataset_iam_member" "gha_reads_billing" {
+  count      = var.billing_account_id == "" ? 0 : 1
+  dataset_id = google_bigquery_dataset.billing[0].dataset_id
+  role       = "roles/bigquery.dataViewer"
+  member     = "serviceAccount:${google_service_account.gha.email}"
+}
+
+resource "google_bigquery_dataset_iam_member" "gha_reads_ops" {
+  dataset_id = google_bigquery_dataset.ops.dataset_id
+  role       = "roles/bigquery.dataViewer"
+  member     = "serviceAccount:${google_service_account.gha.email}"
+}
+
+# runs_index(외부 테이블)가 버킷의 index.csv를 읽으므로 조회하는 계정에 버킷 읽기도 필요하다
+resource "google_storage_bucket_iam_member" "gha_reads_results" {
+  bucket = google_storage_bucket.results.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.gha.email}"
+}
