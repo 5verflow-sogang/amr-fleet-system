@@ -137,7 +137,11 @@ jobs:
           GH_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
           NAME: ${{ steps.name.outputs.name }}
           MACHINE: ${{ steps.slot.outputs.machine }}
+          SLOT: ${{ steps.slot.outputs.slot }}
+          SCENARIO: ${{ github.event.inputs.scenario }}
         run: |
+          # 결제 보고서에서 실행·시나리오·슬롯별 비용을 거른다 (라벨 값은 소문자·숫자·_- 63자)
+          scenario_label=$(printf '%s' "$SCENARIO" | tr -c 'a-z0-9_-' '_' | cut -c1-63)
           gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runners/generate-jitconfig" \
             -f name="$NAME" -F runner_group_id=1 \
             -f 'labels[]=self-hosted' -f 'labels[]=linux' -f "labels[]=$NAME" \
@@ -150,6 +154,7 @@ jobs:
           gcloud compute instances create "$NAME" \
             --project "$PROJECT_ID" --zone "$ZONE" \
             --source-instance-template "$TEMPLATE" --machine-type "$MACHINE" \
+            --labels "purpose=fleet-runner,run=${GITHUB_RUN_ID},scenario=${scenario_label},slot=${SLOT}" \
             --metadata-from-file jit-config=jit-config.txt,startup-script=startup.sh
           rm jit-config.txt startup.sh
 
