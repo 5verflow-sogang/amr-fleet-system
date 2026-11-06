@@ -19,8 +19,8 @@ timeout_s: 3600
 params:
   num_robots: 5
   # 로봇 스폰 간격(실제 시간 s). 추적·안전·혼잡도·직원까지 띄워 5 s 간격이면 Nav2 lifecycle_manager의
-  # planner_server 상태 질의가 시간 초과로 기동이 멈췄다 (11/6, n2d-16에서도 3번 모두). 한 대씩 차례로 올린다
-  spawn_interval_s: 15
+  # planner_server 상태 질의가 시간 초과로 기동이 멈췄다 (11/6, n2d-16에서도 3번 모두. 15 s도 5대 중 1~2대 남음). 한 대씩 차례로 올린다
+  spawn_interval_s: 25
   delay_ms: 100
   loss_pct: 0
   duration_s: 60
