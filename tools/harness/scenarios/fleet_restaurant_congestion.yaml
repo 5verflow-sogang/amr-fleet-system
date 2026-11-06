@@ -12,7 +12,8 @@ packages: amr_bringup
 num_robots: 5
 use_sim_time: true
 seed_base: 1
-timeout_s: 3600
+# GCP b 슬롯(c2d-8)에서 RTF 약 0.25(11/5 스모크): 시뮬레이션 700 s ≈ 실제 47분 + 기동 4분
+timeout_s: 5400
 params:
   num_robots: 5
   delay_ms: 100
@@ -22,8 +23,8 @@ params:
   assign: "off"
   cost_fn: euclidean
   congestion_weight: 3.0
-  # 일정 약 490 s(10 s + 23 × 평균 20 s) 뒤 마지막 서빙을 끝낼 여유
-  duration_s: 900
+  # 시뮬레이션 시간 (s). 일정 약 490 s(10 s + 23 × 평균 20 s) 뒤 마지막 서빙을 끝낼 여유 약 3.5분
+  duration_s: 700
   guests: peak
 processes:
   - name: stack
@@ -41,7 +42,8 @@ processes:
     # fleet_stack과 같다: 모든 로봇의 bt_navigator가 active여야 작업을 받아 움직인다
     ready_cmds:
       - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
-    ready_timeout_s: 240
+    # 11/5 스모크 첫 시도가 240 s 안에 5대 Nav2를 못 올렸다(두 번째 194 s). 스폰 5대 × 5 s + 식당 손님 13명
+    ready_timeout_s: 360
     settle_s: 5
   # 끔 조건도 띄운다: 혼잡도 체류 비교와 녹화를 같게 하려고. 서버는 cost_fn:=congestion일 때만 구독한다
   - name: congestion
@@ -52,20 +54,22 @@ processes:
   - name: rosbag
     cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/amr_[0-9][0-9]/odom'
     settle_s: 3
+  # 일정을 시뮬레이션 시간으로 낸다(use_sim_time). RTF가 0.25면 실제 시간 일정은 시뮬레이션에서 4배 몰려
+  # "놀고 있는 로봇 2대 이상" 조건이 깨진다. task_generator.launch.py에는 #285 전까지 use_sim_time 인자가 없어 ros2 run으로 띄운다
   - name: task_generator
     cmd: >-
-      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json
-      map_origin_in_world:="[0, 0, 0]"
-      stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
-      scenario_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/scenarios/restaurant_serving.yaml
+      ros2 run amr_fleet_manager task_generator --ros-args -p use_sim_time:=true -p seed:={seed}
+      -p schedule_out:={run_dir}/tasks.json -p "map_origin_in_world:=[0.0, 0.0, 0.0]"
+      -p stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
+      -p scenario_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/scenarios/restaurant_serving.yaml
 param_sets:
   assign:
     "off": {cost_fn: euclidean}
     "on": {cost_fn: congestion}
 driver:
   mode: wait
-  # 작업 일정이 실제 시간이라 실제 시간으로 기다린다 (#285 머지 전)
-  use_sim_time: false
+  # 작업 일정과 같은 시뮬레이션 시간으로 기다린다
+  use_sim_time: true
   duration_s: "{duration_s}"
 postprocess:
   - name: fleet_metrics

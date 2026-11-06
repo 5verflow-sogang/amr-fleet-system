@@ -33,8 +33,8 @@
 ## 실행
 
 하네스 시나리오 `tools/harness/scenarios/fleet_restaurant_congestion.yaml`(#308의 `system.launch.py` 식당 인자 + 혼잡도 노드 +
-작업 생성기 + rosbag). GCP 러너(RTF 1.0 근처)로 돌린다. 노트북 Docker는 5대 + 손님 13명에서 RTF가 낮아 작업 일정(실제 시간,
-#285 머지 전)이 상대적으로 몰린다.
+작업 생성기 + rosbag). GCP b 슬롯(c2d-standard-8)에서 RTF가 약 0.25라, 작업 일정과 관측 길이를 시뮬레이션 시간으로 둔다
+(작업 생성기 `use_sim_time`). 실행 하나가 실제 약 50분이다.
 
 ```bash
 tools/harness/gcp_run.sh fleet_restaurant_congestion -n 5 --set assign=off --label off
