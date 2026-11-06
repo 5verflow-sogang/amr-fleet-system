@@ -35,6 +35,8 @@ class Options:
     # true / false / 카메라를 켤 로봇 이름 목록 'amr_01,amr_03' (시연 로봇 시점: CPU로 5대를 다 그리면 RTF 0.37)
     enable_camera: object = False
     congestion_filter: str = 'none'
+    # Nav2 서버 5개를 컨테이너 하나로 (DDS 참가자를 줄인다. 식당 시연 5대 + 추적)
+    nav2_composition: bool = False
     payload_mass: str = '0.0'
     seed: int = 0
     map: str = ''
@@ -101,7 +103,8 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
     if opt.nav2:
         stack.append(Include('amr_bringup', 'nav2.launch.py', dict(
             namespace=name, cmd_vel_topic=chain['nav_out'], nav2_profile=NAV2_PROFILE[opt.body],
-            congestion_filter=opt.congestion_filter, use_sim_time='true')))
+            congestion_filter=opt.congestion_filter, use_composition=str(opt.nav2_composition).lower(),
+            use_sim_time='true')))
     if opt.zone_client:
         # 서버와 같은 구역 목록. zones.yaml은 world 좌표라 TF map ← world(system.launch가 발행)로
         # 바꿔 쓰게 한다 (구역 1.5 m 어긋남 수정). 로봇 위치는 네임스페이스 안 상대 토픽

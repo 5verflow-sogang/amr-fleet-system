@@ -43,7 +43,8 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.actions import Node
+from launch_ros.actions import ComposableNodeContainer, Node
+from launch_ros.descriptions import ComposableNode
 from launch_ros.substitutions import FindPackageShare
 from nav2_common.launch import RewrittenYaml
 
@@ -75,6 +76,9 @@ def _nav2(context):
     overrides = {ns: build_overrides(
         nav2_params, arg('nav2_profile'), arg('congestion_filter'), odom_topic,
         speed_limit_topic=f'/{ns}/speed_limit')}
+    # local_costmap 기준 프레임. 따로 뜰 때는 controller_params 재작성과 같은 값이고, 컴포지션(한 프로세스에 지도 기준
+    # 파일 하나)일 때는 이것만 local_costmap을 <ns>/odom으로 맞춘다
+    overrides[ns]['local_costmap']['local_costmap']['ros__parameters']['global_frame'] = odom_frame
     # 로봇마다 다른 임시 파일이 필요하다 (프로세스가 끝나면 OS가 지운다)
     overrides_file = tempfile.NamedTemporaryFile(
         mode='w', prefix=f'nav2_{ns}_', suffix='.yaml', delete=False)
@@ -103,31 +107,42 @@ def _nav2(context):
             FindPackageShare('nav2_bt_navigator'), 'behavior_trees',
             'navigate_to_pose_w_replanning_and_recovery.xml'])})
 
-    return [
-        Node(package='nav2_planner', executable='planner_server', name='planner_server', namespace=ns,
-             parameters=[planner_params, use_sim_time, {'GridBased.use_astar': True}, planner_params_extra,
-                         overrides_file.name],
-             output='screen'),
-        Node(package='nav2_controller', executable='controller_server', name='controller_server', namespace=ns,
-             parameters=[controller_params, use_sim_time, overrides_file.name],
-             remappings=cmd_vel_remap, output='screen'),
-        Node(package='nav2_behaviors', executable='behavior_server', name='behavior_server', namespace=ns,
-             parameters=[{'robot_base_frame': base_footprint, 'global_frame': odom_frame, **use_sim_time}],
-             remappings=cmd_vel_remap, output='screen'),
-        Node(package='nav2_bt_navigator', executable='bt_navigator', name='bt_navigator', namespace=ns,
-             # bt_loop_duration 50ms(20Hz) - 기본 10ms(100Hz)는 5대 통합 실행에서 "tick rate 100
-             # exceeded" 경고가 1,400번 나오고 로봇당 CPU를 0.25코어씩 더 썼다.
-             # restaurant_bt_override를 맨 뒤에 둬서(비어 있지 않을 때만) #292가 넣을 dict보다 이긴다
-             parameters=[{'global_frame': 'map', 'robot_base_frame': base_footprint,
-                          'odom_topic': odom_topic, 'bt_loop_duration': 50, **use_sim_time},
-                         *restaurant_bt_override],
-             output='screen'),
-        Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
-             name='lifecycle_manager_navigation', namespace=ns,
-             parameters=[{'autostart': True, 'node_names': LIFECYCLE_NODES, 'bond_timeout': BOND_TIMEOUT_S,
-                          **use_sim_time}],
-             output='screen'),
+    # (패키지, 실행 파일, 컴포넌트 플러그인, 노드 이름, 파라미터, 리맵)
+    servers = [
+        ('nav2_planner', 'planner_server', 'nav2_planner::PlannerServer', 'planner_server',
+         [planner_params, use_sim_time, {'GridBased.use_astar': True}, planner_params_extra, overrides_file.name], []),
+        ('nav2_controller', 'controller_server', 'nav2_controller::ControllerServer', 'controller_server',
+         [controller_params, use_sim_time, overrides_file.name], cmd_vel_remap),
+        ('nav2_behaviors', 'behavior_server', 'behavior_server::BehaviorServer', 'behavior_server',
+         [{'robot_base_frame': base_footprint, 'global_frame': odom_frame, **use_sim_time}], cmd_vel_remap),
+        # bt_loop_duration 50ms(20Hz) - 기본 10ms(100Hz)는 5대 통합 실행에서 "tick rate 100
+        # exceeded" 경고가 1,400번 나오고 로봇당 CPU를 0.25코어씩 더 썼다.
+        # restaurant_bt_override를 맨 뒤에 둬서(비어 있지 않을 때만) #292가 넣을 dict보다 이긴다
+        ('nav2_bt_navigator', 'bt_navigator', 'nav2_bt_navigator::BtNavigator', 'bt_navigator',
+         [{'global_frame': 'map', 'robot_base_frame': base_footprint,
+           'odom_topic': odom_topic, 'bt_loop_duration': 50, **use_sim_time}, *restaurant_bt_override], []),
+        ('nav2_lifecycle_manager', 'lifecycle_manager', 'nav2_lifecycle_manager::LifecycleManager',
+         'lifecycle_manager_navigation',
+         [{'autostart': True, 'node_names': LIFECYCLE_NODES, 'bond_timeout': BOND_TIMEOUT_S, **use_sim_time}], []),
     ]
+
+    if arg('use_composition').lower() != 'true':
+        return [Node(package=pkg, executable=exe, name=name, namespace=ns, parameters=params,
+                     remappings=remaps, output='screen')
+                for pkg, exe, _, name, params, remaps in servers]
+
+    # 컴포지션: 5개를 프로세스 하나로 (DDS 참가자 5 → 1). 식당 시연 5대에 추적을 켜면 프로세스가 120개를 넘어
+    # 뒤늦게 뜬 노드가 다른 노드를 못 찾았다 (11/6 demo_smoke track: 녹화 하네스가 /clock을 못 받음).
+    # costmap 노드는 컴포넌트 파라미터가 아니라 프로세스 --params-file을 읽으므로 컨테이너에 파일을 준다
+    # (nav2_bringup과 같은 방식). 파일이 하나라 지도 기준(planner_params)으로 주고 local_costmap은 overrides가 맞춘다
+    return [ComposableNodeContainer(
+        name='nav2_container', namespace=ns, package='rclcpp_components',
+        executable='component_container_isolated', output='screen',
+        parameters=[planner_params, use_sim_time, overrides_file.name],
+        composable_node_descriptions=[
+            ComposableNode(package=pkg, plugin=plugin, name=name, namespace=ns, remappings=remaps,
+                           parameters=[planner_params if p is controller_params else p for p in params])
+            for pkg, _, plugin, name, params, remaps in servers])]
 
 
 def generate_launch_description():
@@ -151,5 +166,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'congestion_filter', default_value='none', choices=list(CONGESTION_FILTERS),
             description='전역 costmap에 붙일 혼잡도 필터(#296). keepout(돌아가기)·speed(느려짐)'),
+        DeclareLaunchArgument(
+            'use_composition', default_value='false',
+            description='Nav2 서버 5개를 컨테이너 프로세스 하나로 (DDS 참가자를 줄인다, 식당 시연 녹화)'),
         OpaqueFunction(function=_nav2),
     ])

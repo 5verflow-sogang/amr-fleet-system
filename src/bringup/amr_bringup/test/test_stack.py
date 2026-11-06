@@ -137,3 +137,8 @@ def test_camera_names_must_be_robots():
 def test_congestion_filter_reaches_nav2():
     assert args(stack(nav2=True), 'nav2.launch.py')['congestion_filter'] == 'none'
     assert args(stack(nav2=True, congestion_filter='keepout'), 'nav2.launch.py')['congestion_filter'] == 'keepout'
+
+
+def test_nav2_composition_reaches_nav2():
+    assert args(stack(nav2=True), 'nav2.launch.py')['use_composition'] == 'false'
+    assert args(stack(nav2=True, nav2_composition=True), 'nav2.launch.py')['use_composition'] == 'true'
