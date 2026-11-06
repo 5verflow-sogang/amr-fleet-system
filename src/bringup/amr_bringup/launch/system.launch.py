@@ -52,10 +52,13 @@ from amr_bringup.robots import load_robots, world_to_map, world_to_map_tf_args
 from amr_bringup.stack import Options, robot_stack
 
 
-def _launch(package, name, **arguments):
-    """다른 패키지 launch를 include한다. 넘긴 인자가 뒤의 include로 새지 않게 GroupAction으로 가둔다."""
+def _launch(package, launch_file, **arguments):
+    """다른 패키지 launch를 include한다. 넘긴 인자가 뒤의 include로 새지 않게 GroupAction으로 가둔다.
+
+    두 번째 인자 이름을 name으로 두면 launch 인자 name(동적 장애물 등)과 겹친다.
+    """
     return GroupAction([IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(get_package_share_directory(package), 'launch', name)),
+        PythonLaunchDescriptionSource(os.path.join(get_package_share_directory(package), 'launch', launch_file)),
         launch_arguments={k: str(v) for k, v in arguments.items()}.items(),
     )])
 
