@@ -327,7 +327,9 @@ def test_customer_yields_to_serving_robot_size():
     assert any(w for _, _, w in log)
 
 
-@pytest.mark.parametrize('name', ['dynamic_obstacles_restaurant.yaml', 'dynamic_obstacles_restaurant_peak.yaml'])
+@pytest.mark.parametrize('name', [
+    'dynamic_obstacles_restaurant.yaml', 'dynamic_obstacles_restaurant_peak.yaml',
+    'dynamic_obstacles_restaurant_peak_scene12.yaml'])
 def test_restaurant_guests_yield_except_curve(name):
     path = os.path.join(os.path.dirname(__file__), '..', 'config', name)
     with open(path, encoding='utf-8') as f:
@@ -340,6 +342,22 @@ def test_restaurant_guests_yield_except_curve(name):
             assert s['yield_to_robots'] == ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05'], s['id']
             assert s['yield_robot_size'] == [0.565, 0.537], s['id']
             assert (s['yield_patience_s'], s['yield_progress_m']) == (3.0, 0.1), s['id']
+
+
+def _yield_keys(spec):
+    return {k: spec.get(k) for k in ('yield_to_robots', 'yield_robot_size', 'yield_patience_s', 'yield_progress_m')}
+
+
+def test_peak_scene12_has_same_guest_yield_settings_as_peak():
+    # scene12는 피크 파일에서 customer_2만 뺀 것이다 (머리말). 나머지 손님은 양보 설정도 같아야 한다
+    config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
+    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak.yaml'), encoding='utf-8') as f:
+        peak = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
+    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak_scene12.yaml'), encoding='utf-8') as f:
+        scene12 = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
+    assert set(peak) - set(scene12) == {'customer_2'}
+    for guest_id, spec in scene12.items():
+        assert _yield_keys(spec) == _yield_keys(peak[guest_id]), guest_id
 
 
 # 제자리에서 도는 로봇: 위치는 그대로인데 속력이 0과 0.1 m/s를 오간다 (식당 리허설에서 손님과 서로 기다림)
