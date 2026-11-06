@@ -11,7 +11,7 @@ import uuid
 
 import rclpy
 from builtin_interfaces.msg import Time
-from amr_fleet_core.assignment import RobotInfo, TaskInfo
+from amr_fleet_core.assignment import RobotInfo, TaskInfo, has_pickup
 from amr_fleet_core.traffic import Decision, ZoneManager
 from amr_msgs.msg import (ErrorInfo, FleetHeartbeat, FleetTaskTable, RobotFleetMode, RobotState, Task,
                           TaskAssignment, TaskAssignmentAck, TaskRecord, TaskStatus, ZoneCongestionArray, ZoneGrant,
@@ -35,9 +35,9 @@ def sec_to_stamp(seconds: float) -> Time:
 
 
 def task_info(msg: Task) -> TaskInfo:
-    """Task 메시지 → amr_fleet_core 입력. CHARGE·RETURN은 픽업이 없다 (Task.msg 주석)."""
+    """Task 메시지 → amr_fleet_core 입력. DELIVERY·COLLECT만 픽업이 있다 (Task.msg 주석)."""
     pickup = None
-    if msg.task_type == Task.TYPE_DELIVERY:
+    if has_pickup(msg.task_type):
         pickup = (msg.pickup_pose.position.x, msg.pickup_pose.position.y)
     deadline = stamp_to_sec(msg.deadline)
     return TaskInfo(

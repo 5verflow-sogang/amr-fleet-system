@@ -4,6 +4,7 @@
 uint8 TYPE_DELIVERY=0   # 픽업 → 배송
 uint8 TYPE_CHARGE=1     # 충전소로 이동
 uint8 TYPE_RETURN=2     # 대기 위치로 복귀
+uint8 TYPE_COLLECT=3    # 빈 그릇 회수: 테이블(pickup) → 반납 카트(dropoff). DELIVERY와 같은 흐름
 
 uint8 ITEM_NONE=0
 uint8 ITEM_SMALL=1      # 소형 박스 2kg
@@ -17,10 +18,10 @@ string task_id
 # 작업 종류 (TYPE_*)
 uint8 task_type
 
-# 운반 물품 (ITEM_*). DELIVERY가 아니면 ITEM_NONE
+# 운반 물품 (ITEM_*). DELIVERY가 아니면 ITEM_NONE (COLLECT도 ITEM_NONE)
 uint8 item_type
 
-# 출발지·목적지: 스테이션 이름과 map 기준 도착 자세. CHARGE·RETURN은 pickup을 비운다
+# 출발지·목적지: 스테이션 이름과 map 기준 도착 자세. CHARGE·RETURN은 pickup을 비운다 (DELIVERY·COLLECT는 둘 다 채운다)
 string pickup_station_id
 geometry_msgs/Pose pickup_pose
 string dropoff_station_id
