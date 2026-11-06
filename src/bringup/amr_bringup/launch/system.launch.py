@@ -10,7 +10,7 @@
         robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant.yaml \
         map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:='[0.0, 0.0, 0.0]' \
         dynamic_obstacles:=true dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak.yaml \
-        congestion:=restaurant cost_fn:=congestion congestion_filter:=keepout \
+        staff_file:=dynamic_obstacles_restaurant_staff.yaml congestion:=restaurant cost_fn:=congestion congestion_filter:=keepout \
         enable_camera:=amr_01                                               # 식당 5대 (혼잡도 켬, 1호만 카메라)
 
 기본은 1단계라 BT의 이동이 가짜(stub)여서 로봇이 움직이지 않는다. nav2 등은 꺼 둔 채로 시작해, 패키지가 준비되는 대로 인자로 켠다 (README "단계").
@@ -83,9 +83,11 @@ def _system(context):
     opt.validate([r.name for r in robots])
 
     # 상대 이름이면 amr_gazebo config/ 아래 파일 (식당: dynamic_obstacles_restaurant_peak.yaml 등)
-    obstacles = arg('dynamic_obstacles_file')
-    if obstacles and not os.path.isabs(obstacles):
-        obstacles = os.path.join(get_package_share_directory('amr_gazebo'), 'config', obstacles)
+    def gazebo_config(name):
+        return name if not name or os.path.isabs(name) else \
+            os.path.join(get_package_share_directory('amr_gazebo'), 'config', name)
+
+    obstacles = gazebo_config(arg('dynamic_obstacles_file'))
 
     actions = [_launch('amr_gazebo', 'world.launch.py', gui=arg('gui'), world=arg('world'))]
     if opt.localization:
@@ -97,6 +99,10 @@ def _system(context):
     if flag('dynamic_obstacles'):
         actions.append(_launch('amr_gazebo', 'dynamic_obstacles.launch.py', seed=seed, use_sim_time='true',
                                config=obstacles))
+    if arg('staff_file'):
+        # 직원은 손님 파일과 따로 띄워 혼잡도 노드가 세지 않게 한다. 이동 노드·브리지 이름이 겹치지 않게 name을 바꾼다
+        actions.append(_launch('amr_gazebo', 'dynamic_obstacles.launch.py', seed=seed, use_sim_time='true',
+                               config=gazebo_config(arg('staff_file')), name='staff_obstacles'))
     if arg('congestion') != 'none':
         # 혼잡도를 세는 손님이 실제로 스폰한 손님과 같아야 한다: 손님 파일과 지도 원점을 여기서 같이 넘긴다.
         # 손님 파일을 비우면 혼잡도 노드의 site 기본 손님(normal)
@@ -158,6 +164,7 @@ def generate_launch_description():
          'RGBD 카메라: true / false / 켤 로봇 이름 목록(amr_01,amr_03). CPU로 5대를 그리면 RTF 0.37 (명세서 11-3절)'),
         ('dynamic_obstacles', 'false', '동적 장애물 5개'),
         ('dynamic_obstacles_file', '', '동적 장애물 yaml (amr_gazebo config/ 아래 이름 또는 절대 경로). 비우면 물류센터 기본'),
+        ('staff_file', '', '직원 동적 장애물 yaml (같은 형식). 혼잡도에 세지 않는다. 식당: dynamic_obstacles_restaurant_staff.yaml'),
         ('spawn_interval_s', '3.0', '로봇 스폰 시차 (실제 시간, s)'),
         ('payload_mass', '0.0', '모든 로봇의 적재물 질량 [kg] (연구 2 Gazebo 평가)'),
         ('body', 'amr', '몸체: amr(물류 0.6 x 0.4 m) 또는 serving(식당 0.565 x 0.537 m). 스폰 몸체와 Nav2 footprint(nav2_profile)가 같이 바뀐다'),

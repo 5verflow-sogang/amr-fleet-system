@@ -171,6 +171,24 @@ def test_congestion_node_uses_spawned_guests():
         include_args(context, module._system(context), 'site')
 
 
+def test_staff_spawned_separately_and_not_counted():
+    # 직원은 두 번째 동적 장애물 launch(이름 staff_obstacles)로 띄우고, 혼잡도 노드는 손님 파일만 센다
+    module = load_module()
+    context = context_with_defaults(
+        module, num_robots=1, dynamic_obstacles=True, congestion='restaurant',
+        dynamic_obstacles_file='dynamic_obstacles_restaurant_peak.yaml',
+        staff_file='dynamic_obstacles_restaurant_staff.yaml')
+    actions = module._system(context)
+    staff = include_args(context, actions, 'name')
+    assert staff['name'] == 'staff_obstacles'
+    assert staff['config'].endswith('config/dynamic_obstacles_restaurant_staff.yaml') and os.path.exists(staff['config'])
+    assert include_args(context, actions, 'site')['obstacles_file'].endswith('dynamic_obstacles_restaurant_peak.yaml')
+    # 기본은 직원 없음
+    context = context_with_defaults(module, num_robots=1)
+    with pytest.raises(AssertionError, match='name'):
+        include_args(context, module._system(context), 'name')
+
+
 def test_camera_robot_names_checked():
     module = load_module()
     module._system(context_with_defaults(module, num_robots=2, enable_camera='amr_02'))
