@@ -8,6 +8,8 @@
 # TODO(연우): 장면 스크립트(2·4·5호 먼 배달 → 0초 요청, /demo/t0)가 생기면 task_schedule 대신 쓴다
 name: demo_s11
 extends: demo_restaurant
+# docker_run.sh는 이 파일의 packages: 줄만 읽는다 (extends를 따라가지 않는다)
+packages: amr_bringup
 params:
   robots: robots_restaurant_s11.yaml
   guests: dynamic_obstacles_restaurant_peak.yaml

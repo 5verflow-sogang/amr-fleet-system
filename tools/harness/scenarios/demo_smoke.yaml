@@ -3,6 +3,8 @@
 # 기대: video/에 카메라마다 duration_s x 15프레임 안팎의 mp4, rosbag의 /fleet/task_status가 0건이 아니다
 name: demo_smoke
 extends: demo_restaurant
+# docker_run.sh는 이 파일의 packages: 줄만 읽는다 (extends를 따라가지 않는다)
+packages: amr_bringup
 params:
   cameras: top,west,stalls
   robot_camera: "false"
