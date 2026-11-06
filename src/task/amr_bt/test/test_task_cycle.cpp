@@ -176,6 +176,19 @@ TEST_F(TaskCycleTest, DeliveryRunsAllPhases)
   EXPECT_NEAR(clock, 1.0 + 16.0, 1.5);
 }
 
+// 빈 그릇 회수: 테이블(pickup) → 반납 카트(dropoff). 배송과 같은 단계를 돈다
+TEST_F(TaskCycleTest, CollectRunsLikeDelivery)
+{
+  ctx->assign(make_task("collect_1", Task::TYPE_COLLECT, "table_3", "return_cart"));
+  run(60.0);
+  const std::vector<std::string> expected = {
+    P + "move_to_pickup", P + "docking", P + "loading",
+    P + "move_to_dropoff", P + "docking", P + "unloading", DONE};
+  EXPECT_EQ(phases(), expected);
+  EXPECT_EQ(nav.starts, 2);
+  EXPECT_FALSE(ctx->busy());
+}
+
 // 스테이션 이름 없이 자세만 받은 작업은 도킹을 건너뛴다
 TEST_F(TaskCycleTest, DeliveryWithoutStationsSkipsDocking)
 {

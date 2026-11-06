@@ -4,20 +4,23 @@
   서 있는 자세의 사람 메시라 T자 자세 없이 걷는 것처럼 보인다 (다리는 움직이지 않는다).
   - VelocityControl: /model/<이름>/cmd_vel (몸체 기준 Twist)
   - OdometryPublisher: /model/<이름>/odometry (월드 기준 GT)
+  넘어지지 않게: 충돌체는 무게중심에 놓은 구(마찰 0)라 어디서 부딪혀도 힘이 무게중심을 지나 기울이는 회전력이 없다.
+  원기둥이었을 때는 배식대 앞 줄(피크)에서 손님끼리·가구와 모서리로 부딪혀 기울었고, 중력을 꺼 둬서 누운 채 남았다.
+  기울기 관성(ixx·iyy)도 크게 둬 남은 회전력에도 거의 안 기운다. LiDAR는 충돌체가 아니라 메시를 보므로 센서 모습은 같다.
 -->
 <sdf version="1.8">
   <model name="dynamic_customer">
     <link name="link">
-      <!-- dynamic_worker와 같이 중력을 끄고 충돌체를 바닥에서 띄운다 (넘어지지 않게) -->
+      <!-- 중력을 끄고 바닥에서 띄운다 (바닥 마찰로 넘어지지 않게) -->
       <gravity>false</gravity>
       <pose>0 0 0.85 0 0 0</pose>
       <inertial>
         <mass>60</mass>
-        <inertia><ixx>14.8</ixx><iyy>14.8</iyy><izz>1.9</izz></inertia>
+        <inertia><ixx>10000</ixx><iyy>10000</iyy><izz>1.9</izz></inertia>
       </inertial>
       <collision name="collision">
-        <pose>0 0 0.0125 0 0 0</pose>
-        <geometry><cylinder><radius>0.25</radius><length>1.675</length></cylinder></geometry>
+        <geometry><sphere><radius>0.25</radius></sphere></geometry>
+        <surface><friction><ode><mu>0</mu><mu2>0</mu2></ode></friction></surface>
       </collision>
       <!-- OpenRobotics "FemaleVisitor" (Gazebo Fuel, CC-BY 4.0), 키 1.64 m, 정면 +x. 메시 원점이 발바닥 -->
       <visual name="visual">

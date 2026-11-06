@@ -105,7 +105,7 @@ jobs:
 
       # 패키지 테스트는 병렬로 돈다. ROS 노드를 띄우는 테스트는 패키지마다 ROS 도메인이 따로라 서로의 메시지를 받지 않는다
       # (test/conftest.py, amr_bt는 런치 테스트 파일. 번호: amr_bt 11, amr_fault_injector 12,
-      # amr_fleet_decentralized 13, amr_fleet_manager 14, amr_zone_client 15, amr_safety 16, amr_tracking 17).
+      # amr_fleet_decentralized 13, amr_fleet_manager 14, amr_zone_client 15, amr_safety 16, amr_tracking 17, amr_localization 18).
       # 10/16 같은 도메인(0)에서 amr_bt 테스트가 보낸 작업을 동시에 돌던 amr_fleet_manager 테스트의 가짜 로봇 amr_01도
       # 수행해 간헐적으로 실패했다. ROS 노드를 띄우는 테스트를 새로 만든 패키지는 비어 있는 번호로 conftest.py를 둔다
       - name: Test

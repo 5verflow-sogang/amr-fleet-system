@@ -1,10 +1,12 @@
-# 경로 계획·추종 KPI (민지 측정, 이진 판정, 4주차 민지 작업 2). 로봇 1대, 지도 v1 0.025 m, EKF+AMCL, Nav2(DWA).
+# 경로 계획·추종 KPI (민지 측정, 이진 판정, 4주차 민지 작업 2). 로봇 1대, 지도 v2 0.025 m, EKF+AMCL, Nav2(DWA).
 # 웨이포인트 50개 투어(= 출발·목표 50쌍, experiments/nav_kpi/waypoints.yaml)를 한 실행에 돈다.
-#   HARNESS_PACKAGES="amr_bringup amr_nav2_plugins amr_control" tools/harness/docker_run.sh nav_kpi -n 1
+#   tools/harness/docker_run.sh nav_kpi -n 1
 #   ... --set controller=pp --label pp     # CTE KPI(5장 모션 제어)는 path_tracker로 판정 (이진 10/13)
 # 결과: nav_pairs.csv(쌍마다 계획·주행·예측 오차·복구 횟수), replan.csv, cte.csv, paths.csv, nav_kpi.json
 # DWA 최고 속도를 예측 순항 속도(0.5 m/s)와 같게 맞춘다 (config_patch, navigation.md 7-4절 비교 조건)
 name: nav_kpi
+# 빌드할 패키지 (docker_run.sh가 읽는다. HARNESS_PACKAGES·--packages가 있으면 그쪽이 우선). 없으면 기본값에 amr_bringup이 없어 실패한다
+packages: amr_bringup amr_nav2_plugins amr_control
 num_robots: 1
 use_sim_time: true
 seed_base: 1

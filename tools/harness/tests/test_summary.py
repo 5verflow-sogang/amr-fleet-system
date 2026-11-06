@@ -152,6 +152,11 @@ def test_fleet_task_and_recovery_metrics(tmp_path):
     assert m['fleet.throughput_per_min'] == pytest.approx(3.0)     # 완료 2건 / 첫 요청 0초~마지막 완료 40초
     assert 'fleet.reclaimed_tasks' not in m      # 로봇 장애 없는 실행
     assert 'fleet.duplicate_tasks' not in m      # runners 열이 없는 옛 결과
+    # 시뮬레이션 시각 열이 있으면 처리량은 그 시계로 (RTF 0.5: 실제 40 s = 시뮬레이션 20 s → 2건/20 s)
+    (run / 'task_outcomes.csv').write_text(
+        'task_id,request_time,first_assign_time,robots,final_state,end_time,request_sim,end_sim\n'
+        't1,0,1,amr_01,COMPLETED,8,0,4\nt2,10,11,amr_01,COMPLETED,40,5,20\n')
+    assert fleet_metrics(run)['fleet.throughput_per_min'] == pytest.approx(6.0)
 
     (run / 'task_outcomes.csv').write_text(
         'task_id,request_time,first_assign_time,robots,final_state,end_time,runners\n'
