@@ -49,6 +49,8 @@ def task_info(msg: Task) -> TaskInfo:
         task_type=msg.task_type,
         dropoff_xy=(msg.dropoff_pose.position.x, msg.dropoff_pose.position.y),
         priority=msg.priority,
+        # 기록용. aging은 이 값이 아니라 dispatcher.add_task의 received_at(서버 시계)으로 잰다 - 보낸 쪽
+        # (대시보드 등) 시계가 서버와 다르면 msg.created_time만으로는 대기 시간을 믿을 수 없다
         created=stamp_to_sec(msg.created_time),
         pickup_xy=pickup,
         deadline=deadline if deadline > 0 else None,
@@ -190,7 +192,8 @@ class FleetManager(Node):
     def _on_task(self, msg: Task):
         if not msg.task_id:
             msg.task_id = f'task_{uuid.uuid4().hex[:12]}'
-        if not self._dispatcher.add_task(task_info(msg), msg):
+        # aging은 받은 시각(서버 시계, _now_sec)으로 잰다 - msg.created_time은 보낸 쪽(대시보드 등) 시계라 다를 수 있다
+        if not self._dispatcher.add_task(task_info(msg), msg, received_at=self._now_sec()):
             self.get_logger().warn(f'이미 받은 작업이라 무시: {msg.task_id}')
             return
         self._assign()

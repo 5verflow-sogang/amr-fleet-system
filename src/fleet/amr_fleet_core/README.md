@@ -169,11 +169,15 @@ def assign_xxx(
 
 - 정렬 첫 키만 `priority` 대신 유효 우선순위다. 뒤 키(`deadline` → `created` → `task_id`)는 그대로라, 유효 우선순위가 같아진
   순간에는 먼저 들어온 작업이 앞선다.
-- `now`·`created`는 같은 시계다. 서버는 노드 시계(시뮬레이션에서는 시뮬레이션 시간)로 `now`를 넣고, `created`는
-  `Task.created_time`이다 - Fleet 시간 지표와 같은 기준(#285). 재전송·생존 판정에 쓰는 실제 시간과는 따로 넘긴다.
+- `now`·`created`는 같은 시계다(노드 시계, 시뮬레이션에서는 시뮬레이션 시간). 이 모듈은 `TaskInfo.created`가 그
+  시계라고만 가정한다 - `amr_fleet_manager`는 `Task.created_time`(보낸 쪽 시계라 다를 수 있다. 대시보드 등 외부
+  클라이언트)을 그대로 쓰지 않고, dispatcher가 작업을 받은 시각(`TaskEntry.received_at`)으로 바꿔 넣는다.
+  재전송·생존 판정에 쓰는 실제 시간과는 따로 넘긴다.
 - `aging`이 없거나 `rate` 0이면 지금 순서와 똑같다(서버 기본 `assignment.aging_rate: 0.0`).
 - 모든 작업이 같은 속도로 오르므로 두 작업의 차이는 "들어온 시각 차이 × rate"만큼만 바뀐다. 그래서 우선순위 차이 Δ는
   Δ / rate 초 먼저 들어온 작업에 따라잡힌다. 같은 우선순위끼리의 순서(먼저 온 순)는 그대로다.
+- aging을 켜면(`rate` > 0) 유효 우선순위가 대기 시간만큼 계속 올라 `deadline`보다 먼저 정렬 순서를 가르므로,
+  `deadline`은 둘의 유효 우선순위가 딱 같아지는 드문 경우에만 쓰인다 - 사실상 안 쓰는 값이 된다.
 
 **식당 시연 값** (`amr_fleet_manager/config/fleet_manager_restaurant.yaml`): `rate = 100 / 60 ≈ 1.667 /s`.
 

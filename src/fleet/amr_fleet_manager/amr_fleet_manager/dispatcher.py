@@ -76,7 +76,8 @@ class DispatcherConfig:
     # 비용 + battery_weight × (필요 배터리 / 남은 배터리) [m]. 배터리가 많은 로봇이 먼 작업을 맡게 한다. 0이면 끈다
     battery_weight: float = 0.0
     # 우선순위 aging (인터럽트 관제): 큐에서 기다린 1초마다 우선순위에 이만큼 더해 줄 세운다(amr_fleet_core Aging).
-    # 0이면 끈다 (기본, 지금 순서와 같음). 대기 시간은 assign()의 aging_now(Task.created_time과 같은 시계)로 잰다.
+    # 0이면 끈다 (기본, 지금 순서와 같음). 대기 시간은 add_task가 받은 시각(TaskEntry.received_at, assign()의
+    # aging_now와 같은 시계)로 잰다 - 보낸 쪽 시계(Task.created_time)가 다를 수 있어 그 값은 쓰지 않는다.
     # 서버가 직접 내는 충전·복귀(for_robot)는 할당 알고리즘을 거치지 않아 aging과 상관없다
     aging_rate: float = 0.0
 
@@ -123,6 +124,9 @@ class TaskEntry:
     for_robot: str = ''
     # 목적지 스테이션 이름 (충전기·대기 위치 예약에 쓴다)
     station: str = ''
+    # add_task가 이 작업을 받았을 때 서버 시계(aging_now와 같은 시계). aging은 info.created(Task.created_time,
+    # 보낸 쪽 시계) 대신 이 값으로 잰다 - 대시보드 등 외부 클라이언트의 시계가 서버와 다를 수 있다
+    received_at: float = 0.0
 
 
 @dataclass
@@ -219,14 +223,19 @@ class Dispatcher:
             return 'congestion', self._congestion_cost
         return 'euclidean', euclidean_cost
 
-    def add_task(self, info: TaskInfo, payload: Any = None, for_robot: str = '', station: str = '') -> bool:
+    def add_task(self, info: TaskInfo, payload: Any = None, for_robot: str = '', station: str = '',
+                 received_at: Optional[float] = None) -> bool:
         """새 작업을 큐에 넣는다. 같은 task_id가 이미 있으면 무시하고 False.
 
         for_robot을 주면 할당 알고리즘을 거치지 않고 그 로봇이 비는 대로 맡긴다 (서버가 낸 충전·복귀).
+        received_at: aging이 대기 시간을 잴 서버 시각(assign()의 aging_now와 같은 시계). 생략하면 info.created를
+        쓴다(기존 호출 호환, 단위 테스트에서 TaskInfo를 직접 만들 때).
         """
         if info.task_id in self.tasks:
             return False
-        self.tasks[info.task_id] = TaskEntry(info=info, payload=payload, for_robot=for_robot, station=station)
+        self.tasks[info.task_id] = TaskEntry(
+            info=info, payload=payload, for_robot=for_robot, station=station,
+            received_at=received_at if received_at is not None else info.created)
         return True
 
     def update_robot(self, info: RobotInfo, current_task_id: str, now: float) -> None:
@@ -322,7 +331,8 @@ class Dispatcher:
 
         이미 다른 로봇이 맡았다고 보고한 작업은 맡기지 않고 그 로봇(주인)에게 넘긴다.
         aging_now: aging(DispatcherConfig.aging_rate)의 지금 시각. now(실제 시간, 재전송·생존 판정)와 달리
-        TaskInfo.created(Task.created_time)와 같은 시계여야 한다 - 시뮬레이션에서는 시뮬레이션 시간. None이면 aging 끔.
+        add_task의 received_at(TaskEntry.received_at)과 같은 시계여야 한다 - 시뮬레이션에서는 시뮬레이션 시간.
+        None이면 aging 끔.
         """
         aging = (Aging(self.config.aging_rate, aging_now)
                  if self.config.aging_rate > 0 and aging_now is not None else None)
@@ -334,8 +344,10 @@ class Dispatcher:
                                     else STATE_IN_PROGRESS)
         # 서버가 낸 충전을 먼저 보낸다 (그 로봇에게 다른 작업을 주지 않게). 복귀는 할당 알고리즘 뒤
         commands = self._assign_directed(TYPE_CHARGE, now)
+        # aging은 받은 시각(received_at)으로 잰다. info.created(Task.created_time)는 기록용으로만 남긴다
         queued = self._station_free(
-            [t.info for t in self.tasks.values() if t.state == STATE_PENDING and not t.assignee and not t.for_robot],
+            [replace(t.info, created=t.received_at) for t in self.tasks.values()
+             if t.state == STATE_PENDING and not t.assignee and not t.for_robot],
             aging)
         reserved = self._reserved()
         free = [
