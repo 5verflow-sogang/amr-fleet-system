@@ -13,6 +13,8 @@ yield_to_robots(선택, 로봇 네임스페이스 목록)를 주면 그 로봇�
 한번 서면 로봇이 다시 움직여도 이번 구간(다음 경유점까지) 길에서 비킬 때까지 기다린다
 (막 출발한 로봇에 걸어 들어가지 않게). 로봇이 YIELD_PATIENCE_S 동안 계속 멈춰 있으면 온 쪽으로 돌아선다.
 straight·random 패턴만 쓸 수 있다 (curve는 구간이 표본 간격 0.5 m로 짧아 앞을 충분히 못 본다).
+yield_robot_size(선택, [길이, 폭] m)는 비킬 때 보는 로봇 차체 크기다. 없으면 물류 AMR(ROBOT_LENGTH × ROBOT_WIDTH).
+식당 서빙 로봇(body:=serving)은 0.565 × 0.537 m를 준다.
 """
 
 from __future__ import annotations
@@ -42,11 +44,12 @@ YIELD_SIDE_MARGIN = 0.05
 # 서 있는 동안 막은 로봇이 이만큼 [s] 계속 멈춰 있으면 돌아선다. 로봇이 작업자가 이미 가까이 있을 때 서면
 # 작업자는 긴급정지 띠 안이고 로봇은 후진하지 않아(min_vel_x 0) 둘 다 기다리기만 한다 (로컬 시험에서 50 s)
 YIELD_PATIENCE_S = 5.0
-# 로봇 차체 [m] (amr_description, avoidance_eval robot_length·width)
+# 로봇 차체 [m] (amr_description, avoidance_eval robot_length·width). yield_robot_size가 없을 때 쓴다
 ROBOT_LENGTH = 0.6
 ROBOT_WIDTH = 0.4
 # 장애물 몸을 덮는 원 반지름 [m] (models/dynamic_*/model.sdf 충돌체: 원기둥 r 0.25, 1.2×0.9·0.6×0.4 상자의 외접원)
-BODY_RADIUS = {'worker': 0.25, 'forklift': 0.75, 'robot': 0.36}
+# customer: 식당 손님(models/dynamic_customer 충돌체 원기둥 r 0.25)
+BODY_RADIUS = {'worker': 0.25, 'forklift': 0.75, 'robot': 0.36, 'customer': 0.25}
 
 
 def catmull_rom(points: Sequence[Point], spacing: float = CURVE_SPACING) -> List[Point]:
@@ -91,6 +94,10 @@ class ObstacleMotion:
         if self.yield_to and self.pattern == 'curve':
             raise ValueError(f'{self.id}: yield_to_robots는 straight·random 패턴만 쓸 수 있다')
         self.radius = BODY_RADIUS.get(spec.get('type'), 0.0)
+        size = spec.get('yield_robot_size') or [ROBOT_LENGTH, ROBOT_WIDTH]
+        if len(size) != 2 or not all(float(v) > 0 for v in size):
+            raise ValueError(f'{self.id}: yield_robot_size는 [길이, 폭] (m, 양수): {size!r}')
+        self.robot_half = (0.5 * float(size[0]), 0.5 * float(size[1]))
         self.waiting = False     # 멈춘 로봇 앞에서 서 있는 중
         self.turn_backs = 0      # 오래 멈춘 로봇 앞에서 돌아선 횟수
         self._stuck_since: Optional[float] = None   # 막은 로봇이 계속 멈춰 있기 시작한 시각 [s]
@@ -144,7 +151,8 @@ class ObstacleMotion:
         reach = d if self.waiting else min(YIELD_DISTANCE, d)
         blocking = [state for name, state in robots.items()
                     if name in self.yield_to
-                    and blocks_path(xy, (dx / d, dy / d), reach, state, self.radius + YIELD_SIDE_MARGIN)]
+                    and blocks_path(xy, (dx / d, dy / d), reach, state, self.radius + YIELD_SIDE_MARGIN,
+                                    self.robot_half)]
         all_stopped = all(speed < STOPPED_SPEED for *_, speed in blocking)
         if not self.waiting:
             self.waiting = bool(blocking) and any(speed < STOPPED_SPEED for *_, speed in blocking)
@@ -193,8 +201,9 @@ class ObstacleMotion:
         return self._rng.uniform(*self.speed_range)
 
 
-def blocks_path(xy: Point, u: Point, reach: float, robot: RobotState, clearance: float) -> bool:
-    """xy에서 단위 방향 u로 reach [m] 가는 동안 로봇 차체에 clearance [m]보다 가까워지는지.
+def blocks_path(xy: Point, u: Point, reach: float, robot: RobotState, clearance: float,
+                half: Tuple[float, float] = (0.5 * ROBOT_LENGTH, 0.5 * ROBOT_WIDTH)) -> bool:
+    """xy에서 단위 방향 u로 reach [m] 가는 동안 로봇 차체(반길이·반폭 half)에 clearance [m]보다 가까워지는지.
 
     지금 차체에서 가장 가까운 점 쪽으로 가지 않으면 막히지 않은 것으로 본다. 점과 볼록 도형 사이 거리는
     직선을 따라 볼록 함수라, 처음에 줄지 않으면 그 방향으로는 계속 줄지 않는다 (이미 붙어 있어도 떨어지는 쪽은 간다).
@@ -204,7 +213,7 @@ def blocks_path(xy: Point, u: Point, reach: float, robot: RobotState, clearance:
     rx, ry = xy[0] - x, xy[1] - y
     px, py = c * rx + s * ry, -s * rx + c * ry          # 차체 기준 좌표 (x 앞, y 왼쪽)
     ux, uy = c * u[0] + s * u[1], -s * u[0] + c * u[1]
-    hl, hw = 0.5 * ROBOT_LENGTH, 0.5 * ROBOT_WIDTH
+    hl, hw = half
     qx, qy = min(max(px, -hl), hl), min(max(py, -hw), hw)
     if (qx - px) * ux + (qy - py) * uy <= 0.0:
         return False

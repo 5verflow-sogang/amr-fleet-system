@@ -304,3 +304,38 @@ def test_rejects_bad_yield_config():
         ObstacleMotion({**WORKER, 'yield_to_robots': 'amr_01'}, random.Random(0))
     with pytest.raises(ValueError):          # curve는 구간이 짧아 앞을 못 본다
         ObstacleMotion({**WORKER, 'pattern': 'curve'}, random.Random(0))
+
+
+def test_rejects_bad_robot_size():
+    for size in ([0.565], [0.565, 0.0], [-0.5, 0.5]):
+        with pytest.raises(ValueError):
+            ObstacleMotion({**WORKER, 'yield_robot_size': size}, random.Random(0))
+
+
+def test_customer_yields_to_serving_robot_size():
+    """식당 손님(customer, r 0.25)도 멈춘 로봇 앞에서 선다. 서빙 로봇(0.565 x 0.537 m)은 AMR보다 폭이 넓어
+    옆으로 0.27 m 떨어진 선도 막는다 (AMR 크기로 보면 막히지 않는다)."""
+    customer = {**WORKER, 'id': 'customer_cross', 'type': 'customer'}
+    # 로봇(3, 1.5, 동쪽)의 오른쪽(동쪽) 변에서 옆으로: AMR 반길이 0.3 / 서빙 0.2825는 x 방향이라 북쪽을 보게 돌려 반폭이 x로 오게 한다
+    robot = (3.0, 1.5, math.pi / 2, 0.0)
+    line_x = 3.0 + 0.2685 + 0.25          # 서빙 로봇 옆 끝에서 손님 몸 반지름만큼 = 닿는 선
+    spec = {**customer, 'spawn': {'x': line_x, 'y': 4.0},
+            'waypoints': [{'x': line_x, 'y': 4.0}, {'x': line_x, 'y': 0.8}]}
+    assert not any(w for _, _, w in _walk(lambda t: robot, 6.0, spec=spec, clock=False))
+    serving = {**spec, 'yield_robot_size': [0.565, 0.537]}
+    log = _walk(lambda t: robot, 6.0, spec=serving, clock=False)
+    assert any(w for _, _, w in log)
+
+
+@pytest.mark.parametrize('name', ['dynamic_obstacles_restaurant.yaml', 'dynamic_obstacles_restaurant_peak.yaml'])
+def test_restaurant_guests_yield_except_curve(name):
+    path = os.path.join(os.path.dirname(__file__), '..', 'config', name)
+    with open(path, encoding='utf-8') as f:
+        specs = yaml.safe_load(f)['obstacles']
+    for s in specs:
+        ObstacleMotion(s, random.Random(0))          # 설정이 받아들여진다
+        if s['pattern'] == 'curve':
+            assert not s.get('yield_to_robots'), s['id']
+        else:
+            assert s['yield_to_robots'] == ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05'], s['id']
+            assert s['yield_robot_size'] == [0.565, 0.537], s['id']

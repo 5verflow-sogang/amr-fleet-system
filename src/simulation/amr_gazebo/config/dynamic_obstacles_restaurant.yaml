@@ -12,7 +12,10 @@
 #   x -4.225·1.875는 1·3행에 기둥이 있다. 남쪽 통로에서 홀로는 화분 칸막이 틈(x -10.5, -7.275, -1.175, 4.74)으로만 들어간다
 #   가로 통로 y 3.45(매장 앞), 0.55, -2.45, -5.8(남쪽, 화분 칸막이 아래)
 # 가로 통로는 테이블 정차 자리(stations_restaurant.yaml t01~t15)를 비켜 조금 옮겼다. 매장 앞 통로(y 3.45)만은 폭이 좁아
-# 픽업·테이블 정차 로봇과 겹칠 수 있다 (혼잡 구간). 손님은 로봇을 피하지 않는다 (obstacle_motion은 경로만 따른다)
+# 픽업·테이블 정차 로봇과 겹칠 수 있다 (혼잡 구간). 손님은 움직이는 로봇을 피하지 않고 경로만 따른다.
+# 다만 멈춘 서빙 로봇에는 걸어 들어가지 않는다 (yield_to_robots, #263 작업자와 같은 규칙: 앞 0.5 m 안에서 서고 5 s 넘게
+# 막히면 돌아선다). 손님 몸이 로봇을 밀어 테이블 쪽으로 붙이던 것을 막는다(식당 리허설). curve(customer_3)는 이 규칙을
+# 쓸 수 없어 그대로다
 # random은 경유점이 이루는 사각 영역 안을 직선으로 다니므로 테이블이 없는 남쪽 빈 곳에만 쓴다.
 # 사람 걸음 0.4~1.0 m/s (식당 안이라 물류센터 작업자보다 조금 넓게).
 
@@ -20,6 +23,8 @@ obstacles:
   - id: customer_1
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -10.0, y: 3.45, yaw: 0.0}
     waypoints:
@@ -30,6 +35,8 @@ obstacles:
   - id: customer_2
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -7.275, y: -5.6, yaw: 1.5707963}
     waypoints:
@@ -57,6 +64,8 @@ obstacles:
   - id: customer_4
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -10.5, y: 0.55, yaw: 0.0}
     waypoints:
@@ -67,6 +76,8 @@ obstacles:
   - id: customer_5
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
     speed_range_mps: [0.5, 1.0]
     spawn: {x: 4.74, y: -5.6, yaw: 1.5707963}
     waypoints:
@@ -77,6 +88,8 @@ obstacles:
   - id: customer_6
     type: customer
     pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
     speed_range_mps: [0.4, 0.8]
     spawn: {x: -6.0, y: -5.6, yaw: 0.0}
     waypoints:
@@ -89,6 +102,8 @@ obstacles:
   - id: customer_7
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -7.275, y: -2.45, yaw: 0.0}
     waypoints:
