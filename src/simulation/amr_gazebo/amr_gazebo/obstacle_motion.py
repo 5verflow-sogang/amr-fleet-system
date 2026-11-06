@@ -15,6 +15,10 @@ yield_to_robots(선택, 로봇 네임스페이스 목록)를 주면 그 로봇�
 straight·random 패턴만 쓸 수 있다 (curve는 구간이 표본 간격 0.5 m로 짧아 앞을 충분히 못 본다).
 yield_robot_size(선택, [길이, 폭] m)는 비킬 때 보는 로봇 차체 크기다. 없으면 물류 AMR(ROBOT_LENGTH × ROBOT_WIDTH).
 식당 서빙 로봇(body:=serving)은 0.565 × 0.537 m를 준다.
+yield_patience_s·yield_progress_m(선택)은 언제 돌아설지 정한다. 기본(없음)은 막은 로봇의 속력이 STOPPED_SPEED 아래로
+YIELD_PATIENCE_S 동안 이어질 때다. yield_progress_m을 주면 속력 대신 위치를 본다: 막은 로봇이 그만큼도 못 움직인 채
+yield_patience_s가 지나면 돌아선다. 제자리에서 돌거나 조금씩 들썩이는 로봇(속력이 기준을 넘나든다) 앞에서 손님이 한없이
+서 있지 않게 한다 (식당 리허설: 손님과 로봇이 서로 기다림). random 패턴은 돌아설 때 로봇이 막지 않는 목표점을 고른다.
 """
 
 from __future__ import annotations
@@ -98,6 +102,12 @@ class ObstacleMotion:
         if len(size) != 2 or not all(float(v) > 0 for v in size):
             raise ValueError(f'{self.id}: yield_robot_size는 [길이, 폭] (m, 양수): {size!r}')
         self.robot_half = (0.5 * float(size[0]), 0.5 * float(size[1]))
+        self.patience_s = float(spec.get('yield_patience_s', YIELD_PATIENCE_S))
+        progress = spec.get('yield_progress_m')
+        self.progress_m = None if progress is None else float(progress)
+        if self.patience_s <= 0 or (self.progress_m is not None and self.progress_m <= 0):
+            raise ValueError(f'{self.id}: yield_patience_s·yield_progress_m은 양수여야 한다')
+        self._anchor: Optional[List[Point]] = None   # yield_progress_m: 기다리기 시작한 때 막은 로봇들 위치
         self.waiting = False     # 멈춘 로봇 앞에서 서 있는 중
         self.turn_backs = 0      # 오래 멈춘 로봇 앞에서 돌아선 횟수
         self._stuck_since: Optional[float] = None   # 막은 로봇이 계속 멈춰 있기 시작한 시각 [s]
@@ -153,6 +163,8 @@ class ObstacleMotion:
                     if name in self.yield_to
                     and blocks_path(xy, (dx / d, dy / d), reach, state, self.radius + YIELD_SIDE_MARGIN,
                                     self.robot_half)]
+        if self.progress_m is not None:
+            return self._must_wait_progress(xy, blocking, robots, t)
         all_stopped = all(speed < STOPPED_SPEED for *_, speed in blocking)
         if not self.waiting:
             self.waiting = bool(blocking) and any(speed < STOPPED_SPEED for *_, speed in blocking)
@@ -163,17 +175,41 @@ class ObstacleMotion:
             self._stuck_since = None
         elif self._stuck_since is None:
             self._stuck_since = t
-        elif t is not None and t - self._stuck_since >= YIELD_PATIENCE_S:
-            self._turn_back()
+        elif t is not None and t - self._stuck_since >= self.patience_s:
+            self._turn_back(xy, robots)
             self.waiting = False
         return self.waiting
 
-    def _turn_back(self) -> None:
-        """온 쪽으로 돌아선다 (random은 새 목표점)."""
+    def _must_wait_progress(self, xy: Point, blocking, robots: Mapping[str, RobotState], t: Optional[float]) -> bool:
+        """yield_progress_m을 줬을 때: 막은 로봇이 progress_m도 못 움직인 채 patience_s가 지나면 돌아선다."""
+        here = [(x, y) for x, y, *_ in blocking]
+        if not self.waiting:
+            self.waiting = bool(blocking) and any(speed < STOPPED_SPEED for *_, speed in blocking)
+            self._stuck_since, self._anchor = (t, here) if self.waiting else (None, None)
+            return self.waiting
+        if not blocking:
+            self.waiting, self._stuck_since, self._anchor = False, None, None
+            return False
+        moved = self._anchor is None or len(here) != len(self._anchor) or any(
+            math.dist(a, b) >= self.progress_m for a, b in zip(sorted(here), sorted(self._anchor)))
+        if moved or self._stuck_since is None:
+            self._stuck_since, self._anchor = t, here
+        elif t is not None and t - self._stuck_since >= self.patience_s:
+            self._turn_back(xy, robots)
+            self.waiting, self._anchor = False, None
+        return self.waiting
+
+    def _turn_back(self, xy: Optional[Point] = None, robots: Optional[Mapping[str, RobotState]] = None) -> None:
+        """온 쪽으로 돌아선다 (random은 새 목표점, yield_progress_m이면 로봇이 막지 않는 쪽으로)."""
         self.turn_backs += 1
         self._stuck_since = None
         if self.pattern == 'random':
             self._goal = self._random_goal()
+            if self.progress_m is not None and xy is not None and robots:
+                for _ in range(20):
+                    if not self._goal_blocked(xy, self._goal, robots):
+                        break
+                    self._goal = self._random_goal()
             return
         self._dir = -self._dir
         self._index += self._dir
@@ -192,6 +228,14 @@ class ObstacleMotion:
             self.speed = self._new_speed()
         self._index = nxt
         self._goal = self.path[nxt]
+
+    def _goal_blocked(self, xy: Point, goal: Point, robots: Mapping[str, RobotState]) -> bool:
+        dx, dy = goal[0] - xy[0], goal[1] - xy[1]
+        d = math.hypot(dx, dy)
+        if d < 1e-6:
+            return False
+        return any(blocks_path(xy, (dx / d, dy / d), d, state, self.radius + YIELD_SIDE_MARGIN, self.robot_half)
+                   for name, state in robots.items() if name in self.yield_to)
 
     def _random_goal(self) -> Point:
         x0, x1, y0, y1 = self.area

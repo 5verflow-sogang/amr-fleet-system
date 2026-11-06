@@ -339,3 +339,44 @@ def test_restaurant_guests_yield_except_curve(name):
         else:
             assert s['yield_to_robots'] == ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05'], s['id']
             assert s['yield_robot_size'] == [0.565, 0.537], s['id']
+            assert (s['yield_patience_s'], s['yield_progress_m']) == (3.0, 0.1), s['id']
+
+
+# 제자리에서 도는 로봇: 위치는 그대로인데 속력이 0과 0.1 m/s를 오간다 (식당 리허설에서 손님과 서로 기다림)
+def _jittering(t):
+    return (3.0, 1.5, 0.0, 0.1 if int(t * 2) % 2 else 0.0)
+
+
+def test_default_patience_keeps_waiting_for_a_jittering_robot():
+    log = _walk(_jittering, 12.0)
+    stop = next(i for i, (_, _, waiting) in enumerate(log) if waiting)
+    assert all(waiting for _, _, waiting in log[stop:])
+
+
+def test_progress_patience_walks_again_when_the_robot_does_not_move():
+    spec = {**WORKER, 'yield_patience_s': 3.0, 'yield_progress_m': 0.1}
+    m = ObstacleMotion(spec, random.Random(1))
+    log = _walk(_jittering, 12.0, spec=spec, motion=m)
+    stop = next(i for i, (_, _, waiting) in enumerate(log) if waiting)
+    walk = next(i for i in range(stop, len(log)) if not log[i][2])
+    assert log[walk][0] - log[stop][0] == pytest.approx(3.0, abs=2 * DT)
+    assert m.turn_backs >= 1
+    assert max(xy[1] for _, xy, _ in log[walk:]) > log[stop][1][1] + 1.0    # 북쪽으로 떠났다
+
+
+def test_progress_patience_restarts_when_the_robot_moves():
+    spec = {**WORKER, 'yield_patience_s': 3.0, 'yield_progress_m': 0.1}
+
+    def creeping(t):    # 2 s마다 0.15 m씩 동쪽으로 간다 (7.5 s까지 길은 계속 막고 있다)
+        return (3.0 + 0.15 * int(t / 2.0), 1.5, 0.0, 0.0)
+
+    m = ObstacleMotion(spec, random.Random(1))
+    log = _walk(creeping, 7.5, spec=spec, motion=m)
+    assert any(waiting for _, _, waiting in log)
+    assert m.turn_backs == 0                   # 3 s 안에 0.1 m 넘게 움직여 타이머가 다시 시작된다
+
+
+def test_rejects_bad_patience():
+    for extra in ({'yield_patience_s': 0.0}, {'yield_progress_m': -0.1}):
+        with pytest.raises(ValueError):
+            ObstacleMotion({**WORKER, **extra}, random.Random(0))

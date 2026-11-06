@@ -16,6 +16,8 @@
 # 다만 멈춘 서빙 로봇에는 걸어 들어가지 않는다 (yield_to_robots, #263 작업자와 같은 규칙: 앞 0.5 m 안에서 서고 5 s 넘게
 # 막히면 돌아선다). 손님 몸이 로봇을 밀어 테이블 쪽으로 붙이던 것을 막는다(식당 리허설). curve(customer_3)는 이 규칙을
 # 쓸 수 없어 그대로다
+# 로봇이 0.1 m도 못 움직인 채 3 s가 지나면 손님이 돌아서 다시 걷는다(yield_progress_m·yield_patience_s). 제자리에서 도는 로봇은
+# 속력으로는 멈춘 것과 움직이는 것을 오가 손님과 로봇이 서로 기다렸다(식당 리허설)
 # random은 경유점이 이루는 사각 영역 안을 직선으로 다니므로 테이블이 없는 남쪽 빈 곳에만 쓴다.
 # 사람 걸음 0.4~1.0 m/s (식당 안이라 물류센터 작업자보다 조금 넓게).
 
@@ -25,6 +27,8 @@ obstacles:
     pattern: straight
     yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
     yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -10.0, y: 3.45, yaw: 0.0}
     waypoints:
@@ -37,6 +41,8 @@ obstacles:
     pattern: straight
     yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
     yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -7.275, y: -5.6, yaw: 1.5707963}
     waypoints:
@@ -66,6 +72,8 @@ obstacles:
     pattern: straight
     yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
     yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -10.5, y: 0.55, yaw: 0.0}
     waypoints:
@@ -78,6 +86,8 @@ obstacles:
     pattern: straight
     yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
     yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.5, 1.0]
     spawn: {x: 4.74, y: -5.6, yaw: 1.5707963}
     waypoints:
@@ -90,6 +100,8 @@ obstacles:
     pattern: random
     yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
     yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.8]
     spawn: {x: -6.0, y: -5.6, yaw: 0.0}
     waypoints:
@@ -104,6 +116,8 @@ obstacles:
     pattern: straight
     yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
     yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -7.275, y: -2.45, yaw: 0.0}
     waypoints:
