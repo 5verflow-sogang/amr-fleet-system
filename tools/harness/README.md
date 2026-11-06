@@ -152,7 +152,7 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
 
 - 형식: UTF-8 CSV, 첫 줄은 헤더. 지표 하나당 파일 하나.
 - 시각: 초 단위 실수 (예: `123.456789`).
-- 시간 기준: 기본은 **시뮬레이션 시간**이다(GT와 추정값을 같은 시계로 맞춰야 하므로). 단, **응답 시간과 연구 1의 지연은 실제 시간**으로 잰다(하연 합의, #5).
+- 시간 기준: 기본은 **시뮬레이션 시간**이다(GT와 추정값을 같은 시계로 맞춰야 하므로). 단, **응답 시간과 연구 1의 지연은 실제 시간**으로 잰다(하연 합의, #5). Fleet 작업 시간·처리량·구역 대기·정체·회수 시간도 시뮬레이션 시간이다(11/3 하연 결정): `fleet_metrics`가 bag의 odom(수신 시각, `header.stamp`) 짝으로 지속 시간을 시뮬레이션 시간으로 바꾼다. 시각 열(`*_time`)은 그림·`fault_events.csv`와 맞추려고 실제 시간 그대로다. odom이 없는 가짜 로봇 시나리오는 /clock이 없어 실제 시간이다.
 - 단위: 거리는 m, 각도는 rad, 지연은 ms. 컬럼 이름에 단위가 없으면 이 규칙을 따른다.
 - 명세서 컬럼은 이름·순서를 바꾸지 않는다. 부가 컬럼은 **명세서 컬럼 뒤에만** 추가한다. 앞쪽 열만 잘라내면 명세서 형식이 되도록 하기 위해서다.
 - 다중 로봇 시나리오는 부가 컬럼 `robot`(예: `amr_01`)을 붙인다.
@@ -180,14 +180,14 @@ python3 tools/harness/summarize.py tools/harness/results/fleet_fake-d100_* --not
 | `localization.csv` | `timestamp, gt_x, gt_y, est_x, est_y, error` | `segment` (`stationary`·`straight`·`rotation`), `yaw_error`, `robot` | 시나리오당 100개 시점 이상 | 민지 |
 | `cte.csv` | `timestamp, planned_x, planned_y, actual_x, actual_y, cte` | `segment` (`straight`·`curve`), `robot` | 구간별 분리 | 이진 |
 | `response_time.csv` | `cmd_time, response_time, latency_ms` | `robot`, `task_id`, `latency_sim_ms`, `assignment_id`, `ack_time`, `ack_rtt_ms`, `resends`, `recv_time`, `latency_recv_ms`, `moving_at_cmd` | 50회 이상 | 하연 |
-| `zone_waits.csv` | `robot, zone, request_id, request_time, grant_time, wait_s, outcome, release_time` | — | 구역 진입 요청마다 1행 (구역 기록이 있을 때만) | 하연 (`fleet_metrics`) |
-| `stalls.csv` | `robot, task_id, phase, start_time, end_time, duration_s, with` | — | 이동 단계에서 60 s 동안 2 m 안에서만 움직인 구간마다 1행 (로봇·구간마다, odom 기록이 있을 때만). `with`: 같은 때 1.5 m 안에서 같이 정체한 로봇 (`fleet.stalls_paired`) | 하연 (`fleet_metrics`) |
+| `zone_waits.csv` | `robot, zone, request_id, request_time, grant_time, wait_s, outcome, release_time` | — | 구역 진입 요청마다 1행 (구역 기록이 있을 때만). `wait_s`는 시뮬레이션 시간(`meta.json` `fleet_clock`) | 하연 (`fleet_metrics`) |
+| `stalls.csv` | `robot, task_id, phase, start_time, end_time, duration_s, with` | — | 이동 단계에서 60 s(시뮬레이션 시간) 동안 2 m 안에서만 움직인 구간마다 1행 (로봇·구간마다, odom 기록이 있을 때만). `duration_s`는 시뮬레이션 시간, `start_time`·`end_time`은 수신 시각. `with`: 같은 때 1.5 m 안에서 같이 정체한 로봇 (`fleet.stalls_paired`) | 하연 (`fleet_metrics`) |
 | `cpu.csv` | `time, cores, allowed_cores, cpu_pct, host_cpu_pct` | `cores_<묶음>` (sim·nav2·localization·fleet·perception·other) | 1초마다 1행 | 하연 (`cpu_monitor.py`) |
 | `fleet_latency.csv` | — (연구 1, 아래) | — | 메시지 1건 × 로봇 1대마다 1행 | 하연 정의, 하네스 기록기 (민지) |
 | `hop_latency.csv` | — (연구 1, 아래) | — | 구독 수신 1건마다 1행 | 하연 (트레이스 변환) |
 | `tasks.csv` | 명세서 작업 로그 필드 (아래) | — | 작업마다 1행 | 하네스 기록기 (민지) |
 | `assignments.csv` | — (팀 정의, 아래) | — | 할당 호출마다 | 하연 (`amr_fleet_manager`) |
-| `task_outcomes.csv` | — (팀 정의) | `task_id, request_time, first_assign_time, robots, final_state, end_time, task_time_s, distance_m, error_code, runners` | 작업마다 1행 | 하연 (`fleet_metrics`, bag에서 만든 Fleet 쪽 결과. 로봇 BT 작업 로그 `tasks.csv`와 별개) |
+| `task_outcomes.csv` | — (팀 정의) | `task_id, request_time, first_assign_time, robots, final_state, end_time, task_time_s, distance_m, error_code, runners, request_sim, end_sim` | 작업마다 1행. `task_time_s`·`request_sim`·`end_sim`은 시뮬레이션 시간(처리량도 이 열로) | 하연 (`fleet_metrics`, bag에서 만든 Fleet 쪽 결과. 로봇 BT 작업 로그 `tasks.csv`와 별개) |
 | `recovery.csv` | — (연구 1 로봇 장애) | `robot, kill_time, task_id, reassign_time, reassigned_robot, recovery_s, completed` | 로봇 강제종료 × 하던 작업마다 1행 | 하연 (`fleet_metrics`) |
 | `coverage/` | `colcon test --coverage` 텍스트·HTML | 모듈별 하위 폴더 | — | 전원 |
 
@@ -296,6 +296,7 @@ tools/harness/results/<run_id>/
 | `rmw_implementation` | `rmw_cyclonedds_cpp` | 연구 1 After 측정의 DDS 벤더 비교 (하연, #33) |
 | `qos_profile` | `default` | 연구 1 After 측정의 QoS 튜닝 전후 구분. 값은 [api.md 6절](../../docs/api.md#6-qos-기본값) 프로파일 이름 (하연, #33) |
 | `observation_cutoff` | `{"end": 612.3, "grace_s": 1.0, "cutoff": 610.8, "start": 12.4}` | 연구 1 지연·손실·Ack에서 뺀 실행 끝 구간(하연·민지, #33)과 녹화 초반 구간(`start`) |
+| `fleet_clock` | `{"durations": "sim", "rtf": 0.42}` | `fleet_metrics`가 지속 시간을 잰 시계(`sim`: bag odom으로 바꿈, `wall`: odom 없음)와 bag 전체의 RTF |
 
 ### 요약 통계
 
@@ -309,6 +310,7 @@ tools/harness/results/<run_id>/
 | 항목 | 결정 | 출처 |
 | --- | --- | --- |
 | 응답 시간·연구 1 지연의 시간 기준 | 실제 시간 | 하연, #5 |
+| Fleet 작업·대기·정체 시간의 시간 기준 (11/3) | 시뮬레이션 시간. 작업 생성기·하네스 대기도 시뮬레이션 시간 (`fleet_stack`·`task_cycle`). Gazebo가 느리면(RTF 0.42) 실제 시간 값이 2.4배 부풀었다 | 하연 결정, 민지 |
 | 실제 시간 측정 방식 | 하네스 기록기 수신 시각 (노드 `header.stamp`는 시뮬레이션 시간 유지) | 하연, #27 |
 | `response_time.csv` 부가 컬럼, `meta.json` 필드 | 설계와 맞으니 우선 진행, 바뀌면 수정 | 하연, #5 |
 | `cte.csv` 부가 컬럼 | `segment`, `robot` 확정. `meta.json`에 `controller` 추가 | 이진, #5 |

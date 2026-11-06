@@ -1,8 +1,13 @@
 """rosbag 기록 → Fleet 지표 CSV (fleet_latency.csv, response_time.csv 등). rclpy를 import하지 않는다.
 
 형식과 규칙은 tools/harness/README.md "지표 CSV"·"연구 1 지연"을 따른다.
-- 시각은 모두 bag에 저장된 수신 시각(실제 시간, s)이다. 메시지의 header.stamp(시뮬레이션 시간)는
-  짝짓기와 latency_sim_ms에만 쓴다.
+- 시각 열(*_time)은 모두 bag에 저장된 수신 시각(실제 시간, s)이다. fault_events.csv·그림(fleet_plot)과 같은 시계다.
+- 지속 시간 열(task_time_s, wait_s, duration_s, recovery_s)과 정체 판정은 시뮬레이션 시간으로 잰다 (11/3 하연 결정).
+  로봇·서버는 use_sim_time이라, Gazebo가 느리면(RTF 0.42, 11/2 fleet_stack) 실제 시간으로 잰 작업 시간이 2.4배로
+  부풀었다. bag의 /<robot>/odom(header.stamp = 시뮬레이션 시간)으로 수신 시각 → 시뮬레이션 시각 짝을 만든다(SimClock).
+  odom이 없으면(가짜 로봇, /clock 없음) 실제 시간 그대로다. 어느 쪽이었는지는 meta.json fleet_clock에 남긴다.
+- 통신 지연·손실(fleet_latency.csv)과 응답 시간(response_time.csv latency_ms)은 실제 시간 그대로다. 장애 주입기가
+  실제 시간(steady)으로 지연을 넣는다. 메시지의 header.stamp는 짝짓기와 latency_sim_ms에 쓴다.
 - 원본(/fleet/<topic>)과 중계본(/<robot>/fleet/<topic>)은 직렬화 바이트로 짝짓는다. 장애 주입기가 바이트를
   그대로 넘기므로 정확하고, request_id처럼 로봇마다 겹치는 번호에 헷갈리지 않는다. key 컬럼은 읽기용이다.
 - 관측 마감: 실행 끝 무렵에 보낸 메시지는 아직 오는 중일 수 있어 손실로 세지 않는다.
@@ -83,8 +88,9 @@ LINEAR_THRESHOLD = 0.01   # m/s
 ANGULAR_THRESHOLD = 0.05  # rad/s
 
 FLEET_LATENCY_HEADER = ['topic', 'robot', 'key', 'send_time', 'recv_time', 'latency_ms', 'delivered']
+# request_sim·end_sim: 같은 시각의 시뮬레이션 시간 (SimClock). 처리량(하네스 fleet.throughput_per_min)을 이 시계로 낸다
 TASK_OUTCOMES_HEADER = ['task_id', 'request_time', 'first_assign_time', 'robots', 'final_state', 'end_time',
-                        'task_time_s', 'distance_m', 'error_code', 'runners']
+                        'task_time_s', 'distance_m', 'error_code', 'runners', 'request_sim', 'end_sim']
 ZONE_WAITS_HEADER = ['robot', 'zone', 'request_id', 'request_time', 'grant_time', 'wait_s', 'outcome', 'release_time']
 STALLS_HEADER = ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s', 'with']
 FLEET_MODES_HEADER = ['robot', 'mode', 'start_time', 'end_time', 'duration_s']
@@ -155,6 +161,61 @@ def observation_start(records: Sequence[Record], delay_ms: float) -> Optional[fl
         if m and m['topic'] in PERIODIC_TOPICS:
             first.setdefault((m['topic'], m['robot']), r.t)
     return max(first.values()) - delay_ms / 1000.0 if first else None
+
+
+class SimClock:
+    """bag 수신 시각(실제 시간, s) → 시뮬레이션 시각(s). 지속 시간을 로봇·서버와 같은 시계로 재려고 쓴다.
+
+    Gazebo 로봇의 /<robot>/odom 메시지마다 (수신 시각, header.stamp) 짝을 모으고, 둘 다 늘어나는 짝만 남겨 그 사이를
+    선형 보간한다 (로봇 여럿의 odom이 섞이고 수신이 조금씩 늦어도 거꾸로 가지 않게). 범위 밖은 끝 짝에서 전체 RTF로
+    늘린다. 짝이 2개 미만이면(가짜 로봇은 odom이 없다) 실제 시간 그대로 돌려준다.
+    """
+
+    def __init__(self, records: Sequence[Record]):
+        pairs = sorted((r.t, _stamp_ns(r.msg.header.stamp) / 1e9) for r in records if ODOM_TOPIC.match(r.topic))
+        self.wall: list[float] = []
+        self.sim: list[float] = []
+        for w, t in pairs:
+            if not self.wall or (w > self.wall[-1] and t > self.sim[-1]):
+                self.wall.append(w)
+                self.sim.append(t)
+
+    @property
+    def active(self) -> bool:
+        return len(self.wall) >= 2
+
+    @property
+    def rtf(self) -> Optional[float]:
+        """기록 전체의 시뮬레이션 시간 ÷ 실제 시간. 짝이 모자라면 None."""
+        if not self.active:
+            return None
+        return (self.sim[-1] - self.sim[0]) / (self.wall[-1] - self.wall[0])
+
+    def __call__(self, t: Optional[float]) -> Optional[float]:
+        if t is None or not self.active:
+            return t
+        i = bisect.bisect_right(self.wall, t)
+        if i == 0:
+            return self.sim[0] + (t - self.wall[0]) * self.rtf
+        if i == len(self.wall):
+            return self.sim[-1] + (t - self.wall[-1]) * self.rtf
+        w0, w1, s0, s1 = self.wall[i - 1], self.wall[i], self.sim[i - 1], self.sim[i]
+        return s0 + (t - w0) * (s1 - s0) / (w1 - w0)
+
+    def span(self, start: Optional[float], end: Optional[float]) -> Optional[float]:
+        """두 수신 시각 사이의 시뮬레이션 시간. 하나라도 없으면 None."""
+        if start is None or end is None:
+            return None
+        return self(end) - self(start)
+
+    def meta(self) -> dict:
+        return {'durations': 'sim' if self.active else 'wall',
+                'rtf': None if self.rtf is None else round(self.rtf, 4)}
+
+
+def _wall_clock() -> SimClock:
+    """실제 시간 그대로인 시계 (짝 없음). 함수를 따로 부를 때의 기본값."""
+    return SimClock([])
 
 
 def _digest(data: bytes) -> bytes:
@@ -303,7 +364,7 @@ def _task_events(records: Sequence[Record]):
     return requests, assigns, finishes
 
 
-def task_outcomes(records: Sequence[Record]) -> list[list]:
+def task_outcomes(records: Sequence[Record], clock: Optional[SimClock] = None) -> list[list]:
     """task_outcomes.csv 행. 작업 1건마다 1행.
 
     final_state: 어느 로봇이든 COMPLETED를 보고했으면 COMPLETED (첫 보고). 하이브리드에서는 서버가 맡긴 로봇이
@@ -314,7 +375,9 @@ def task_outcomes(records: Sequence[Record]) -> list[list]:
     502 충전 시간 초과 등). 하네스 요약이 실패 원인별로 센다(fleet.tasks_failed_*). FAILED가 아니면 빈칸.
     runners: IN_PROGRESS를 보고한 로봇 (처음 보고한 순서, 공백 구분). 둘 이상이면 같은 작업을 여러 로봇이 실제로
     움직이며 했다는 뜻이다 (하이브리드 중복 실행, 하네스 요약 fleet.duplicate_tasks).
+    task_time_s는 clock(SimClock)의 시뮬레이션 시간, request_sim·end_sim은 그 시계의 시각이다.
     """
+    clock = clock or _wall_clock()
     requests, assigns, finishes = _task_events(records)
     # 끝 보고의 이동 거리 (TaskStatus.distance_traveled, #141)
     distance = {(r.msg.task_id, r.msg.robot_id, r.t): r.msg.distance_traveled
@@ -343,20 +406,22 @@ def task_outcomes(records: Sequence[Record]) -> list[list]:
                 code = error.get((task_id, robot, t)) if final == 'FAILED' else None
                 break
         request = requests.get(task_id)
-        task_time = None if end is None or request is None else end - request
         rows.append([task_id, _fmt(request), _fmt(series[0][0] if series else None),
                      ' '.join(robot for _, robot in series), final or '', _fmt(end),
-                     _fmt(task_time, 3), _fmt(None if dist is None else float(dist), 3),
-                     '' if code is None else str(int(code)), ' '.join(runners.get(task_id, []))])
+                     _fmt(clock.span(request, end), 3), _fmt(None if dist is None else float(dist), 3),
+                     '' if code is None else str(int(code)), ' '.join(runners.get(task_id, [])),
+                     _fmt(clock(request)), _fmt(clock(end))])
     return rows
 
 
-def zone_waits(records: Sequence[Record], end: float) -> list[list]:
+def zone_waits(records: Sequence[Record], end: float, clock: Optional[SimClock] = None) -> list[list]:
     """zone_waits.csv 행. 구역 진입 요청(robot, zone, request_id) 1건마다 1행.
 
     wait_s: 첫 요청 → 첫 GRANTED. 허가를 끝내 못 받았으면 실행 끝(end)까지 기다린 시간.
     outcome: granted / rejected(교착 회피) / revoked(교착 회수) / waiting(끝까지 대기) / released(받기 전 반납).
+    wait_s는 시뮬레이션 시간이다 (서버 release_timeout_s와 같은 시계).
     """
+    clock = clock or _wall_clock()
     episodes: dict[tuple[str, str, int], dict] = {}
     for r in sorted(records, key=lambda r: r.t):
         if r.topic == ZONE_REQUESTS_TOPIC:
@@ -381,34 +446,38 @@ def zone_waits(records: Sequence[Record], end: float) -> list[list]:
                                     else 'released' if ep['release'] is not None else 'waiting')
         until = ep['grant'] if ep['grant'] is not None else (ep['release'] if ep['release'] is not None else end)
         rows.append([robot, zone, request_id, _fmt(ep['request']), _fmt(ep['grant']),
-                     _fmt(until - ep['request'], 3), outcome, _fmt(ep['release'])])
+                     _fmt(clock.span(ep['request'], until), 3), outcome, _fmt(ep['release'])])
     return rows
 
 
 def stalls(records: Sequence[Record], min_s: float = STALL_S, disp_m: float = STALL_DISP_M,
-           pair_m: float = STALL_PAIR_M) -> list[list]:
+           pair_m: float = STALL_PAIR_M, clock: Optional[SimClock] = None) -> list[list]:
     """stalls.csv 행. 작업 이동 단계(IN_PROGRESS, phase move_*)에서 min_s 동안 위치가 그 구간 시작점에서 disp_m 안에만
     있었던 구간 1개마다 1행. 시작은 그 min_s 창의 처음이라 duration_s는 min_s 이상이다.
 
     위치는 RobotState(map 기준, 로봇끼리 비교 가능)로 본다. 구역 안팎 어디서 생긴 교착이든, 서 있든 꿈틀거리든 잡는다.
     with: 같은 때 pair_m 안에서 같이 정체한 로봇 (';'로 잇는다). 비어 있으면 혼자 막힌 것이다.
+    창(min_s)과 duration_s는 시뮬레이션 시간이다 (Gazebo가 느리면 실제 시간으로는 같은 정지가 더 길어 보인다).
+    start_time·end_time은 다른 파일처럼 수신 시각(실제 시간)이다.
     """
+    clock = clock or _wall_clock()
     status: dict[str, list[tuple[float, int, str, str]]] = defaultdict(list)
-    poses: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
+    # (시뮬레이션 시각, 수신 시각, x, y)
+    poses: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
     for r in records:
         if r.topic == STATUS_TOPIC:
-            status[r.msg.robot_id].append((r.t, r.msg.state, r.msg.phase, r.msg.task_id))
+            status[r.msg.robot_id].append((clock(r.t), r.msg.state, r.msg.phase, r.msg.task_id))
         elif r.topic == STATES_TOPIC:
             p = r.msg.pose.position
-            poses[r.msg.robot_id].append((r.t, p.x, p.y))
-    found = []   # (robot, task_id, phase, start, end)
+            poses[r.msg.robot_id].append((clock(r.t), r.t, p.x, p.y))
+    found = []   # (robot, task_id, phase, 시작 sim, 끝 sim, 시작 수신, 끝 수신)
     for robot, series in sorted(poses.items()):
         series.sort()
         events = sorted(status.get(robot, []))
         times = [e[0] for e in events]
         cur = None
         j = 0
-        for k, (t, x, y) in enumerate(series):
+        for k, (t, w, x, y) in enumerate(series):
             i = bisect.bisect_right(times, t) - 1
             moving = i >= 0 and events[i][1] == STATE_IN_PROGRESS and events[i][2].startswith('move_')
             stuck = False
@@ -416,13 +485,13 @@ def stalls(records: Sequence[Record], min_s: float = STALL_S, disp_m: float = ST
                 while series[j][0] < t - min_s:
                     j += 1
                 # 창이 이 이동 단계 안에 다 들어와야 한다 (단계가 바뀐 직후의 짧은 정지는 보지 않는다)
-                t0, x0, y0 = series[j]
+                t0, w0, x0, y0 = series[j]
                 stuck = (t0 >= times[i] and t - t0 >= min_s * 0.9
-                         and all(math.hypot(wx - x0, wy - y0) < disp_m for _, wx, wy in series[j:k + 1]))
+                         and all(math.hypot(wx - x0, wy - y0) < disp_m for _, _, wx, wy in series[j:k + 1]))
             if stuck and cur is None:
-                cur = [robot, events[i][3], events[i][2], t0, t]
+                cur = [robot, events[i][3], events[i][2], t0, t, w0, w]
             elif stuck:
-                cur[4] = t
+                cur[4], cur[6] = t, w
             elif cur is not None:
                 found.append(cur)
                 cur = None
@@ -432,16 +501,16 @@ def stalls(records: Sequence[Record], min_s: float = STALL_S, disp_m: float = ST
     def pose_at(robot, t):
         series = poses[robot]
         k = min(bisect.bisect_left(series, (t,)), len(series) - 1)
-        return series[k][1], series[k][2]
+        return series[k][2], series[k][3]
 
     rows = []
-    for robot, task_id, phase, start, end in found:
+    for robot, task_id, phase, start, end, w_start, w_end in found:
         with_robots = sorted({
-            other for other, _, _, s2, e2 in found
+            other for other, _, _, s2, e2, _, _ in found
             if other != robot and s2 < end and start < e2
             and math.dist(pose_at(robot, (max(start, s2) + min(end, e2)) / 2),
                           pose_at(other, (max(start, s2) + min(end, e2)) / 2)) <= pair_m})
-        rows.append([robot, task_id, phase, _fmt(start), _fmt(end), _fmt(end - start, 3), ';'.join(with_robots)])
+        rows.append([robot, task_id, phase, _fmt(w_start), _fmt(w_end), _fmt(end - start, 3), ';'.join(with_robots)])
     return rows
 
 
@@ -454,13 +523,16 @@ def read_kill_events(path: Path) -> list[tuple[float, str]]:
                 for row in csv.DictReader(f) if row['event'].startswith('robot_kill:')]
 
 
-def recovery(records: Sequence[Record], kills: Sequence[tuple[float, str]]) -> list[list]:
+def recovery(records: Sequence[Record], kills: Sequence[tuple[float, str]],
+             clock: Optional[SimClock] = None) -> list[list]:
     """recovery.csv 행. 로봇 강제종료 1건 × 그 로봇이 하던 작업 1건마다 1행.
 
     하던 작업: 죽기 전 마지막 할당이 그 로봇이고, 죽기 전에 그 로봇의 끝 보고가 없다.
     recovery_s = 다른 로봇에 처음 다시 할당된 시각 − 죽은 시각 (서버 회수 대기 + 할당). 다시 할당되지 않았으면 빈칸.
     completed = 죽은 뒤 누구든 COMPLETED를 보고했으면 1. 하던 작업이 없었으면(놀던 로봇) task_id가 빈 행 1개.
+    recovery_s는 시뮬레이션 시간이다 (kill_time도 UNIX 초라 bag 수신 시각과 같은 시계로 바꾼다).
     """
+    clock = clock or _wall_clock()
     _, assigns, finishes = _task_events(records)
     rows = []
     for kill_time, robot in kills:
@@ -479,17 +551,19 @@ def recovery(records: Sequence[Record], kills: Sequence[tuple[float, str]]) -> l
             again = next(((t, r) for t, r in assigns[task_id] if t > kill_time and r != robot), None)
             done = any(t > kill_time and state == STATE_COMPLETED for t, _, state in finishes.get(task_id, []))
             rows.append([robot, _fmt(kill_time), task_id, _fmt(again[0] if again else None),
-                         again[1] if again else '', _fmt(again[0] - kill_time if again else None, 3),
+                         again[1] if again else '', _fmt(clock.span(kill_time, again[0]) if again else None, 3),
                          '1' if done else '0'])
     return rows
 
 
-def fleet_modes(records: Sequence[Record], end: float) -> list[list]:
+def fleet_modes(records: Sequence[Record], end: float, clock: Optional[SimClock] = None) -> list[list]:
     """fleet_modes.csv 행. 하이브리드 로봇의 모드 구간 1개마다 1행 (architecture.md 5-2절).
 
     RobotFleetMode는 1초마다와 바뀔 때 온다. 로봇마다 첫 메시지부터 모드가 바뀔 때까지가 한 구간이고, 마지막 구간은
     end(실행 끝)까지다. 하네스 요약이 분산 전환 횟수(fleet.fallbacks)와 분산 모드 시간(fleet.decentral_s)을 센다.
+    duration_s는 시뮬레이션 시간이다.
     """
+    clock = clock or _wall_clock()
     segments: dict[str, list[list]] = defaultdict(list)
     for r in sorted((r for r in records if r.topic == MODES_TOPIC), key=lambda r: r.t):
         robot = segments[r.msg.robot_id]
@@ -500,7 +574,8 @@ def fleet_modes(records: Sequence[Record], end: float) -> list[list]:
         robot = segments[robot_id]
         for i, (mode, start) in enumerate(robot):
             stop = robot[i + 1][1] if i + 1 < len(robot) else max(end, start)
-            rows.append([robot_id, MODE_NAMES.get(mode, str(mode)), _fmt(start), _fmt(stop), _fmt(stop - start, 3)])
+            rows.append([robot_id, MODE_NAMES.get(mode, str(mode)), _fmt(start), _fmt(stop),
+                         _fmt(clock.span(start, stop), 3)])
     return rows
 
 
@@ -521,10 +596,11 @@ def write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence]) -> No
         writer.writerows(rows)
 
 
-def update_meta(path: Path, cutoff: Cutoff) -> None:
-    """meta.json의 observation_cutoff를 채운다. 파일이 없으면 이 키만 있는 파일을 만든다."""
+def update_meta(path: Path, cutoff: Cutoff, clock: Optional[SimClock] = None) -> None:
+    """meta.json의 observation_cutoff·fleet_clock(지속 시간 시계, 기록의 RTF)을 채운다. 파일이 없으면 이 키만 있는 파일을 만든다."""
     meta = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     meta['observation_cutoff'] = cutoff.as_meta()
+    meta['fleet_clock'] = (clock or _wall_clock()).meta()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
@@ -541,20 +617,21 @@ def convert(records: Sequence[Record], out_dir: Path, delay_ms: float, grace_s: 
         raise ValueError('기록이 비어 있다')
     cutoff = Cutoff(max(r.t for r in records), delay_ms, grace_s, resend_grace_s,
                     start=observation_start(records, delay_ms))
+    clock = SimClock(records)
     write_csv(out_dir / 'fleet_latency.csv', FLEET_LATENCY_HEADER, fleet_latency(records, cutoff, robots))
     write_csv(out_dir / 'response_time.csv', RESPONSE_TIME_HEADER, response_time(records, cutoff))
-    write_csv(out_dir / 'task_outcomes.csv', TASK_OUTCOMES_HEADER, task_outcomes(records))
+    write_csv(out_dir / 'task_outcomes.csv', TASK_OUTCOMES_HEADER, task_outcomes(records, clock))
     # 구역 기록이 있을 때만 (가짜 로봇 시나리오는 구역을 요청하지 않는다)
     if any(r.topic == ZONE_REQUESTS_TOPIC for r in records):
-        write_csv(out_dir / 'zone_waits.csv', ZONE_WAITS_HEADER, zone_waits(records, cutoff.end))
+        write_csv(out_dir / 'zone_waits.csv', ZONE_WAITS_HEADER, zone_waits(records, cutoff.end, clock))
     if any(ODOM_TOPIC.match(r.topic) for r in records):
-        write_csv(out_dir / 'stalls.csv', STALLS_HEADER, stalls(records))
+        write_csv(out_dir / 'stalls.csv', STALLS_HEADER, stalls(records, clock=clock))
     write_csv(out_dir / 'robot_states.csv', ROBOT_STATES_HEADER, robot_states(records))
     # 하이브리드 실행만 (경매 노드가 fleet_mode:=hybrid로 떠야 모드를 알린다)
     if any(r.topic == MODES_TOPIC for r in records):
-        write_csv(out_dir / 'fleet_modes.csv', FLEET_MODES_HEADER, fleet_modes(records, cutoff.end))
+        write_csv(out_dir / 'fleet_modes.csv', FLEET_MODES_HEADER, fleet_modes(records, cutoff.end, clock))
     kills = read_kill_events(fault_events or out_dir / 'fault_events.csv')
     if kills:
-        write_csv(out_dir / 'recovery.csv', RECOVERY_HEADER, recovery(records, kills))
-    update_meta(meta_path or out_dir / 'meta.json', cutoff)
+        write_csv(out_dir / 'recovery.csv', RECOVERY_HEADER, recovery(records, kills, clock))
+    update_meta(meta_path or out_dir / 'meta.json', cutoff, clock)
     return cutoff

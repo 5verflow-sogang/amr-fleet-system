@@ -12,6 +12,8 @@ command: 셸 명령 하나를 끝날 때까지 돌린다(예: Nav2 목표를 보
 프로세스를 SIGKILL로 죽여 손자(측정 스크립트)를 못 치우므로, timeout_s는 시나리오 timeout_s보다 짧게 둔다.
 마지막 줄에 {"sim_s", "wall_s", "rtf"} JSON을 출력한다. sim_s는 대기 시계(use_sim_time)와 상관없이 /clock으로 잰다.
 /clock이 없으면(가짜 로봇만 띄우는 시나리오) sim_s·rtf는 null이다.
+segments·wait는 노드 시계(use_sim_time)로 기다린다. 시뮬레이션 시간으로 기다리는데 시계가 실제 60초 동안 멈추면
+(Gazebo가 죽음) 종료 코드 3으로 끝낸다 (clock_watch, #285 하연 리뷰).
 """
 
 import json
@@ -25,7 +27,8 @@ from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from rosgraph_msgs.msg import Clock
 
-from proc import TIMEOUT, run_group  # 같은 폴더 (runner가 이 파일을 스크립트로 부른다)
+from clock_watch import ClockStall  # 같은 폴더 (runner가 이 파일을 스크립트로 부른다)
+from proc import TIMEOUT, run_group
 
 
 def main(argv):
@@ -62,43 +65,56 @@ def main(argv):
             print('시계(/clock)가 오지 않음', file=sys.stderr)
             return 2
 
+    class ClockStalled(Exception):
+        pass
+
     def spin_for(duration, publish=None):
+        # 시뮬레이션 시간으로 기다리는데 /clock이 멈추면(Gazebo가 죽음) 끝나지 않으므로 멈춤을 본다 (clock_watch)
         t0 = now()
+        watch = ClockStall(t0, time.monotonic())
         while now() - t0 < duration:
             if publish:
                 publish()
             rclpy.spin_once(node, timeout_sec=0.05)
+            if watch.stalled(now(), time.monotonic()):
+                raise ClockStalled(f'시계가 실제 {watch.frozen_s(time.monotonic()):.0f}초 동안 멈춤 '
+                                   f'(시뮬레이션 {now() - t0:.1f}/{duration:g}초에서). 시뮬레이터가 죽었는지 본다')
 
     wall0 = time.monotonic()
     first = clock_sample()
     mode = spec.get('mode', 'segments')
-    if mode == 'segments':
-        pub = node.create_publisher(Twist, spec['topic'], 10)
-        for v, w, duration in spec['segments']:
-            cmd = Twist()
-            cmd.linear.x, cmd.angular.z = float(v), float(w)
-            spin_for(float(duration), lambda: pub.publish(cmd))
-            for _ in range(5):
-                pub.publish(Twist())
-                rclpy.spin_once(node, timeout_sec=0.02)
-            print(f'구간 끝: v={v} w={w} {duration}s', file=sys.stderr, flush=True)
-        spin_for(float(spec.get('then_wait_s', 0.0)))
-    elif mode == 'wait':
-        spin_for(float(spec['duration_s']))
-    elif mode == 'command':
-        # 명령의 출력은 이 프로세스의 stderr(drive.log)로 보낸다. stdout은 마지막 JSON 한 줄만 쓴다
-        timeout_s = spec.get('timeout_s')
-        code = run_group(spec['cmd'], None if timeout_s is None else float(timeout_s),
-                         poll=lambda: rclpy.spin_once(node, timeout_sec=0.1))
-        if code == TIMEOUT:
-            print(f'명령 시간 초과 ({timeout_s}s), 프로세스 그룹 정리: {spec["cmd"]}', file=sys.stderr)
-            return 1
-        if code != 0:
-            print(f'명령 실패 (종료 코드 {code}): {spec["cmd"]}', file=sys.stderr)
-            return 1
-    else:
-        print(f'알 수 없는 mode: {mode}', file=sys.stderr)
-        return 2
+    try:
+        if mode == 'segments':
+            pub = node.create_publisher(Twist, spec['topic'], 10)
+            for v, w, duration in spec['segments']:
+                cmd = Twist()
+                cmd.linear.x, cmd.angular.z = float(v), float(w)
+                spin_for(float(duration), lambda: pub.publish(cmd))
+                for _ in range(5):
+                    pub.publish(Twist())
+                    rclpy.spin_once(node, timeout_sec=0.02)
+                print(f'구간 끝: v={v} w={w} {duration}s', file=sys.stderr, flush=True)
+            spin_for(float(spec.get('then_wait_s', 0.0)))
+        elif mode == 'wait':
+            spin_for(float(spec['duration_s']))
+        elif mode == 'command':
+            # 명령의 출력은 이 프로세스의 stderr(drive.log)로 보낸다. stdout은 마지막 JSON 한 줄만 쓴다
+            timeout_s = spec.get('timeout_s')
+            code = run_group(spec['cmd'], None if timeout_s is None else float(timeout_s),
+                             poll=lambda: rclpy.spin_once(node, timeout_sec=0.1))
+            if code == TIMEOUT:
+                print(f'명령 시간 초과 ({timeout_s}s), 프로세스 그룹 정리: {spec["cmd"]}', file=sys.stderr)
+                return 1
+            if code != 0:
+                print(f'명령 실패 (종료 코드 {code}): {spec["cmd"]}', file=sys.stderr)
+                return 1
+        else:
+            print(f'알 수 없는 mode: {mode}', file=sys.stderr)
+            return 2
+    except ClockStalled as e:
+        # runner는 0이 아닌 종료를 주행 실패(outcome error)로 남기고 다음 반복으로 간다
+        print(e, file=sys.stderr, flush=True)
+        return 3
 
     wall_s = time.monotonic() - wall0
     last = clock_sample() if first is not None else None
