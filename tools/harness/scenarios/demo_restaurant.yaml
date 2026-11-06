@@ -18,6 +18,9 @@ seed_base: 1
 timeout_s: 3600
 params:
   num_robots: 5
+  # 로봇 스폰 간격(실제 시간 s). 추적·안전·혼잡도·직원까지 띄워 5 s 간격이면 Nav2 lifecycle_manager의
+  # planner_server 상태 질의가 시간 초과로 기동이 멈췄다 (11/6, n2d-16에서도 3번 모두). 한 대씩 차례로 올린다
+  spawn_interval_s: 15
   delay_ms: 100
   loss_pct: 0
   duration_s: 60
@@ -43,11 +46,11 @@ processes:
       dynamic_obstacles:=true dynamic_obstacles_file:={guests} staff_file:={staff} congestion:=restaurant
       cost_fn:={cost_fn} congestion_weight:={congestion_weight} congestion_filter:={congestion_filter}
       enable_camera:={robot_camera}
-      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:=5.0
+      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:={spawn_interval_s}
     ready_topic: /fleet/heartbeat
     ready_cmds:
       - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
-    ready_timeout_s: 300
+    ready_timeout_s: 600
     settle_s: 5
   - name: cameras
     cmd: ros2 launch amr_gazebo demo_cameras.launch.py cameras:={cameras}
