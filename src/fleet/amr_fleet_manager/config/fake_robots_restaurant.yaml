@@ -1,0 +1,30 @@
+# 식당 가짜 로봇 5대 (fake_robots.launch.py config:=fake_robots_restaurant.yaml). 관제 대시보드(dashboard/)를
+# Gazebo 없이 시험할 때 쓴다. 시작 위치는 식당 지도 좌표(map = world, m)이고 stations_restaurant.yaml의 정차 위치를 따른다.
+# 공통 값은 fake_robots.yaml과 같다.
+/**:
+  ros__parameters:
+    speed_mps: 1.0
+    # 싣기·내리기에 걸리는 시간 (s)
+    dwell_s: 1.0
+    battery_percent: 100.0
+    state_rate_hz: 2.0
+    step_hz: 10.0
+
+# 1호: 입구 옆 (시나리오 1-1·1-2의 1호)
+/amr_01/fake_robot:
+  ros__parameters:
+    start_xy: [-10.5, -5.6]
+# 2호·4호·5호: 동쪽 벽 대기 자리 (wait_1·wait_2·wait_3)
+/amr_02/fake_robot:
+  ros__parameters:
+    start_xy: [11.2, -7.0]
+# 3호: 양식 매장 앞 (stall_3, 시나리오 1-1의 3호)
+/amr_03/fake_robot:
+  ros__parameters:
+    start_xy: [1.5, 4.15]
+/amr_04/fake_robot:
+  ros__parameters:
+    start_xy: [11.2, -5.8]
+/amr_05/fake_robot:
+  ros__parameters:
+    start_xy: [11.2, -4.6]

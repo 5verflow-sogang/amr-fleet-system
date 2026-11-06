@@ -4,6 +4,7 @@
 #   docker compose run --rm dev                  # 개발 셸
 #   docker compose --profile gui up -d           # 브라우저 GUI: http://localhost:6080/vnc.html
 #   docker compose --profile fake up -d fake-robots   # 가짜 로봇 5대 (Gazebo 없이 Fleet만)
+#   docker compose --profile dashboard up -d     # 관제 대시보드: http://localhost:8080
 # TODO: 각 서비스의 command를 해당 패키지 launch로 교체
 
 x-ros: &ros
@@ -68,6 +69,8 @@ services:
 
   # 가짜 로봇 5대 (amr_01~05). Gazebo·Nav2 없이 Fleet 흐름만 볼 때 켠다. 실제 robots 서비스와 이름이 겹치므로 같이 띄우지 않는다.
   #   docker compose up -d fleet && docker compose --profile fake up -d fake-robots
+  # 식당 정차 위치에서 시작하려면 (관제 대시보드 시험):
+  #   FAKE_ROBOTS_CONFIG=fake_robots_restaurant.yaml docker compose --profile fake up -d fake-robots
   fake-robots:
     <<: *ros
     profiles: [fake]
@@ -79,7 +82,8 @@ services:
         cd /ros2_ws
         colcon build --packages-up-to amr_fleet_manager --event-handlers console_cohesion-
         source install/setup.bash
-        exec ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 relayed:=true
+        exec ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 relayed:=true \
+          config:=${FAKE_ROBOTS_CONFIG:-fake_robots.yaml}
 
   perception:
     <<: *ros
@@ -127,5 +131,42 @@ services:
     command:
       - exec socat TCP-LISTEN:6080,fork,reuseaddr TCP:$$(ip route | awk '/default/ {print $$3}'):6081
 
+  # 관제 대시보드 (dashboard/index.html). rosbridge(WebSocket)와 화면 파일 서버를 띄운다. 브라우저: http://localhost:8080
+  # 다른 서비스와 같은 host 네트워크에 있어야 토픽이 보이므로, gui처럼 안에서는 8081·9091로 열고 dashboard-proxy가
+  # 호스트의 8080·9090으로 중계한다. 메시지를 풀려면 rosbridge가 amr_msgs를 알아야 해서 시작할 때 메시지 패키지만 빌드한다.
+  #   docker compose up -d fleet && docker compose --profile fake up -d fake-robots && docker compose --profile dashboard up -d
+  dashboard:
+    <<: *ros
+    profiles: [dashboard]
+    volumes:
+      - ./src:/ros2_ws/src
+      - ./docker/colcon_defaults.yaml:/etc/amr/colcon_defaults.yaml:ro
+      - ./dashboard:/dashboard:ro
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        cd /ros2_ws
+        colcon build --packages-select amr_msgs --event-handlers console_cohesion-
+        source install/setup.bash
+        python3 -m http.server 8081 --directory /dashboard &
+        ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=9091 &
+        wait -n
+        exit 1
+
+  dashboard-proxy:
+    image: alpine/socat:1.8.0.1
+    profiles: [dashboard]
+    depends_on: [dashboard]
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9090:9090"
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        host=$$(ip route | awk '/default/ {print $$3}')
+        socat TCP-LISTEN:8080,fork,reuseaddr TCP:$$host:8081 &
+        exec socat TCP-LISTEN:9090,fork,reuseaddr TCP:$$host:9091
+
   # TODO(관측 스택): prometheus, grafana 서비스 추가 (설정은 docker/ 아래)
-  # TODO(대시보드): dashboard 서비스 추가 (dashboard/ 참고)

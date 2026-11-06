@@ -36,6 +36,8 @@
   <exec_depend>amr_safety</exec_depend>
   <exec_depend>amr_detection</exec_depend>
   <exec_depend>amr_docking</exec_depend>
+  <!-- 관제 대시보드(dashboard/)가 rosbridge WebSocket으로 토픽을 주고받는다 (docker-compose dashboard 서비스) -->
+  <exec_depend>rosbridge_server</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
   <test_depend>launch</test_depend>
