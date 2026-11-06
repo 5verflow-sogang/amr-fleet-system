@@ -7,14 +7,17 @@
     # 120초에 amr_03을 SIGKILL로 죽인다 (연구 1 로봇 장애). 시각은 fault_events.csv에 남는다
     ros2 launch amr_fleet_manager fake_robots.launch.py kill_robot:=amr_03 kill_robot_at_s:=120.0 \\
         fault_events_file:=/tmp/run1/fault_events.csv
+    # 식당 정차 위치에서 시작 (관제 대시보드 시험, 5대)
+    ros2 launch amr_fleet_manager fake_robots.launch.py config:=fake_robots_restaurant.yaml
 
-로봇 이름은 amr_01부터 차례로 붙는다. 시작 위치는 config/fake_robots.yaml에 있는 대수(10대)까지다.
+로봇 이름은 amr_01부터 차례로 붙는다. 시작 위치는 config 파일에 있는 대수까지다 (기본 fake_robots.yaml 10대).
 kill_robot_at_s는 이 launch를 시작한 때부터 잰 실제 시간이다. 다시 띄운 로봇은 작업 없이 새로 시작한다.
 """
 
 import os
 import signal
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, EmitEvent, LogInfo, OpaqueFunction, TimerAction
@@ -29,6 +32,14 @@ from amr_fleet_manager.records import append_fault_event
 MAX_ROBOTS = 10
 
 
+def _start_count(path):
+    """config 파일에서 start_xy가 있는 로봇 수."""
+    with open(path, encoding='utf-8') as f:
+        data = yaml.safe_load(f)
+    return sum(1 for key, value in data.items()
+               if key.endswith('/fake_robot') and 'start_xy' in (value.get('ros__parameters') or {}))
+
+
 def _record(context, path, event):
     now = append_fault_event(path, event)
     return [LogInfo(msg=f'[장애 주입] 가짜 로봇 {event} (time={now:.3f})')]
@@ -38,12 +49,15 @@ def _robots(context):
     def arg(name):
         return LaunchConfiguration(name).perform(context)
 
-    config = os.path.join(
-        get_package_share_directory('amr_fleet_manager'), 'config', 'fake_robots.yaml')
+    # 파일 이름만 주면 패키지 config 폴더에서 찾는다
+    config = arg('config')
+    if not os.path.isabs(config):
+        config = os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', config)
+    starts = _start_count(config)
     count = int(arg('count'))
-    if not 1 <= count <= MAX_ROBOTS:
-        # 시작 위치가 없는 로봇은 원점에 겹쳐 생겨 할당(거리 기준)이 틀어진다. 늘리려면 fake_robots.yaml에 위치를 더한다
-        raise RuntimeError(f'count는 1~{MAX_ROBOTS} (fake_robots.yaml 시작 위치 수): {count}')
+    if not 1 <= count <= starts:
+        # 시작 위치가 없는 로봇은 원점에 겹쳐 생겨 할당(거리 기준)이 틀어진다. 늘리려면 config 파일에 위치를 더한다
+        raise RuntimeError(f'count는 1~{starts} ({os.path.basename(config)} 시작 위치 수): {count}')
     relayed = arg('relayed').lower() == 'true'
     # 장애 주입기는 /<robot_id>/fleet/<topic>으로 중계한다. 네임스페이스 안의 상대 이름이 그 토픽이 된다
     prefix = 'fleet' if relayed else '/fleet'
@@ -87,7 +101,10 @@ def _robots(context):
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument('count', default_value='5', description='로봇 수 (1~10)'),
+        DeclareLaunchArgument('count', default_value='5', description='로봇 수 (1~config의 시작 위치 수)'),
+        DeclareLaunchArgument(
+            'config', default_value='fake_robots.yaml',
+            description='시작 위치·공통 파라미터 파일. 이름만 주면 패키지 config 폴더 (식당: fake_robots_restaurant.yaml)'),
         DeclareLaunchArgument(
             'relayed', default_value='false',
             description='true면 장애 주입기 중계본(/<robot_id>/fleet/*)을 구독한다'),
