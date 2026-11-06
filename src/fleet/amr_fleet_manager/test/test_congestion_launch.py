@@ -89,7 +89,10 @@ class TestCongestion(unittest.TestCase):
             pubs['guest_b'].publish(odom(3.0, 2.0))
             rclpy.spin_once(self.node, timeout_sec=0.1)
             last = got['congestion'][-1] if got['congestion'] else None
-            if last and last.zones[0].value > 0.95 and got['mask'] and got['keepout'] and got['speed']:
+            # 혼잡도와 마스크는 같은 틱에 같은 stamp로 나가지만 다른 토픽이라 따로 도착한다.
+            # 마스크도 그 틱 것이 와야 비교한다(앞 틱 마스크는 value 0.94 → 84)
+            same_tick = got['mask'] and last and got['mask'][-1].header.stamp == last.header.stamp
+            if same_tick and last.zones[0].value > 0.95 and got['keepout'] and got['speed']:
                 break
         self.assertTrue(got['congestion'], '/fleet/congestion을 받지 못했다')
         line, hall = got['congestion'][-1].zones
@@ -99,6 +102,7 @@ class TestCongestion(unittest.TestCase):
         self.assertEqual(list(line.area), [0.0, 4.0, 0.0, 1.0])
 
         mask = got['mask'][-1]
+        self.assertEqual(mask.header.stamp, got['congestion'][-1].header.stamp)
         # 구역 x 0~6, y 0~1 + 둘레 1 m (mask.padding) → 원점 (-1, -1), 0.1 m 칸 80 × 30
         self.assertEqual((mask.header.frame_id, mask.info.width, mask.info.height), ('map', 80, 30))
         self.assertEqual((mask.info.origin.position.x, mask.info.origin.position.y), (-1.0, -1.0))
