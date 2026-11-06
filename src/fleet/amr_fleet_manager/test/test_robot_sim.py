@@ -2,7 +2,8 @@
 
 import pytest
 
-from amr_fleet_manager.robot_sim import DUPLICATE, NEW, STALE, AssignmentFilter, LinkWatch, TaskRun, assignment_source
+from amr_fleet_manager.robot_sim import (DUPLICATE, NEW, STALE, AssignmentFilter, Battery, BatteryConfig, LinkWatch,
+                                         TaskRun, assignment_source)
 
 
 # 경매로 로봇 k가 수락한 명령 번호 (amr_fleet_decentralized #211: 1,000,000 + k × 100,000 + 순번)
@@ -129,3 +130,25 @@ def test_hold_at_boundary_before_start_does_not_move():
     run = TaskRun((0.0, 0.0), pickup=(3.0, 0.0), dropoff=(6.0, 0.0), speed=1.0, dwell_s=1.0)
     assert not run.step(2.0, hold_at_boundary=True)
     assert run.xy == (0.0, 0.0)
+
+
+def test_battery_matches_amr_bt_model():
+    b = Battery(BatteryConfig(initial_percent=50.0, move_per_m=0.05, idle_per_s=0.002, charge_per_s=0.5))
+    b.update(10.0, 20.0, False)                    # 20 m × 0.05 + 10 s × 0.002
+    assert b.percent == pytest.approx(48.98)
+    b.update(10.0, 5.0, True)                      # 충전 중이면 이동해도 소모 없이 찬다
+    assert b.percent == pytest.approx(53.98)
+    b.update(1000.0, 0.0, True)
+    assert b.percent == 100.0
+    b.update(0.0, 1e6, False)                      # dt 0은 무시
+    assert b.percent == 100.0
+
+
+def test_battery_default_does_not_drain_and_clamps_empty():
+    # 가짜 로봇 기본은 닳지 않는다 (지금까지의 실험 조건 유지)
+    b = Battery()
+    b.update(1000.0, 1000.0, False)
+    assert b.percent == 100.0 and not b.empty
+    b = Battery(BatteryConfig(initial_percent=1.0, move_per_m=1.0))
+    b.update(1.0, 5.0, False)
+    assert b.percent == 0.0 and b.empty

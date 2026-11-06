@@ -20,6 +20,23 @@ ROS 토픽을 직접 다루지 않는다. 공개 함수·클래스 목록을 여
 | `rival(task_id, robot_id, start, now)` | robot_id(수락 시각 start, 수락 전이면 None)보다 먼저 맡은 다른 로봇 |
 | `completed(task_id, robot_id)` | 그 로봇이 COMPLETED를 보고했는지 |
 
+### 자동 충전 배정 (`charging.plan_charging`, 배터리 인지 운영 1단계)
+
+놀고 있는 로봇의 배터리가 `low_percent` 밑이면 빈 충전기 중 가장 가까운 곳으로 보낸다. 배터리가 가장 낮은 로봇부터 보낸다.
+운영 중인 로봇(충전하러 가거나 충전 중이 아닌 로봇)이 `min_in_service`(N)대 밑으로 떨어지지 않게, 동시 충전 대수를 **살아 있는 로봇 − N**으로 묶는다. 충전기 수도 넘지 않는다.
+자리가 없는 로봇은 기다린다(`ChargePlan.waiting`). 기다리는 동안에도 할당 하한(`min_battery_percent`) 위면 배송을 받는다.
+일하는 중인 로봇은 작업을 끝낸 뒤 본다. 작업 중 배터리 부족 대응은 3단계에서 한다.
+
+| 입력 | 뜻 |
+| --- | --- |
+| `alive` | 살아 있는 로봇 전부 (`RobotInfo`, 충전 중 포함) |
+| `free_ids` | 그중 맡은 작업이 없어 지금 보낼 수 있는 로봇 |
+| `charging` | 이미 충전 작업을 맡은 로봇 → 충전기 이름 |
+| `chargers` | 충전기 `Station(name, xy)` (map 좌표) |
+| `ChargeConfig` | `low_percent` (30), `min_in_service` (0이면 충전기 수로만 묶음), `occupied_radius_m` (0.5, 예약 없이 충전기 위에 서 있는 다른 로봇이 있으면 그 충전기는 쓰지 않음) |
+
+출력은 `ChargePlan(orders=[ChargeOrder(robot_id, station)], waiting=[robot_id])`이다. 장부와 작업 생성은 `amr_fleet_manager` Dispatcher가 한다.
+
 ### 작업 할당 (설계 초안)
 
 > 상태: 알고리즘 3종 구현 완료(2주차). 기본 알고리즘 선택과 비교 실험은 아래 미결 참고. 호출 흐름은 [architecture.md 5-1절](../../../docs/architecture.md#5-1-작업-요청--할당--이동--완료-보고-중앙집중-모드) 4~5번이다.

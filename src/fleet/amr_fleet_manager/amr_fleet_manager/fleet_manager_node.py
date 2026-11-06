@@ -2,16 +2,19 @@
 
 구역 허가(ZoneRequest/ZoneGrant)는 정원·lease·작업 우선순위 대기열, 교착이면 우선순위 낮은 로봇의 허가를 회수한다.
 흐름은 architecture.md 5-1절.
+자동 충전(charging.enabled): 배터리 낮은 로봇에게 충전 작업을 직접 내고, 최소 운영 대수를 지키며 동시 충전을 묶는다.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import time
 import uuid
 
 import rclpy
 from builtin_interfaces.msg import Time
 from amr_fleet_core.assignment import RobotInfo, TaskInfo, has_pickup
+from amr_fleet_core.charging import ChargeConfig, Station
 from amr_fleet_core.traffic import Decision, ZoneManager
 from amr_msgs.msg import (ErrorInfo, FleetHeartbeat, FleetTaskTable, RobotFleetMode, RobotState, Task,
                           TaskAssignment, TaskAssignmentAck, TaskRecord, TaskStatus, ZoneCongestionArray, ZoneGrant,
@@ -21,8 +24,9 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
-from .dispatcher import Dispatcher, DispatcherConfig, Outgoing
+from .dispatcher import TYPE_CHARGE, ChargeTask, Dispatcher, DispatcherConfig, Outgoing
 from .records import AssignmentLog, load_zones, next_epoch
+from .task_gen import Pose2D, load_stations, world_to_map, yaw_to_quaternion
 
 
 def stamp_to_sec(stamp) -> float:
@@ -51,11 +55,29 @@ def task_info(msg: Task) -> TaskInfo:
     )
 
 
+def pick_stations(stations: dict[str, Pose2D], pattern: str) -> dict[str, Pose2D]:
+    """이름이 pattern(* 패턴)에 맞는 스테이션. 패턴이 비면 없음."""
+    return {name: pose for name, pose in sorted(stations.items()) if pattern and fnmatch.fnmatchcase(name, pattern)}
+
+
 class FleetManager(Node):
 
     def __init__(self):
         super().__init__('fleet_manager')
         self._server_id = self.declare_parameter('server_id', 'fleet_manager').value
+        # 자동 충전: 충전기·대기 위치는 작업 생성기와 같은 스테이션 파일(world 좌표)에서 이름으로 고른다
+        charging = self.declare_parameter('charging.enabled', False).value
+        stations = {}
+        stations_file = self.declare_parameter('charging.stations_file', '').value
+        origin = list(self.declare_parameter('charging.map_origin_in_world', [-0.0439, 1.4712, -0.00088]).value)
+        if stations_file:
+            stations = {name: world_to_map(pose, origin) for name, pose in load_stations(stations_file).items()}
+        chargers = pick_stations(stations, self.declare_parameter('charging.charger_pattern', 'charger_*').value)
+        waits = pick_stations(stations, self.declare_parameter('charging.wait_pattern', 'wait_*').value)
+        if charging and not chargers:
+            raise ValueError(f'charging.enabled인데 충전기가 없다 (charging.stations_file={stations_file!r})')
+        # Task 메시지에 넣을 자세 (map 좌표)
+        self._station_poses = {**chargers, **waits}
         self._dispatcher = Dispatcher(DispatcherConfig(
             algorithm=self.declare_parameter('assignment.algorithm', 'nearest').value,
             min_battery_percent=self.declare_parameter('assignment.min_battery_percent', 20.0).value,
@@ -68,7 +90,15 @@ class FleetManager(Node):
             cost_fn=self.declare_parameter('assignment.cost_fn', 'euclidean').value,
             congestion_weight=self.declare_parameter('assignment.congestion_weight', 3.0).value,
             congestion_timeout_s=self.declare_parameter('assignment.congestion_timeout_s', 3.0).value,
+            charging_enabled=charging,
+            charge=ChargeConfig(
+                low_percent=self.declare_parameter('charging.low_percent', 30.0).value,
+                min_in_service=self.declare_parameter('charging.min_in_service', 0).value,
+            ),
+            chargers=tuple(Station(name, pose[:2]) for name, pose in chargers.items()),
+            wait_stations=tuple(Station(name, pose[:2]) for name, pose in waits.items()),
         ))
+        self._charge_waiting: list[str] = []
         heartbeat_period_s = self.declare_parameter('heartbeat_period_s', 0.2).value
         task_table_period_s = self.declare_parameter('task_table_period_s', 1.0).value
         tick_s = self.declare_parameter('tick_s', 0.05).value
@@ -113,6 +143,11 @@ class FleetManager(Node):
             f'Fleet 서버 시작: epoch={self._epoch}, algorithm={self._dispatcher.config.algorithm}, '
             f'resend={self._dispatcher.config.resend_interval_s}s x {self._dispatcher.config.max_resends}, '
             f'zones={self._zones.zone_ids}')
+        if charging:
+            c = self._dispatcher.config.charge
+            self.get_logger().info(
+                f'자동 충전: {c.low_percent:g} % 밑이면 충전, 최소 운영 {c.min_in_service}대, '
+                f'충전기 {list(chargers)}, 충전 뒤 대기 위치 {list(waits)}')
 
     # ---- 구독 ----
 
@@ -220,8 +255,33 @@ class FleetManager(Node):
     def _now_sec(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
 
+    def _plan_charging(self):
+        for order in self._dispatcher.plan_charging(time.monotonic()):
+            self._dispatcher.tasks[order.task_id].payload = self._charge_task(order)
+            kind = '충전' if order.task_type == TYPE_CHARGE else '충전 뒤 복귀'
+            self.get_logger().info(f'{kind}: {order.robot_id} → {order.station} ({order.task_id})')
+        waiting = self._dispatcher.charge_waiting
+        if waiting != self._charge_waiting:
+            self._charge_waiting = waiting
+            if waiting:
+                self.get_logger().info(
+                    f'충전 차례 기다림: {waiting} (충전 중 {sorted(self._dispatcher.charging_robots())})')
+
+    def _charge_task(self, order: ChargeTask) -> Task:
+        x, y, yaw = self._station_poses[order.station]
+        msg = Task()
+        msg.task_id = order.task_id
+        msg.task_type = order.task_type
+        msg.item_type = Task.ITEM_NONE
+        msg.dropoff_station_id = order.station
+        msg.dropoff_pose.position.x, msg.dropoff_pose.position.y = x, y
+        msg.dropoff_pose.orientation.z, msg.dropoff_pose.orientation.w = yaw_to_quaternion(yaw)
+        msg.priority = self._dispatcher.tasks[order.task_id].info.priority
+        msg.created_time = self.get_clock().now().to_msg()
+        return msg
 
     def _assign(self):
+        self._plan_charging()
         commands, rows = self._dispatcher.assign(time.monotonic())
         if rows and self._log is not None:
             self._log.write(stamp_to_sec(self.get_clock().now().to_msg()), rows)

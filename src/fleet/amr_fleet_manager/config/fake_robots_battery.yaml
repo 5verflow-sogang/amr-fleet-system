@@ -1,0 +1,58 @@
+# 배터리 실험·시연용 가짜 로봇 배터리. fake_robots.yaml 위에 덧씌운다:
+#   ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 \
+#       battery_config:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/fake_robots_battery.yaml
+#
+# 시간 압축: amr_bt 기본(이동 0.05 %/m, 정지 0.002 %/s)이면 한 번 닳는 데 몇 시간이 걸린다. 15–20분 실행에 충전이
+# 2–3번 돌도록 2배(이동)·5배(정지)로 키웠다. 계속 일하면 1 m/s에서 분당 약 6.6 %, 물류센터 basic 배송 1건(약 75 m)
+# ≈ 8 %, 30 → 100 % 충전 140 s. 0.25 %/m로 올렸더니 배송 1건이 22 %라 하한(20 %) 바로 위에서 받은 작업 하나로
+# 충전기 가는 길에 0 %가 됐다 (이건 2단계 에너지 예측 배정이 막을 문제다). 비교군(B0·B1·P1·P2)은 모두 같은 값을 쓴다.
+/**:
+  ros__parameters:
+    battery:
+      move_per_m: 0.1
+      idle_per_s: 0.01
+      charge_per_s: 0.5
+      charge_target_percent: 100.0
+      reject_below_percent: 10.0
+
+# 시작 배터리는 로봇마다 다르게 둔다 (한꺼번에 충전하러 몰리지 않는 평소 상태). 6–10번은 1–5번을 되풀이한다
+/amr_01/fake_robot:
+  ros__parameters:
+    battery:
+      initial_percent: 95.0
+/amr_02/fake_robot:
+  ros__parameters:
+    battery:
+      initial_percent: 80.0
+/amr_03/fake_robot:
+  ros__parameters:
+    battery:
+      initial_percent: 65.0
+/amr_04/fake_robot:
+  ros__parameters:
+    battery:
+      initial_percent: 50.0
+/amr_05/fake_robot:
+  ros__parameters:
+    battery:
+      initial_percent: 40.0
+/amr_06/fake_robot:
+  ros__parameters:
+    battery:
+      initial_percent: 95.0
+/amr_07/fake_robot:
+  ros__parameters:
+    battery:
+      initial_percent: 80.0
+/amr_08/fake_robot:
+  ros__parameters:
+    battery:
+      initial_percent: 65.0
+/amr_09/fake_robot:
+  ros__parameters:
+    battery:
+      initial_percent: 50.0
+/amr_10/fake_robot:
+  ros__parameters:
+    battery:
+      initial_percent: 40.0

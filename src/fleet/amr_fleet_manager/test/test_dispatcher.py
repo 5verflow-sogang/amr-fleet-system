@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
+from amr_fleet_core.charging import ChargeConfig, Station
 
 from amr_fleet_manager.dispatcher import (ERROR_CANCELED, ERROR_TASK_TAKEN, STATE_COMPLETED, STATE_FAILED,
-                                          STATE_IN_PROGRESS, STATE_PENDING, Dispatcher, DispatcherConfig)
+                                          STATE_IN_PROGRESS, STATE_PENDING, TYPE_CHARGE, TYPE_RETURN, Dispatcher,
+                                          DispatcherConfig)
 from amr_fleet_manager.records import (ASSIGNMENTS_HEADER, AssignmentLog, append_fault_event, load_zones,
                                        next_epoch)
 
@@ -547,3 +549,155 @@ def test_different_stations_all_assigned():
     assert sorted(c.task_id for c in commands) == ['t1', 't2']
     with pytest.raises(ValueError):
         make(station_clearance_m=-1.0)
+
+
+# ---- 자동 충전 (배터리 인지 운영 1단계) ----
+
+
+def charging(n=0, low=30.0, **kwargs):
+    chargers = tuple(Station(f'charger_c{i}', (float(2 * i), -10.0)) for i in (1, 2, 3))
+    waits = tuple(Station(f'wait_{i}', (20.0, float(i))) for i in (1, 2, 3, 4, 5))
+    return make(charging_enabled=True, charge=ChargeConfig(low_percent=low, min_in_service=n),
+                chargers=chargers, wait_stations=waits, **kwargs)
+
+
+def _five(d, batteries, now=0.0):
+    for i, b in enumerate(batteries, start=1):
+        d.update_robot(robot(f'amr_0{i}', (float(i), 0.0), battery=b), '', now)
+
+
+def test_charging_off_by_default_creates_nothing():
+    d = make()
+    _five(d, [10.0] * 5)
+    assert d.plan_charging(0.0) == []
+    assert d.assign(0.0) == ([], [])
+
+
+def test_five_robots_n3_never_more_than_two_charging():
+    # 명세 완료 기준: 가짜 로봇 5대, N=3에서 배터리가 동시에 떨어져도 충전하러 가는 로봇은 2대를 넘지 않는다
+    d = charging(n=3)
+    _five(d, [25.0, 12.0, 28.0, 18.0, 22.0])
+    orders = d.plan_charging(0.0)
+    assert [(o.robot_id, o.task_type) for o in orders] == [('amr_02', TYPE_CHARGE), ('amr_04', TYPE_CHARGE)]
+    commands, rows = d.assign(0.0)
+    assert sorted(c.robot_id for c in commands) == ['amr_02', 'amr_04'] and rows == []
+    assert sorted(d.charging_robots()) == ['amr_02', 'amr_04']
+    assert d.charge_waiting == ['amr_05', 'amr_01', 'amr_03']
+    # 다음 틱에도 더 보내지 않는다 (한 대 충전이 끝나야 한 대가 간다)
+    _five(d, [24.0, 12.0, 27.0, 18.0, 21.0], now=1.0)
+    assert d.plan_charging(1.0) == [] and len(d.charging_robots()) == 2
+    # amr_02 충전 완료 → 다음으로 낮은 amr_05가 간다. amr_02는 대기 위치로
+    d.on_status(orders[0].task_id, 'amr_02', STATE_COMPLETED, now=2.0)
+    _five(d, [24.0, 100.0, 27.0, 18.0, 21.0], now=2.0)
+    nxt = d.plan_charging(2.0)
+    assert [(o.robot_id, o.task_type) for o in nxt] == [('amr_05', TYPE_CHARGE), ('amr_02', TYPE_RETURN)]
+    assert len(d.charging_robots()) == 2
+
+
+def test_waiting_robot_keeps_serving_above_min_battery():
+    # 충전 차례를 기다리는 로봇도 할당 하한(20) 위면 배송을 받는다
+    d = charging(n=3)
+    _five(d, [25.0, 12.0, 28.0, 18.0, 22.0])
+    d.plan_charging(0.0)
+    d.add_task(task('t1', (3.0, 0.0)))
+    commands, _ = d.assign(0.0)
+    assert [c.robot_id for c in commands if c.task_id == 't1'] == ['amr_03']
+
+
+def test_charge_order_goes_before_delivery():
+    # 충전 작업을 만든 로봇에게는 같은 틱에 배송을 주지 않는다
+    d = charging()
+    d.update_robot(robot('amr_01', battery=25.0), '', 0.0)
+    d.add_task(task('t1'))
+    d.plan_charging(0.0)
+    commands, _ = d.assign(0.0)
+    assert [c.task_id.split('_')[0] for c in commands] == ['charge']
+    assert d.tasks['t1'].state == STATE_PENDING and not d.tasks['t1'].assignee
+
+
+def test_busy_low_robot_charges_after_task():
+    d = charging()
+    d.update_robot(robot('amr_01', battery=15.0), '', 0.0)
+    d.robots['amr_01'].task_id = 'x'
+    assert d.plan_charging(0.0) == [] and d.charge_waiting == ['amr_01']
+    d.robots['amr_01'].task_id = ''
+    assert [o.robot_id for o in d.plan_charging(1.0)] == ['amr_01']
+
+
+def _charged(d):
+    """amr_01을 충전기 c1로 보내 충전을 끝낸다 (1 s)."""
+    d.update_robot(robot('amr_01', (2.0, -10.0), battery=25.0), '', 0.0)
+    charge = d.plan_charging(0.0)[0]
+    d.assign(0.0)
+    d.on_status(charge.task_id, 'amr_01', STATE_COMPLETED, now=1.0)
+    d.update_robot(robot('amr_01', (2.0, -10.0), battery=100.0), '', 1.0)
+
+
+def test_return_dropped_if_robot_takes_delivery():
+    # 충전을 마친 로봇이 같은 틱에 배송을 받으면 대기 위치 복귀는 보내지 않는다 (충전기는 어차피 비워진다)
+    d = charging()
+    _charged(d)
+    d.add_task(task('t1', (3.0, -10.0)))
+    ret = d.plan_charging(1.0)
+    assert [o.task_type for o in ret] == [TYPE_RETURN]
+    commands, _ = d.assign(1.0)
+    assert [c.task_id for c in commands] == ['t1']
+    assert ret[0].task_id not in d.tasks
+
+
+def test_return_goes_to_free_wait_station():
+    d = charging()
+    d.update_robot(robot('amr_02', (20.0, 1.0), battery=90.0), '', 0.0)   # wait_1에 서 있다
+    _charged(d)
+    d.update_robot(robot('amr_02', (20.0, 1.0), battery=90.0), '', 1.0)
+    ret = d.plan_charging(1.0)
+    assert [(o.robot_id, o.station) for o in ret] == [('amr_01', 'wait_2')]
+    commands, _ = d.assign(1.0)
+    assert [c.task_id for c in commands] == [ret[0].task_id]
+
+
+def test_no_return_without_wait_stations():
+    d = charging()
+    d = make(charging_enabled=True, chargers=d.config.chargers)
+    _charged(d)
+    assert d.plan_charging(1.0) == []
+
+
+def test_dead_robot_charge_order_dropped():
+    d = charging()
+    d.update_robot(robot('amr_01', battery=25.0), '', 0.0)
+    d.robots['amr_01'].task_id = 'x'          # 일하는 중이라 아직 못 보낸다
+    order = d.plan_charging(0.0)
+    assert order == []
+    d.robots['amr_01'].task_id = ''
+    order = d.plan_charging(0.0)[0]
+    d.robots['amr_01'].task_id = 'y'          # 보내기 전에 다른 출처의 작업을 받고 (분산 등)
+    d.robots['amr_01'].last_seen = -10.0      # 죽었다
+    assert d.plan_charging(5.0) == [] and order.task_id not in d.tasks
+    assert d.charging_robots() == {}
+
+
+def test_failed_charge_retried_to_same_robot_without_load():
+    d = charging()
+    d.update_robot(robot('amr_01', battery=25.0), '', 0.0)
+    d.update_robot(robot('amr_02', battery=90.0), '', 0.0)
+    order = d.plan_charging(0.0)[0]
+    d.assign(0.0)
+    d.on_status(order.task_id, 'amr_01', STATE_FAILED, error_code=502, now=1.0)
+    assert d.tasks[order.task_id].state == STATE_PENDING
+    commands, _ = d.assign(1.0)
+    assert [(c.robot_id, c.task_id) for c in commands] == [('amr_01', order.task_id)]
+    # 거부되면 큐로 돌아가도 load(부하균형 할당 수)는 건드리지 않는다
+    d.on_ack('amr_01', commands[0].assignment_id, False)
+    assert d.robots['amr_01'].load == 0 and d.robots['amr_02'].load == 0
+
+
+def test_generator_charge_task_counts_toward_limit():
+    # 작업 생성기가 낸 충전 작업(for_robot 없음)도 동시 충전 대수에 센다
+    d = charging(n=1)
+    d.update_robot(robot('amr_01', battery=90.0), '', 0.0)
+    d.update_robot(robot('amr_02', battery=10.0), '', 0.0)
+    d.add_task(TaskInfo(task_id='gen_c', task_type=TYPE_CHARGE, dropoff_xy=(6.0, -10.0), priority=0, created=0.0))
+    d.assign(0.0)
+    assert d.charging_robots() == {d.tasks['gen_c'].assignee: 'charger_c3'}
+    assert d.plan_charging(0.0) == []

@@ -12,6 +12,7 @@ from typing import Any, Optional
 from amr_fleet_core.assignment import (ALGORITHMS, COST_FNS, CongestedArea, CostFn, RobotInfo, TaskInfo,
                                        euclidean_cost, filter_candidates, make_congestion_cost, sort_by_priority)
 
+from amr_fleet_core.charging import ChargeConfig, Station, nearest_free, plan_charging
 from amr_fleet_core.claims import TaskClaims
 
 # amr_msgs/msg/TaskStatus.STATE_* 와 같은 값
@@ -24,6 +25,11 @@ FINISHED = (STATE_COMPLETED, STATE_FAILED)
 ERROR_CANCELED = 103
 # amr_msgs/msg/ErrorInfo.ASSIGN_TASK_TAKEN 와 같은 값. 다른 로봇이 먼저 맡아 물러난 것이라 재시도로 세지 않는다
 ERROR_TASK_TAKEN = 104
+# amr_msgs/msg/Task.TYPE_* 와 같은 값
+TYPE_CHARGE = 1
+TYPE_RETURN = 2
+# 서버가 만드는 충전·복귀 작업의 우선순위 (구역 허가 순서에서 배송보다 먼저)
+CHARGE_PRIORITY = 200
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,13 @@ class DispatcherConfig:
     congestion_weight: float = 3.0
     # 혼잡도를 이 시간 [s] 동안 못 받으면 직선 거리로 돌아간다. 혼잡도 노드가 죽었을 때 마지막 값으로 계속 벌점을 주지 않게
     congestion_timeout_s: float = 3.0
+    # 자동 충전 배정 (배터리 인지 운영 1단계, amr_fleet_core charging). 끄면(기본) 지금처럼 하한 밑 로봇을 빼기만 한다
+    charging_enabled: bool = False
+    charge: ChargeConfig = ChargeConfig()
+    # 충전기 위치 (map 좌표). 비면 충전하러 보내지 않는다
+    chargers: tuple[Station, ...] = ()
+    # 충전을 마친 로봇을 보낼 대기 위치. 비면 충전기 위에 그대로 둔다 (다음 작업을 받으면 비켜 준다)
+    wait_stations: tuple[Station, ...] = ()
 
     def __post_init__(self):
         if self.algorithm not in ALGORITHMS:
@@ -88,6 +101,10 @@ class TaskEntry:
     failures: int = 0
     # 맡은 로봇이 죽어 회수한 횟수 (failures와 따로 센다. 작업이 아니라 로봇의 문제다)
     reclaims: int = 0
+    # 서버가 이 로봇에게 직접 낸 작업 (자동 충전·충전 뒤 복귀). 할당 알고리즘을 거치지 않는다
+    for_robot: str = ''
+    # 목적지 스테이션 이름 (충전기·대기 위치 예약에 쓴다)
+    station: str = ''
 
 
 @dataclass
@@ -127,6 +144,16 @@ class AssignmentRow:
 
 
 @dataclass
+class ChargeTask:
+    """서버가 만든 충전·복귀 작업 1건. 노드가 payload(Task 메시지)를 붙인다."""
+
+    task_id: str
+    robot_id: str
+    task_type: int
+    station: str
+
+
+@dataclass
 class _PendingAck:
     robot_id: str
     task_id: str
@@ -152,6 +179,10 @@ class Dispatcher:
         # 먼저 수락한 쪽이 주인 (architecture.md 5-2절). 죽은 로봇의 주장은 회수와 같은 시간 뒤에 뺀다
         timeout = self.config.reclaim_timeout_s if self.config.reclaim_timeout_s > 0 else float('inf')
         self.claims = TaskClaims(timeout)
+        # 자동 충전: 만든 작업 번호, 충전을 마치고 대기 위치로 보낼 로봇, 마지막 계획에서 충전 차례를 기다리는 로봇
+        self._next_charge = 1
+        self._return_after: set[str] = set()
+        self.charge_waiting: list[str] = []
 
     # ---- 입력 ----
 
@@ -167,11 +198,14 @@ class Dispatcher:
             return 'congestion', self._congestion_cost
         return 'euclidean', euclidean_cost
 
-    def add_task(self, info: TaskInfo, payload: Any = None) -> bool:
-        """새 작업을 큐에 넣는다. 같은 task_id가 이미 있으면 무시하고 False."""
+    def add_task(self, info: TaskInfo, payload: Any = None, for_robot: str = '', station: str = '') -> bool:
+        """새 작업을 큐에 넣는다. 같은 task_id가 이미 있으면 무시하고 False.
+
+        for_robot을 주면 할당 알고리즘을 거치지 않고 그 로봇이 비는 대로 맡긴다 (서버가 낸 충전·복귀).
+        """
         if info.task_id in self.tasks:
             return False
-        self.tasks[info.task_id] = TaskEntry(info=info, payload=payload)
+        self.tasks[info.task_id] = TaskEntry(info=info, payload=payload, for_robot=for_robot, station=station)
         return True
 
     def update_robot(self, info: RobotInfo, current_task_id: str, now: float) -> None:
@@ -253,6 +287,9 @@ class Dispatcher:
             robot = self.robots.get(robot_id)
             if robot is not None and robot.task_id == task_id:
                 robot.task_id = ''
+            if state == STATE_COMPLETED and task.for_robot and task.info.task_type == TYPE_CHARGE \
+                    and self.config.wait_stations:
+                self._return_after.add(robot_id)
         return True
 
     # ---- 출력 ----
@@ -268,15 +305,18 @@ class Dispatcher:
                 if owner is not None:
                     self._hand_over(t, owner, STATE_COMPLETED if self.claims.completed(t.info.task_id, owner)
                                     else STATE_IN_PROGRESS)
+        # 서버가 낸 충전을 먼저 보낸다 (그 로봇에게 다른 작업을 주지 않게). 복귀는 할당 알고리즘 뒤
+        commands = self._assign_directed(TYPE_CHARGE, now)
         queued = self._station_free(
-            [t.info for t in self.tasks.values() if t.state == STATE_PENDING and not t.assignee])
+            [t.info for t in self.tasks.values() if t.state == STATE_PENDING and not t.assignee and not t.for_robot])
+        reserved = self._reserved()
         free = [
             replace(r.info, load=r.load) for r in self.robots.values()
-            if not r.task_id and not r.decentral and now - r.last_seen <= self.config.robot_timeout_s
+            if self._free(r, now) and r.info.robot_id not in reserved
         ]
         candidates = filter_candidates(free, self.config.min_battery_percent)
         if not queued or not candidates:
-            return [], []
+            return commands + self._assign_directed(TYPE_RETURN, now), []
 
         cost_name, cost_fn = self._current_cost_fn(now)
         result = self._assign_fn(queued, candidates, cost_fn)
@@ -284,7 +324,7 @@ class Dispatcher:
         self._next_call_id += 1
         by_id = {r.robot_id: r for r in candidates}
 
-        commands, rows = [], []
+        rows = []
         for info in queued:
             robot_id = result.assignments.get(info.task_id)
             if robot_id is None:
@@ -305,7 +345,54 @@ class Dispatcher:
         for task_id in result.unassigned:
             rows.append(AssignmentRow(
                 call_id, self.config.algorithm, cost_name, task_id, '', None))
-        return commands, rows
+        return commands + self._assign_directed(TYPE_RETURN, now), rows
+
+    def plan_charging(self, now: float) -> list[ChargeTask]:
+        """자동 충전 (charging_enabled): 배터리 낮은 로봇에게 충전, 충전을 마친 로봇에게 대기 위치 복귀 작업을 만든다.
+
+        만든 작업은 장부에 넣고(for_robot) 돌려준다. 노드가 payload를 붙인 뒤 assign()이 보낸다.
+        보내기 전에 로봇이 죽으면(robot_timeout_s) 그 작업은 지운다. 충전 차례를 기다리는 로봇은 charge_waiting.
+        """
+        if not self.config.charging_enabled or not self.config.chargers:
+            return []
+        alive = {rid: r for rid, r in self.robots.items()
+                 if not r.decentral and now - r.last_seen <= self.config.robot_timeout_s}
+        for task_id, t in list(self.tasks.items()):
+            if t.for_robot and not t.assignee and t.state == STATE_PENDING and t.for_robot not in alive:
+                del self.tasks[task_id]
+        reserved = self._reserved()
+        plan = plan_charging([r.info for r in alive.values()],
+                             {rid for rid, r in alive.items() if self._free(r, now) and rid not in reserved},
+                             self._charging(), self.config.chargers, self.config.charge)
+        self.charge_waiting = plan.waiting
+        by_name = {s.name: s for s in self.config.chargers}
+        created = []
+        for order in plan.orders:
+            self._return_after.discard(order.robot_id)
+            created.append(self._add_directed(order.robot_id, TYPE_CHARGE, by_name[order.station], now))
+        # 충전을 마친 로봇: 일을 받아 이미 떠났으면 그만, 아니면 빈 대기 위치로
+        reserved = self._reserved()
+        for rid in sorted(self._return_after):
+            robot = alive.get(rid)
+            if robot is None or robot.task_id:
+                self._return_after.discard(rid)
+                continue
+            if rid in reserved:
+                continue
+            taken = {t.station for t in self.tasks.values()
+                     if t.for_robot and t.info.task_type == TYPE_RETURN and t.state not in FINISHED}
+            taken |= {s.name for s in self.config.wait_stations for other, r in alive.items()
+                      if other != rid and math.dist(r.info.xy, s.xy) <= self.config.charge.occupied_radius_m}
+            station = nearest_free(robot.info.xy, self.config.wait_stations, taken)
+            if station is None:
+                continue
+            self._return_after.discard(rid)
+            created.append(self._add_directed(rid, TYPE_RETURN, station, now))
+        return created
+
+    def charging_robots(self) -> dict[str, str]:
+        """충전 작업을 맡았거나 맡을 로봇 → 충전기 (이동 중·충전 중 포함, 작업이 끝나면 빠진다)."""
+        return self._charging()
 
     def due_resends(self, now: float) -> tuple[list[Outgoing], list[str]]:
         """Ack가 아직 없는 명령 중 재전송할 것과, 한도를 넘어 포기한 task_id를 돌려준다.
@@ -380,6 +467,65 @@ class Dispatcher:
 
     # ---- 내부 ----
 
+    def _free(self, robot: RobotEntry, now: float) -> bool:
+        """맡은 작업이 없고 서버 명령이 닿는 살아 있는 로봇."""
+        return not robot.task_id and not robot.decentral and now - robot.last_seen <= self.config.robot_timeout_s
+
+    def _reserved(self) -> set[str]:
+        """아직 보내지 않은 충전 작업이 기다리는 로봇 (다른 작업을 주지 않는다)."""
+        return {t.for_robot for t in self.tasks.values()
+                if t.for_robot and not t.assignee and t.state == STATE_PENDING and t.info.task_type == TYPE_CHARGE}
+
+    def _charging(self) -> dict[str, str]:
+        """끝나지 않은 충전 작업의 로봇 → 충전기 이름. 작업 생성기가 낸 충전 작업도 센다 (충전기는 목적지에서 가장 가까운 곳)."""
+        out = {}
+        for t in self.tasks.values():
+            robot_id = t.assignee or t.for_robot
+            if t.info.task_type != TYPE_CHARGE or t.state in FINISHED or not robot_id:
+                continue
+            station = t.station
+            if not station:
+                near = nearest_free(t.info.dropoff_xy, self.config.chargers, set())
+                station = near.name if near is not None else t.info.task_id
+            out[robot_id] = station
+        return out
+
+    def _add_directed(self, robot_id: str, task_type: int, station: Station, now: float) -> ChargeTask:
+        kind = 'charge' if task_type == TYPE_CHARGE else 'return'
+        task_id = f'{kind}_{robot_id}_{self._next_charge:04d}'
+        self._next_charge += 1
+        info = TaskInfo(task_id=task_id, task_type=task_type, dropoff_xy=station.xy, priority=CHARGE_PRIORITY,
+                        created=now)
+        self.add_task(info, for_robot=robot_id, station=station.name)
+        return ChargeTask(task_id, robot_id, task_type, station.name)
+
+    def _assign_directed(self, task_type: int, now: float) -> list[Outgoing]:
+        """for_robot 작업 중 task_type인 것을 그 로봇이 비어 있으면 맡긴다.
+
+        복귀는 할당 알고리즘 뒤에 본다. 그 사이 로봇이 일을 받았으면 보낸 적 없는 복귀 작업은 지운다.
+        """
+        commands = []
+        for task_id, t in list(self.tasks.items()):
+            if not t.for_robot or t.assignee or t.state != STATE_PENDING or t.info.task_type != task_type:
+                continue
+            robot = self.robots.get(t.for_robot)
+            if robot is None:
+                continue
+            if robot.task_id:
+                if task_type == TYPE_RETURN and t.failures == 0:
+                    del self.tasks[task_id]
+                continue
+            if not self._free(robot, now):
+                continue
+            assignment_id = self._next_assignment_id
+            self._next_assignment_id += 1
+            t.assignee = t.for_robot
+            t.assignment_id = assignment_id
+            robot.task_id = task_id
+            self._pending[assignment_id] = _PendingAck(t.for_robot, task_id, now)
+            commands.append(Outgoing(assignment_id, t.for_robot, task_id, first=True))
+        return commands
+
     def _station_free(self, queued: list[TaskInfo]) -> list[TaskInfo]:
         """스테이션 예약(DispatcherConfig.station_clearance_m)에 걸리지 않는 작업만 남긴다 (순서는 그대로).
 
@@ -430,7 +576,9 @@ class Dispatcher:
         robot = self.robots.get(robot_id)
         if robot is not None and robot.task_id == task_id:
             robot.task_id = ''
-            robot.load = max(0, robot.load - 1)
+            # 서버가 낸 충전·복귀는 load에 넣지 않았다
+            if task is None or not task.for_robot:
+                robot.load = max(0, robot.load - 1)
 
 
 def _stations(info: TaskInfo) -> list:

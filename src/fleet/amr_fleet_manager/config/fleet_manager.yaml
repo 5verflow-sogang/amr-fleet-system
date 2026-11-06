@@ -27,6 +27,18 @@ fleet_manager:
       congestion_weight: 3.0
       # 혼잡도를 이 시간 동안 못 받으면 euclidean으로 돌아간다 (실제 시간, s). 혼잡도 노드는 2 Hz
       congestion_timeout_s: 3.0
+    # 자동 충전 배정 (배터리 인지 운영 1단계). 끄면 지금처럼 min_battery_percent 밑 로봇을 빼기만 한다 (B0).
+    # 충전기·대기 위치 파일(charging.stations_file)과 지도 원점은 launch 인자로 받는다 (작업 생성기와 같은 파일)
+    charging:
+      enabled: false
+      # 놀고 있는 로봇이 이보다 낮으면 빈 충전기 중 가장 가까운 곳으로 보낸다 (%). min_battery_percent보다 높게
+      low_percent: 30.0
+      # 운영 중(충전하러 가거나 충전 중이 아닌) 로봇을 최소 이만큼 남긴다 (N). 동시 충전 ≤ 살아 있는 로봇 − N.
+      # 0이면 충전기 수로만 묶는다
+      min_in_service: 0
+      # 스테이션 이름 패턴. 충전을 마친 로봇은 빈 대기 위치로 보낸다 (wait_pattern을 비우면 충전기에 그대로 둔다)
+      charger_pattern: charger_*
+      wait_pattern: wait_*
     # 이 시간 동안 RobotState가 안 오면 할당 후보에서 뺀다 (실제 시간, s)
     robot_timeout_s: 3.0
     resend:

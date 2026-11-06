@@ -88,6 +88,35 @@ ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<구역> obstacle
 - `robot_timeout_s` 안에 `RobotState`가 왔다
 - 서버가 맡긴 작업이 없다 (완료·실패 보고 전까지는 `RobotState.mode`가 IDLE이어도 후보가 아니다)
 - `RobotState.mode == IDLE`이고 배터리가 `assignment.min_battery_percent` 이상 (`amr_fleet_core.filter_candidates`)
+- 서버가 낸 충전 작업을 아직 받지 않았다 (아래 자동 충전)
+
+### 자동 충전 (`charging.enabled`, 배터리 인지 운영 1단계)
+
+켜면 서버가 배터리 낮은 로봇에게 충전 작업(`TYPE_CHARGE`)을 직접 낸다. 끄면(기본) 지금처럼 하한 밑 로봇을 할당에서 빼기만 한다.
+
+- 할당을 부를 때마다 먼저 `amr_fleet_core.plan_charging`을 부른다. 놀고 있는 로봇이 `charging.low_percent` 밑이면, 빈 충전기 중 가장 가까운 곳으로 충전 작업을 만든다.
+- 운영 중인 로봇은 `charging.min_in_service`(N)대 밑으로 떨어지지 않는다. 동시 충전 대수는 살아 있는 로봇 − N이다.
+  - 예: 5대, N=3이면 동시에 떨어져도 2대만 간다.
+  - 나머지는 배터리 낮은 순으로 기다리고, 그동안 하한 위면 배송을 받는다.
+  - 작업 생성기가 낸 충전 작업도 동시 충전 대수에 센다.
+- 충전 작업은 할당 알고리즘을 거치지 않고 그 로봇에게 바로 간다.
+  - 작업 ID는 `charge_<robot>_<번호>`, 우선순위는 200이다.
+  - 실패하면 다른 작업처럼 `failed_retries`번 같은 로봇에게 다시 낸다.
+  - 보내기 전에 로봇이 죽으면 지운다.
+- 충전을 마친 로봇은 빈 대기 위치(`charging.wait_pattern`)로 보낸다(`return_<robot>_<번호>`, `TYPE_RETURN`). 충전기를 비워 다음 로봇이 쓰게 하려는 것이다.
+  - 같은 틱에 배송을 받으면 복귀는 보내지 않는다.
+- 충전기·대기 위치는 작업 생성기와 같은 스테이션 파일에서 이름 패턴으로 고른다.
+  - launch 인자는 `stations_file`, `map_origin_in_world`이고, 식당은 `stations_restaurant.yaml`, `[0, 0, 0]`이다.
+  - 패턴 기본값은 `charger_*`, `wait_*`이다.
+- 로그에 충전·복귀를 낼 때와 충전 차례를 기다리는 로봇이 바뀔 때를 남긴다.
+
+```bash
+# 가짜 로봇 5대, N=3, 로봇마다 다른 시작 배터리와 압축한 소모율
+ros2 launch amr_fleet_manager fleet_manager.launch.py charging:=true min_in_service:=3
+ros2 launch amr_fleet_manager fake_robots.launch.py count:=5 \
+    battery_config:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/fake_robots_battery.yaml
+ros2 launch amr_fleet_manager task_generator.launch.py
+```
 
 ### 확인과 재전송
 
@@ -201,6 +230,13 @@ ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<구역> obstacle
 | `assignment.cost_fn` | `euclidean` | 할당 비용. `euclidean` / `congestion`(직선 거리 + 혼잡 구역 통과 벌점, `amr_fleet_core.make_congestion_cost`). `congestion`이면 `/fleet/congestion`을 구독하고, 아직 못 받았거나 `congestion_timeout_s` 넘게 끊기면 `euclidean`으로 할당한다. `assignments.csv`의 `cost_fn` 열에 호출마다 실제로 쓴 쪽이 남는다. launch 인자 `cost_fn`. `load_balance`는 할당 수를 먼저 보고 비용은 동률일 때만 봐서 혼잡도가 거의 안 먹힌다(시연은 `nearest`·`hungarian`) |
 | `assignment.congestion_weight` | `3.0` | 혼잡도 1.0인 구역 1 m를 (1 + 이 값) m로 본다. 시간으로 보면 (평소 속도 / 혼잡 구역 속도 − 1)이고, 속도 필터 55%만이면 0.8이다. 3.0은 멈춤·우회까지 감안한 시연용 값으로, 켬/끔 측정으로 다시 정한다. launch 인자 `congestion_weight` |
 | `assignment.congestion_timeout_s` | `3.0` | 혼잡도를 이 시간 동안 못 받으면 `euclidean`으로 돌아간다 (실제 시간, s). 혼잡도 노드가 죽었을 때 마지막 값으로 계속 벌점을 주지 않게 |
+| `charging.enabled` | `false` | 자동 충전 배정 (위 '자동 충전'). launch 인자 `charging` |
+| `charging.low_percent` | `30.0` | 놀고 있는 로봇이 이보다 낮으면 충전하러 보낸다 (%). `min_battery_percent`보다 높게. launch 인자 `charge_low_percent` |
+| `charging.min_in_service` | `0` | 운영 중 로봇 최소 대수 N. 동시 충전 ≤ 살아 있는 로봇 − N. 0이면 충전기 수로만 묶는다. launch 인자 `min_in_service` |
+| `charging.stations_file` | `''` | 충전기·대기 위치 스테이션 파일 (world 좌표). launch 인자 `stations_file` (기본 `config/stations.yaml`) |
+| `charging.map_origin_in_world` | `[-0.0439, 1.4712, -0.00088]` | world에서 본 map 원점. 작업 생성기와 같게. launch 인자 같은 이름 (식당 `[0, 0, 0]`) |
+| `charging.charger_pattern` | `charger_*` | 충전기 스테이션 이름 패턴 |
+| `charging.wait_pattern` | `wait_*` | 충전을 마친 로봇을 보낼 대기 위치 패턴. 비우면 충전기 위에 그대로 둔다 |
 | `assignment.station_clearance_m` | `1.0` | 스테이션 예약 (m). 맡겨진 작업의 픽업·하역 위치에서 이 거리 안을 쓰는 작업은 그 작업이 끝날 때까지 큐에서 기다린다. 큐 안에서 겹치면 우선순위가 높은 하나만 맡긴다. 같은 도크로 가는 두 작업을 동시에 내보내 두 로봇이 한 자리에서 막혔다 (11/2). 0이면 끄기 (`fleet_fake`는 연구 1 조건대로 0) |
 | `robot_timeout_s` | `3.0` | 이 시간 동안 `RobotState`가 없으면 후보에서 뺀다 (s) |
 | `resend.interval_s` | `1.0` | Ack 없을 때 재전송 간격 (s) launch 인자 `resend_interval_s`(연구 1 재시도 간격 비교) |
@@ -225,7 +261,12 @@ ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<구역> obstacle
 | `start_xy` | `[0.0, 0.0]` | 시작 위치 (map, m). yaml에 로봇별로 둔다 |
 | `speed_mps` | `1.0` | 직선 이동 속도 |
 | `dwell_s` | `1.0` | 싣기·내리기 시간 |
-| `battery_percent` | `100.0` | 고정값 (방전 없음) |
+| `battery.initial_percent` | `100.0` | 시작 배터리 (%). [config/fake_robots_battery.yaml](config/fake_robots_battery.yaml)은 로봇마다 95·80·65·50·40 |
+| `battery.move_per_m` | `0.0` | 이동 1 m당 소모 (%). 기본은 닳지 않는다(지금까지의 실험 조건). amr_bt 기본 0.05, `fake_robots_battery.yaml` 0.1 |
+| `battery.idle_per_s` | `0.0` | 시간당 소모 (%/s). amr_bt 기본 0.002, `fake_robots_battery.yaml` 0.01 |
+| `battery.charge_per_s` | `0.5` | 충전 (%/s). 충전 작업은 충전기에 도착한 뒤 `battery.charge_target_percent`(100)까지 채우고 COMPLETED (그동안 `MODE_CHARGING`, phase `charging`) |
+| `battery.reject_below_percent` | `10.0` | 이보다 낮으면 충전이 아닌 작업을 `ASSIGN_BATTERY_LOW`로 거부 (amr_bt와 같다). 0 %가 되면 작업을 쥔 채 그 자리에 선다 (방전 정지) |
+| `battery_config` (launch 인자) | `''` | 배터리 파라미터 파일을 `fake_robots.yaml` 위에 덧씌운다 (`config/fake_robots_battery.yaml`: 15–20분에 충전 2–3번이 돌도록 소모율 2–5배) |
 | `state_rate_hz` | `2.0` | `RobotState` 주기 |
 | `step_hz` | `10.0` | 이동 계산 주기 |
 | `server_topic_prefix` | `/fleet` | 서버 → 로봇 토픽 앞부분. launch 인자 `relayed:=true`면 `fleet` |
