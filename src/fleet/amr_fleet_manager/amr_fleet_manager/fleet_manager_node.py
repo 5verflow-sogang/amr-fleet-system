@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import fnmatch
-import time
 import uuid
 
 import rclpy
@@ -202,13 +201,13 @@ class FleetManager(Node):
             battery_percent=msg.battery_percent,
             mode=msg.mode,
         )
-        self._dispatcher.update_robot(info, msg.current_task_id, time.monotonic())
+        self._dispatcher.update_robot(info, msg.current_task_id, self._now_sec())
         self._assign()
 
     def _on_ack(self, msg: TaskAssignmentAck):
         accepted = msg.result == TaskAssignmentAck.RESULT_ACCEPTED
         if self._dispatcher.on_ack(msg.robot_id, msg.assignment_id, accepted, msg.error.code,
-                                   time.monotonic()) and not accepted:
+                                   self._now_sec()) and not accepted:
             self.get_logger().warn(
                 f'{msg.robot_id}가 할당 {msg.assignment_id}를 거부: '
                 f'code={msg.error.code} {msg.error.message}')
@@ -220,7 +219,7 @@ class FleetManager(Node):
         # 수락 시각. 비어 있으면 보고 시각으로 본다 (TaskStatus.msg)
         start = stamp_to_sec(msg.start_time) or stamp_to_sec(msg.header.stamp)
         if not self._dispatcher.on_status(msg.task_id, msg.robot_id, msg.state, msg.error.code,
-                                          start, time.monotonic()):
+                                          start, self._now_sec()):
             return
         handed_over = bool(task.assignee) and task.assignee != before
         if handed_over:
@@ -240,7 +239,7 @@ class FleetManager(Node):
             self._assign()
 
     def _on_congestion(self, msg: ZoneCongestionArray):
-        self._dispatcher.set_congestion([(tuple(z.area), z.value) for z in msg.zones], time.monotonic())
+        self._dispatcher.set_congestion([(tuple(z.area), z.value) for z in msg.zones], self._now_sec())
 
     def _on_robot_mode(self, msg: RobotFleetMode):
         decentral = msg.mode == FleetHeartbeat.MODE_DECENTRALIZED
@@ -289,11 +288,18 @@ class FleetManager(Node):
             self._grant_pub.publish(msg)
 
     def _now_sec(self) -> float:
+        """노드 시계(초). use_sim_time:=true면 시뮬레이션 시간이다.
+
+        배정·Ack 재전송·로봇 끊김 회수·혼잡도 만료를 모두 이 시계로 잰다. 예전엔 실제 시간(time.monotonic)이라,
+        카메라를 켜 RTF 0.08로 느려진 시연 녹화에서 시뮬레이션 시간 2 Hz RobotState가 실제 6 s마다 와
+        5 s 끊김 회수가 계속 일어났다(같은 작업이 여러 로봇에 배정, 혼잡도 3 s 만료로 직선 거리 배정, 11/6).
+        use_sim_time:=false(가짜 로봇)면 지금처럼 실제 시간이다.
+        """
         return self.get_clock().now().nanoseconds * 1e-9
 
     def _plan_charging(self):
-        now = time.monotonic()
-        for order in self._dispatcher.plan_charging(now, self._now_sec() - self._t0):
+        now = self._now_sec()
+        for order in self._dispatcher.plan_charging(now, now - self._t0):
             self._dispatcher.tasks[order.task_id].payload = self._charge_task(order)
             kind = '충전' if order.task_type == TYPE_CHARGE else '충전 뒤 복귀'
             self.get_logger().info(f'{kind}: {order.robot_id} → {order.station} ({order.task_id})')
@@ -333,13 +339,13 @@ class FleetManager(Node):
 
     def _assign(self):
         self._plan_charging()
-        commands, rows = self._dispatcher.assign(time.monotonic())
+        commands, rows = self._dispatcher.assign(self._now_sec())
         if rows and self._log is not None:
             self._log.write(stamp_to_sec(self.get_clock().now().to_msg()), rows)
         self._send(commands)
 
     def _resend(self):
-        now = time.monotonic()
+        now = self._now_sec()
         reclaimed = self._dispatcher.reclaim_lost(now)
         for task_id, robot_id in reclaimed:
             self.get_logger().warn(

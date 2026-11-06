@@ -11,7 +11,7 @@ fleet_manager:
       # 분산 경매의 재경매(최대 1회)와 같게 둔다 (api.md 4-4절)
       failed_retries: 1
       # 작업을 맡은 로봇의 RobotState가 이 시간 동안 끊기면 로봇이 죽은 것으로 보고 작업을 회수해 다시 할당한다
-      # (실제 시간, s). 0이면 회수하지 않는다. robot_timeout_s 이상
+      # (노드 시계 s: use_sim_time이면 시뮬레이션 시간). 0이면 회수하지 않는다. robot_timeout_s 이상
       reclaim_timeout_s: 5.0
       # 스테이션 예약 (m): 맡겨진 작업의 픽업·하역 위치에서 이 거리 안을 쓰는 작업은 그 작업이 끝날 때까지 맡기지 않는다.
       # 같은 도크로 가는 두 작업을 동시에 내보내 두 로봇이 한 자리에서 막혔다 (11/2 fleet_stack, dock_a).
@@ -25,7 +25,7 @@ fleet_manager:
       # 혼잡도 1.0인 구역 1 m를 (1 + 이 값) m로 본다. 시간으로 보면 (평소 속도 / 혼잡 구역 속도 − 1)이다
       # (속도 필터 55%만이면 0.8). 3.0은 멈춤·우회까지 감안한 시연용 값이고, 켬/끔 측정(작업 5)으로 다시 정한다
       congestion_weight: 3.0
-      # 혼잡도를 이 시간 동안 못 받으면 euclidean으로 돌아간다 (실제 시간, s). 혼잡도 노드는 2 Hz
+      # 혼잡도를 이 시간 동안 못 받으면 euclidean으로 돌아간다 (노드 시계 s: use_sim_time이면 시뮬레이션 시간). 혼잡도 노드는 2 Hz
       congestion_timeout_s: 3.0
       # 비용 + 이 값 × (필요 배터리 / 남은 배터리) [m] (energy.* 모델). 배터리가 많은 로봇이 먼 작업을 맡는다. 0이면 끈다
       battery_weight: 0.0
@@ -68,10 +68,10 @@ fleet_manager:
       # 기다려야 하는 경우 그 대기 시간 × idle_per_s를 필요 배터리에 더한다 (대기 시간은 충전 중인 로봇의 남은 시간으로 추정)
       charge_per_s: 0.5
       charge_target_percent: 100.0
-    # 이 시간 동안 RobotState가 안 오면 할당 후보에서 뺀다 (실제 시간, s)
+    # 이 시간 동안 RobotState가 안 오면 할당 후보에서 뺀다 (노드 시계 s: use_sim_time이면 시뮬레이션 시간)
     robot_timeout_s: 3.0
     resend:
-      # Ack가 없으면 같은 assignment_id를 이 간격으로 다시 보낸다 (실제 시간, s).
+      # Ack가 없으면 같은 assignment_id를 이 간격으로 다시 보낸다 (노드 시계 s: use_sim_time이면 시뮬레이션 시간).
       # 주입 지연 최대 500ms + 로봇 처리 시간보다 커야 불필요한 재전송이 줄어든다
       interval_s: 1.0
       # 재전송 한도. 넘으면 작업을 큐로 되돌려 다시 할당한다. 첫 발송은 세지 않는다
