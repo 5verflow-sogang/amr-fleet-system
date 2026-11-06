@@ -10,6 +10,10 @@ obstacles:
   - id: customer_1
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -10.0, y: 3.45, yaw: 0.0}
     waypoints:
@@ -37,6 +41,10 @@ obstacles:
   - id: customer_4
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -10.5, y: 0.55, yaw: 0.0}
     waypoints:
@@ -47,6 +55,10 @@ obstacles:
   - id: customer_5
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.5, 1.0]
     spawn: {x: 4.74, y: -5.6, yaw: 1.5707963}
     waypoints:
@@ -57,6 +69,10 @@ obstacles:
   - id: customer_6
     type: customer
     pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.8]
     spawn: {x: -6.0, y: -5.6, yaw: 0.0}
     waypoints:
@@ -69,6 +85,10 @@ obstacles:
   - id: customer_7
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -7.275, y: -2.45, yaw: 0.0}
     waypoints:
@@ -81,6 +101,10 @@ obstacles:
   - id: peak_1
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.8]
     spawn: {x: -10.45, y: -4.6, yaw: 1.5707963}
     waypoints:
@@ -91,6 +115,10 @@ obstacles:
   - id: peak_2
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.8]
     spawn: {x: -10.0, y: 2.6, yaw: -1.5707963}
     waypoints:
@@ -101,6 +129,10 @@ obstacles:
   - id: peak_3
     type: customer
     pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.8]
     spawn: {x: -11.0, y: -3.5, yaw: 0.0}
     waypoints:
@@ -115,6 +147,10 @@ obstacles:
   - id: peak_4
     type: customer
     pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.3, 0.7]
     spawn: {x: -10.5, y: 3.3, yaw: 0.0}
     waypoints:
@@ -127,6 +163,10 @@ obstacles:
   - id: peak_5
     type: customer
     pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.3, 0.7]
     spawn: {x: -8.0, y: 3.3, yaw: 3.1415927}
     waypoints:
@@ -139,6 +179,10 @@ obstacles:
   - id: peak_6
     type: customer
     pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.3, 0.7]
     spawn: {x: -7.0, y: 3.2, yaw: 3.1415927}
     waypoints:

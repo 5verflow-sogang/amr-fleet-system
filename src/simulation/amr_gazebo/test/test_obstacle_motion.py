@@ -304,3 +304,97 @@ def test_rejects_bad_yield_config():
         ObstacleMotion({**WORKER, 'yield_to_robots': 'amr_01'}, random.Random(0))
     with pytest.raises(ValueError):          # curve는 구간이 짧아 앞을 못 본다
         ObstacleMotion({**WORKER, 'pattern': 'curve'}, random.Random(0))
+
+
+def test_rejects_bad_robot_size():
+    for size in ([0.565], [0.565, 0.0], [-0.5, 0.5]):
+        with pytest.raises(ValueError):
+            ObstacleMotion({**WORKER, 'yield_robot_size': size}, random.Random(0))
+
+
+def test_customer_yields_to_serving_robot_size():
+    """식당 손님(customer, r 0.25)도 멈춘 로봇 앞에서 선다. 서빙 로봇(0.565 x 0.537 m)은 AMR보다 폭이 넓어
+    옆으로 0.27 m 떨어진 선도 막는다 (AMR 크기로 보면 막히지 않는다)."""
+    customer = {**WORKER, 'id': 'customer_cross', 'type': 'customer'}
+    # 로봇(3, 1.5, 동쪽)의 오른쪽(동쪽) 변에서 옆으로: AMR 반길이 0.3 / 서빙 0.2825는 x 방향이라 북쪽을 보게 돌려 반폭이 x로 오게 한다
+    robot = (3.0, 1.5, math.pi / 2, 0.0)
+    line_x = 3.0 + 0.2685 + 0.25          # 서빙 로봇 옆 끝에서 손님 몸 반지름만큼 = 닿는 선
+    spec = {**customer, 'spawn': {'x': line_x, 'y': 4.0},
+            'waypoints': [{'x': line_x, 'y': 4.0}, {'x': line_x, 'y': 0.8}]}
+    assert not any(w for _, _, w in _walk(lambda t: robot, 6.0, spec=spec, clock=False))
+    serving = {**spec, 'yield_robot_size': [0.565, 0.537]}
+    log = _walk(lambda t: robot, 6.0, spec=serving, clock=False)
+    assert any(w for _, _, w in log)
+
+
+@pytest.mark.parametrize('name', [
+    'dynamic_obstacles_restaurant.yaml', 'dynamic_obstacles_restaurant_peak.yaml',
+    'dynamic_obstacles_restaurant_peak_scene12.yaml'])
+def test_restaurant_guests_yield_except_curve(name):
+    path = os.path.join(os.path.dirname(__file__), '..', 'config', name)
+    with open(path, encoding='utf-8') as f:
+        specs = yaml.safe_load(f)['obstacles']
+    for s in specs:
+        ObstacleMotion(s, random.Random(0))          # 설정이 받아들여진다
+        if s['pattern'] == 'curve':
+            assert not s.get('yield_to_robots'), s['id']
+        else:
+            assert s['yield_to_robots'] == ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05'], s['id']
+            assert s['yield_robot_size'] == [0.565, 0.537], s['id']
+            assert (s['yield_patience_s'], s['yield_progress_m']) == (3.0, 0.1), s['id']
+
+
+def _yield_keys(spec):
+    return {k: spec.get(k) for k in ('yield_to_robots', 'yield_robot_size', 'yield_patience_s', 'yield_progress_m')}
+
+
+def test_peak_scene12_has_same_guest_yield_settings_as_peak():
+    # scene12는 피크 파일에서 customer_2만 뺀 것이다 (머리말). 나머지 손님은 양보 설정도 같아야 한다
+    config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
+    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak.yaml'), encoding='utf-8') as f:
+        peak = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
+    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak_scene12.yaml'), encoding='utf-8') as f:
+        scene12 = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
+    assert set(peak) - set(scene12) == {'customer_2'}
+    for guest_id, spec in scene12.items():
+        assert _yield_keys(spec) == _yield_keys(peak[guest_id]), guest_id
+
+
+# 제자리에서 도는 로봇: 위치는 그대로인데 속력이 0과 0.1 m/s를 오간다 (식당 리허설에서 손님과 서로 기다림)
+def _jittering(t):
+    return (3.0, 1.5, 0.0, 0.1 if int(t * 2) % 2 else 0.0)
+
+
+def test_default_patience_keeps_waiting_for_a_jittering_robot():
+    log = _walk(_jittering, 12.0)
+    stop = next(i for i, (_, _, waiting) in enumerate(log) if waiting)
+    assert all(waiting for _, _, waiting in log[stop:])
+
+
+def test_progress_patience_walks_again_when_the_robot_does_not_move():
+    spec = {**WORKER, 'yield_patience_s': 3.0, 'yield_progress_m': 0.1}
+    m = ObstacleMotion(spec, random.Random(1))
+    log = _walk(_jittering, 12.0, spec=spec, motion=m)
+    stop = next(i for i, (_, _, waiting) in enumerate(log) if waiting)
+    walk = next(i for i in range(stop, len(log)) if not log[i][2])
+    assert log[walk][0] - log[stop][0] == pytest.approx(3.0, abs=2 * DT)
+    assert m.turn_backs >= 1
+    assert max(xy[1] for _, xy, _ in log[walk:]) > log[stop][1][1] + 1.0    # 북쪽으로 떠났다
+
+
+def test_progress_patience_restarts_when_the_robot_moves():
+    spec = {**WORKER, 'yield_patience_s': 3.0, 'yield_progress_m': 0.1}
+
+    def creeping(t):    # 2 s마다 0.15 m씩 동쪽으로 간다 (7.5 s까지 길은 계속 막고 있다)
+        return (3.0 + 0.15 * int(t / 2.0), 1.5, 0.0, 0.0)
+
+    m = ObstacleMotion(spec, random.Random(1))
+    log = _walk(creeping, 7.5, spec=spec, motion=m)
+    assert any(waiting for _, _, waiting in log)
+    assert m.turn_backs == 0                   # 3 s 안에 0.1 m 넘게 움직여 타이머가 다시 시작된다
+
+
+def test_rejects_bad_patience():
+    for extra in ({'yield_patience_s': 0.0}, {'yield_progress_m': -0.1}):
+        with pytest.raises(ValueError):
+            ObstacleMotion({**WORKER, **extra}, random.Random(0))

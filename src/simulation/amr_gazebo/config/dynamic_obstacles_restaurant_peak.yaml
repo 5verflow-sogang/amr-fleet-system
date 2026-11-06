@@ -12,12 +12,16 @@
 #   B 매장 3 앞 (1.5, 4.15) 약 11.4 m, 매장 앞 통로(stall_front, 평상시 수준)를 지난다
 #   → 혼잡도를 끄면 가까운 A, 켜면 B가 받는다. 1-2는 A가 가면서 서쪽 통로 대신 x -7.275 통로로 돌아가는지
 #   (1-2는 그 우회 통로를 왕복하는 customer_2를 뺀 dynamic_obstacles_restaurant_peak_scene12.yaml을 쓴다)
-# 형식·통로 좌표는 dynamic_obstacles_restaurant.yaml 머리말과 같다.
+# 형식·통로 좌표·멈춘 로봇에 비키는 규칙(yield_to_robots)은 dynamic_obstacles_restaurant.yaml 머리말과 같다.
 
 obstacles:
   - id: customer_1
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -10.0, y: 3.45, yaw: 0.0}
     waypoints:
@@ -28,6 +32,10 @@ obstacles:
   - id: customer_2
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -7.275, y: -5.6, yaw: 1.5707963}
     waypoints:
@@ -55,6 +63,10 @@ obstacles:
   - id: customer_4
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -10.5, y: 0.55, yaw: 0.0}
     waypoints:
@@ -65,6 +77,10 @@ obstacles:
   - id: customer_5
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.5, 1.0]
     spawn: {x: 4.74, y: -5.6, yaw: 1.5707963}
     waypoints:
@@ -75,6 +91,10 @@ obstacles:
   - id: customer_6
     type: customer
     pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.8]
     spawn: {x: -6.0, y: -5.6, yaw: 0.0}
     waypoints:
@@ -87,6 +107,10 @@ obstacles:
   - id: customer_7
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
     spawn: {x: -7.275, y: -2.45, yaw: 0.0}
     waypoints:
@@ -99,6 +123,10 @@ obstacles:
   - id: peak_1
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.8]
     spawn: {x: -10.45, y: -4.6, yaw: 1.5707963}
     waypoints:
@@ -109,6 +137,10 @@ obstacles:
   - id: peak_2
     type: customer
     pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.8]
     spawn: {x: -10.0, y: 2.6, yaw: -1.5707963}
     waypoints:
@@ -119,6 +151,10 @@ obstacles:
   - id: peak_3
     type: customer
     pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.8]
     spawn: {x: -11.0, y: -3.5, yaw: 0.0}
     waypoints:
@@ -133,6 +169,10 @@ obstacles:
   - id: peak_4
     type: customer
     pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.3, 0.7]
     spawn: {x: -10.5, y: 3.3, yaw: 0.0}
     waypoints:
@@ -145,6 +185,10 @@ obstacles:
   - id: peak_5
     type: customer
     pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.3, 0.7]
     spawn: {x: -8.0, y: 3.3, yaw: 3.1415927}
     waypoints:
@@ -157,6 +201,10 @@ obstacles:
   - id: peak_6
     type: customer
     pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
     speed_range_mps: [0.3, 0.7]
     spawn: {x: -7.0, y: 3.2, yaw: 3.1415927}
     waypoints:
