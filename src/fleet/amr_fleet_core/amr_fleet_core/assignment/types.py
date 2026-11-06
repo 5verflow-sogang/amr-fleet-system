@@ -65,3 +65,5 @@ class AssignmentResult:
 
 
 CostFn = Callable[[RobotInfo, TaskInfo], float]
+# (로봇, 작업) 짝을 맡길 수 있는지. None이면 전부 된다 (에너지 예측 배정, amr_fleet_core.energy)
+FeasibleFn = Optional[Callable[[RobotInfo, TaskInfo], bool]]

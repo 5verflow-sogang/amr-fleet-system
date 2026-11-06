@@ -27,6 +27,8 @@ fleet_manager:
       congestion_weight: 3.0
       # 혼잡도를 이 시간 동안 못 받으면 euclidean으로 돌아간다 (실제 시간, s). 혼잡도 노드는 2 Hz
       congestion_timeout_s: 3.0
+      # 비용 + 이 값 × (필요 배터리 / 남은 배터리) [m] (energy.* 모델). 배터리가 많은 로봇이 먼 작업을 맡는다. 0이면 끈다
+      battery_weight: 0.0
     # 자동 충전 배정 (배터리 인지 운영 1단계). 끄면 지금처럼 min_battery_percent 밑 로봇을 빼기만 한다 (B0).
     # 충전기·대기 위치 파일(charging.stations_file)과 지도 원점은 launch 인자로 받는다 (작업 생성기와 같은 파일)
     charging:
@@ -39,6 +41,23 @@ fleet_manager:
       # 스테이션 이름 패턴. 충전을 마친 로봇은 빈 대기 위치로 보낸다 (wait_pattern을 비우면 충전기에 그대로 둔다)
       charger_pattern: charger_*
       wait_pattern: wait_*
+    # 에너지 예측 배정 (배터리 인지 운영 2단계). 필요 배터리 = (현재 위치 → 픽업 → 배달지 → 가장 가까운 충전기) 직선 거리
+    # × path_factor × (move_per_m + idle_per_s / speed_mps) + reserve_percent. 모자란 로봇은 그 작업에서만 뺀다.
+    # 충전기는 charging.stations_file에서 고른다. 소모율은 로봇(amr_bt battery.* / 가짜 로봇)과 같게 둔다
+    energy:
+      enabled: false
+      move_per_m: 0.05
+      idle_per_s: 0.002
+      # 평균 주행 속도 (m/s). 가는 동안의 정지 소모를 거리로 바꾸는 데만 쓴다
+      speed_mps: 0.5
+      # 직선 거리 → 실제 경로 길이 비율 (통로를 돌아가는 만큼. 가짜 로봇은 직선이라 1.0)
+      path_factor: 1.3
+      # 충전기에 닿았을 때 남겨 둘 여유 (%)
+      reserve_percent: 5.0
+      # 충전 속도 (%/s)·목표 (%). 자동 충전을 켜면, 작업을 마친 뒤 충전 기준(charging.low_percent) 밑이라 충전 차례를
+      # 기다려야 하는 경우 그 대기 시간 × idle_per_s를 필요 배터리에 더한다 (대기 시간은 충전 중인 로봇의 남은 시간으로 추정)
+      charge_per_s: 0.5
+      charge_target_percent: 100.0
     # 이 시간 동안 RobotState가 안 오면 할당 후보에서 뺀다 (실제 시간, s)
     robot_timeout_s: 3.0
     resend:

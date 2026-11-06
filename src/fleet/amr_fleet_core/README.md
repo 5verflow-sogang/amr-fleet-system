@@ -37,6 +37,27 @@ ROS 토픽을 직접 다루지 않는다. 공개 함수·클래스 목록을 여
 
 출력은 `ChargePlan(orders=[ChargeOrder(robot_id, station)], waiting=[robot_id])`이다. 장부와 작업 생성은 `amr_fleet_manager` Dispatcher가 한다.
 
+### 에너지 예측 배정 (`energy`, 배터리 인지 운영 2단계)
+
+고정 하한(`min_battery_percent`) 대신 "이 작업을 끝내고 충전기까지 갈 수 있는지"를 본다.
+
+```
+필요 배터리 = (현재 위치 → 픽업 → 배달지 → 가장 가까운 충전기) 직선 거리 × path_factor × per_m + reserve_percent
+per_m = move_per_m + idle_per_s / speed_mps        # 이동 소모 + 가는 동안의 정지 소모
+```
+
+| 함수 | 뜻 |
+| --- | --- |
+| `EnergyModel(move_per_m, idle_per_s, speed_mps, path_factor, reserve_percent)` | 로봇 배터리 모델 추정. 기본은 amr_bt 기본값(0.05, 0.002)과 0.5 m/s, 경로 1.3배, 여유 5 % |
+| `trip_length(xy, task, chargers)` | 위 직선 거리 합. 충전 작업은 충전기까지만, 충전기가 없으면 배달지까지 |
+| `required_percent(xy, task, chargers, model)` | 필요 배터리 [%] |
+| `make_energy_feasible(chargers, model)` | `(로봇, 작업) → bool`. 할당 알고리즘 3종의 `feasible` 인자로 넘긴다 |
+| `make_battery_cost(base, chargers, model, weight)` | 비용 + weight × (필요 배터리 / 남은 배터리) [m]. 배터리가 많은 로봇이 먼 작업을 맡는다. 0이면 base 그대로 |
+
+`ChargeQueue(remaining_s, waiting, free_slots, cycle_s)`를 `make_energy_feasible(…, queue, low_percent)`에 주면, 작업을 마친 뒤 `low_percent` 밑이라 충전 차례를 기다려야 하는 경우 `idle_per_s × wait_s(작업 시간)`를 더한다. `wait_s`는 빈 자리가 있으면 0, 아니면 앞에서 기다리는 수만큼 뒤의 충전 자리가 날 때까지(한 바퀴를 넘으면 `cycle_s`씩 더함)다. 충전 중인 로봇의 남은 시간은 `charge_remaining_s`(충전기까지 이동 + 목표까지 충전)로 잰다.
+
+할당 알고리즘(`assign_nearest`·`assign_load_balance`·`assign_hungarian`)은 `feasible`(기본 None)을 받는다. 배터리가 모자란 로봇은 그 작업에서만 빠지고 짧은 작업은 계속 받는다. 아무도 못 맡는 작업은 `unassigned`로 큐에 남는다. 탐욕 알고리즘은 그 로봇을 다음 작업에 쓰고, Hungarian은 못 맡는 짝을 아주 큰 비용으로 넣었다가 매칭에 들어오면 버린다.
+
 ### 작업 할당 (설계 초안)
 
 > 상태: 알고리즘 3종 구현 완료(2주차). 기본 알고리즘 선택과 비교 실험은 아래 미결 참고. 호출 흐름은 [architecture.md 5-1절](../../../docs/architecture.md#5-1-작업-요청--할당--이동--완료-보고-중앙집중-모드) 4~5번이다.

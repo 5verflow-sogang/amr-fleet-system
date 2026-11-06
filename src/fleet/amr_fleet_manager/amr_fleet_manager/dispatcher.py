@@ -12,8 +12,10 @@ from typing import Any, Optional
 from amr_fleet_core.assignment import (ALGORITHMS, COST_FNS, CongestedArea, CostFn, RobotInfo, TaskInfo,
                                        euclidean_cost, filter_candidates, make_congestion_cost, sort_by_priority)
 
-from amr_fleet_core.charging import ChargeConfig, Station, nearest_free, plan_charging
+from amr_fleet_core.charging import ChargeConfig, Station, max_charging, nearest_free, plan_charging
 from amr_fleet_core.claims import TaskClaims
+from amr_fleet_core.energy import (ChargeQueue, EnergyModel, charge_remaining_s, make_battery_cost,
+                                   make_energy_feasible)
 
 # amr_msgs/msg/TaskStatus.STATE_* 와 같은 값
 STATE_PENDING = 0
@@ -65,6 +67,12 @@ class DispatcherConfig:
     chargers: tuple[Station, ...] = ()
     # 충전을 마친 로봇을 보낼 대기 위치. 비면 충전기 위에 그대로 둔다 (다음 작업을 받으면 비켜 준다)
     wait_stations: tuple[Station, ...] = ()
+    # 에너지 예측 배정 (2단계, amr_fleet_core energy): 작업을 끝내고 가장 가까운 충전기까지 갈 배터리가 없는 로봇은
+    # 그 작업에서만 뺀다. 충전기는 chargers를 쓴다 (비면 배달지까지만 본다). 끄면(기본) min_battery_percent만 본다
+    energy_check: bool = False
+    energy: EnergyModel = EnergyModel()
+    # 비용 + battery_weight × (필요 배터리 / 남은 배터리) [m]. 배터리가 많은 로봇이 먼 작업을 맡게 한다. 0이면 끈다
+    battery_weight: float = 0.0
 
     def __post_init__(self):
         if self.algorithm not in ALGORITHMS:
@@ -73,6 +81,8 @@ class DispatcherConfig:
             raise ValueError(f'알 수 없는 비용 함수: {self.cost_fn} (가능: {list(COST_FNS)})')
         if not self.congestion_weight >= 0:
             raise ValueError(f'congestion_weight는 0 이상이어야 한다: {self.congestion_weight}')
+        if not self.battery_weight >= 0:
+            raise ValueError(f'battery_weight는 0 이상이어야 한다: {self.battery_weight}')
         if not self.congestion_timeout_s > 0:
             raise ValueError(f'congestion_timeout_s는 0보다 커야 한다: {self.congestion_timeout_s}')
         if self.resend_interval_s <= 0:
@@ -319,7 +329,13 @@ class Dispatcher:
             return commands + self._assign_directed(TYPE_RETURN, now), []
 
         cost_name, cost_fn = self._current_cost_fn(now)
-        result = self._assign_fn(queued, candidates, cost_fn)
+        cost_fn = make_battery_cost(cost_fn, self.config.chargers, self.config.energy, self.config.battery_weight)
+        feasible = None
+        if self.config.energy_check:
+            queue = self.charge_queue(now) if self.config.charging_enabled else None
+            feasible = make_energy_feasible(self.config.chargers, self.config.energy, queue,
+                                            self.config.charge.low_percent if queue is not None else None)
+        result = self._assign_fn(queued, candidates, cost_fn, feasible)
         call_id = self._next_call_id
         self._next_call_id += 1
         by_id = {r.robot_id: r for r in candidates}
@@ -389,6 +405,23 @@ class Dispatcher:
             self._return_after.discard(rid)
             created.append(self._add_directed(rid, TYPE_RETURN, station, now))
         return created
+
+    def charge_queue(self, now: float) -> ChargeQueue:
+        """지금 충전 대기열 (에너지 예측 배정이 충전 차례 대기 시간을 추정하는 데 쓴다).
+
+        대기 로봇 수는 마지막 plan_charging의 charge_waiting이다 (노드는 할당 직전에 부른다).
+        """
+        model = self.config.energy
+        alive = [r for r in self.robots.values()
+                 if not r.decentral and now - r.last_seen <= self.config.robot_timeout_s]
+        charging = self._charging()
+        by_name = {s.name: s.xy for s in self.config.chargers}
+        remaining = tuple(charge_remaining_s(self.robots[rid].info, by_name.get(name, self.robots[rid].info.xy), model)
+                          for rid, name in charging.items() if rid in self.robots)
+        slots = max_charging(len(alive), self.config.charge) - len(charging)
+        free_chargers = len(self.config.chargers) - len(set(charging.values()))
+        cycle = max(0.0, model.charge_target_percent - self.config.charge.low_percent) / model.charge_per_s
+        return ChargeQueue(remaining, len(self.charge_waiting), max(0, min(slots, free_chargers)), cycle)
 
     def charging_robots(self) -> dict[str, str]:
         """충전 작업을 맡았거나 맡을 로봇 → 충전기 (이동 중·충전 중 포함, 작업이 끝나면 빠진다)."""
