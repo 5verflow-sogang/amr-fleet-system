@@ -12,7 +12,7 @@
 # 슬롯 (params의 slot=<이름>, 기본 a): 슬롯마다 러너가 동시에 1대씩 뜬다. 전체 리전 vCPU 한도가 80이라(11/6)
 #   a      n2d-standard-16 (템플릿 그대로). Gazebo 시나리오
 #   b1~b4  c2d-standard-8. 가짜 로봇 시나리오(fleet_fake)를 나눠 돌릴 때 (연구 1)
-#   c1·c2  n2d-standard-16. 식당 시연 녹화(demo_*) 켬/끔 한 쌍. 서울 N2D 한도(16)를 넘으면 VM이 만들어지지 않는다
+#   c1·c2  n2-standard-16. 식당 시연 녹화(demo_*) 켬/끔 한 쌍 (서울 N2D 한도 16 증설이 거절돼 N2, 한도 200)
 # a + c 둘 + b 넷 = 80 vCPU.
 # 지연을 재는 실험은 기계가 다르면 값이 달라지므로 한 실험의 조건은 같은 종류 슬롯(b끼리)에서 돌린다.
 # GitHub는 같은 concurrency 그룹에서 대기 실행을 1개만 남기고 앞의 대기 실행을 취소한다.
@@ -32,8 +32,8 @@ run-name: >-
     contains(format(' {0} ', github.event.inputs.params), ' slot=b2 ') && 'b2 (c2d-8)' ||
     contains(format(' {0} ', github.event.inputs.params), ' slot=b3 ') && 'b3 (c2d-8)' ||
     contains(format(' {0} ', github.event.inputs.params), ' slot=b4 ') && 'b4 (c2d-8)' ||
-    contains(format(' {0} ', github.event.inputs.params), ' slot=c1 ') && 'c1 (n2d-16)' ||
-    contains(format(' {0} ', github.event.inputs.params), ' slot=c2 ') && 'c2 (n2d-16)' || 'a (n2d-16)' }} · ${{
+    contains(format(' {0} ', github.event.inputs.params), ' slot=c1 ') && 'c1 (n2-16)' ||
+    contains(format(' {0} ', github.event.inputs.params), ' slot=c2 ') && 'c2 (n2-16)' || 'a (n2d-16)' }} · ${{
     github.triggering_actor }}
 
 on:
@@ -123,8 +123,9 @@ jobs:
           case "$slot" in
             a) machine=n2d-standard-16 ;;
             b1|b2|b3|b4) machine=c2d-standard-8 ;;
-            # 시연 녹화용 (11/6). b와 같은 값(시간당 약 280원)에 코어가 두 배. 기존 b 실험과 섞이지 않게 슬롯을 나눴다
-            c1|c2) machine=n2d-standard-16 ;;
+            # 시연 녹화용 (11/6). 16코어 Spot 시간당 약 375원. 기존 b 실험과 기종이 섞이지 않게 슬롯을 나눴다.
+            # N2D(약 283원)는 서울 한도 16에서 증설 요청이 자동 거절돼(11/2·11/6) 한도 200인 N2를 쓴다
+            c1|c2) machine=n2-standard-16 ;;
             *) echo "::error::slot은 a, b1~b4, c1·c2: $slot"; exit 1 ;;
           esac
           echo "slot $slot → $machine"
