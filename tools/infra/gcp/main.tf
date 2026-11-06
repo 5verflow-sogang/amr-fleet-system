@@ -15,6 +15,7 @@ locals {
     "storage.googleapis.com",
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
+    "bigquery.googleapis.com",
   ], var.billing_account_id == "" ? [] : ["billingbudgets.googleapis.com"])
 }
 

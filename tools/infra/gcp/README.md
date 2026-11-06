@@ -196,6 +196,39 @@ gcloud storage cp -r gs://amr-fleet-results/runs/<폴더> .
 gcloud storage cp -r tools/harness/results/<실행 폴더> gs://amr-fleet-results/runs/<폴더>/
 ```
 
+## 모니터링 (BigQuery)
+
+`monitoring.tf`가 BigQuery 데이터셋 `fleet_ops`를 만든다. 실행 목록 `gs://amr-fleet-results/index.csv`를 외부 테이블로 읽어서, 실험이 끝나 한 줄이 더해지면 바로 보인다(적재 작업 없음).
+
+| 이름 | 내용 |
+| --- | --- |
+| `fleet_ops.runs_index` | `index.csv` 그대로 (모든 열 문자열) |
+| `fleet_ops.runs` | 실행 한 번 = 한 줄. 완료 시각·완료율·`run_id`(Actions 실행 번호 = 러너 VM 라벨 `run`) |
+| `fleet_ops.runs_daily` | 날짜(KST)·시나리오별 실행 수·반복 수·완료율 |
+| `billing_export` | 결제 내보내기 자리 (아래 1번에서 켠다) |
+
+```sql
+-- 최근 실행 20개
+SELECT finished_at, scenario, label, completed, repeats, machine_type, triggered_by
+FROM `amr-fleet.fleet_ops.runs` ORDER BY finished_at DESC LIMIT 20
+```
+
+하연이 한 번 할 일:
+
+1. 결제 내보내기 켜기 (콘솔에서만 된다): 결제 → 결제 내보내기 → BigQuery 내보내기 → **표준 사용량 비용** → 프로젝트 `amr-fleet`, 데이터셋 `billing_export`. 테이블이 생기면 실행별 비용 뷰(라벨 `run` ↔ `runs.run_id`)를 더한다
+2. 대시보드: [Looker Studio](https://lookerstudio.google.com) → 만들기 → 보고서 → BigQuery → `amr-fleet` · `fleet_ops` · `runs_daily`(일별 추이)·`runs`(실행 목록). 보고서를 팀원에게 보기 권한으로 공유한다
+
+## 상태 파일 (GCS)
+
+상태(`terraform.tfstate`)는 `state.tf`의 버킷 `amr-fleet-tfstate`(버전 보관)에 둔다. 처음 한 번 로컬 상태를 옮긴다:
+
+```bash
+terraform apply                      # 버킷을 먼저 만든다 (로컬 상태)
+# versions.tf terraform 블록에 backend "gcs" { bucket = "amr-fleet-tfstate"  prefix = "gcp" } 를 넣고
+terraform init -migrate-state        # "yes" → 로컬 상태를 버킷으로 복사
+terraform plan                       # 바뀌는 것 없음이면 끝. 로컬 terraform.tfstate*는 지워도 된다
+```
+
 ## 문제 해결
 
 | 증상 | 확인 |
