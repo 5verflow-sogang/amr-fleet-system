@@ -23,6 +23,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
+from amr_fleet_core.assignment import has_pickup
 from amr_fleet_core.claims import TaskClaims
 from .robot_sim import DUPLICATE, STALE, AssignmentFilter, Battery, BatteryConfig, LinkWatch, TaskRun
 
@@ -152,7 +153,7 @@ class FakeRobot(Node):
 
         task = msg.task
         pickup = None
-        if task.task_type == Task.TYPE_DELIVERY:
+        if has_pickup(task.task_type):
             pickup = (task.pickup_pose.position.x, task.pickup_pose.position.y)
         dropoff = (task.dropoff_pose.position.x, task.dropoff_pose.position.y)
         self._task = task

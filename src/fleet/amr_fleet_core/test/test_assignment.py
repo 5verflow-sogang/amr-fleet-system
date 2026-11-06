@@ -7,11 +7,13 @@ from amr_fleet_core.assignment import (
     check_unique_ids,
     euclidean_cost,
     filter_candidates,
+    has_pickup,
     make_congestion_cost,
     segment_length_in_rect,
     sort_by_priority,
 )
-from amr_fleet_core.assignment.types import MODE_BUSY, MODE_IDLE, TYPE_CHARGE, TYPE_DELIVERY
+from amr_fleet_core.assignment.types import (MODE_BUSY, MODE_IDLE, TYPE_CHARGE, TYPE_COLLECT, TYPE_DELIVERY,
+                                            TYPE_RETURN)
 from amr_fleet_core.viz import draw_assignment
 
 
@@ -24,6 +26,12 @@ def task(task_id, priority=0, created=0.0, deadline=None, pickup=(0.0, 0.0), dro
 
 def robot(robot_id, xy=(0.0, 0.0), battery=100.0, mode=MODE_IDLE, load=0):
     return RobotInfo(robot_id=robot_id, xy=xy, battery_percent=battery, mode=mode, load=load)
+
+
+def test_only_delivery_and_collect_have_a_pickup():
+    # 빈 그릇 회수(COLLECT)는 배송처럼 테이블(pickup) → 반납 카트(dropoff)
+    assert has_pickup(TYPE_DELIVERY) and has_pickup(TYPE_COLLECT)
+    assert not has_pickup(TYPE_CHARGE) and not has_pickup(TYPE_RETURN)
 
 
 def test_start_xy_falls_back_to_dropoff():

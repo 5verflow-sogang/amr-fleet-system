@@ -61,6 +61,7 @@ DockWithRetry = IfThenElse(HasStation) → docking → RetryUntilSuccessful(3) �
 ```
 
 - 배송(`TYPE_DELIVERY`): `move_to_pickup` → `docking` → `loading` → `move_to_dropoff` → `docking` → `unloading` → COMPLETED
+- 빈 그릇 회수(`TYPE_COLLECT`, 테이블 → 반납 카트): 배송과 같은 단계 (`IsDelivery`가 둘 다 참)
 - 충전(`TYPE_CHARGE`): `move_to_dropoff` → `docking` → `charging`(배터리가 `charge_target_percent`까지) → COMPLETED
 - 복귀(`TYPE_RETURN`): `move_to_dropoff` → COMPLETED
 - 스테이션 이름(`pickup_station_id`·`dropoff_station_id`)이 비면 도킹을 건너뛴다
