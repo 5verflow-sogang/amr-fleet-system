@@ -17,6 +17,19 @@ NAV2_PROFILE = {'amr': 'warehouse', 'serving': 'restaurant'}
 # ground_truth: 시뮬레이터 정답 위치로 대신함 - 식당 시연 녹화 전용, 물류센터 KPI에는 안 씀
 #   (amr_localization README "정답 위치로 대신하기")
 LOCALIZATION_MODES = ('off', 'amcl', 'ground_truth')
+# 예전 불리언 값(localization:=true/false)도 계속 받는다. 아직 머지 안 된 브랜치·하네스 시나리오가 쓸 수 있다.
+# true는 예전 그대로 AMCL + EKF, false는 DiffDrive odom TF (대소문자 무관, 예전 flag()와 같이)
+LOCALIZATION_ALIASES = {'true': 'amcl', 'false': 'off'}
+# system.launch.py choices에 넣는 값 (launch choices는 대소문자를 가른다)
+LOCALIZATION_CHOICES = LOCALIZATION_MODES + tuple(v for a in LOCALIZATION_ALIASES for v in (a, a.capitalize()))
+
+
+def localization_mode(value) -> str:
+    """localization 인자 → off / amcl / ground_truth. 예전 불리언(True/False, 'true'/'false')은 amcl / off로 바꾼다."""
+    if isinstance(value, bool):
+        return 'amcl' if value else 'off'
+    text = str(value).strip()
+    return LOCALIZATION_ALIASES.get(text.lower(), text)
 
 
 class Include(NamedTuple):
@@ -46,6 +59,9 @@ class Options:
     use_imu: str = 'true'
     zones_file: str = ''
     body: str = 'amr'
+
+    def __post_init__(self) -> None:
+        self.localization = localization_mode(self.localization)
 
     def validate(self) -> None:
         if self.body not in NAV2_PROFILE:

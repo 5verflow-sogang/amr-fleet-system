@@ -88,6 +88,16 @@ def test_world_to_map_tf_published_for_ground_truth_too():
     assert any(isinstance(a, Node) for a in actions)
 
 
+
+@pytest.mark.parametrize('old, has_tf', [('true', True), ('True', True), ('false', False), ('False', False)])
+def test_old_boolean_localization_values_still_launch(old, has_tf):
+    # localization이 true/false → amcl/ground_truth/off로 바뀌었다. 예전 값은 true = amcl, false = off
+    module = load_module()
+    declared = {a.name: a for a in module.generate_launch_description().get_launch_arguments()}
+    assert old in declared['localization'].choices
+    actions = module._system(context_with_defaults(module, num_robots=1, fleet='false', localization=old))
+    assert any(isinstance(a, Node) for a in actions) == has_tf   # world → map TF는 위치추정이 있을 때만
+
 def test_stage_flags_do_not_change_robot_count():
     # 2·3단계를 켜도 로봇마다 TimerAction 하나 (스택 내용은 test_stack.py가 ROS 없이 본다)
     module = load_module()

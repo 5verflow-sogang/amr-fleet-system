@@ -55,7 +55,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from amr_bringup.robots import load_robots, world_to_map, world_to_map_tf_args
-from amr_bringup.stack import LOCALIZATION_MODES, Options, robot_stack
+from amr_bringup.stack import LOCALIZATION_CHOICES, Options, robot_stack
 
 
 def _launch(package, name, **arguments):
@@ -194,7 +194,8 @@ def generate_launch_description():
     return LaunchDescription(
         [DeclareLaunchArgument(name, default_value=default, description=desc) for name, default, desc in args]
         + [DeclareLaunchArgument(
-            'localization', default_value='amcl', choices=list(LOCALIZATION_MODES),
+            'localization', default_value='amcl', choices=list(LOCALIZATION_CHOICES),
             description='위치추정. amcl(AMCL+EKF, 기본, 물류센터 KPI) / ground_truth(시뮬레이터 정답 위치 - '
-                        '식당 시연 녹화 전용, KPI에는 안 씀, amr_localization README) / off(DiffDrive odom TF)')]
+                        '식당 시연 녹화 전용, KPI에는 안 씀, amr_localization README) / off(DiffDrive odom TF). '
+                        '예전 값 true는 amcl, false는 off로 받는다')]
         + [OpaqueFunction(function=_system)])
