@@ -93,6 +93,40 @@ class LinkWatch:
         return self.pause_after_s > 0 and self._last is not None and now - self._last >= self.pause_after_s
 
 
+@dataclass(frozen=True)
+class BatteryConfig:
+    """가상 배터리 (amr_bt battery.hpp와 같은 모델, 파라미터 이름도 같다). 가짜 로봇 기본은 닳지 않는다(0)."""
+
+    initial_percent: float = 100.0
+    # 이동 1 m당 [%]. amr_bt 기본 0.05
+    move_per_m: float = 0.0
+    # 가만히 있어도 [%/s]. amr_bt 기본 0.002
+    idle_per_s: float = 0.0
+    # 충전 [%/s]. amr_bt 기본 0.5
+    charge_per_s: float = 0.5
+
+
+class Battery:
+    """이동 거리와 시간으로 닳고, 충전 중이면 찬다. 0~100으로 자른다."""
+
+    def __init__(self, config: BatteryConfig = BatteryConfig()):
+        self.config = config
+        self.percent = min(100.0, max(0.0, config.initial_percent))
+
+    def update(self, dt: float, distance: float, charging: bool) -> None:
+        if dt <= 0.0:
+            return
+        if charging:
+            self.percent += self.config.charge_per_s * dt
+        else:
+            self.percent -= self.config.move_per_m * max(0.0, distance) + self.config.idle_per_s * dt
+        self.percent = min(100.0, max(0.0, self.percent))
+
+    @property
+    def empty(self) -> bool:
+        return self.percent <= 0.0
+
+
 @dataclass
 class _Leg:
     phase: str

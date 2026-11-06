@@ -7,6 +7,9 @@ amr_bt가 완성되기 전에 Fleet 서버·장애 주입기·하네스 기록�
 - 다른 로봇이 먼저 맡은 작업은 거부하거나 멈춘다 (claims.TaskClaims, architecture.md 5-2절)
 - pause_on_link_loss_s > 0이면 서버 heartbeat가 끊긴 동안 기다린다 (robot_sim.LinkWatch). pause_mode가 stop이면 그 자리에서
   멈추고, leg이면 지금 구간(선반까지·목적지까지·싣기·내리기)은 마저 하고 다음 구간 앞에서 기다린다(허가 지점 대기)
+- 가상 배터리 (robot_sim.Battery, amr_bt battery.hpp와 같은 모델·파라미터 이름). 기본은 닳지 않는다. 충전 작업은 충전기에
+  도착한 뒤 battery.charge_target_percent까지 채우고 끝낸다(그동안 MODE_CHARGING). 0 %가 되면 그 자리에서 멈춘다(방전 정지).
+  battery.reject_below_percent 밑이면 충전이 아닌 작업을 ASSIGN_BATTERY_LOW로 거부한다 (amr_bt와 같다)
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 from amr_fleet_core.claims import TaskClaims
-from .robot_sim import DUPLICATE, STALE, AssignmentFilter, LinkWatch, TaskRun
+from .robot_sim import DUPLICATE, STALE, AssignmentFilter, Battery, BatteryConfig, LinkWatch, TaskRun
 
 
 def stamp_to_sec(stamp) -> float:
@@ -36,7 +39,15 @@ class FakeRobot(Node):
         start = self.declare_parameter('start_xy', [0.0, 0.0]).value
         self._speed = self.declare_parameter('speed_mps', 1.0).value
         self._dwell_s = self.declare_parameter('dwell_s', 1.0).value
-        self._battery = self.declare_parameter('battery_percent', 100.0).value
+        self._battery = Battery(BatteryConfig(
+            initial_percent=self.declare_parameter('battery.initial_percent', 100.0).value,
+            move_per_m=self.declare_parameter('battery.move_per_m', 0.0).value,
+            idle_per_s=self.declare_parameter('battery.idle_per_s', 0.0).value,
+            charge_per_s=self.declare_parameter('battery.charge_per_s', 0.5).value,
+        ))
+        self._charge_target = self.declare_parameter('battery.charge_target_percent', 100.0).value
+        self._reject_below = self.declare_parameter('battery.reject_below_percent', 10.0).value
+        self._charging = False
         state_rate_hz = self.declare_parameter('state_rate_hz', 2.0).value
         step_hz = self.declare_parameter('step_hz', 10.0).value
         # 서버 → 로봇 토픽 앞부분. 장애 주입기를 거치면 상대 이름 'fleet'(→ /<robot_id>/fleet/...)
@@ -135,6 +146,9 @@ class FakeRobot(Node):
         if self._run is not None:
             return TaskAssignmentAck.RESULT_REJECTED, ErrorInfo(
                 code=ErrorInfo.ASSIGN_ALREADY_BUSY, message=f'busy with {self._task.task_id}')
+        if self._battery.percent < self._reject_below and msg.task.task_type != Task.TYPE_CHARGE:
+            return TaskAssignmentAck.RESULT_REJECTED, ErrorInfo(
+                code=ErrorInfo.ASSIGN_BATTERY_LOW, message=f'battery {int(self._battery.percent)} %')
 
         task = msg.task
         pickup = None
@@ -150,6 +164,18 @@ class FakeRobot(Node):
 
     def _step(self):
         if self._run is None:
+            self._battery.update(self._step_s, 0.0, False)
+            return
+        if self._charging:
+            self._battery.update(self._step_s, 0.0, True)
+            if self._battery.percent >= self._charge_target:
+                self._charging = False
+                self._finish(TaskStatus.STATE_COMPLETED, ErrorInfo())
+            return
+        if self._battery.empty:
+            # 방전 정지: 작업을 쥔 채 그 자리에 선다 (사람이 옮겨 충전해야 한다)
+            self._run.velocity = (0.0, 0.0)
+            self._battery.update(self._step_s, 0.0, False)
             return
         paused = self._link.lost(time.monotonic())
         if paused != self._paused:
@@ -161,9 +187,17 @@ class FakeRobot(Node):
         if paused and self._pause_mode == 'stop':
             self._run.velocity = (0.0, 0.0)
             return
+        before = self._run.distance
         changed = self._run.step(self._step_s, hold_at_boundary=paused)
         self._xy = self._run.xy
-        if self._run.done:
+        self._battery.update(self._step_s, self._run.distance - before, False)
+        if self._battery.empty:
+            self.get_logger().warn(f'배터리 0 %, {self._task.task_id} 중 멈춤 (방전 정지)')
+        if self._run.done and self._task.task_type == Task.TYPE_CHARGE:
+            # 충전기 도착: 목표까지 채운 뒤 끝낸다 (amr_bt Charge)
+            self._charging = True
+            self._publish_status(TaskStatus.STATE_IN_PROGRESS, 'charging')
+        elif self._run.done:
             self._finish(TaskStatus.STATE_COMPLETED, ErrorInfo())
         elif changed:
             self._publish_status(TaskStatus.STATE_IN_PROGRESS, self._run.phase)
@@ -172,6 +206,7 @@ class FakeRobot(Node):
         self._publish_status(state, '', error, end=True)
         self._run = None
         self._task = None
+        self._charging = False
 
     def _publish_status(self, state: int, phase: str, error: ErrorInfo | None = None, end: bool = False):
         msg = TaskStatus()
@@ -198,12 +233,12 @@ class FakeRobot(Node):
         msg.pose.orientation.w = 1.0
         if self._run is not None:
             msg.velocity.linear.x = float(abs(complex(*self._run.velocity)))
-            msg.mode = RobotState.MODE_BUSY
+            msg.mode = RobotState.MODE_CHARGING if self._charging else RobotState.MODE_BUSY
             msg.current_task_id = self._task.task_id
             msg.item_type = self._task.item_type
         else:
             msg.mode = RobotState.MODE_IDLE
-        msg.battery_percent = float(self._battery)
+        msg.battery_percent = float(self._battery.percent)
         msg.last_assignment_id = self._filter.last_id
         self._state_pub.publish(msg)
 

@@ -15,6 +15,8 @@ kill_at_s는 이 launch를 시작한 때부터 잰 실제 시간이다.
 import os
 import signal
 
+import yaml
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, EmitEvent, LogInfo, OpaqueFunction, TimerAction
@@ -34,6 +36,7 @@ SERVER_ARGS = [
     ('traffic.zones_file', 'zones_file'),
     ('traffic.deadlock_strategy', 'deadlock_strategy'),
     ('epoch_file', 'epoch_file'),
+    ('charging.stations_file', 'stations_file'),
 ]
 
 
@@ -68,6 +71,11 @@ def _server(context):
                 'assignment.station_clearance_m': float(arg('station_clearance_m')),
                 # 혼잡도 가중치 (식당 시연 1-1). cost_fn:=congestion일 때만 쓴다
                 'assignment.congestion_weight': float(arg('congestion_weight')),
+                # 자동 충전 (배터리 인지 운영). 충전기·대기 위치는 stations_file에서 이름으로 고른다
+                'charging.enabled': arg('charging').lower() == 'true',
+                'charging.low_percent': float(arg('charge_low_percent')),
+                'charging.min_in_service': int(arg('min_in_service')),
+                'charging.map_origin_in_world': [float(v) for v in yaml.safe_load(arg('map_origin_in_world'))],
             }],
             output='screen',
         )
@@ -105,6 +113,21 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'congestion_weight', default_value='3.0',
             description='혼잡도 1.0인 구역 1 m를 (1 + 이 값) m로 본다 (cost_fn:=congestion일 때)'),
+        DeclareLaunchArgument(
+            'charging', default_value='false',
+            description='자동 충전 배정: 배터리 낮은 로봇을 빈 충전기로 보내고, 최소 운영 대수를 지키며 동시 충전을 묶는다'),
+        DeclareLaunchArgument(
+            'charge_low_percent', default_value='30.0',
+            description='놀고 있는 로봇이 이보다 낮으면 충전하러 보낸다 (%, charging:=true일 때)'),
+        DeclareLaunchArgument(
+            'min_in_service', default_value='0',
+            description='운영 중 로봇 최소 대수 N. 동시 충전 ≤ 살아 있는 로봇 − N (0이면 충전기 수로만 묶는다)'),
+        DeclareLaunchArgument(
+            'stations_file', default_value=os.path.join(share, 'config', 'stations.yaml'),
+            description='충전기(charger_*)·대기 위치(wait_*) 스테이션 파일 (world 좌표). 식당은 stations_restaurant.yaml'),
+        DeclareLaunchArgument(
+            'map_origin_in_world', default_value='[-0.0439, 1.4712, -0.00088]',
+            description='world에서 본 map 원점 [x, y, yaw] (작업 생성기와 같게). 식당은 [0, 0, 0]'),
         DeclareLaunchArgument(
             'assignments_csv', default_value='',
             description='할당 호출 기록 파일. 비우면 기록하지 않는다 (하네스가 실행마다 경로를 준다)'),
