@@ -27,6 +27,10 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+# lifecycle_manager가 관리 노드의 생존 신호(bond)를 기다리는 시간. 기본 4 s면 5대가 함께 뜰 때 CPU가 밀려
+# 살아 있는 amcl·map_server를 죽었다고 보고 꺼 버린다 (amr_bringup nav2.launch.py와 같은 값, 11/6)
+BOND_TIMEOUT_S = 30.0
+
 
 def _is_true(context, name):
     return LaunchConfiguration(name).perform(context).lower() == 'true'
@@ -72,7 +76,7 @@ def _localization(context):
                 executable='lifecycle_manager',
                 name='lifecycle_manager_map',
                 parameters=[{'use_sim_time': use_sim_time, 'autostart': True,
-                             'node_names': ['map_server']}],
+                             'node_names': ['map_server'], 'bond_timeout': BOND_TIMEOUT_S}],
                 output='screen',
             ),
         ]
@@ -100,7 +104,8 @@ def _localization(context):
             executable='lifecycle_manager',
             name='lifecycle_manager_localization',
             namespace=ns,
-            parameters=[{'use_sim_time': use_sim_time, 'autostart': True, 'node_names': ['amcl']}],
+            parameters=[{'use_sim_time': use_sim_time, 'autostart': True, 'node_names': ['amcl'],
+                         'bond_timeout': BOND_TIMEOUT_S}],
             output='screen',
         ),
         Node(
