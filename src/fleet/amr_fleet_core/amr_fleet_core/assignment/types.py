@@ -11,6 +11,15 @@ Point = Tuple[float, float]
 TYPE_DELIVERY = 0
 TYPE_CHARGE = 1
 TYPE_RETURN = 2
+TYPE_COLLECT = 3
+
+# 픽업 → 목적지 흐름인 작업 종류 (나머지는 목적지만 간다)
+PICKUP_TYPES = (TYPE_DELIVERY, TYPE_COLLECT)
+
+
+def has_pickup(task_type: int) -> bool:
+    """픽업 단계가 있는 작업 종류인지 (DELIVERY·COLLECT)."""
+    return task_type in PICKUP_TYPES
 
 # amr_msgs/msg/RobotState.MODE_* 와 같은 값
 MODE_IDLE = 0
@@ -29,7 +38,7 @@ class TaskInfo:
     dropoff_xy: Point
     priority: int
     created: float
-    # CHARGE·RETURN은 픽업이 없다
+    # CHARGE·RETURN은 픽업이 없다 (has_pickup)
     pickup_xy: Optional[Point] = None
     # 마감 없음이면 None
     deadline: Optional[float] = None

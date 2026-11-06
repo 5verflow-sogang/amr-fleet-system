@@ -2,7 +2,7 @@
 <!--
   작업 1건 수행 사이클 (architecture.md 5-1절). 끝나면 처음으로 돌아가 다음 작업을 기다린다.
 
-  배송: move_to_pickup → docking → loading → move_to_dropoff → docking → unloading → COMPLETED
+  배송·회수(COLLECT): move_to_pickup → docking → loading → move_to_dropoff → docking → unloading → COMPLETED
   충전: move_to_dropoff → docking → charging(배터리가 charge_target까지) → COMPLETED
   복귀: move_to_dropoff → COMPLETED
   어느 단계든 실패·취소면 FailTask가 FAILED(단계 + 원인 코드)를 보낸다.

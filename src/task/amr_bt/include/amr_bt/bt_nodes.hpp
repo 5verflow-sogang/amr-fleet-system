@@ -28,7 +28,7 @@ private:
   std::shared_ptr<TaskContext> ctx_;
 };
 
-// 배송(픽업 있음) 작업인지. CHARGE·RETURN은 목적지만 있다
+// 픽업이 있는 작업인지 (배송 DELIVERY, 빈 그릇 회수 COLLECT). CHARGE·RETURN은 목적지만 있다
 class IsDelivery : public BT::ConditionNode
 {
 public:

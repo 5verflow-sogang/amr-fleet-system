@@ -132,7 +132,7 @@ dot -Tpng frames_*.gv -o tf_tree.png
 | 주행 | `dwa/avoid_mode` | 토픽 (transient local) | `std_msgs/msg/Bool` | DWA(`amr_nav2_plugins`) | 기록(I17), 대시보드 | 회피 모드가 바뀔 때, 활성화 때 한 번 ([navigation.md 4-10절](algorithms/navigation.md)) |
 | 안전 | `safety/status` | 토픽 | `amr_msgs/msg/SafetyStatus` | `amr_safety` | `amr_control`, `amr_bt`, `amr_fleet_manager`, 대시보드 | 바뀌면 즉시, 그 외 10 Hz |
 | 안전 | `safety/estop` | 서비스 | `std_srvs/srv/SetBool` | `amr_safety` | 대시보드, 운영자, RViz2 E-Stop 버튼(`amr_safety` `estop_button`) | 요청 시 |
-| Fleet | `/fleet/task_requests` | 토픽 | `amr_msgs/msg/Task` | 작업 생성기(`amr_fleet_manager` `task_generator`), 대시보드 | `amr_fleet_manager` | 요청 시 |
+| Fleet | `/fleet/task_requests` | 토픽 | `amr_msgs/msg/Task` | 작업 생성기(`amr_fleet_manager` `task_generator`), 대시보드(회수 호출, [4-6절](#4-6-회수-호출-빈-그릇-회수-tasktype_collect)) | `amr_fleet_manager` | 요청 시 |
 | Fleet | `/fleet/task_assignments` | 토픽 | `amr_msgs/msg/TaskAssignment` | `amr_fleet_manager` | `amr_bt` | 할당·취소 시, Ack 없으면 재전송 |
 | Fleet | `/fleet/heartbeat` | 토픽 | `amr_msgs/msg/FleetHeartbeat` | `amr_fleet_manager` | 각 로봇, `amr_fleet_decentralized` | 고정 주기 |
 | Fleet | `/fleet/zone_grants` | 토픽 | `amr_msgs/msg/ZoneGrant` | `amr_fleet_manager` | `amr_zone_client`. 네임스페이스 안 `fleet/zone_grants`(장애 주입기 중계본) | 요청에 대한 응답, 차례가 오면 |
@@ -280,6 +280,41 @@ ros2 topic pub -r 2 --qos-durability transient_local --qos-reliability reliable 
 ros2 topic pub --once --qos-durability transient_local --qos-reliability reliable \
   /fleet/congestion_keepout_info nav2_msgs/msg/CostmapFilterInfo \
   "{header: {frame_id: map}, type: 0, filter_mask_topic: /fleet/congestion_mask, base: 0.0, multiplier: 1.0}"
+```
+
+### 4-6. 회수 호출 (빈 그릇 회수, `Task.TYPE_COLLECT`)
+
+> 식당 시연용. 대시보드(연우)가 테이블의 "치워 주세요" 버튼을 누르면 보낸다.
+
+토픽 `/fleet/task_requests`(`amr_msgs/msg/Task`, reliable, depth 10 - fleet_manager 구독과 같게)에 한 건씩 보낸다.
+
+| 필드 | 값 |
+| --- | --- |
+| `task_id` | UUID 문자열 (예: `collect_` + `uuid4().hex`). 같은 `task_id`를 다시 보내면 서버가 무시한다 |
+| `task_type` | `Task.TYPE_COLLECT` (3) |
+| `item_type` | `Task.ITEM_NONE` (0) |
+| `pickup_station_id` | 테이블 정차 이름 (예: `table_3`) |
+| `pickup_pose` | **필수.** 그 테이블 정차 자세 (map 기준) |
+| `dropoff_station_id` | 반납 카트 정차 이름 (예: `return_cart`) |
+| `dropoff_pose` | **필수.** 반납 카트 정차 자세 (map 기준) |
+| `priority` | 200 (일반 작업은 100. 클수록 먼저 할당) |
+| `deadline` | 0 (마감 없음) |
+| `created_time` | 보낸 시각. 서버와 같은 시계 - 시뮬레이션에서는 대시보드 노드도 `use_sim_time: true`로 `/clock` 시각을 넣는다 (Fleet 시간 지표는 시뮬레이션 시간, #285) |
+
+- **pose는 비우면 안 된다.** fleet_manager는 `pickup_station_id`·`dropoff_station_id`로 자세를 찾지 않고 `pickup_pose`·
+  `dropoff_pose`를 그대로 할당 거리 계산과 로봇 이동 목표에 쓴다(`fleet_manager_node.task_info`, amr_bt `MoveTo`).
+  스테이션 이름 → 자세는 대시보드가 채운다. 작업 생성기처럼 스테이션 파일(world 좌표)을 `map_origin_in_world`로 map
+  좌표로 바꿔 넣는다(`amr_fleet_manager` `task_gen.world_to_map`)
+- 처리 흐름은 배송과 같다: 로봇이 테이블로 가서(`move_to_pickup` → `docking` → `loading`) 반납 카트로 간다
+  (`move_to_dropoff` → `docking` → `unloading` → COMPLETED). 스테이션 이름이 있으면 도킹 단계를 거친다(BT `HasStation`)
+- 진행 상황은 다른 작업과 같이 `/fleet/task_status`·`/fleet/task_table`로 본다
+
+```bash
+# 손으로 한 건 보내기 (자세는 예시 값)
+ros2 topic pub --once /fleet/task_requests amr_msgs/msg/Task   "{task_id: collect_3f2a9c, task_type: 3, item_type: 0,
+    pickup_station_id: table_3, pickup_pose: {position: {x: 4.0, y: 2.5}, orientation: {w: 1.0}},
+    dropoff_station_id: return_cart, dropoff_pose: {position: {x: 9.0, y: 1.0}, orientation: {w: 1.0}},
+    priority: 200}"
 ```
 
 ## 5. 패키지별 인터페이스

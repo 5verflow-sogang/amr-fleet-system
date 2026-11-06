@@ -17,6 +17,20 @@ nav2_profile:=restaurant면 footprint를 서빙 로봇 크기(#299)로, congesti
 costmap에 민지 혼잡도 노드(#296)용 KeepoutFilter/SpeedFilter를 붙인다 (amr_bringup.nav2_profile). 둘 다
 기본(warehouse·none)은 바뀌는 게 없어 지금 물류센터 동작 그대로다 - nav2_params.yaml을 복사하지 않고
 controller_server override와 같은 방식(바뀌는 키만 임시 yaml에 더해 얹는다)으로 적용한다.
+
+nav2_profile:=restaurant는 bt_navigator의 default_nav_to_pose_bt_xml도 nav2 제공 1초 재계획 BT
+(navigate_to_pose_w_replanning_and_recovery.xml)로 되돌린다. #292가 bt_navigator 기본 트리를
+"막혔을 때만 재계획" BT로 바꾸는데, 식당 혼잡 비용(229)으로는 그 BT가 재계획을 안 해 1-2 우회가
+안 나온다(로컬 비교 3회씩, #292 PR 댓글). warehouse는 #292가 정한 기본값을 그대로 쓴다.
+
+이 경로는 amr_bringup.nav2_profile(ROS 비의존, 문자열만 다룬다)이 아니라 여기서 바로
+FindPackageShare(실제 launch 실행 때만 nav2_bt_navigator를 찾는 launch substitution)로 만든다 -
+CI는 exec_depend(nav2_bt_navigator 포함)를 안 설치하므로(.github/workflows/ci.yml, 무거운 런타임
+의존성을 줄이려는 의도), get_package_share_directory로 즉시(Python 레벨에서) 찾으면
+test_nav2_launch.py가 _nav2()를 직접 호출할 때 PackageNotFoundError로 죽는다(#307 CI 실패).
+restaurant일 때만 이 substitution을 bt_navigator Node parameters 맨 뒤에 추가해서, warehouse는
+애초에 찾지도 않고 restaurant는 실제 ros2 launch가 그 Node를 띄우는 순간에만 찾는다(#292가 그
+앞에 dict로 넣을 값보다 이 값이 이긴다 - ROS2 Node parameters는 나중 소스가 이긴다).
 """
 
 import os
@@ -28,8 +42,9 @@ from amr_bringup.planner import PLANNERS, planner_overrides
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 from nav2_common.launch import RewrittenYaml
 
 LIFECYCLE_NODES = ['planner_server', 'controller_server', 'behavior_server', 'bt_navigator']
@@ -75,6 +90,16 @@ def _nav2(context):
 
     # 컨트롤러와 복구 행동(spin/backup)이 낸 속도는 모두 cmd_vel_nav로 모은다
     cmd_vel_remap = [('cmd_vel', cmd_vel_topic)]
+
+    # restaurant일 때만 만든다 - FindPackageShare는 생성만 해도 아무 것도 안 찾지만(evaluate() 때만
+    # 찾는다), warehouse에서는 아예 만들지도 않아 "warehouse는 nav2_bt_navigator를 찾지 않는다"가
+    # 코드로도 분명하다
+    restaurant_bt_override = []
+    if arg('nav2_profile') == 'restaurant':
+        restaurant_bt_override.append({'default_nav_to_pose_bt_xml': PathJoinSubstitution([
+            FindPackageShare('nav2_bt_navigator'), 'behavior_trees',
+            'navigate_to_pose_w_replanning_and_recovery.xml'])})
+
     return [
         Node(package='nav2_planner', executable='planner_server', name='planner_server', namespace=ns,
              parameters=[planner_params, use_sim_time, {'GridBased.use_astar': True}, planner_params_extra,
@@ -88,9 +113,11 @@ def _nav2(context):
              remappings=cmd_vel_remap, output='screen'),
         Node(package='nav2_bt_navigator', executable='bt_navigator', name='bt_navigator', namespace=ns,
              # bt_loop_duration 50ms(20Hz) - 기본 10ms(100Hz)는 5대 통합 실행에서 "tick rate 100
-             # exceeded" 경고가 1,400번 나오고 로봇당 CPU를 0.25코어씩 더 썼다
+             # exceeded" 경고가 1,400번 나오고 로봇당 CPU를 0.25코어씩 더 썼다.
+             # restaurant_bt_override를 맨 뒤에 둬서(비어 있지 않을 때만) #292가 넣을 dict보다 이긴다
              parameters=[{'global_frame': 'map', 'robot_base_frame': base_footprint,
-                          'odom_topic': odom_topic, 'bt_loop_duration': 50, **use_sim_time}],
+                          'odom_topic': odom_topic, 'bt_loop_duration': 50, **use_sim_time},
+                         *restaurant_bt_override],
              output='screen'),
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
              name='lifecycle_manager_navigation', namespace=ns,
