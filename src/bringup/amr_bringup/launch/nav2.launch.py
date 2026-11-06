@@ -48,6 +48,9 @@ from launch_ros.substitutions import FindPackageShare
 from nav2_common.launch import RewrittenYaml
 
 LIFECYCLE_NODES = ['planner_server', 'controller_server', 'behavior_server', 'bt_navigator']
+# lifecycle_manager가 관리 노드의 생존 신호(bond)를 기다리는 시간. 기본 4 s면 5대가 함께 뜰 때 CPU가 밀려
+# 살아 있는 노드를 죽었다고 보고 꺼 버린다 (11/6: 식당·fleet_stack 실패 19건 중 17건이 이 기동 실패, 16코어에서도)
+BOND_TIMEOUT_S = 30.0
 
 
 def _nav2(context):
@@ -121,7 +124,8 @@ def _nav2(context):
              output='screen'),
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
              name='lifecycle_manager_navigation', namespace=ns,
-             parameters=[{'autostart': True, 'node_names': LIFECYCLE_NODES, **use_sim_time}],
+             parameters=[{'autostart': True, 'node_names': LIFECYCLE_NODES, 'bond_timeout': BOND_TIMEOUT_S,
+                          **use_sim_time}],
              output='screen'),
     ]
 
