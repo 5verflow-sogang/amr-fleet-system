@@ -21,7 +21,9 @@ from launch_ros.actions import Node
 SITES = {
     'warehouse': ('congestion_zones.yaml', {'normal': 'dynamic_obstacles.yaml'}, [-0.0439, 1.4712, -0.00088]),
     'restaurant': ('congestion_zones_restaurant.yaml',
-                   {'normal': 'dynamic_obstacles_restaurant.yaml', 'peak': 'dynamic_obstacles_restaurant_peak.yaml'},
+                   {'normal': 'dynamic_obstacles_restaurant.yaml', 'peak': 'dynamic_obstacles_restaurant_peak.yaml',
+                    # 시나리오 1-2: 피크에서 우회 통로(x -7.275)를 왕복하는 customer_2를 뺐다
+                    'peak_scene12': 'dynamic_obstacles_restaurant_peak_scene12.yaml'},
                    [0.0, 0.0, 0.0]),
 }
 
@@ -65,7 +67,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('site', default_value='warehouse', description='warehouse / restaurant'),
         DeclareLaunchArgument('guests', default_value='normal',
-                              description='손님 파일: normal / peak (peak는 식당만, 서쪽 통로·배식대 앞에 6명 더)'),
+                              description='손님 파일: normal / peak / peak_scene12 (식당만. peak는 서쪽 통로·배식대 앞에 6명 더, '
+                                          'peak_scene12는 peak에서 우회 통로의 customer_2를 뺀 1-2용)'),
         DeclareLaunchArgument('zones_file', default_value='', description='혼잡도 구역 파일. 비우면 site 기본'),
         DeclareLaunchArgument(
             'obstacles_file', default_value='',

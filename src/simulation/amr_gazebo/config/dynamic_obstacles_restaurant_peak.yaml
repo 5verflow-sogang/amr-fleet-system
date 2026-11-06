@@ -11,6 +11,7 @@
 #   A (-10.5, -5.6, 북쪽)  배식대까지 약 10 m, 서쪽 통로(몰림)를 지난다
 #   B 매장 3 앞 (1.5, 4.15) 약 11.4 m, 매장 앞 통로(stall_front, 평상시 수준)를 지난다
 #   → 혼잡도를 끄면 가까운 A, 켜면 B가 받는다. 1-2는 A가 가면서 서쪽 통로 대신 x -7.275 통로로 돌아가는지
+#   (1-2는 그 우회 통로를 왕복하는 customer_2를 뺀 dynamic_obstacles_restaurant_peak_scene12.yaml을 쓴다)
 # 형식·통로 좌표는 dynamic_obstacles_restaurant.yaml 머리말과 같다.
 
 obstacles:
