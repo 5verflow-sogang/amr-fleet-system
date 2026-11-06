@@ -1,0 +1,62 @@
+# 넓은 식당 확인 (amr_gazebo worlds/restaurant_wide.sdf, 32 x 24 m, 매장이 양 끝). Gazebo + 서빙 로봇 N대(기본 5, 카메라 끔)
+# + 위치추정 + Nav2 + Fleet 서버·장애 주입기 + 걷는 손님(평상시 24명) + 작업 생성기 + CPU 기록.
+# 보는 것: 배달이 끝까지 되는지(task_outcomes.csv), 막히는 곳(stalls.csv, Nav2 로그), RTF·CPU.
+# 로컬 PC(Docker CPU 렌더링)에서는 로봇 3–5대 + 사람 78명에 RTF 0.13–0.15라 30분에 배달 완료가 0건이었다 (11/6)
+#
+#   tools/harness/gcp_run.sh restaurant_wide -n 1 --pr <번호> --label smoke
+#   tools/harness/gcp_run.sh restaurant_wide -n 1 --pr <번호> --set guests=dynamic_obstacles_restaurant_wide_peak.yaml --label peak
+name: restaurant_wide
+packages: amr_bringup
+num_robots: 5
+use_sim_time: true
+seed_base: 1
+# 시뮬레이션 900 s를 RTF 0.25까지 견딘다 (3600 s + 기동)
+timeout_s: 5400
+params:
+  num_robots: 5
+  delay_ms: 100
+  loss_pct: 0
+  algorithm: nearest
+  # 작업 생성기: 20 s 간격 40건 = 약 800 s. 끝난 작업까지 보게 여유를 둔다 (시뮬레이션 s)
+  duration_s: 900
+  # 걷는 손님 파일 (amr_gazebo config/). 피크: dynamic_obstacles_restaurant_wide_peak.yaml (서쪽 홀에 몰림)
+  guests: dynamic_obstacles_restaurant_wide.yaml
+processes:
+  - name: stack
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py world:=restaurant_wide.sdf body:=serving num_robots:={num_robots}
+      nav2:=true seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct} algorithm:={algorithm}
+      robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant_wide.yaml
+      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_wide_gt.yaml map_origin_in_world:="[0, 0, 0]"
+      dynamic_obstacles:=true dynamic_obstacles_file:={guests}
+      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
+      fault_events_file:={run_dir}/fault_events.csv spawn_interval_s:=5.0
+    ready_topic: /fleet/heartbeat
+    ready_cmds:
+      - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
+    ready_timeout_s: 300
+    settle_s: 5
+  - name: cpu_monitor
+    cmd: python3 /repo/tools/harness/cpu_monitor.py --out {run_dir}/cpu.csv --interval 1.0
+    settle_s: 1
+  - name: rosbag
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/amr_[0-9][0-9]/odom'
+    settle_s: 3
+  # 작업 생성기의 지도 원점은 실수로 준다 ('[0, 0, 0]'이면 launch 형식 검사에서 꺼진다)
+  - name: task_generator
+    cmd: >-
+      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json use_sim_time:=true
+      map_origin_in_world:="[0.0, 0.0, 0.0]"
+      stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant_wide.yaml
+      scenario_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/scenarios/restaurant_wide_serving.yaml
+driver:
+  mode: wait
+  use_sim_time: true
+  duration_s: "{duration_s}"
+postprocess:
+  - name: fleet_metrics
+    cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots {num_robots}
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
+  - pkill -9 -f "[c]pu_monitor.py" || true

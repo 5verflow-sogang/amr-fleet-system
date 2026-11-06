@@ -1,0 +1,13 @@
+# 자동 생성 (amr_gazebo/tools/make_restaurant_wide.py) - 손으로 고치지 않는다. 넓은 식당 월드 restaurant_wide.sdf용.
+# 원래 식당 좌표를 90° 돌린 서쪽 홀 + 거울 복사본(이름 끝 _e) 동쪽 홀. 원래 설명의 방위는 돌기 전 기준이다
+# 서 있는 손님 (정지 모델 standing_N, 동쪽 복사 standing_N_e). 형식은 static_people_restaurant.yaml.
+# 카운터 앞 standing_1 ~ 5는 걷는 손님 counter_N으로 바꿔 손님 파일에 있다
+people:
+  - {id: standing_6, x: 0.1, y: -10.96, zone: west_aisle}
+  - {id: standing_8, x: 6.405, y: -9.277, zone: south}
+  - {id: standing_9, x: -4.21, y: -8.9, zone: buffet_line}
+  - {id: standing_10, x: -4.26, y: -10.65, zone: buffet_line}
+  - {id: standing_6_e, x: 16.1, y: -10.96, zone: west_aisle_e}
+  - {id: standing_8_e, x: 9.795, y: -9.277, zone: south_e}
+  - {id: standing_9_e, x: 20.41, y: -8.9, zone: buffet_line_e}
+  - {id: standing_10_e, x: 20.46, y: -10.65, zone: buffet_line_e}

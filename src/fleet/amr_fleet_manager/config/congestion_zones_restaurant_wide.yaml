@@ -1,0 +1,61 @@
+# 자동 생성 (amr_gazebo/tools/make_restaurant_wide.py) - 손으로 고치지 않는다. 넓은 식당 월드 restaurant_wide.sdf용.
+# 원래 식당 좌표를 90° 돌린 서쪽 홀 + 거울 복사본(이름 끝 _e) 동쪽 홀. 원래 설명의 방위는 돌기 전 기준이다
+# 혼잡 구역 (congestion_zones_restaurant.yaml + 동쪽 복사 _e).
+# area [x_min, x_max, y_min, y_max]
+zones:
+  - id: buffet_line
+    area: [-4.63, -3, -11.9, -6.1]
+    capacity: 4
+    description: "배식대 앞 (buffet_1·2 픽업 자리, 손님 줄)"
+  - id: stall_front
+    area: [-4.63, -3, -6.09, 6.5]
+    capacity: 6
+    description: "매장 4곳 카운터 앞 (stall_1~4 픽업 자리, 서 있는 손님 5명은 정지 모델이라 안 센다)"
+  - id: west_aisle
+    area: [-2.99, 5, -11.9, -9.73]
+    capacity: 3
+    description: "서쪽 통로 (셀프 코너 앞, 남서쪽 입구에서 배식대로 가는 지름길)"
+  - id: hall_west
+    area: [-2.99, 5, -9.72, -1.2]
+    capacity: 6
+    description: "홀 서쪽 반 (t01~t03, t06~t08, t11~t13 주변)"
+  - id: hall_east
+    area: [-2.99, 5, -1.19, 5.4]
+    capacity: 6
+    description: "홀 동쪽 반 (t04·t05, t09·t10, t14·t15 주변)"
+  - id: cafe
+    area: [-2.99, 4.5, 5.41, 11.9]
+    capacity: 4
+    description: "동쪽 좌석 (4인석 동쪽 통로, 6인 테이블 L01~L04와 사이 좁은 통로, 부스 b02·b03, 2인석 c01·c02). b01은 매장 앞 높이라 구역 밖"
+  - id: south
+    area: [5.01, 7.3, -11.9, 10.5]
+    capacity: 5
+    description: "남쪽 통로 (입구-퇴식대-정수대-충전소 앞, return_1·2). 동쪽 세로 통로(x 4.74) 손님의 남쪽 끝도 여기서 센다"
+  - id: buffet_line_e
+    area: [19.2, 20.83, -11.9, -6.1]
+    capacity: 4
+    description: "(동쪽 복사) 배식대 앞 (buffet_1·2 픽업 자리, 손님 줄)"
+  - id: stall_front_e
+    area: [19.2, 20.83, -6.09, 6.5]
+    capacity: 6
+    description: "(동쪽 복사) 매장 4곳 카운터 앞 (stall_1~4 픽업 자리, 서 있는 손님 5명은 정지 모델이라 안 센다)"
+  - id: west_aisle_e
+    area: [11.2, 19.19, -11.9, -9.73]
+    capacity: 3
+    description: "(동쪽 복사) 서쪽 통로 (셀프 코너 앞, 남서쪽 입구에서 배식대로 가는 지름길)"
+  - id: hall_west_e
+    area: [11.2, 19.19, -9.72, -1.2]
+    capacity: 6
+    description: "(동쪽 복사) 홀 서쪽 반 (t01~t03, t06~t08, t11~t13 주변)"
+  - id: hall_east_e
+    area: [11.2, 19.19, -1.19, 5.4]
+    capacity: 6
+    description: "(동쪽 복사) 홀 동쪽 반 (t04·t05, t09·t10, t14·t15 주변)"
+  - id: cafe_e
+    area: [11.7, 19.19, 5.41, 11.9]
+    capacity: 4
+    description: "(동쪽 복사) 동쪽 좌석 (4인석 동쪽 통로, 6인 테이블 L01~L04와 사이 좁은 통로, 부스 b02·b03, 2인석 c01·c02). b01은 매장 앞 높이라 구역 밖"
+  - id: south_e
+    area: [8.9, 11.19, -11.9, 10.5]
+    capacity: 5
+    description: "(동쪽 복사) 남쪽 통로 (입구-퇴식대-정수대-충전소 앞, return_1·2). 동쪽 세로 통로(x 4.74) 손님의 남쪽 끝도 여기서 센다"

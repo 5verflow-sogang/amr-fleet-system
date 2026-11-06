@@ -26,6 +26,12 @@ ros2 launch amr_bringup system.launch.py world:=restaurant.sdf body:=serving nav
   map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:='[0, 0, 0]' \
   dynamic_obstacles:=true dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak.yaml cost_fn:=congestion
 
+# 넓은 식당 5대 (32 x 24 m, 매장이 양 끝, amr_gazebo README "넓은 식당 월드"). 혼잡도 노드는 site:=restaurant_wide
+ros2 launch amr_bringup system.launch.py world:=restaurant_wide.sdf body:=serving nav2:=true \
+  robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant_wide.yaml \
+  map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_wide_gt.yaml map_origin_in_world:='[0, 0, 0]' \
+  dynamic_obstacles:=true dynamic_obstacles_file:=dynamic_obstacles_restaurant_wide_peak.yaml cost_fn:=congestion
+
 # 로봇 하나에 목표 보내기 (map 기준)
 ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose \
   "{pose: {header: {frame_id: map}, pose: {position: {x: 3.0, y: 1.5, z: 0.0}, orientation: {w: 1.0}}}}"

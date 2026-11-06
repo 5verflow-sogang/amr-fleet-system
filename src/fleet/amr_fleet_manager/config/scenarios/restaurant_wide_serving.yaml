@@ -1,0 +1,16 @@
+# 넓은 식당(restaurant_wide.sdf) 배달 확인용 작업 일정: 양쪽 홀 매장·배식대에서 테이블로.
+# stations_file:=stations_restaurant_wide.yaml, map_origin_in_world:="[0.0, 0.0, 0.0]"과 같이 쓴다 (하네스 restaurant_wide).
+# 패턴 stall_*·buffet_*·t*는 서쪽 홀과 동쪽 홀(_e)을 다 고른다.
+count: 40
+start_delay_s: 10.0
+arrival: fixed
+interval_s: 20.0
+flows:
+  - type: delivery
+    pickup: [stall_*, buffet_*]
+    dropoff: [t*]
+    weight: 1.0
+items:
+  small: 1.0
+priority: [0, 0]
+deadline_s: 0.0

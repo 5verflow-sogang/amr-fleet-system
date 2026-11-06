@@ -2,6 +2,7 @@
 
     ros2 launch amr_fleet_manager congestion.launch.py                                  # 물류센터 가짜 구역
     ros2 launch amr_fleet_manager congestion.launch.py site:=restaurant guests:=peak    # 식당, 피크 몰림 손님
+    ros2 launch amr_fleet_manager congestion.launch.py site:=restaurant_wide guests:=peak   # 넓은 식당, 서쪽 절반에 몰림
     ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<구역> obstacles_file:=<손님> map_origin_in_world:='[x, y, yaw]'
 
 site가 구역 파일·손님 파일·map 원점의 기본값을 한 번에 고른다. 셋 중 직접 준 것은 그 값을 쓴다.
@@ -23,6 +24,11 @@ SITES = {
     'restaurant': ('congestion_zones_restaurant.yaml',
                    {'normal': 'dynamic_obstacles_restaurant.yaml', 'peak': 'dynamic_obstacles_restaurant_peak.yaml'},
                    [0.0, 0.0, 0.0]),
+    # 넓은 식당 (restaurant_wide.sdf, 48 x 16 m): 평상시 양쪽 고르게, 피크는 서쪽 절반에 몰린다
+    'restaurant_wide': ('congestion_zones_restaurant_wide.yaml',
+                        {'normal': 'dynamic_obstacles_restaurant_wide.yaml',
+                         'peak': 'dynamic_obstacles_restaurant_wide_peak.yaml'},
+                        [0.0, 0.0, 0.0]),
 }
 
 
@@ -63,7 +69,8 @@ def _node(context):
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument('site', default_value='warehouse', description='warehouse / restaurant'),
+        DeclareLaunchArgument('site', default_value='warehouse',
+                              description='warehouse / restaurant / restaurant_wide'),
         DeclareLaunchArgument('guests', default_value='normal',
                               description='손님 파일: normal / peak (peak는 식당만, 서쪽 통로·배식대 앞에 6명 더)'),
         DeclareLaunchArgument('zones_file', default_value='', description='혼잡도 구역 파일. 비우면 site 기본'),

@@ -349,6 +349,38 @@ ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_
 - 몸체·footprint: `system.launch.py body:=serving`이면 스폰 몸체와 Nav2 footprint(0.565 x 0.537 m, nav2.launch.py `nav2_profile:=restaurant`)가 같이 바뀐다
 - 아직 없는 것: 식당 지도를 system.launch 기본으로 쓰는 설정(`map:=`·`map_origin_in_world:=[0, 0, 0]`을 직접 준다), 구역 설정(`zones.yaml`), 충전소 ArUco 마커, 로봇 여러 대 스폰 목록
 
+## 넓은 식당 월드 (`worlds/restaurant_wide.sdf`, 32 x 24 m)
+
+서빙 로봇 5대에 24 x 16 m 식당이 좁아서, 지금 식당을 두 벌 붙여 매장 줄이 양 끝에 오게 했다 (서 → 동: 한식 - 책상 - 책상 - 한식).
+
+```
+     매장 │ 홀(4인석·6인석) │ 퇴식·충전 ┃ 퇴식·충전 │ 홀 │ 매장
+x =  −8                           8.1                       24.2      (y −12 – 12)
+```
+
+- **자동 생성**: [`tools/make_restaurant_wide.py`](tools/make_restaurant_wide.py)가 `restaurant.sdf`와 식당 설정 파일에서 만든다. 만든 파일은 손으로 고치지 않고, 원래 식당이 바뀌면 도구를 다시 돌린다. `test/test_restaurant_wide.py`가 어긋나면 잡는다
+- **만드는 법**: 원래 식당을 남쪽 벽 중심선(y −8.1)에 대고 거울로 한 벌 더 만든 뒤, 둘을 함께 90° 돌린다. 원래 북쪽(매장 줄)이 양 끝, 원래 남쪽(퇴식대·정수대·충전소·키오스크)이 가운데에서 등을 맞댄다. 원래 동쪽 벽(부스·대기 줄)은 북쪽 벽, 원래 서쪽 벽(입구)은 남쪽 벽이 된다
+- **이름**: 서쪽 홀은 원래 이름 그대로, 동쪽 홀은 끝에 `_e` (모델, 스테이션 `stall_1_e` = 동쪽 한식, 혼잡 구역 `buffet_line_e`, 손님 `customer_1_e`). 좌표는 90° 돌아 원래와 다르다
+- **가운데 벽**(`center_wall`): 원래 남쪽 벽 자리를 두 홀이 같이 쓴다 (퇴식대 창문·충전기·간판이 붙어 있다). 문 두 곳 y −6.9 – −4.4, 8.6 – 10.6으로 이어진다
+- 물체는 거울상으로 뒤집지 않고 놓았다. 간판 글자와 주방 바닥 메시는 앞쪽이 로컬 y로 치우쳐 180° 더 돌렸다 (글자는 그대로 읽힌다)
+- **혼잡은 시간대마다 바뀐다**
+  - 평상시 [`dynamic_obstacles_restaurant_wide.yaml`](config/dynamic_obstacles_restaurant_wide.yaml): 양쪽 홀에 걷는 손님 12명씩 고르게 (원래 7명 + 카운터 앞 5명)
+  - 피크 [`_wide_peak.yaml`](config/dynamic_obstacles_restaurant_wide_peak.yaml): 서쪽 홀에 18명(원래 피크 13명: 셀프 코너 앞 통로·배식대 앞 몰림 + 카운터 앞 5명), 동쪽 홀은 8명. 같은 메뉴를 붐비는 쪽(`stall_1`)과 한산한 쪽(`stall_1_e`) 중 고르는 장면이 생긴다 (혼잡도 반영 할당)
+- **사람이 원래 식당과 다른 점**
+  - 카운터 앞 손님: 원래 정지 모델 `standing_1`–`5`를 걷는 손님 `counter_N`으로 바꿨다. 카운터 앞 좁은 사각형(픽업 자리와 0.1 m 이상)에서 0.2–0.4 m/s로 서성이고, 손님 파일에 있어 혼잡도에 센다
+  - 주방 직원: 걷지 않는다. 원래 직원 파일의 시작 자리에 정지 모델 `staff_N`을 카운터 쪽을 보게 세웠다 (월드에 들어 있어 따로 띄우지 않는다)
+  - 월드에 늘 있는 사람: 앉은 손님 36명, 서 있는 손님 8명(배식대 앞·셀프 코너·입구), 주방 직원 10명. 걷는 손님까지 평상시 78명, 피크 80명
+- 함께 쓰는 파일: 지도 `amr_mapping/maps/restaurant_wide_gt` (664 x 500칸, 정차 자세 80곳 모두 도달), 스테이션 `amr_fleet_manager/config/stations_restaurant_wide.yaml`, 혼잡 구역 `congestion_zones_restaurant_wide.yaml`(혼잡도 노드 `site:=restaurant_wide`), 로봇 `amr_bringup/config/robots_restaurant_wide.yaml`(북쪽 대기 줄 양쪽 5대), 서 있는 손님 `config/static_people_restaurant_wide.yaml`
+- 확인: Docker CPU 렌더링으로 탑뷰와 양 끝 매장 시점을 렌더링했다 (양 끝 간판 글자, 가운데 벽, 바닥)
+
+```bash
+ros2 launch amr_bringup system.launch.py world:=restaurant_wide.sdf body:=serving nav2:=true \
+  robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant_wide.yaml \
+  map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_wide_gt.yaml map_origin_in_world:='[0, 0, 0]' \
+  dynamic_obstacles:=true dynamic_obstacles_file:=dynamic_obstacles_restaurant_wide_peak.yaml
+ros2 launch amr_fleet_manager congestion.launch.py site:=restaurant_wide guests:=peak
+```
+
 ## 파라미터
 
 `config/` 의 YAML로 관리한다. 파라미터 변경에 재빌드가 필요 없어야 한다.
