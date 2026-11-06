@@ -1,0 +1,17 @@
+# 식당 시연 1-2 혼잡 구간 우회 (이진). 켬/끔은 congestion_filter만 다르다. 같은 seed로 슬롯 둘에서 동시에 돌린다:
+#   Actions Fleet Regression Test: scenario=demo_s12, repeats=1, label=on,  params="congestion_filter=keepout slot=b1"
+#                                  scenario=demo_s12, repeats=1, label=off, params="congestion_filter=none slot=b2"
+# 시작 위치: 1호 입구 옆(-10.5, -5.6) (robots_restaurant_s12.yaml). 배정 비용은 직선 거리(euclidean).
+# 1초 재계획 BT는 body:=serving이면 자동(#307 머지 뒤)
+# TODO(지수): customer_2를 뺀 손님 파일이 생기면 guests를 바꾼다
+# TODO(연우): 장면 스크립트(4대 먼저 배달 → 0초 요청, /demo/t0)가 생기면 task_schedule 대신 쓴다
+name: demo_s12
+extends: demo_restaurant
+params:
+  robots: robots_restaurant_s12.yaml
+  guests: dynamic_obstacles_restaurant_peak.yaml
+  cost_fn: euclidean
+  congestion_filter: none
+  cameras: top,west,stalls
+  robot_camera: "false"
+  duration_s: 60

@@ -1,0 +1,85 @@
+# 식당 시연 녹화 공통 (장면 시나리오 demo_s11·demo_s12와 스모크 demo_smoke가 extends로 쓴다).
+# 식당 월드 + 서빙 로봇 5대 + Nav2·추적·안전 + 손님 + 혼잡도 노드 + 고정 카메라(+ 로봇 시점 카메라) + 작업.
+# 결과:
+#   video/<카메라>.mp4 + video.json  카메라마다 영상(시뮬레이션 시각 15 fps)과 첫 프레임 시각. /demo/t0에 맞춰 자른다
+#   rosbag/                          측정 토픽(task_status·robot_states·task_table·/demo/t0)만
+#   assignments.csv, bag_info.txt, 요약의 run.real_time_factor
+# 카메라 원본(camera_bag/)은 mp4로 바꾼 뒤 지워 버킷에 올리지 않는다 (카메라 3대 60 s 약 8 GB → mp4 수십 MB).
+# 바꾸기에 실패하면 원본이 남아 그대로 올라간다.
+#
+# RTF (11/6 c2d-8): 고정 카메라 3대 0.069, 탑뷰 1대 0.13 → 시뮬레이션 60 s에 실제 15분·8분 (#316).
+# 켬/끔은 같은 seed로 같은 기종 슬롯 둘(b1·b2)에서 동시에 돌린다 (장면 시나리오 머리말).
+name: demo_restaurant
+packages: amr_bringup
+num_robots: 5
+use_sim_time: true
+seed_base: 1
+# 시뮬레이션 duration_s를 RTF 0.05까지 견딘다 (60 s면 1200 s + 기동)
+timeout_s: 3600
+params:
+  num_robots: 5
+  delay_ms: 100
+  loss_pct: 0
+  duration_s: 60
+  # 장면별로 바꾸는 값 (장면 시나리오가 덮어쓴다)
+  robots: robots_restaurant.yaml                 # amr_bringup config/ 시작 위치
+  guests: dynamic_obstacles_restaurant_peak.yaml # amr_gazebo config/ 손님 (혼잡도 노드도 같은 파일을 센다)
+  cost_fn: euclidean                             # 1-1 켬: congestion
+  congestion_weight: "3.0"
+  congestion_filter: none                        # 1-2 켬: keepout
+  cameras: top,west,stalls                       # amr_gazebo config/demo_cameras_restaurant.yaml 이름
+  robot_camera: "false"                          # 로봇 시점: amr_01 등 (카메라 하나마다 RTF가 더 떨어진다)
+  # 작업 일정 (amr_fleet_manager 작업 생성기 형식). 연우 장면 스크립트가 생기면 그쪽으로 바꾼다
+  task_schedule: /repo/tools/harness/tasks/restaurant_smoke.yaml
+processes:
+  - name: stack
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true tracking:=true safety:=true
+      world:=restaurant.sdf body:=serving seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct}
+      robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/{robots}
+      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
+      dynamic_obstacles:=true dynamic_obstacles_file:={guests} congestion:=restaurant
+      cost_fn:={cost_fn} congestion_weight:={congestion_weight} congestion_filter:={congestion_filter}
+      enable_camera:={robot_camera}
+      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:=5.0
+    ready_topic: /fleet/heartbeat
+    ready_cmds:
+      - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
+    ready_timeout_s: 300
+    settle_s: 5
+  - name: cameras
+    cmd: ros2 launch amr_gazebo demo_cameras.launch.py cameras:={cameras}
+    ready_cmds:
+      - timeout 20 ros2 topic list | grep -q '^/demo_cam/'
+    ready_timeout_s: 60
+    settle_s: 5
+  - name: cpu_monitor
+    cmd: python3 /repo/tools/harness/cpu_monitor.py --out {run_dir}/cpu.csv --interval 1.0
+    settle_s: 1
+  # 카메라와 측정 토픽을 나눠 녹화한다: 카메라 bag은 mp4로 바꾸고 지운다
+  - name: camera_bag
+    cmd: ros2 bag record -o {run_dir}/camera_bag -e '/demo_cam/.*|/amr_[0-9][0-9]/camera/color/image_raw'
+    settle_s: 1
+  - name: rosbag
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/task_status|/fleet/robot_states|/fleet/task_table|/fleet/congestion|/demo/t0|/clock'
+    settle_s: 3
+  # 지도 원점은 실수로 준다 ('[0, 0, 0]'이면 작업 생성기가 시작하자마자 죽는다, 11/6 스모크)
+  - name: task_generator
+    cmd: >-
+      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json use_sim_time:=true
+      map_origin_in_world:="[0.0, 0.0, 0.0]"
+      stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
+      scenario_file:={task_schedule}
+driver:
+  mode: wait
+  use_sim_time: true
+  duration_s: "{duration_s}"
+postprocess:
+  - name: bag_info
+    cmd: bash -c 'ros2 bag info {run_dir}/camera_bag > {run_dir}/bag_info.txt; ros2 bag info {run_dir}/rosbag >> {run_dir}/bag_info.txt; du -sh {run_dir}/camera_bag >> {run_dir}/bag_info.txt; cat {run_dir}/bag_info.txt'
+  - name: video
+    cmd: bash -c 'ros2 run amr_gazebo bag_to_mp4.py {run_dir}/camera_bag --out {run_dir}/video && rm -rf {run_dir}/camera_bag && du -sh {run_dir}/video'
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
+  - pkill -9 -f "[c]pu_monitor.py" || true
