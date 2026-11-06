@@ -124,3 +124,19 @@ def test_count_ready_server_and_decentral():
     assert count_ready(decentral, 'task_auction') == 4      # 5대 중 4대만 떴으면 아직 시작하지 않는다 (server_count 5)
     assert count_ready(decentral, '') == 5                  # 비우면 아무 구독자나 (녹화 포함)
     assert count_ready([], 'fleet_manager') == 0
+
+
+def test_profile_changes_interval_by_time(stations, basic):
+    # 한가함(10 s) → 피크(2 s) → 한가함(10 s). count 없이 마지막 until_s까지
+    scenario = {k: v for k, v in basic.items() if k not in ('count', 'interval_s')}
+    scenario.update(start_delay_s=0.0, profile=[{'until_s': 30, 'interval_s': 10}, {'until_s': 40, 'interval_s': 2},
+                                                {'until_s': 60, 'interval_s': 10}])
+    times = [t.at_s for t in generate(scenario, stations, seed=1)]
+    assert times == [0.0, 10.0, 20.0, 30.0, 32.0, 34.0, 36.0, 38.0, 40.0, 50.0]
+    # count가 있으면 상한
+    assert len(generate(dict(scenario, count=4), stations, seed=1)) == 4
+    with pytest.raises(ValueError):
+        generate(dict(scenario, profile=[{'until_s': 10, 'interval_s': 0}]), stations, seed=1)
+    with pytest.raises(ValueError):
+        generate(dict(scenario, profile=[{'until_s': 10, 'interval_s': 1}, {'until_s': 5, 'interval_s': 1}]),
+                 stations, seed=1)

@@ -547,3 +547,29 @@ def test_tracking_d1_worst_case_verdict(tmp_path):
     # 0.5 m/s(c05)는 참고 속력이라 판정하지 않는다
     m = d1('c05', ok, 'tracking_kpi_c05')[0]
     assert 'kpi' not in m and 'kpi_note' not in m
+
+
+def test_fleet_battery_metrics_and_server_tasks(tmp_path):
+    # 배터리 실험 (배터리 인지 운영): 서버가 만든 충전·복귀 작업은 배송 지표에서 빼고 fleet.charges로 센다
+    run = tmp_path / 'r'
+    run.mkdir()
+    (run / 'task_outcomes.csv').write_text(
+        'task_id,request_time,first_assign_time,robots,final_state,end_time,task_time_s\n'
+        't1,0,1,amr_01,COMPLETED,8,8\nt2,10,14,amr_02,COMPLETED,40,30\n'
+        'charge_amr_03_0001,,20,amr_03,COMPLETED,60,\nreturn_amr_03_0002,,61,amr_03,COMPLETED,70,\n')
+    # amr_02가 충전하러 가는 동안 amr_03이 충전 중 → 동시 충전 2대, 그때 서빙 가능 1대 (amr_01). amr_02는 0 %
+    (run / 'robot_states.csv').write_text(
+        'time,robot,x,y,mode,task_id,battery\n'
+        '1,amr_01,0,0,0,,80\n1,amr_02,0,0,1,t2,25\n1,amr_03,0,0,2,charge_amr_03_0001,40\n'
+        '2,amr_02,0,0,1,charge_amr_02_0004,0\n'
+        '3,amr_03,0,0,1,return_amr_03_0002,100\n3,amr_02,0,0,1,charge_amr_02_0004,0\n')
+    m = fleet_metrics(run)
+    assert (m['fleet.tasks_requested'], m['fleet.tasks_completed'], m['fleet.charges']) == (2, 2, 1)
+    assert m['fleet.assign_wait_s.mean'] == pytest.approx(2.5) and m['fleet.assign_wait_s.max'] == pytest.approx(4.0)
+    assert m['fleet.tasks_never_assigned'] == 0
+    assert m['fleet.task_time_s.p95'] == pytest.approx(30.0, abs=1.5)
+    assert (m['fleet.battery_min'], m['fleet.battery_depleted']) == (0.0, 1)
+    assert (m['fleet.charging_max'], m['fleet.serviceable_min']) == (2, 1)
+    # 배터리 열이 없는 옛 결과는 배터리 지표를 내지 않는다
+    (run / 'robot_states.csv').write_text('time,robot,x,y,mode,task_id\n1,amr_01,0,0,0,\n')
+    assert 'fleet.battery_min' not in fleet_metrics(run)

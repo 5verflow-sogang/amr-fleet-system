@@ -76,6 +76,11 @@ def _server(context):
                 'charging.low_percent': float(arg('charge_low_percent')),
                 'charging.min_in_service': int(arg('min_in_service')),
                 'charging.map_origin_in_world': [float(v) for v in yaml.safe_load(arg('map_origin_in_world'))],
+                # 피크 대비 (4단계). peaks는 [시작, 끝, ...] (서버 시작부터 s), 비우면 끔
+                'charging.peaks': [float(v) for v in (yaml.safe_load(arg('peaks')) or [0.0])],
+                'charging.pre_peak_s': float(arg('pre_peak_s')),
+                'charging.peak_max_charging': int(arg('peak_max_charging')),
+                'charging.peak_target_percent': float(arg('peak_target_percent')),
                 # 에너지 예측 배정 (2단계). 소모율은 로봇 쪽과 같게 (가짜 로봇 fake_robots_battery.yaml이면 0.1·0.01·1.0·1.0)
                 'energy.enabled': arg('energy_check').lower() == 'true',
                 'energy.move_per_m': float(arg('energy_move_per_m')),
@@ -129,6 +134,15 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'min_in_service', default_value='0',
             description='운영 중 로봇 최소 대수 N. 동시 충전 ≤ 살아 있는 로봇 − N (0이면 충전기 수로만 묶는다)'),
+        DeclareLaunchArgument(
+            'peaks', default_value='[]',
+            description='피크 시간대 [시작, 끝, ...] (서버 시작부터 s). 비우면 피크 대비를 끈다 (charging:=true일 때)'),
+        DeclareLaunchArgument(
+            'pre_peak_s', default_value='0.0', description='피크 이만큼 전부터 80 % 밑이면 미리 충전 (s, 0이면 끔)'),
+        DeclareLaunchArgument(
+            'peak_max_charging', default_value='0', description='피크 중 동시 충전 상한 (0이면 최소 운영 대수 규칙만)'),
+        DeclareLaunchArgument(
+            'peak_target_percent', default_value='100.0', description='피크 중 충전 목표 (%). 닿으면 충전을 끝낸다'),
         DeclareLaunchArgument(
             'energy_check', default_value='false',
             description='에너지 예측 배정: 작업을 끝내고 가장 가까운 충전기까지 갈 배터리가 없는 로봇은 그 작업에서 뺀다'),

@@ -762,3 +762,47 @@ def test_energy_check_counts_charge_queue_wait():
         commands, _ = d.assign(0.0)
         assert [c.task_id for c in commands] == expected
     assert d.charge_queue(0.0).remaining_s == pytest.approx((140.0,))
+
+
+# ---- 피크 대비 (4단계) ----
+
+def _peak(**kwargs):
+    charge = ChargeConfig(low_percent=30.0, min_in_service=0, peaks=((300.0, 600.0),), peak_target_percent=60.0)
+    return Dispatcher(replace(charging(**kwargs).config, charge=charge))
+
+
+def _charging_robot(d, battery, now=0.0):
+    order = d.plan_charging(now, t=now)
+    if order:
+        d.assign(now)
+        d.on_status(order[0].task_id, 'amr_01', STATE_IN_PROGRESS, now=now)
+    d.update_robot(robot('amr_01', (2.0, -10.0), mode=2, battery=battery), d.robots['amr_01'].task_id, now)
+    return d.robots['amr_01'].task_id
+
+
+def test_peak_ends_charge_at_target_and_returns():
+    d = _peak()
+    d.update_robot(robot('amr_01', (2.0, -10.0), battery=25.0), '', 290.0)
+    task_id = _charging_robot(d, 25.0, now=290.0)
+    assert d.stop_charging(290.0) == []                 # 피크 전이면 끝까지 채운다
+    _charging_robot(d, 55.0, now=310.0)
+    assert d.stop_charging(310.0) == []                 # 피크지만 아직 60 % 밑
+    _charging_robot(d, 61.0, now=320.0)
+    first = d.stop_charging(320.0)
+    assert [(c.robot_id, c.task_id, c.first) for c in first] == [('amr_01', task_id, True)]
+    assert d.stop_charging(320.5) == []                 # 재전송 간격(1 s) 전
+    again = d.stop_charging(321.5)
+    assert [(c.assignment_id, c.first) for c in again] == [(first[0].assignment_id, False)]   # 같은 번호로
+    # 로봇이 취소 완료를 보고하면 다시 할당하지 않고 대기 위치로 보낸다
+    d.on_status(task_id, 'amr_01', STATE_FAILED, error_code=ERROR_CANCELED, now=322.0)
+    assert d.tasks[task_id].state == STATE_FAILED
+    d.update_robot(robot('amr_01', (2.0, -10.0), battery=61.0), '', 322.0)
+    assert [o.task_type for o in d.plan_charging(322.0, t=322.0)] == [TYPE_RETURN]
+    assert d.stop_charging(323.0) == []
+
+
+def test_no_stop_without_peak_target():
+    d = charging()
+    d.update_robot(robot('amr_01', (2.0, -10.0), battery=25.0), '', 0.0)
+    _charging_robot(d, 99.0, now=0.0)
+    assert d.stop_charging(0.0) == []

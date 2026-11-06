@@ -80,6 +80,13 @@ class FleetManager(Node):
             raise ValueError(f'charging.enabled·energy.enabled인데 충전기가 없다 (charging.stations_file={stations_file!r})')
         # Task 메시지에 넣을 자세 (map 좌표)
         self._station_poses = {**chargers, **waits}
+        # 피크 시간대 [시작, 끝, 시작, 끝, ...] (서버 시작부터 노드 시계 s). 작업 생성기 profile과 같은 시각으로 맞춘다
+        flat = [float(v) for v in self.declare_parameter('charging.peaks', [0.0]).value]
+        flat = [] if flat == [0.0] else flat
+        if len(flat) % 2:
+            raise ValueError(f'charging.peaks는 [시작, 끝, ...] 짝수 개: {flat}')
+        peaks = tuple(zip(flat[0::2], flat[1::2]))
+        self._t0 = self._now_sec()
         self._dispatcher = Dispatcher(DispatcherConfig(
             algorithm=self.declare_parameter('assignment.algorithm', 'nearest').value,
             min_battery_percent=self.declare_parameter('assignment.min_battery_percent', 20.0).value,
@@ -96,6 +103,11 @@ class FleetManager(Node):
             charge=ChargeConfig(
                 low_percent=self.declare_parameter('charging.low_percent', 30.0).value,
                 min_in_service=self.declare_parameter('charging.min_in_service', 0).value,
+                peaks=peaks,
+                pre_peak_s=self.declare_parameter('charging.pre_peak_s', 0.0).value,
+                pre_peak_percent=self.declare_parameter('charging.pre_peak_percent', 80.0).value,
+                peak_max_charging=self.declare_parameter('charging.peak_max_charging', 0).value,
+                peak_target_percent=self.declare_parameter('charging.peak_target_percent', 100.0).value,
             ),
             chargers=tuple(Station(name, pose[:2]) for name, pose in chargers.items()),
             wait_stations=tuple(Station(name, pose[:2]) for name, pose in waits.items()),
@@ -161,6 +173,10 @@ class FleetManager(Node):
             self.get_logger().info(
                 f'자동 충전: {c.low_percent:g} % 밑이면 충전, 최소 운영 {c.min_in_service}대, '
                 f'충전기 {list(chargers)}, 충전 뒤 대기 위치 {list(waits)}')
+            if c.peaks:
+                self.get_logger().info(
+                    f'피크 대비: 피크 {list(c.peaks)} s, {c.pre_peak_s:g} s 전부터 {c.pre_peak_percent:g} % 밑 미리 충전, '
+                    f'피크 중 동시 충전 ≤ {c.peak_max_charging or "제한 없음"}, {c.peak_target_percent:g} %까지만')
         if energy_check:
             e = self._dispatcher.config.energy
             self.get_logger().info(
@@ -276,7 +292,8 @@ class FleetManager(Node):
         return self.get_clock().now().nanoseconds * 1e-9
 
     def _plan_charging(self):
-        for order in self._dispatcher.plan_charging(time.monotonic()):
+        now = time.monotonic()
+        for order in self._dispatcher.plan_charging(now, self._now_sec() - self._t0):
             self._dispatcher.tasks[order.task_id].payload = self._charge_task(order)
             kind = '충전' if order.task_type == TYPE_CHARGE else '충전 뒤 복귀'
             self.get_logger().info(f'{kind}: {order.robot_id} → {order.station} ({order.task_id})')
@@ -286,6 +303,20 @@ class FleetManager(Node):
             if waiting:
                 self.get_logger().info(
                     f'충전 차례 기다림: {waiting} (충전 중 {sorted(self._dispatcher.charging_robots())})')
+        for command in self._dispatcher.stop_charging(now):
+            self._send_cancel(command)
+
+    def _send_cancel(self, command: Outgoing):
+        """피크 중 충전 목표에 닿은 충전 작업을 끝낸다 (TaskAssignment ACTION_CANCEL, 재전송은 같은 번호)."""
+        msg = TaskAssignment()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.assignment_id = command.assignment_id
+        msg.robot_id = command.robot_id
+        msg.action = TaskAssignment.ACTION_CANCEL
+        msg.task = self._dispatcher.tasks[command.task_id].payload
+        if command.first:
+            self.get_logger().info(f'피크 중 짧은 충전: {command.robot_id} 충전 끝냄 ({command.task_id})')
+        self._assignment_pub.publish(msg)
 
     def _charge_task(self, order: ChargeTask) -> Task:
         x, y, yaw = self._station_poses[order.station]

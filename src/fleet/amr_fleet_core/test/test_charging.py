@@ -3,7 +3,8 @@
 import pytest
 
 from amr_fleet_core.assignment import RobotInfo
-from amr_fleet_core.charging import ChargeConfig, ChargeOrder, Station, max_charging, nearest_free, plan_charging
+from amr_fleet_core.charging import (ChargeConfig, ChargeOrder, Station, charge_target, max_charging, nearest_free,
+                                     peak_phase, plan_charging)
 
 CHARGERS = [Station('c1', (0.0, 0.0)), Station('c2', (2.0, 0.0)), Station('c3', (4.0, 0.0))]
 
@@ -92,3 +93,43 @@ def test_nearest_free_ties_by_name():
     stations = [Station('b', (1.0, 0.0)), Station('a', (-1.0, 0.0))]
     assert nearest_free((0.0, 0.0), stations, set()).name == 'a'
     assert nearest_free((0.0, 0.0), stations, {'a', 'b'}) is None
+
+
+# ---- 피크 대비 (4단계) ----
+
+PEAK = ChargeConfig(low_percent=30.0, min_in_service=3, peaks=((300.0, 600.0),), pre_peak_s=120.0,
+                    pre_peak_percent=80.0, peak_max_charging=1, peak_target_percent=60.0)
+
+
+def test_peak_phase_windows():
+    assert peak_phase(None, PEAK) == ''
+    assert peak_phase(100.0, PEAK) == ''
+    assert peak_phase(180.0, PEAK) == 'pre_peak'
+    assert peak_phase(300.0, PEAK) == 'peak' and peak_phase(599.9, PEAK) == 'peak'
+    assert peak_phase(600.0, PEAK) == ''
+    assert charge_target(400.0, PEAK) == 60.0 and charge_target(100.0, PEAK) is None
+    assert charge_target(400.0, ChargeConfig(peaks=((300.0, 600.0),))) is None     # 100이면 로봇 기본
+
+
+def test_peak_config_validation():
+    for kwargs in ({'peaks': ((10.0, 5.0),)}, {'pre_peak_s': -1.0}, {'peak_max_charging': -1},
+                   {'peaks': ((0.0, 1.0),), 'peak_target_percent': 20.0},
+                   {'pre_peak_s': 10.0, 'pre_peak_percent': 10.0}):
+        with pytest.raises(ValueError):
+            ChargeConfig(**kwargs)
+
+
+def test_pre_peak_tops_up_before_rush():
+    # 피크 전에는 80 % 밑이면 미리 보낸다 (평소라면 30 % 위라 안 간다). 최소 운영 대수(5 − 3 = 2대)는 그대로
+    robots = [robot('amr_01', 75.0), robot('amr_02', 50.0), robot('amr_03', 90.0), robot('amr_04', 60.0),
+              robot('amr_05', 85.0)]
+    assert plan_charging(robots, ids(robots), {}, CHARGERS, PEAK, t=100.0).orders == []
+    plan = plan_charging(robots, ids(robots), {}, CHARGERS, PEAK, t=200.0)
+    assert [o.robot_id for o in plan.orders] == ['amr_02', 'amr_04'] and plan.waiting == ['amr_01']
+
+
+def test_peak_limits_concurrent_charging_further():
+    robots = [robot(f'amr_0{i}', 10.0 + i) for i in range(1, 6)]
+    assert max_charging(5, PEAK, 400.0) == 1 and max_charging(5, PEAK, 100.0) == 2
+    plan = plan_charging(robots, ids(robots), {}, CHARGERS, PEAK, t=400.0)
+    assert [o.robot_id for o in plan.orders] == ['amr_01']

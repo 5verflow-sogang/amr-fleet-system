@@ -80,17 +80,42 @@ def expand(patterns: Sequence[str], stations: Sequence[str]) -> list[str]:
     return names
 
 
+def load_profile(scenario: dict) -> list[tuple[float, float]]:
+    """시간대별 주문량 profile: [{until_s, interval_s}, ...] → [(until_s, interval_s)] (시각 순).
+
+    작업 시각 t가 until_s 전인 첫 구간의 간격을 쓴다. 마지막 until_s가 일정 끝이다. 없으면 빈 목록.
+    """
+    segments = [(float(seg['until_s']), float(seg['interval_s'])) for seg in scenario.get('profile') or []]
+    for i, (until, interval) in enumerate(segments):
+        if interval <= 0:
+            raise ValueError(f'profile {i}번 구간 interval_s는 0보다 커야 한다: {interval}')
+        if i and until <= segments[i - 1][0]:
+            raise ValueError(f'profile until_s는 늘어나야 한다: {[u for u, _ in segments]}')
+    return segments
+
+
 def generate(scenario: dict, stations: dict[str, Pose2D], seed: int, id_prefix: str = 'task') -> list[TaskSpec]:
-    """시나리오와 seed로 작업 일정을 만든다."""
+    """시나리오와 seed로 작업 일정을 만든다.
+
+    profile이 있으면 시간대별 간격으로 마지막 until_s까지 만든다 (count는 상한, 없으면 제한 없음). 없으면 count건을
+    interval_s 간격으로 만든다.
+    """
     rng = random.Random(seed)
     names = sorted(stations)
-    count = int(scenario['count'])
-    interval = float(scenario['interval_s'])
+    profile = load_profile(scenario)
+    count = int(scenario['count']) if 'count' in scenario or not profile else None
+    interval = float(scenario.get('interval_s', profile[0][1] if profile else 0.0))
     arrival = scenario.get('arrival', 'fixed')
     if arrival not in ('fixed', 'poisson'):
         raise ValueError(f'arrival은 fixed 또는 poisson: {arrival}')
     if interval <= 0:
         raise ValueError(f'interval_s는 0보다 커야 한다: {interval}')
+
+    def interval_at(t: float) -> float:
+        for until, value in profile:
+            if t < until:
+                return value
+        return interval
 
     flows = []
     for flow in scenario['flows']:
@@ -104,9 +129,13 @@ def generate(scenario: dict, stations: dict[str, Pose2D], seed: int, id_prefix: 
 
     tasks = []
     t = float(scenario.get('start_delay_s', 0.0))
-    for i in range(count):
+    i = 0
+    while count is None or i < count:
         if i > 0:
-            t += interval if arrival == 'fixed' else rng.expovariate(1.0 / interval)
+            gap = interval_at(t)
+            t += gap if arrival == 'fixed' else rng.expovariate(1.0 / gap)
+        if profile and t >= profile[-1][0]:
+            break
         kind, pickups, dropoffs, _ = rng.choices(flows, weights=[f[3] for f in flows])[0]
         pickup = rng.choice(pickups)
         # 픽업과 같은 곳으로는 보내지 않는다
@@ -115,6 +144,7 @@ def generate(scenario: dict, stations: dict[str, Pose2D], seed: int, id_prefix: 
         tasks.append(TaskSpec(
             at_s=round(t, 6), task_id=f'{id_prefix}_s{seed}_{i + 1:04d}', type=kind, item=item,
             pickup=pickup, dropoff=dropoff, priority=rng.randint(int(low), int(high)), deadline_s=deadline_s))
+        i += 1
     return tasks
 
 
