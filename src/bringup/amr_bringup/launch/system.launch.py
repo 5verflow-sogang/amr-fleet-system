@@ -109,9 +109,11 @@ def _system(context):
     if arg('congestion') != 'none':
         # 혼잡도를 세는 손님이 실제로 스폰한 손님과 같아야 한다: 손님 파일과 지도 원점을 여기서 같이 넘긴다.
         # 손님 파일을 비우면 혼잡도 노드의 site 기본 손님(normal)
+        # zones_file은 비워 site 기본 혼잡도 구역을 쓰게 한다. 넘기지 않으면 이 launch의 zones_file(구역 클라이언트용
+        # 좁은 통로 구역)이 하위 launch로 보여 혼잡도 노드가 그 파일을 읽고 죽는다 (KeyError 'area', 11/6 녹화 스모크)
         actions.append(_launch('amr_fleet_manager', 'congestion.launch.py', site=arg('congestion'),
-                               obstacles_file=obstacles, map_origin_in_world=arg('map_origin_in_world'),
-                               use_sim_time='true'))
+                               zones_file='', obstacles_file=obstacles,
+                               map_origin_in_world=arg('map_origin_in_world'), use_sim_time='true'))
 
     for i, robot in enumerate(robots):
         pose = (robot.x, robot.y, robot.yaw)

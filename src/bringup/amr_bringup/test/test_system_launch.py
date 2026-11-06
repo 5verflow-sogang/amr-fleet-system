@@ -165,6 +165,8 @@ def test_congestion_node_uses_spawned_guests():
     assert congestion['site'] == 'restaurant'
     assert congestion['obstacles_file'] == include_args(context, actions, 'config')['config']
     assert congestion['map_origin_in_world'] == '[0, 0, 0]'
+    # 구역 클라이언트용 zones_file이 새어 들어가지 않게 비워 넘긴다 (혼잡도 노드는 site 기본 구역)
+    assert congestion['zones_file'] == ''
     # 기본은 혼잡도 노드 없음
     context = context_with_defaults(module, num_robots=1)
     with pytest.raises(AssertionError, match='site'):
