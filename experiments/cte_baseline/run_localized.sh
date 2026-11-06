@@ -41,7 +41,7 @@ trap cleanup EXIT
 # EKF·AMCL(지도 v1, #96). BT·Fleet·동적 장애물·카메라는 끈다
 ros2 launch amr_bringup system.launch.py num_robots:=1 "robots_file:=$HERE/robots_single.yaml" \
   gui:=false dynamic_obstacles:=false enable_camera:=false bt:=false fleet:=false \
-  localization:=true use_imu:=true seed:=1 > "$OUT/sim.log" 2>&1 &
+  localization:=amcl use_imu:=true seed:=1 > "$OUT/sim.log" 2>&1 &
 SIM_PID=$!
 
 for _ in $(seq 1 180); do

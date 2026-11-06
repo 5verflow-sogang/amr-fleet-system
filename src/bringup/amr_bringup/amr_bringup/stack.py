@@ -12,6 +12,12 @@ from amr_bringup.robots import cmd_vel_chain, encoder_seed
 # 몸체(spawn_robot body) → Nav2 프로필(nav2.launch.py nav2_profile). serving이면 footprint가 서빙 로봇 크기가 된다
 NAV2_PROFILE = {'amr': 'warehouse', 'serving': 'restaurant'}
 
+# off: DiffDrive odom TF를 그대로 씀 (지도 매핑 등 위치추정 자체가 필요 없을 때)
+# amcl: AMCL + EKF 두 개 (기본, 물류센터 KPI에 쓰는 것)
+# ground_truth: 시뮬레이터 정답 위치로 대신함 - 식당 시연 녹화 전용, 물류센터 KPI에는 안 씀
+#   (amr_localization README "정답 위치로 대신하기")
+LOCALIZATION_MODES = ('off', 'amcl', 'ground_truth')
+
 
 class Include(NamedTuple):
     """다른 패키지의 launch 하나와 넘길 인자."""
@@ -23,7 +29,7 @@ class Include(NamedTuple):
 @dataclass
 class Options:
     """system.launch.py 인자 중 로봇 스택을 정하는 것."""
-    localization: bool = True
+    localization: str = 'amcl'
     bt: bool = True
     fleet: bool = True
     nav2: bool = False
@@ -36,6 +42,7 @@ class Options:
     payload_mass: str = '0.0'
     seed: int = 0
     map: str = ''
+    map_origin_in_world: str = '[0, 0, 0]'
     use_imu: str = 'true'
     zones_file: str = ''
     body: str = 'amr'
@@ -43,8 +50,11 @@ class Options:
     def validate(self) -> None:
         if self.body not in NAV2_PROFILE:
             raise RuntimeError(f'body는 {", ".join(NAV2_PROFILE)} 중 하나: {self.body!r}')
-        if self.nav2 and not self.localization:
-            raise RuntimeError('nav2:=true는 map → odom TF를 내는 위치추정이 필요하다 (localization:=true)')
+        if self.localization not in LOCALIZATION_MODES:
+            raise RuntimeError(f'localization은 {", ".join(LOCALIZATION_MODES)} 중 하나: {self.localization!r}')
+        if self.nav2 and self.localization == 'off':
+            raise RuntimeError(
+                'nav2:=true는 map → odom TF를 내는 위치추정이 필요하다 (localization:=amcl 또는 ground_truth)')
         if self.docking and not self.nav2:
             # nav2:=false면 BT 이동이 자리채움이라 로봇이 스테이션에 가지 않고 제자리에서 도킹을 시도한다 (마커판이 안 보여 904)
             raise RuntimeError('docking:=true는 로봇이 스테이션까지 가야 해서 Nav2가 필요하다 (nav2:=true)')
@@ -65,18 +75,23 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
     stack = [
         Include('amr_gazebo', 'spawn_robot.launch.py', dict(
             namespace=name, x=x, y=y, yaw=yaw,
-            # EKF(ekf_local)가 odom → base_footprint를 내므로 DiffDrive TF는 끈다 (docs/api.md 2-1절)
-            publish_odom_tf='false' if opt.localization else 'true',
+            # EKF(ekf_local) 또는 ground_truth_localization이 odom → base_footprint를 내므로
+            # DiffDrive TF는 끈다 (docs/api.md 2-1절). off일 때만 DiffDrive가 낸다
+            publish_odom_tf='true' if opt.localization == 'off' else 'false',
             enable_camera=str(opt.enable_camera).lower(), payload_mass=opt.payload_mass, body=opt.body,
             use_sim_time='true')),
         Include('amr_odometry', 'odometry.launch.py', dict(
             namespace=name, encoder_seed=encoder_seed(opt.seed, index), use_sim_time='true')),
         Include('amr_odometry', 'sensor_filters.launch.py', dict(namespace=name, use_sim_time='true')),
     ]
-    if opt.localization:
+    if opt.localization == 'amcl':
         stack.append(Include('amr_localization', 'localization.launch.py', dict(
             namespace=name, map=opt.map, start_map_server='true' if index == 0 else 'false',
             use_imu=opt.use_imu, initial_x=mx, initial_y=my, initial_yaw=myaw, use_sim_time='true')))
+    elif opt.localization == 'ground_truth':
+        # 식당 시연 녹화 전용 (물류센터 KPI에는 안 씀) - amr_localization README "정답 위치로 대신하기"
+        stack.append(Include('amr_localization', 'ground_truth_localization.launch.py', dict(
+            namespace=name, map_origin_in_world=opt.map_origin_in_world, use_sim_time='true')))
     if opt.bt:
         stack.append(Include('amr_bt', 'amr_bt.launch.py', dict(
             namespace=name, relayed='true' if opt.fleet else 'false', use_sim_time='true',

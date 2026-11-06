@@ -27,6 +27,7 @@ setup(
             'eval_offline = amr_localization.eval_offline:main',
             'kidnap_recovery = amr_localization.kidnap_recovery_node:main',
             'kidnap_trial = amr_localization.kidnap_trial_node:main',
+            'ground_truth_localization = amr_localization.ground_truth_localization_node:main',
         ],
     },
 )

@@ -48,6 +48,38 @@ ros2 launch amr_localization localization.launch.py odom_topic:=wheel/odom   # D
 - 함께 띄워야 하는 것: 시뮬레이터와 로봇(`amr_gazebo`), 휠 오도메트리·센서 필터(`amr_odometry`). D4에 따라 `amr_odometry`는 `publish_tf:=false`(기본), DiffDrive는 `publish_odom_tf:=false`로 띄운다.
 - 위치 오차는 `eval_node`(아래)로 잰다: 추정 `odometry/filtered`, `map_origin_in_world: [-0.0439, 1.4712, -0.00088]`.
 
+## 정답 위치로 대신하기 (`ground_truth_localization.launch.py`) — 식당 시연 녹화 전용
+
+> **물류센터 KPI에는 쓰지 않는다.** 위치추정 성능(AMCL·EKF)을 전혀 반영하지 않고 시뮬레이터 정답
+> 위치를 그대로 내보내는 것이라, 위치 오차·수렴 같은 걸 재는 측정에 섞으면 그 측정 자체가 무의미해진다.
+> **이 옵션으로 찍은 시연 영상은 정답 위치를 썼다는 것을 영상에 밝힌다.**
+
+식당 리허설에서 AMCL 오차 0.9~2.3 m 때문에 로봇이 테이블 안에 있다고 믿고 멈추거나 거짓 도착이
+났다(원인 분석·지도 분리는 pp 창에서 따로 진행 중). 시연 녹화 동안만 위치추정을 Gazebo 정답으로
+대신해 이 문제를 피한다. `localization.launch.py`(AMCL+EKF)와 같은 토픽·TF를 내므로 Nav2·구역
+클라이언트 등 나머지 노드는 바뀐 걸 모른다 - `amr_bringup system.launch.py`는 이 launch를
+`localization:=ground_truth`로 고른다([amr_bringup README](../../bringup/amr_bringup/README.md)).
+
+```bash
+ros2 launch amr_localization ground_truth_localization.launch.py namespace:=amr_01
+```
+
+| 종류 | 이름 | 타입 | 설명 |
+| --- | --- | --- | --- |
+| Subscribe | `ground_truth/odom` | `nav_msgs/msg/Odometry` | 정답, world 기준 (`amr_gazebo`) |
+| Publish | `amcl_pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | 정답을 map 기준으로 바꾼 값. 공분산은 "거의 확실하다"는 뜻의 작은 값 |
+| Publish | `odometry/local` | `nav_msgs/msg/Odometry` | 정답, odom 기준 |
+| Publish | `odometry/filtered` | `nav_msgs/msg/Odometry` | 정답, map 기준 |
+| Publish | `/tf` | | `map → <ns>/odom`(identity, static), `<ns>/odom → <ns>/base_footprint`(정답을 그대로) |
+
+| 인자 | 기본값 | 설명 |
+| --- | --- | --- |
+| `namespace` | `amr_01` | 로봇. TF 프레임 접두어로도 쓴다 |
+| `map_origin_in_world` | `[-0.0439, 1.4712, -0.00088]` | world에서 본 map 원점. `system.launch.py`와 같은 값으로 맞춘다 |
+
+- `map → <ns>/odom`을 identity로 두고 `<ns>/odom → <ns>/base_footprint` 하나로 정답 위치를 옮긴다 - 그래서 `odometry/local`(odom 기준)과 `odometry/filtered`(map 기준)이 숫자로 같다.
+- 변환 수학은 `amr_localization.ground_truth`(ROS 없이 테스트).
+
 ## 정확도 평가 모듈 (`amr_localization.eval`)
 
 ROS에 의존하지 않는 순수 Python 모듈이다. 시뮬레이터 없이 단위 테스트한다. 로그 형식은 [하네스 로그 포맷](../../../tools/harness/README.md)을 따른다.

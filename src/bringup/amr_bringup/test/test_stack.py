@@ -96,13 +96,23 @@ def test_map_server_only_on_first_robot():
 
 
 def test_localization_off_uses_diffdrive_tf():
-    items = stack(localization=False)
+    items = stack(localization='off')
     assert 'localization.launch.py' not in launches(items)
+    assert 'ground_truth_localization.launch.py' not in launches(items)
     assert args(items, 'spawn_robot.launch.py')['publish_odom_tf'] == 'true'
 
 
+def test_localization_ground_truth_uses_gt_launch_and_no_diffdrive_tf():
+    items = stack(localization='ground_truth')
+    assert 'localization.launch.py' not in launches(items)
+    gt = args(items, 'ground_truth_localization.launch.py')
+    assert args(items, 'spawn_robot.launch.py')['publish_odom_tf'] == 'false'
+    assert gt['map_origin_in_world'] == '[0, 0, 0]'  # Options 기본값
+
+
 @pytest.mark.parametrize('flags, message', [
-    ({'nav2': True, 'localization': False}, 'localization'),
+    ({'nav2': True, 'localization': 'off'}, 'localization'),
+    ({'localization': 'warehouse'}, 'localization'),
     ({'detection': True}, 'enable_camera'),
     ({'docking': True, 'enable_camera': True}, 'nav2'),
     ({'docking': True, 'nav2': True}, 'enable_camera'),

@@ -22,6 +22,7 @@ INCLUDED = [
     ('amr_odometry', 'odometry.launch.py'),
     ('amr_odometry', 'sensor_filters.launch.py'),
     ('amr_localization', 'localization.launch.py'),
+    ('amr_localization', 'ground_truth_localization.launch.py'),
     ('amr_bt', 'amr_bt.launch.py'),
     ('amr_fleet_manager', 'fleet_manager.launch.py'),
     ('amr_bringup', 'nav2.launch.py'),
@@ -75,8 +76,16 @@ def test_options_off():
 
 def test_world_to_map_tf_only_with_localization():
     module = load_module()
-    actions = module._system(context_with_defaults(module, num_robots=1, fleet='false', localization='false'))
+    actions = module._system(context_with_defaults(module, num_robots=1, fleet='false', localization='off'))
     assert not any(isinstance(a, Node) for a in actions)
+
+
+def test_world_to_map_tf_published_for_ground_truth_too():
+    # ground_truth도 world → map TF가 필요하다 (ground_truth_localization_node가 정답을 map 기준으로 바꿀 때 같은 원점을 씀)
+    module = load_module()
+    actions = module._system(context_with_defaults(
+        module, num_robots=1, fleet='false', localization='ground_truth'))
+    assert any(isinstance(a, Node) for a in actions)
 
 
 def test_stage_flags_do_not_change_robot_count():
@@ -90,7 +99,7 @@ def test_stage_flags_do_not_change_robot_count():
 def test_nav2_needs_localization():
     module = load_module()
     with pytest.raises(RuntimeError, match='localization'):
-        module._system(context_with_defaults(module, nav2=True, localization=False))
+        module._system(context_with_defaults(module, nav2=True, localization='off'))
 
 
 @pytest.mark.parametrize('name', ['detection', 'docking'])

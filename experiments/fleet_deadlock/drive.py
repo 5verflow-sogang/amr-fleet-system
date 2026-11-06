@@ -79,7 +79,7 @@ def origin_from_tf(node, timeout_s=15.0):
         q = t.rotation
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
         return [t.translation.x, t.translation.y, yaw]
-    raise RuntimeError('TF world → map이 없다 (system.launch localization:=true가 낸다). --origin으로 직접 줄 수 있다')
+    raise RuntimeError('TF world → map이 없다 (system.launch localization:=amcl이 낸다). --origin으로 직접 줄 수 있다')
 
 
 def main():
