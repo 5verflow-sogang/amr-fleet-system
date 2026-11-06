@@ -3,7 +3,7 @@
 #                                  scenario=demo_s12, repeats=1, label=off, params="congestion_filter=none slot=b2"
 # 시작 위치: 1호 입구 옆(-10.5, -5.6) (robots_restaurant_s12.yaml). 배정 비용은 직선 거리(euclidean).
 # 1초 재계획 BT는 body:=serving이면 자동(#307 머지 뒤)
-# TODO(지수): customer_2를 뺀 손님 파일이 생기면 guests를 바꾼다
+# 손님: 피크 파일 그대로 (지수 11/6: peak_1~3 서쪽 통로 몰림 → 1-2, peak_4~6 배식대 앞 → 1-1). 직원은 혼잡도에 안 센다
 # TODO(연우): 장면 스크립트(4대 먼저 배달 → 0초 요청, /demo/t0)가 생기면 task_schedule 대신 쓴다
 name: demo_s12
 extends: demo_restaurant

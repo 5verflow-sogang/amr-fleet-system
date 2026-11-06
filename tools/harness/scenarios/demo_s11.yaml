@@ -4,7 +4,7 @@
 #   결과: gs://amr-fleet-results/runs/demo_s11-on/…/video/*.mp4 (끔은 demo_s11-off)
 # 시작 위치: 1호 입구 옆(-10.5, -5.6), 3호 3번 매장 앞 (robots_restaurant_s11.yaml). 경로 필터는 끈다.
 # 로봇 시점: 끔은 1호, 켬은 3호가 주인공 → params에 robot_camera=amr_01 또는 amr_03 (RTF가 더 떨어진다)
-# TODO(지수): 1-1 손님 파일(배식대 앞 손님 왼쪽 구석, customer_2 뺌)이 생기면 guests를 바꾼다
+# 손님: 피크 파일 그대로 (지수 11/6: peak_1~3 서쪽 통로 몰림 → 1-2, peak_4~6 배식대 앞 → 1-1). 직원은 혼잡도에 안 센다
 # TODO(연우): 장면 스크립트(2·4·5호 먼 배달 → 0초 요청, /demo/t0)가 생기면 task_schedule 대신 쓴다
 name: demo_s11
 extends: demo_restaurant
