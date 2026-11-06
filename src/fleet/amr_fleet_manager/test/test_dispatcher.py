@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from amr_fleet_core.assignment import RobotInfo, TaskInfo
 from amr_fleet_core.charging import ChargeConfig, Station
+from amr_fleet_core.energy import EnergyModel
 
 from amr_fleet_manager.dispatcher import (ERROR_CANCELED, ERROR_TASK_TAKEN, STATE_COMPLETED, STATE_FAILED,
                                           STATE_IN_PROGRESS, STATE_PENDING, TYPE_CHARGE, TYPE_RETURN, Dispatcher,
@@ -701,3 +702,63 @@ def test_generator_charge_task_counts_toward_limit():
     d.assign(0.0)
     assert d.charging_robots() == {d.tasks['gen_c'].assignee: 'charger_c3'}
     assert d.plan_charging(0.0) == []
+
+
+# ---- 에너지 예측 배정 (2단계) ----
+
+UNIT = EnergyModel(move_per_m=1.0, idle_per_s=0.0, speed_mps=1.0, path_factor=1.0, reserve_percent=0.0)
+
+
+def test_energy_check_keeps_low_robot_off_long_task():
+    # #312 첫 Docker 실행: 충전 차례를 기다리던 22 % 로봇이 긴 배송을 받아 충전기 가는 길에 0 %가 됐다.
+    # 켜면 그 로봇은 긴 작업에서만 빠지고, 짧은 작업은 받는다
+    chargers = (Station('charger_c1', (0.0, -10.0)),)
+    for check, expected in ((False, 'amr_01'), (True, 'amr_02')):
+        d = make(energy_check=check, energy=UNIT, chargers=chargers)
+        d.update_robot(robot('amr_01', (0.0, 0.0), battery=22.0), '', 0.0)
+        d.update_robot(robot('amr_02', (30.0, 0.0), battery=90.0), '', 0.0)
+        d.add_task(TaskInfo(task_id='long', task_type=0, pickup_xy=(0.0, 10.0), dropoff_xy=(20.0, 10.0),
+                            priority=5, created=0.0))
+        d.add_task(TaskInfo(task_id='short', task_type=0, pickup_xy=(0.0, -2.0), dropoff_xy=(0.0, -5.0),
+                            priority=0, created=0.0))
+        commands, rows = d.assign(0.0)
+        assert {c.task_id: c.robot_id for c in commands}['long'] == expected
+    assert {c.task_id: c.robot_id for c in commands} == {'long': 'amr_02', 'short': 'amr_01'}
+
+
+def test_energy_check_leaves_task_queued_when_nobody_can():
+    chargers = (Station('charger_c1', (0.0, -10.0)),)
+    d = make(energy_check=True, energy=UNIT, chargers=chargers)
+    d.update_robot(robot('amr_01', battery=22.0), '', 0.0)
+    d.add_task(TaskInfo(task_id='long', task_type=0, pickup_xy=(0.0, 10.0), dropoff_xy=(20.0, 10.0),
+                        priority=0, created=0.0))
+    commands, rows = d.assign(0.0)
+    assert commands == [] and [(r.task_id, r.robot_id) for r in rows] == [('long', '')]
+    assert d.tasks['long'].state == STATE_PENDING
+
+
+def test_battery_weight_validation():
+    with pytest.raises(ValueError):
+        make(battery_weight=-1.0)
+
+
+def test_energy_check_counts_charge_queue_wait():
+    # 2대, N=1: amr_02가 충전 중이라 amr_01은 작업을 마치고 충전 차례를 기다려야 한다.
+    # 비교 실행에서 21 %로 끝낸 로봇이 90초 서서 닳아 3.6 %로 충전기에 닿았다 → 대기 소모까지 넣으면 그 작업을 안 준다
+    model = EnergyModel(move_per_m=1.0, idle_per_s=0.1, speed_mps=1.0, path_factor=1.0, reserve_percent=0.0)
+    chargers = (Station('charger_c1', (0.0, -10.0)),)
+    for queue_on, expected in ((False, ['short']), (True, [])):
+        d = make(energy_check=True, energy=model, chargers=chargers, charging_enabled=queue_on,
+                 charge=ChargeConfig(low_percent=30.0, min_in_service=1), min_battery_percent=10.0)
+        d.update_robot(robot('amr_01', (0.0, 0.0), battery=15.0, mode=IDLE), '', 0.0)
+        # amr_02: 충전기 위에서 충전 중 (30 → 100 %, 140 s 남음)
+        d.update_robot(robot('amr_02', (0.0, -10.0), battery=30.0, mode=BUSY), 'gen_c', 0.0)
+        d.add_task(TaskInfo(task_id='gen_c', task_type=TYPE_CHARGE, dropoff_xy=(0.0, -10.0), priority=0, created=0.0))
+        d.tasks['gen_c'].assignee = 'amr_02'
+        d.tasks['gen_c'].state = STATE_IN_PROGRESS
+        d.robots['amr_02'].task_id = 'gen_c'
+        d.add_task(TaskInfo(task_id='short', task_type=0, pickup_xy=(0.0, -2.0), dropoff_xy=(0.0, -5.0),
+                            priority=0, created=0.0))
+        commands, _ = d.assign(0.0)
+        assert [c.task_id for c in commands] == expected
+    assert d.charge_queue(0.0).remaining_s == pytest.approx((140.0,))

@@ -110,6 +110,22 @@ ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<구역> obstacle
   - 패턴 기본값은 `charger_*`, `wait_*`이다.
 - 로그에 충전·복귀를 낼 때와 충전 차례를 기다리는 로봇이 바뀔 때를 남긴다.
 
+### 에너지 예측 배정 (`energy.enabled`, 2단계)
+
+켜면 할당 알고리즘에 `amr_fleet_core.make_energy_feasible`을 넘긴다. 작업을 끝내고 가장 가까운 충전기까지 갈 배터리가 없는 로봇은 그 작업에서만 빠진다. `min_battery_percent` 하한은 그대로 둔다.
+
+- 충전기는 `charging.stations_file`에서 고른다 (자동 충전을 꺼도 쓴다).
+- `energy.*` 소모율은 로봇 쪽과 같게 둔다.
+  - amr_bt 기본이면 그대로 둔다.
+  - 가짜 로봇 `fake_robots_battery.yaml`이면 `energy_move_per_m:=0.1 energy_idle_per_s:=0.01 energy_speed_mps:=1.0 energy_path_factor:=1.0`이다.
+- 할당하지 못한 작업은 `assignments.csv`에 `robot_id` 빈칸으로 남는다.
+- 자동 충전도 켜면 충전 차례 대기 시간을 넣는다.
+  - 작업을 마친 뒤 배터리가 `charging.low_percent` 밑이면, 그 로봇은 충전 차례를 기다려야 한다.
+  - 그 예상 대기 시간 × `energy.idle_per_s`를 필요 배터리에 더한다.
+  - 대기 시간은 충전 중인 로봇의 남은 시간(충전기까지 이동 + `energy.charge_target_percent`까지 충전)과 앞에서 기다리는 로봇 수로 추정한다. 이 작업에 걸리는 시간만큼은 뺀다.
+  - 최소 운영 대수 때문에 동시 충전이 묶이면, 작업을 끝낸 로봇이 서서 닳는다. 넣기 전 비교 실행에서는 21 %로 끝낸 로봇이 90초 기다려 3.6 %로 충전기에 닿았다.
+- `assignment.battery_weight` > 0이면 비용에 배터리 벌점을 더해, 배터리가 많은 로봇이 먼 작업을 맡게 한다.
+
 ```bash
 # 가짜 로봇 5대, N=3, 로봇마다 다른 시작 배터리와 압축한 소모율
 ros2 launch amr_fleet_manager fleet_manager.launch.py charging:=true min_in_service:=3
@@ -236,6 +252,14 @@ ros2 launch amr_fleet_manager task_generator.launch.py
 | `charging.stations_file` | `''` | 충전기·대기 위치 스테이션 파일 (world 좌표). launch 인자 `stations_file` (기본 `config/stations.yaml`) |
 | `charging.map_origin_in_world` | `[-0.0439, 1.4712, -0.00088]` | world에서 본 map 원점. 작업 생성기와 같게. launch 인자 같은 이름 (식당 `[0, 0, 0]`) |
 | `charging.charger_pattern` | `charger_*` | 충전기 스테이션 이름 패턴 |
+| `energy.enabled` | `false` | 에너지 예측 배정 (위 '에너지 예측 배정'). launch 인자 `energy_check` |
+| `energy.move_per_m` | `0.05` | 이동 1 m당 소모 (%). 로봇과 같게. launch 인자 `energy_move_per_m` |
+| `energy.idle_per_s` | `0.002` | 정지 소모 (%/s). launch 인자 `energy_idle_per_s` |
+| `energy.speed_mps` | `0.5` | 평균 주행 속도. 가는 동안의 정지 소모를 거리로 바꾼다. launch 인자 `energy_speed_mps` |
+| `energy.path_factor` | `1.3` | 직선 거리 → 경로 길이 비율 (가짜 로봇은 직선이라 1.0). launch 인자 `energy_path_factor` |
+| `energy.reserve_percent` | `5.0` | 충전기에 닿았을 때 남길 여유 (%) |
+| `energy.charge_per_s`, `energy.charge_target_percent` | `0.5`, `100.0` | 충전 중인 로봇이 언제 끝날지(충전 차례 대기 시간) 추정에 쓴다. 로봇과 같게 |
+| `assignment.battery_weight` | `0.0` | 비용 + 이 값 × (필요 배터리 / 남은 배터리) [m]. 0이면 끔. launch 인자 `battery_weight` |
 | `charging.wait_pattern` | `wait_*` | 충전을 마친 로봇을 보낼 대기 위치 패턴. 비우면 충전기 위에 그대로 둔다 |
 | `assignment.station_clearance_m` | `1.0` | 스테이션 예약 (m). 맡겨진 작업의 픽업·하역 위치에서 이 거리 안을 쓰는 작업은 그 작업이 끝날 때까지 큐에서 기다린다. 큐 안에서 겹치면 우선순위가 높은 하나만 맡긴다. 같은 도크로 가는 두 작업을 동시에 내보내 두 로봇이 한 자리에서 막혔다 (11/2). 0이면 끄기 (`fleet_fake`는 연구 1 조건대로 0) |
 | `robot_timeout_s` | `3.0` | 이 시간 동안 `RobotState`가 없으면 후보에서 뺀다 (s) |

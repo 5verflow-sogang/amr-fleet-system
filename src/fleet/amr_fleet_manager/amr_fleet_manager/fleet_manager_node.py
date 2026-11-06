@@ -15,6 +15,7 @@ import rclpy
 from builtin_interfaces.msg import Time
 from amr_fleet_core.assignment import RobotInfo, TaskInfo, has_pickup
 from amr_fleet_core.charging import ChargeConfig, Station
+from amr_fleet_core.energy import EnergyModel
 from amr_fleet_core.traffic import Decision, ZoneManager
 from amr_msgs.msg import (ErrorInfo, FleetHeartbeat, FleetTaskTable, RobotFleetMode, RobotState, Task,
                           TaskAssignment, TaskAssignmentAck, TaskRecord, TaskStatus, ZoneCongestionArray, ZoneGrant,
@@ -74,8 +75,9 @@ class FleetManager(Node):
             stations = {name: world_to_map(pose, origin) for name, pose in load_stations(stations_file).items()}
         chargers = pick_stations(stations, self.declare_parameter('charging.charger_pattern', 'charger_*').value)
         waits = pick_stations(stations, self.declare_parameter('charging.wait_pattern', 'wait_*').value)
-        if charging and not chargers:
-            raise ValueError(f'charging.enabled인데 충전기가 없다 (charging.stations_file={stations_file!r})')
+        energy_check = self.declare_parameter('energy.enabled', False).value
+        if (charging or energy_check) and not chargers:
+            raise ValueError(f'charging.enabled·energy.enabled인데 충전기가 없다 (charging.stations_file={stations_file!r})')
         # Task 메시지에 넣을 자세 (map 좌표)
         self._station_poses = {**chargers, **waits}
         self._dispatcher = Dispatcher(DispatcherConfig(
@@ -97,6 +99,17 @@ class FleetManager(Node):
             ),
             chargers=tuple(Station(name, pose[:2]) for name, pose in chargers.items()),
             wait_stations=tuple(Station(name, pose[:2]) for name, pose in waits.items()),
+            energy_check=energy_check,
+            energy=EnergyModel(
+                move_per_m=self.declare_parameter('energy.move_per_m', 0.05).value,
+                idle_per_s=self.declare_parameter('energy.idle_per_s', 0.002).value,
+                speed_mps=self.declare_parameter('energy.speed_mps', 0.5).value,
+                path_factor=self.declare_parameter('energy.path_factor', 1.3).value,
+                reserve_percent=self.declare_parameter('energy.reserve_percent', 5.0).value,
+                charge_per_s=self.declare_parameter('energy.charge_per_s', 0.5).value,
+                charge_target_percent=self.declare_parameter('energy.charge_target_percent', 100.0).value,
+            ),
+            battery_weight=self.declare_parameter('assignment.battery_weight', 0.0).value,
         ))
         self._charge_waiting: list[str] = []
         heartbeat_period_s = self.declare_parameter('heartbeat_period_s', 0.2).value
@@ -148,6 +161,13 @@ class FleetManager(Node):
             self.get_logger().info(
                 f'자동 충전: {c.low_percent:g} % 밑이면 충전, 최소 운영 {c.min_in_service}대, '
                 f'충전기 {list(chargers)}, 충전 뒤 대기 위치 {list(waits)}')
+        if energy_check:
+            e = self._dispatcher.config.energy
+            self.get_logger().info(
+                f'에너지 예측 배정: 작업 + 가장 가까운 충전기까지 {e.per_m:.3f} %/m × 경로 {e.path_factor:g}배 '
+                f'+ 여유 {e.reserve_percent:g} %'
+                + (' + 충전 차례 대기 정지 소모' if charging else '')
+                + f', 배터리 가중치 {self._dispatcher.config.battery_weight:g}')
 
     # ---- 구독 ----
 

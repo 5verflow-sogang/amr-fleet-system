@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Callable, Sequence
 
-from .types import MODE_IDLE, AssignmentResult, CostFn, RobotInfo, TaskInfo
+from .types import MODE_IDLE, AssignmentResult, CostFn, FeasibleFn, RobotInfo, TaskInfo
 
 
 def filter_candidates(robots: Sequence[RobotInfo], min_battery_percent: float) -> list[RobotInfo]:
@@ -45,20 +45,23 @@ def assign_greedy(
     robots: Sequence[RobotInfo],
     cost_fn: CostFn,
     rank: Callable[[RobotInfo, float], tuple],
+    feasible: FeasibleFn = None,
 ) -> AssignmentResult:
     """우선순위 순으로 작업을 꺼내, 남은 로봇 중 rank(로봇, 비용)이 가장 작은 로봇에 맡긴다.
 
     rank 끝에 robot_id를 넣어 동률을 사전순으로 깬다. 로봇이 바닥나면 나머지는 unassigned.
+    feasible이 있으면 그 작업을 맡을 수 있는 로봇 중에서만 고르고, 없으면 그 작업만 unassigned (로봇은 다음 작업에 남는다).
     """
     check_unique_ids(tasks, robots)
     result = AssignmentResult()
     remaining = list(robots)
     for task in sort_by_priority(tasks):
-        if not remaining:
+        able = [r for r in remaining if feasible is None or feasible(r, task)]
+        if not able:
             result.unassigned.append(task.task_id)
             continue
-        costs = {r.robot_id: cost_fn(r, task) for r in remaining}
-        best = min(remaining, key=lambda r: rank(r, costs[r.robot_id]))
+        costs = {r.robot_id: cost_fn(r, task) for r in able}
+        best = min(able, key=lambda r: rank(r, costs[r.robot_id]))
         remaining.remove(best)
         result.assignments[task.task_id] = best.robot_id
         result.total_cost += costs[best.robot_id]

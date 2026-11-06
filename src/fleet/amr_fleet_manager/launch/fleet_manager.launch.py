@@ -76,6 +76,13 @@ def _server(context):
                 'charging.low_percent': float(arg('charge_low_percent')),
                 'charging.min_in_service': int(arg('min_in_service')),
                 'charging.map_origin_in_world': [float(v) for v in yaml.safe_load(arg('map_origin_in_world'))],
+                # 에너지 예측 배정 (2단계). 소모율은 로봇 쪽과 같게 (가짜 로봇 fake_robots_battery.yaml이면 0.1·0.01·1.0·1.0)
+                'energy.enabled': arg('energy_check').lower() == 'true',
+                'energy.move_per_m': float(arg('energy_move_per_m')),
+                'energy.idle_per_s': float(arg('energy_idle_per_s')),
+                'energy.speed_mps': float(arg('energy_speed_mps')),
+                'energy.path_factor': float(arg('energy_path_factor')),
+                'assignment.battery_weight': float(arg('battery_weight')),
             }],
             output='screen',
         )
@@ -122,6 +129,17 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'min_in_service', default_value='0',
             description='운영 중 로봇 최소 대수 N. 동시 충전 ≤ 살아 있는 로봇 − N (0이면 충전기 수로만 묶는다)'),
+        DeclareLaunchArgument(
+            'energy_check', default_value='false',
+            description='에너지 예측 배정: 작업을 끝내고 가장 가까운 충전기까지 갈 배터리가 없는 로봇은 그 작업에서 뺀다'),
+        DeclareLaunchArgument('energy_move_per_m', default_value='0.05', description='이동 1 m당 소모 (%, 로봇과 같게)'),
+        DeclareLaunchArgument('energy_idle_per_s', default_value='0.002', description='정지 소모 (%/s, 로봇과 같게)'),
+        DeclareLaunchArgument('energy_speed_mps', default_value='0.5', description='평균 주행 속도 (m/s)'),
+        DeclareLaunchArgument(
+            'energy_path_factor', default_value='1.3', description='직선 거리 → 경로 길이 비율 (가짜 로봇 1.0)'),
+        DeclareLaunchArgument(
+            'battery_weight', default_value='0.0',
+            description='비용 + 이 값 × (필요 배터리 / 남은 배터리) [m]. 배터리가 많은 로봇이 먼 작업을 맡는다. 0이면 끔'),
         DeclareLaunchArgument(
             'stations_file', default_value=os.path.join(share, 'config', 'stations.yaml'),
             description='충전기(charger_*)·대기 위치(wait_*) 스테이션 파일 (world 좌표). 식당은 stations_restaurant.yaml'),

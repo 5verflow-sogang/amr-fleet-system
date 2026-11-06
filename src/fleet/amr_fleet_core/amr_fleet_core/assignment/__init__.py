@@ -5,7 +5,7 @@ from .cost import CongestedArea, euclidean_cost, make_congestion_cost, segment_l
 from .hungarian import assign_hungarian
 from .load_balance import assign_load_balance
 from .nearest import assign_nearest
-from .types import PICKUP_TYPES, AssignmentResult, CostFn, RobotInfo, TaskInfo, has_pickup
+from .types import PICKUP_TYPES, AssignmentResult, CostFn, FeasibleFn, RobotInfo, TaskInfo, has_pickup
 
 # amr_fleet_manager 파라미터 assignment.algorithm 값 -> 함수
 ALGORITHMS = {
@@ -24,6 +24,7 @@ __all__ = [
     'COST_FNS',
     'CongestedArea',
     'CostFn',
+    'FeasibleFn',
     'RobotInfo',
     'TaskInfo',
     'assign_hungarian',
