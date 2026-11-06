@@ -34,12 +34,16 @@ params:
   congestion_filter: none                        # 1-2 켬: keepout
   cameras: top,west,stalls                       # amr_gazebo config/demo_cameras_restaurant.yaml 이름
   robot_camera: "false"                          # 로봇 시점: amr_01 등 (카메라 하나마다 RTF가 더 떨어진다)
+  # 추적·안전 노드 (로봇마다 추적·안전·E-Stop 버튼 3개). 노드가 130개를 넘으면 마지막 로봇의 Nav2가
+  # 서로를 못 찾는 것으로 보여(11/6, 늘 amr_05만) 끄고 확인 중이다
+  tracking: "true"
+  safety: "true"
   # 작업 일정 (amr_fleet_manager 작업 생성기 형식). 연우 장면 스크립트가 생기면 그쪽으로 바꾼다
   task_schedule: /repo/tools/harness/tasks/restaurant_smoke.yaml
 processes:
   - name: stack
     cmd: >-
-      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true tracking:=true safety:=true
+      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true tracking:={tracking} safety:={safety}
       world:=restaurant.sdf body:=serving seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct}
       robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/{robots}
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"

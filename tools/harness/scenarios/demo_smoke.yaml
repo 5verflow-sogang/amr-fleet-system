@@ -9,3 +9,5 @@ params:
   cameras: top,west,stalls
   robot_camera: "false"
   duration_s: 60
+  tracking: "true"
+  safety: "true"
