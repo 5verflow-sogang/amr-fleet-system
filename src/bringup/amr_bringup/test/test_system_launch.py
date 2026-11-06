@@ -24,6 +24,7 @@ INCLUDED = [
     ('amr_localization', 'localization.launch.py'),
     ('amr_bt', 'amr_bt.launch.py'),
     ('amr_fleet_manager', 'fleet_manager.launch.py'),
+    ('amr_fleet_manager', 'congestion.launch.py'),
     ('amr_bringup', 'nav2.launch.py'),
     ('amr_zone_client', 'zone_client.launch.py'),
     ('amr_tracking', 'tracking.launch.py'),
@@ -151,6 +152,30 @@ def test_restaurant_args_reach_world_obstacles_and_fleet():
     assert include_args(context, actions, 'world')['world'] == 'warehouse.sdf'
     assert include_args(context, actions, 'config')['config'] == ''
     assert include_args(context, actions, 'cost_fn')['cost_fn'] == 'euclidean'
+
+
+def test_congestion_node_uses_spawned_guests():
+    # 혼잡도 노드는 실제로 스폰한 손님 파일과 지도 원점으로 센다 (식당 시연 "명령 한 줄")
+    module = load_module()
+    context = context_with_defaults(
+        module, num_robots=1, dynamic_obstacles=True, congestion='restaurant', map_origin_in_world='[0, 0, 0]',
+        dynamic_obstacles_file='dynamic_obstacles_restaurant_peak.yaml')
+    actions = module._system(context)
+    congestion = include_args(context, actions, 'site')
+    assert congestion['site'] == 'restaurant'
+    assert congestion['obstacles_file'] == include_args(context, actions, 'config')['config']
+    assert congestion['map_origin_in_world'] == '[0, 0, 0]'
+    # 기본은 혼잡도 노드 없음
+    context = context_with_defaults(module, num_robots=1)
+    with pytest.raises(AssertionError, match='site'):
+        include_args(context, module._system(context), 'site')
+
+
+def test_camera_robot_names_checked():
+    module = load_module()
+    module._system(context_with_defaults(module, num_robots=2, enable_camera='amr_02'))
+    with pytest.raises(RuntimeError, match='amr_03'):
+        module._system(context_with_defaults(module, num_robots=2, enable_camera='amr_03'))
 
 
 def test_nav2_launch_description_builds():

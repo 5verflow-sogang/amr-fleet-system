@@ -5,7 +5,7 @@ launch 라이브러리 객체를 뜯어보지 않고도 테스트할 수 있게 
 """
 
 from dataclasses import dataclass
-from typing import List, NamedTuple
+from typing import List, NamedTuple, Optional
 
 from amr_bringup.robots import cmd_vel_chain, encoder_seed
 
@@ -32,7 +32,9 @@ class Options:
     safety: bool = False
     detection: bool = False
     docking: bool = False
-    enable_camera: bool = False
+    # true / false / 카메라를 켤 로봇 이름 목록 'amr_01,amr_03' (시연 로봇 시점: CPU로 5대를 다 그리면 RTF 0.37)
+    enable_camera: object = False
+    congestion_filter: str = 'none'
     payload_mass: str = '0.0'
     seed: int = 0
     map: str = ''
@@ -40,7 +42,19 @@ class Options:
     zones_file: str = ''
     body: str = 'amr'
 
-    def validate(self) -> None:
+    def camera_names(self) -> List[str]:
+        """enable_camera가 로봇 이름 목록이면 그 이름들, true/false면 빈 목록."""
+        value = str(self.enable_camera).replace(' ', '')
+        return [] if value.lower() in ('true', 'false') else [n for n in value.split(',') if n]
+
+    def has_camera(self, name: str) -> bool:
+        return str(self.enable_camera).strip().lower() == 'true' or name in self.camera_names()
+
+    def validate(self, robot_names: Optional[List[str]] = None) -> None:
+        if robot_names is not None:
+            unknown = sorted(set(self.camera_names()) - set(robot_names))
+            if unknown:
+                raise RuntimeError(f'enable_camera에 없는 로봇: {", ".join(unknown)} (로봇: {", ".join(robot_names)})')
         if self.body not in NAV2_PROFILE:
             raise RuntimeError(f'body는 {", ".join(NAV2_PROFILE)} 중 하나: {self.body!r}')
         if self.nav2 and not self.localization:
@@ -48,9 +62,12 @@ class Options:
         if self.docking and not self.nav2:
             # nav2:=false면 BT 이동이 자리채움이라 로봇이 스테이션에 가지 않고 제자리에서 도킹을 시도한다 (마커판이 안 보여 904)
             raise RuntimeError('docking:=true는 로봇이 스테이션까지 가야 해서 Nav2가 필요하다 (nav2:=true)')
-        for name in ('detection', 'docking'):
-            if getattr(self, name) and not self.enable_camera:
-                raise RuntimeError(f'{name}:=true는 카메라가 필요하다 (enable_camera:=true)')
+        all_cameras = str(self.enable_camera).strip().lower() == 'true'
+        if self.detection and not (all_cameras or self.camera_names()):
+            raise RuntimeError('detection:=true는 카메라가 필요하다 (enable_camera:=true 또는 로봇 이름)')
+        if self.docking and not all_cameras:
+            # BT가 모든 로봇에서 도킹 서버를 부르므로 일부만 켜면 카메라 없는 로봇의 작업이 실패한다
+            raise RuntimeError('docking:=true는 모든 로봇에 카메라가 필요하다 (enable_camera:=true)')
 
 
 def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Include]:
@@ -67,7 +84,7 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
             namespace=name, x=x, y=y, yaw=yaw,
             # EKF(ekf_local)가 odom → base_footprint를 내므로 DiffDrive TF는 끈다 (docs/api.md 2-1절)
             publish_odom_tf='false' if opt.localization else 'true',
-            enable_camera=str(opt.enable_camera).lower(), payload_mass=opt.payload_mass, body=opt.body,
+            enable_camera=str(opt.has_camera(name)).lower(), payload_mass=opt.payload_mass, body=opt.body,
             use_sim_time='true')),
         Include('amr_odometry', 'odometry.launch.py', dict(
             namespace=name, encoder_seed=encoder_seed(opt.seed, index), use_sim_time='true')),
@@ -84,7 +101,7 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
     if opt.nav2:
         stack.append(Include('amr_bringup', 'nav2.launch.py', dict(
             namespace=name, cmd_vel_topic=chain['nav_out'], nav2_profile=NAV2_PROFILE[opt.body],
-            use_sim_time='true')))
+            congestion_filter=opt.congestion_filter, use_sim_time='true')))
     if opt.zone_client:
         # 서버와 같은 구역 목록. zones.yaml은 world 좌표라 TF map ← world(system.launch가 발행)로
         # 바꿔 쓰게 한다 (구역 1.5 m 어긋남 수정). 로봇 위치는 네임스페이스 안 상대 토픽
@@ -98,7 +115,7 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
             namespace=name, cmd_vel_topic=chain['nav_out'], use_sim_time='true')))
     if opt.tracking:
         stack.append(Include('amr_tracking', 'tracking.launch.py', dict(namespace=name, use_sim_time='true')))
-    if opt.detection:
+    if opt.detection and opt.has_camera(name):
         stack.append(Include('amr_detection', 'detection.launch.py', dict(namespace=name, use_sim_time='true')))
     if opt.safety:
         stack.append(Include('amr_safety', 'safety.launch.py', dict(
