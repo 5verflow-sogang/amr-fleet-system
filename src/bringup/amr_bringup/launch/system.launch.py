@@ -8,7 +8,7 @@
     ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true tracking:=true safety:=true  # 3단계
     ros2 launch amr_bringup system.launch.py world:=restaurant.sdf body:=serving nav2:=true \
         robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant.yaml \
-        map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:='[0, 0, 0]' \
+        map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:='[0.0, 0.0, 0.0]' \
         dynamic_obstacles:=true dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak.yaml \
         congestion:=restaurant cost_fn:=congestion congestion_filter:=keepout \
         enable_camera:=amr_01                                               # 식당 5대 (혼잡도 켬, 1호만 카메라)
