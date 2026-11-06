@@ -223,11 +223,11 @@ FROM `amr-fleet.fleet_ops.runs` ORDER BY finished_at DESC LIMIT 20
 상태(`terraform.tfstate`)는 `state.tf`의 버킷 `amr-fleet-tfstate`(버전 보관)에 둔다. 처음 한 번 로컬 상태를 옮긴다:
 
 ```bash
-terraform apply                      # 버킷을 먼저 만든다 (로컬 상태)
-# versions.tf terraform 블록에 backend "gcs" { bucket = "amr-fleet-tfstate"  prefix = "gcp" } 를 넣고
-terraform init -migrate-state        # "yes" → 로컬 상태를 버킷으로 복사
+terraform init -migrate-state        # "yes" → 로컬 상태를 버킷으로 복사 (backend는 versions.tf)
 terraform plan                       # 바뀌는 것 없음이면 끝. 로컬 terraform.tfstate*는 지워도 된다
 ```
+
+새로 받은 사람은 `gcloud auth application-default login` 후 `terraform init`만 하면 버킷의 상태를 쓴다 (버킷 읽기·쓰기 권한 필요).
 
 ## 문제 해결
 
