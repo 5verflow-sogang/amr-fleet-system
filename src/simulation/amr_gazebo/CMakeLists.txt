@@ -10,7 +10,7 @@ find_package(sensor_msgs REQUIRED)
 # 연구 2 RL 평가 환경 (amr_gazebo/rl_eval.py, rl_policies.py, scripts/rl_eval_node.py),
 # 시뮬레이션 시계 발행 속도 줄이기 (amr_gazebo/clock_throttle.py, scripts/clock_throttle_node.py)
 ament_python_install_package(${PROJECT_NAME})
-install(PROGRAMS scripts/dynamic_obstacles_node.py scripts/rl_eval_node.py scripts/clock_throttle_node.py
+install(PROGRAMS scripts/dynamic_obstacles_node.py scripts/rl_eval_node.py scripts/clock_throttle_node.py scripts/bag_to_mp4.py
   DESTINATION lib/${PROJECT_NAME})
 
 # 바퀴 joint_states 발행 속도 줄이기 (src/joint_state_throttle_node.cpp, 규칙 include/amr_gazebo/throttle.hpp)
@@ -33,6 +33,7 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_rl_eval test/test_rl_eval.py)
   ament_add_pytest_test(test_clock_throttle test/test_clock_throttle.py)
   ament_add_pytest_test(test_demo_cameras test/test_demo_cameras.py)
+  ament_add_pytest_test(test_demo_video test/test_demo_video.py)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_throttle test/test_throttle.cpp)
   target_include_directories(test_throttle PRIVATE include)

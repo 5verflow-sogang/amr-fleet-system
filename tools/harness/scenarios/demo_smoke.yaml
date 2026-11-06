@@ -1,6 +1,8 @@
 # 식당 시연 녹화 스모크: 화면 없는 러너에서 고정 카메라가 실제로 그려지는지, 그때 RTF와 녹화 용량이 얼마인지 본다.
 # 식당 월드 + 서빙 로봇 5대 + Nav2 + 피크 손님 + 고정 카메라(amr_gazebo demo_cameras.launch.py) + 배달 작업.
-# 결과: run.real_time_factor(요약), bag_info.txt(카메라별 이미지 수·용량), rosbag/ (영상 변환 시험용)
+# 결과: run.real_time_factor(요약), video/<카메라>.mp4 + video.json(첫 프레임 시뮬레이션 시각),
+#       rosbag/(측정 토픽만), bag_info.txt. 카메라 원본(camera_bag/)은 mp4로 바꾼 뒤 지워 버킷에 올리지 않는다
+#       (카메라 3대 60 s 원본 약 8 GB → mp4 수십 MB). 바꾸기에 실패하면 원본이 남아 그대로 올라간다
 #
 #   tools/harness/gcp_run.sh demo_smoke -n 1 --label cpu3            # 카메라 3대
 #   tools/harness/gcp_run.sh demo_smoke -n 1 --label cpu1 --set cameras=top
@@ -43,8 +45,12 @@ processes:
   - name: cpu_monitor
     cmd: python3 /repo/tools/harness/cpu_monitor.py --out {run_dir}/cpu.csv --interval 1.0
     settle_s: 1
+  # 카메라와 측정 토픽을 나눠 녹화한다: 카메라 bag은 mp4로 바꾸고 지운다
+  - name: camera_bag
+    cmd: ros2 bag record -o {run_dir}/camera_bag -e '/demo_cam/.*'
+    settle_s: 1
   - name: rosbag
-    cmd: ros2 bag record -o {run_dir}/rosbag -e '/demo_cam/.*|/fleet/task_status|/fleet/robot_states|/fleet/task_table|/clock'
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/task_status|/fleet/robot_states|/fleet/task_table|/demo/t0|/clock'
     settle_s: 3
   - name: task_generator
     cmd: >-
@@ -58,7 +64,9 @@ driver:
   duration_s: "{duration_s}"
 postprocess:
   - name: bag_info
-    cmd: bash -c 'ros2 bag info {run_dir}/rosbag > {run_dir}/bag_info.txt; du -sh {run_dir}/rosbag >> {run_dir}/bag_info.txt; cat {run_dir}/bag_info.txt'
+    cmd: bash -c 'ros2 bag info {run_dir}/camera_bag > {run_dir}/bag_info.txt; du -sh {run_dir}/camera_bag >> {run_dir}/bag_info.txt; cat {run_dir}/bag_info.txt'
+  - name: video
+    cmd: bash -c 'ros2 run amr_gazebo bag_to_mp4.py {run_dir}/camera_bag --out {run_dir}/video && rm -rf {run_dir}/camera_bag && du -sh {run_dir}/video'
 cleanup:
   - pkill -9 -f "[i]gn gazebo" || true
   - pkill -9 -f "[p]arameter_bridge" || true

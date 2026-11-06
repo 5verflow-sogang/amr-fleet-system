@@ -29,6 +29,8 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>rosbag2_py</exec_depend>  <!-- bag_to_mp4.py (시연 녹화 → mp4) -->
+  <exec_depend>ffmpeg</exec_depend>  <!-- bag_to_mp4.py -->
   <exec_depend>amr_description</exec_depend>
   <!-- rviz2는 gui 이미지에만 설치한다 (sim.launch.py rviz:=true일 때만 필요) -->
 
