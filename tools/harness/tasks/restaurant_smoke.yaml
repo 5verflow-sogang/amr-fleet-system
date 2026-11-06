@@ -1,0 +1,15 @@
+# 식당 시연 스모크(demo_smoke)용 작업 일정: 매장·배식대에서 테이블로 배달을 짧은 간격으로 넣어 5대가 계속 움직이게 한다.
+# 형식은 amr_fleet_manager config/scenarios/basic.yaml과 같다. 이름은 stations_restaurant.yaml
+count: 20
+start_delay_s: 5.0
+arrival: fixed
+interval_s: 6.0
+flows:
+  - type: delivery
+    pickup: [stall_*, buffet_*]
+    dropoff: [t*]
+    weight: 1.0
+items:
+  small: 1.0
+priority: [0, 0]
+deadline_s: 0.0
