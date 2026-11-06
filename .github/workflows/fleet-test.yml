@@ -9,10 +9,11 @@
 # 장애 입력(delay_ms·loss_pct·kill_robot)은 시나리오 params에 그 이름이 있을 때만 넘긴다.
 # workflow_dispatch 입력은 10개까지라 시나리오별 값은 따로 입력을 만들지 않고 params로 받는다.
 #
-# 슬롯 (params의 slot=<이름>, 기본 a): 슬롯마다 러너가 동시에 1대씩 뜬다. 전체 리전 vCPU 한도가 32라
+# 슬롯 (params의 slot=<이름>, 기본 a): 슬롯마다 러너가 동시에 1대씩 뜬다. 전체 리전 vCPU 한도가 80이라(11/6)
 #   a      n2d-standard-16 (템플릿 그대로). Gazebo 시나리오
 #   b1~b4  c2d-standard-8. 가짜 로봇 시나리오(fleet_fake)를 나눠 돌릴 때 (연구 1)
-# a와 b 네 개를 한꺼번에 띄우면 48 vCPU라 마지막 VM은 한도에 걸려 만들어지지 않는다.
+#   c1·c2  n2d-standard-16. 식당 시연 녹화(demo_*) 켬/끔 한 쌍. 서울 N2D 한도(16)를 넘으면 VM이 만들어지지 않는다
+# a + c 둘 + b 넷 = 80 vCPU.
 # 지연을 재는 실험은 기계가 다르면 값이 달라지므로 한 실험의 조건은 같은 종류 슬롯(b끼리)에서 돌린다.
 # GitHub는 같은 concurrency 그룹에서 대기 실행을 1개만 남기고 앞의 대기 실행을 취소한다.
 # 여러 조건을 줄 세울 때는 tools/harness/gcp_batch.py가 슬롯이 빌 때마다 하나씩 넣는다.
@@ -30,7 +31,9 @@ run-name: >-
     contains(format(' {0} ', github.event.inputs.params), ' slot=b1 ') && 'b1 (c2d-8)' ||
     contains(format(' {0} ', github.event.inputs.params), ' slot=b2 ') && 'b2 (c2d-8)' ||
     contains(format(' {0} ', github.event.inputs.params), ' slot=b3 ') && 'b3 (c2d-8)' ||
-    contains(format(' {0} ', github.event.inputs.params), ' slot=b4 ') && 'b4 (c2d-8)' || 'a (n2d-16)' }} · ${{
+    contains(format(' {0} ', github.event.inputs.params), ' slot=b4 ') && 'b4 (c2d-8)' ||
+    contains(format(' {0} ', github.event.inputs.params), ' slot=c1 ') && 'c1 (n2d-16)' ||
+    contains(format(' {0} ', github.event.inputs.params), ' slot=c2 ') && 'c2 (n2d-16)' || 'a (n2d-16)' }} · ${{
     github.triggering_actor }}
 
 on:
@@ -83,7 +86,9 @@ concurrency:
       contains(format(' {0} ', github.event.inputs.params), ' slot=b1 ') && 'b1' ||
       contains(format(' {0} ', github.event.inputs.params), ' slot=b2 ') && 'b2' ||
       contains(format(' {0} ', github.event.inputs.params), ' slot=b3 ') && 'b3' ||
-      contains(format(' {0} ', github.event.inputs.params), ' slot=b4 ') && 'b4' || 'a' }}
+      contains(format(' {0} ', github.event.inputs.params), ' slot=b4 ') && 'b4' ||
+      contains(format(' {0} ', github.event.inputs.params), ' slot=c1 ') && 'c1' ||
+      contains(format(' {0} ', github.event.inputs.params), ' slot=c2 ') && 'c2' || 'a' }}
   cancel-in-progress: false
 
 env:
@@ -118,7 +123,9 @@ jobs:
           case "$slot" in
             a) machine=n2d-standard-16 ;;
             b1|b2|b3|b4) machine=c2d-standard-8 ;;
-            *) echo "::error::slot은 a, b1~b4: $slot"; exit 1 ;;
+            # 시연 녹화용 (11/6). b와 같은 값(시간당 약 280원)에 코어가 두 배. 기존 b 실험과 섞이지 않게 슬롯을 나눴다
+            c1|c2) machine=n2d-standard-16 ;;
+            *) echo "::error::slot은 a, b1~b4, c1·c2: $slot"; exit 1 ;;
           esac
           echo "slot $slot → $machine"
           echo "machine=$machine" >> "$GITHUB_OUTPUT"
