@@ -106,8 +106,34 @@ def test_localization_off_uses_diffdrive_tf():
     ({'detection': True}, 'enable_camera'),
     ({'docking': True, 'enable_camera': True}, 'nav2'),
     ({'docking': True, 'nav2': True}, 'enable_camera'),
+    # 도킹은 BT가 모든 로봇에서 부르므로 일부 로봇만 카메라를 켜면 안 된다
+    ({'docking': True, 'nav2': True, 'enable_camera': 'amr_02'}, 'enable_camera'),
     ({'body': 'forklift'}, 'body'),
 ])
 def test_invalid_options(flags, message):
     with pytest.raises(RuntimeError, match=message):
         stack(**flags)
+
+
+@pytest.mark.parametrize('value, cameras', [
+    (False, {}), (True, {'amr_01', 'amr_02'}), ('false', {}), ('True', {'amr_01', 'amr_02'}),
+    ('amr_01', {'amr_01'}), ('amr_02, amr_05', {'amr_02'}),
+])
+def test_camera_per_robot(value, cameras):
+    # 시연 로봇 시점: 이름을 준 로봇만 카메라를 켜고, 인식(detection)도 그 로봇에서만 띄운다
+    for name in ('amr_01', 'amr_02'):
+        items = robot_stack(Options(enable_camera=value, detection=bool(cameras)), 0, name, POSE, MAP_POSE)
+        on = name in cameras
+        assert args(items, 'spawn_robot.launch.py')['enable_camera'] == str(on).lower(), (value, name)
+        assert ('detection.launch.py' in launches(items)) == on, (value, name)
+
+
+def test_camera_names_must_be_robots():
+    Options(enable_camera='amr_01,amr_03').validate(['amr_01', 'amr_02', 'amr_03'])
+    with pytest.raises(RuntimeError, match='amr_07'):
+        Options(enable_camera='amr_01,amr_07').validate(['amr_01', 'amr_02'])
+
+
+def test_congestion_filter_reaches_nav2():
+    assert args(stack(nav2=True), 'nav2.launch.py')['congestion_filter'] == 'none'
+    assert args(stack(nav2=True, congestion_filter='keepout'), 'nav2.launch.py')['congestion_filter'] == 'keepout'

@@ -41,6 +41,44 @@ def test_restaurant_robots_at_wait_stations():
         assert all(obstacle_clearance(r.x, r.y, o) >= CLEARANCE_M for r in robots for o in obstacles), name
 
 
+def free_on_map(pgm: Path, x: float, y: float, half: float = 0.4) -> bool:
+    """식당 정답 지도(restaurant_gt, 0.05 m, 원점 [-12.5, -8.5], map = world)에서 (x, y) 둘레 정사각형이 비었는지."""
+    data = pgm.read_bytes()
+    width, height, maxval = (int(v) for v in data.split(maxsplit=4)[1:4])
+    pixels = data[-width * height:]
+    cells = int(half / 0.05)
+    col, row = int((x + 12.5) / 0.05), height - 1 - int((y + 8.5) / 0.05)
+    return all(pixels[(row + dr) * width + col + dc] > maxval // 2
+               for dr in range(-cells, cells + 1) for dc in range(-cells, cells + 1))
+
+
+@pytest.mark.parametrize('scene', ['s11', 's12'])
+def test_restaurant_scene_robots(scene):
+    # 식당 시연 장면별 시작 위치: 1호는 입구 옆(서쪽 통로 남쪽 끝), 1-1의 3호는 3번 매장 앞. 나머지는 대기 위치
+    robots = {r.name: r for r in load_robots(str(Path(ROBOTS).with_name(f'robots_restaurant_{scene}.yaml')), 5)}
+    root = Path(__file__).resolve().parents[3]
+    stations = yaml.safe_load((root / 'fleet' / 'amr_fleet_manager' / 'config' / 'stations_restaurant.yaml')
+                              .read_text(encoding='utf-8'))['stations']
+    first = robots['amr_01']
+    assert (first.x, first.y) == (-10.5, -5.6) and first.x < -9.73   # 1-1 성립 조건: 1호가 x -9.73보다 서쪽
+    special = {'amr_01': None, 'amr_03': 'stall_3'} if scene == 's11' else {'amr_01': None}
+    for name, robot in robots.items():
+        if name in special:
+            if special[name]:
+                assert (robot.x, robot.y, robot.yaw) == tuple(stations[special[name]]), name
+            continue
+        assert (robot.x, robot.y, robot.yaw) in [tuple(v) for k, v in stations.items() if k.startswith('wait_')], name
+    points = list(robots.values())
+    assert min(math.hypot(a.x - b.x, a.y - b.y) for i, a in enumerate(points) for b in points[i + 1:]) >= 1.0
+    # 1호 자리: 피크 손님·직원 경로와 떨어져 있고 지도(테이블·벽)에서 비어 있다
+    config = root / 'simulation' / 'amr_gazebo' / 'config'
+    for name in ('dynamic_obstacles_restaurant_peak.yaml', 'dynamic_obstacles_restaurant_staff.yaml'):
+        obstacles = yaml.safe_load((config / name).read_text(encoding='utf-8'))['obstacles']
+        assert all(obstacle_clearance(first.x, first.y, o) >= CLEARANCE_M for o in obstacles), name
+    pgm = root / 'localization' / 'amr_mapping' / 'maps' / 'restaurant_gt.pgm'
+    assert all(free_on_map(pgm, r.x, r.y) for r in points)
+
+
 def test_load_robots_count():
     assert len(load_robots(ROBOTS, 3)) == 3
     with pytest.raises(ValueError):
