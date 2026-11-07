@@ -62,6 +62,7 @@ STATE_NAMES = {STATE_COMPLETED: 'COMPLETED', STATE_FAILED: 'FAILED'}
 # amr_msgs/msg/ErrorInfo.ASSIGN_TASK_TAKEN. 다른 로봇이 먼저 맡아 물러난 FAILED는 작업의 끝이 아니다
 ERROR_TASK_TAKEN = 104
 ACTION_ASSIGN = 0  # TaskAssignment.ACTION_ASSIGN
+TYPE_DELIVERY, TYPE_COLLECT = 0, 3  # Task.TYPE_DELIVERY·TYPE_COLLECT (픽업이 있는 작업)
 STATE_IN_PROGRESS = 1
 ZONE_REQUESTS_TOPIC = '/fleet/zone_requests'
 ZONE_GRANTS_TOPIC = '/fleet/zone_grants'
@@ -86,6 +87,9 @@ STALL_PAIR_M = 1.5
 # 응답 판정 임계값 (tools/harness/README.md response_time.csv, 초안)
 LINEAR_THRESHOLD = 0.01   # m/s
 ANGULAR_THRESHOLD = 0.05  # rad/s
+# 명령 순간 로봇이 첫 목표(픽업, 픽업이 없으면 배달지)에서 이 거리 안이면 Nav2가 움직이지 않고 바로 도착 처리한다
+# (nav2_params.yaml xy_goal_tolerance). 그러면 첫 움직임이 싣기 대기 뒤라 응답이 수 초로 잡힌다 (11/2 station_resv 7 s 2건)
+AT_GOAL_M = 0.25
 
 FLEET_LATENCY_HEADER = ['topic', 'robot', 'key', 'send_time', 'recv_time', 'latency_ms', 'delivered']
 # request_sim·end_sim: 같은 시각의 시뮬레이션 시간 (SimClock). 처리량(하네스 fleet.throughput_per_min)을 이 시계로 낸다
@@ -101,7 +105,7 @@ RECOVERY_HEADER = ['robot', 'kill_time', 'task_id', 'reassign_time', 'reassigned
 ROBOT_STATES_HEADER = ['time', 'robot', 'x', 'y', 'mode', 'task_id', 'battery']
 RESPONSE_TIME_HEADER = ['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms',
                         'assignment_id', 'ack_time', 'ack_rtt_ms', 'resends', 'recv_time', 'latency_recv_ms',
-                        'moving_at_cmd']
+                        'moving_at_cmd', 'at_goal_at_cmd']
 
 
 @dataclass(frozen=True)
@@ -279,12 +283,15 @@ def response_time(records: Sequence[Record], cutoff: Cutoff) -> list[list]:
     - response_time은 /<robot>/odom이 bag에 있을 때만 채운다 (가짜 로봇은 odom이 없다).
     - moving_at_cmd: 명령 직전 마지막 odom이 이미 움직이는 중이면 1. 첫 움직임 = "명령 뒤 처음 움직인 odom"이라
       감속·후진 중이던 로봇은 지연이 0에 가깝고 latency_recv_ms는 음수도 나온다. 표시만 하고 빼지는 않는다 (#171 리뷰 4)
+    - at_goal_at_cmd: 명령 직전 RobotState 위치가 첫 목표에서 AT_GOAL_M 안이면 1. 움직일 필요가 없어 첫 움직임이
+      싣기 대기 뒤에 온다. 하네스 요약은 응답 시간 KPI에서 이 명령을 뺀다. RobotState가 없으면 비운다
     """
     commands: dict[tuple[str, int, int], dict] = {}
     acks: dict[tuple[str, int, int], float] = {}
     # 로봇이 받은 시각: 그 로봇 앞으로 중계된 같은 명령의 첫 도착 (장애 주입기를 안 거치면 없다)
     received: dict[tuple[str, int, int], float] = {}
     odom: dict[str, list[Record]] = defaultdict(list)
+    states: dict[str, list[Record]] = defaultdict(list)
     for r in records:
         relay = RELAY_TOPIC.match(r.topic)
         if relay and relay['topic'] == 'task_assignments' and r.msg.robot_id == relay['robot']:
@@ -300,6 +307,8 @@ def response_time(records: Sequence[Record], cutoff: Cutoff) -> list[list]:
         elif r.topic == ACKS_TOPIC:
             ident = (r.msg.robot_id, r.msg.assignment_id, _stamp_ns(r.msg.assignment_stamp))
             acks.setdefault(ident, r.t)
+        elif r.topic == STATES_TOPIC:
+            states[r.msg.robot_id].append(r)
         else:
             m = ODOM_TOPIC.match(r.topic)
             if m:
@@ -307,6 +316,9 @@ def response_time(records: Sequence[Record], cutoff: Cutoff) -> list[list]:
     for series in odom.values():
         series.sort(key=lambda r: r.t)
     odom_times = {robot: [r.t for r in series] for robot, series in odom.items()}
+    for series in states.values():
+        series.sort(key=lambda r: r.t)
+    state_times = {robot: [r.t for r in series] for robot, series in states.items()}
 
     rows = []
     for (robot, assignment_id, stamp_ns), cmd in sorted(commands.items(), key=lambda kv: kv[1]['t']):
@@ -327,12 +339,24 @@ def response_time(records: Sequence[Record], cutoff: Cutoff) -> list[list]:
         recv = received.get((robot, assignment_id, stamp_ns))
         latency_recv = None if recv is None or response is None else (response - recv) * 1000.0
         moving_at_cmd = '' if start == 0 else ('1' if _moving(series[start - 1].msg) else '0')
+        last = bisect.bisect_left(state_times.get(robot, []), cmd_time) - 1
+        at_goal = '' if last < 0 else _at_first_goal(states[robot][last].msg, cmd['msg'].task)
         rows.append([
             _fmt(cmd_time), _fmt(response), _fmt(latency, 3), robot, cmd['msg'].task.task_id,
             _fmt(latency_sim, 3), assignment_id, _fmt(ack), _fmt(ack_rtt, 3), cmd['count'] - 1,
-            _fmt(recv), _fmt(latency_recv, 3), moving_at_cmd,
+            _fmt(recv), _fmt(latency_recv, 3), moving_at_cmd, at_goal,
         ])
     return rows
+
+
+def _at_first_goal(state, task) -> str:
+    """RobotState 위치가 작업의 첫 목표(픽업이 있는 배송·회수는 픽업, 아니면 배달지)에서 AT_GOAL_M 안이면 '1'."""
+    has_pickup = getattr(task, 'task_type', None) in (TYPE_DELIVERY, TYPE_COLLECT)
+    goal = getattr(task, 'pickup_pose' if has_pickup else 'dropoff_pose', None)
+    if goal is None:
+        return ''
+    p = state.pose.position
+    return '1' if math.hypot(p.x - goal.position.x, p.y - goal.position.y) <= AT_GOAL_M else '0'
 
 
 def _task_events(records: Sequence[Record]):
