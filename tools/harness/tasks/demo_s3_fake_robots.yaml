@@ -11,7 +11,7 @@
     battery:
       move_per_m: 0.6
       idle_per_s: 0.0
-      charge_per_s: 2.0
+      charge_per_s: 1.5
       charge_target_percent: 80.0
       reject_below_percent: 10.0
 /amr_01/fake_robot:
