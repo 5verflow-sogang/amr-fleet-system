@@ -152,6 +152,16 @@ def test_restaurant_args_reach_world_obstacles_and_fleet():
     assert include_args(context, actions, 'world')['world'] == 'warehouse.sdf'
     assert include_args(context, actions, 'config')['config'] == ''
     assert include_args(context, actions, 'cost_fn')['cost_fn'] == 'euclidean'
+    assert include_args(context, actions, 'cost_fn')['extra_params_file'] == ''
+
+
+def test_fleet_params_file_reaches_fleet_manager():
+    # 식당 장면 2(회수 + aging): 시연 설정 덮어쓰기가 Fleet 서버 launch에 닿는다. 상대 이름은 amr_fleet_manager config/
+    module = load_module()
+    context = context_with_defaults(module, num_robots=1, fleet_params_file='fleet_manager_restaurant.yaml')
+    actions = module._system(context)
+    assert include_args(context, actions, 'cost_fn')['extra_params_file'] == os.path.join(
+        get_package_share_directory('amr_fleet_manager'), 'config', 'fleet_manager_restaurant.yaml')
 
 
 def test_congestion_node_uses_spawned_guests():

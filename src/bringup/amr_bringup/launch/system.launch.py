@@ -127,13 +127,17 @@ def _system(context):
         actions.append(TimerAction(period=interval, actions=[_launch('amr_docking', 'aruco_markers.launch.py')]))
 
     if fleet:
+        # 시연별 서버 설정 덮어쓰기 (예: fleet_manager_restaurant.yaml의 aging_rate). 상대 이름이면 amr_fleet_manager config/
+        fleet_params = arg('fleet_params_file')
+        if fleet_params and not os.path.isabs(fleet_params):
+            fleet_params = os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', fleet_params)
         actions.append(_launch(
             'amr_fleet_manager', 'fleet_manager.launch.py',
             algorithm=arg('algorithm'), assignments_csv=arg('assignments_csv'), epoch_file=arg('epoch_file'),
             kill_at_s=arg('kill_at_s'), restart_after_s=arg('restart_after_s'),
             fault_events_file=arg('fault_events_file'), zones_file=arg('zones_file'),
             deadlock_strategy=arg('deadlock_strategy'), cost_fn=arg('cost_fn'),
-            congestion_weight=arg('congestion_weight'), use_sim_time='true'))
+            congestion_weight=arg('congestion_weight'), extra_params_file=fleet_params, use_sim_time='true'))
         injector_config = os.path.join(
             get_package_share_directory('amr_fault_injector'), 'config', 'fault_injector.yaml')
         actions.append(Node(
@@ -197,6 +201,8 @@ def generate_launch_description():
         ('algorithm', 'nearest', '할당 알고리즘'),
         ('cost_fn', 'euclidean', '할당 비용: euclidean 또는 congestion (식당 혼잡도, congestion:=restaurant로 혼잡도 노드를 같이 띄운다)'),
         ('congestion_weight', '3.0', '혼잡도 1.0인 구역 1 m를 (1 + 이 값) m로 본다 (cost_fn:=congestion일 때)'),
+        ('fleet_params_file', '', 'Fleet 서버 설정 덮어쓰기 yaml (fleet_manager.launch.py extra_params_file). 상대 이름이면 '
+                                  'amr_fleet_manager config/ 아래. 식당 장면 2 aging: fleet_manager_restaurant.yaml'),
         ('delay_ms', '100.0', '서버 → 로봇 지연 (원 명세 "통신 지연 100ms 반영")'),
         ('loss_pct', '0.0', '서버 → 로봇 손실률'),
         ('relay_auction', 'false', '분산 경매 토픽도 중계 (분산·하이브리드 비교군)'),
