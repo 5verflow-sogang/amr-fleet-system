@@ -6,7 +6,7 @@
 # 경계선 위를 지나지 않게 잡았다. 배치는 amr_gazebo/worlds/restaurant.sdf 머리말, 정차 자세는 stations_restaurant.yaml.
 #
 # 피크 몰림(dynamic_obstacles_restaurant_peak.yaml)에서 west_aisle·buffet_line이 1.0까지 오른다.
-# 평상시(dynamic_obstacles_restaurant.yaml)는 구역마다 0~1명이다.
+# 평상시(dynamic_obstacles_restaurant.yaml)는 손님 6명이 hall_west 안에만 있어 hall_west 1.0, 나머지 구역 0이다 (11/8).
 # capacity는 통로 폭으로 잡은 [가정]이다: 1.5 m 안팎 통로 길이 7 m에 3명이면 로봇(폭 0.54 m)이 비켜 가기 어렵다.
 zones:
   - id: buffet_line

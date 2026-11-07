@@ -28,7 +28,7 @@ params:
   robots: robots_restaurant.yaml                 # amr_bringup config/ 시작 위치
   # 손님(amr_gazebo config/). 혼잡도 노드도 같은 파일을 센다. 피크: peak_1~3 서쪽 통로(1-2), peak_4~6 배식대 앞(1-1)
   guests: dynamic_obstacles_restaurant_peak.yaml
-  staff: dynamic_obstacles_restaurant_staff.yaml # 직원: 따로 띄워 혼잡도에 안 센다
+  staff: none                                   # 직원: 띄우지 않음 (11/8 매장 안 직원 빼기, 홀 손님만). 쓰려면 dynamic_obstacles_restaurant_staff.yaml
   cost_fn: euclidean                             # 1-1 켬: congestion
   congestion_weight: "3.0"
   congestion_filter: none                        # 1-2 켬: keepout
@@ -52,7 +52,7 @@ processes:
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
       dynamic_obstacles:=true dynamic_obstacles_file:={guests} staff_file:={staff} congestion:=restaurant
       cost_fn:={cost_fn} congestion_weight:={congestion_weight} congestion_filter:={congestion_filter} nav2_composition:=true
-      enable_camera:={robot_camera}
+      enable_camera:={robot_camera} guest_keep_away_m:=1.2
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:={spawn_interval_s}
     ready_topic: /fleet/heartbeat
     ready_cmds:

@@ -35,8 +35,8 @@ def test_restaurant_robots_at_wait_stations():
                               .read_text(encoding='utf-8'))['stations']
     assert [(r.x, r.y, r.yaw) for r in robots] == [tuple(stations[f'wait_{i}']) for i in range(1, 6)]
     config = root / 'simulation' / 'amr_gazebo' / 'config'
-    for name in ('dynamic_obstacles_restaurant_peak.yaml', 'dynamic_obstacles_restaurant_peak_scene12.yaml',
-                 'dynamic_obstacles_restaurant_staff.yaml'):
+    for name in ('dynamic_obstacles_restaurant.yaml', 'dynamic_obstacles_restaurant_peak.yaml',
+                 'dynamic_obstacles_restaurant_peak_scene12.yaml', 'dynamic_obstacles_restaurant_staff.yaml'):
         obstacles = yaml.safe_load((config / name).read_text(encoding='utf-8'))['obstacles']
         assert all(obstacle_clearance(r.x, r.y, o) >= CLEARANCE_M for r in robots for o in obstacles), name
 
