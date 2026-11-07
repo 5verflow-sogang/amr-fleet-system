@@ -43,6 +43,16 @@ params:
   localization: "true"
   # 작업 일정 (amr_fleet_manager 작업 생성기 형식). 연우 장면 스크립트가 생기면 그쪽으로 바꾼다
   task_schedule: /repo/tools/harness/tasks/restaurant_smoke.yaml
+  task_generator: "true"                         # 장면 스크립트(scene_script)를 쓰는 장면은 "false"
+  # 장면 스크립트: 작업을 정해진 차례로 넣고 핵심 요청 시각에 /demo/t0을 찍는 명령. 비우면 안 띄운다.
+  # 받는 인자: <장면 파일> --stations <yaml> --map-origin <[x, y, yaw]> --num-robots N --set collect_priority=P --out <json>
+  # (tools/harness/demo_scene.py가 이 꼴이다. 다른 스크립트로 바꿀 때 같은 인자를 받으면 이 값만 바꾸면 된다)
+  scene_script: ""
+  scene_file: ""                                 # tools/harness/tasks/ 아래 장면 파일
+  collect_priority: "200"
+  # Fleet 서버 설정 덮어쓰기 (system.launch fleet_params_file, #333). 비우면 fleet_manager.yaml 그대로 (aging 0.0).
+  # 장면 2 2막 켬: fleet_manager_restaurant.yaml (aging 1.667)
+  fleet_params: ""
 processes:
   - name: stack
     cmd: >-
@@ -52,6 +62,7 @@ processes:
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
       dynamic_obstacles:=true dynamic_obstacles_file:={guests} staff_file:={staff} congestion:=restaurant
       cost_fn:={cost_fn} congestion_weight:={congestion_weight} congestion_filter:={congestion_filter} nav2_composition:=true
+      fleet_params_file:="{fleet_params}"
       enable_camera:={robot_camera}
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:={spawn_interval_s}
     ready_topic: /fleet/heartbeat
@@ -77,11 +88,21 @@ processes:
     settle_s: 3
   # 지도 원점은 실수로 준다 ('[0, 0, 0]'이면 작업 생성기가 시작하자마자 죽는다, 11/6 스모크)
   - name: task_generator
+    enabled: "{task_generator}"
     cmd: >-
       ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json use_sim_time:=true
       map_origin_in_world:="[0.0, 0.0, 0.0]"
       stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
       scenario_file:={task_schedule}
+  # 장면 스크립트 (scene_script가 있을 때만). 장면 기록은 run_dir/scene.json
+  - name: scene
+    enabled: "{scene_script}"
+    cmd: >-
+      {scene_script} /repo/tools/harness/tasks/{scene_file}
+      --stations $(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
+      --map-origin "[0.0, 0.0, 0.0]" --num-robots {num_robots} --set collect_priority={collect_priority}
+      --out {run_dir}/scene.json
+    settle_s: 1
 driver:
   mode: wait
   use_sim_time: true

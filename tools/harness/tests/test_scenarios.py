@@ -135,3 +135,86 @@ def test_fleet_mode_runs_after_prerequisites_merge(mode):
     procs = _fleet_fake_procs(allow_blocked=False, fleet_mode=mode)
     assert f'fleet_mode:={mode}' in procs['task_auctions']['cmd']
     assert 'task_auctions' not in _fleet_fake_procs(allow_blocked=False)      # central은 그대로
+
+
+# ---------------------------------------------------------------- 식당 시연 장면 2 (demo_s2a·demo_s2b)
+def _demo_procs(name, **sets):
+    s = run.load_scenario(name)
+    params = apply_param_sets(s, {**s['params'], **sets, 'run_dir': '/tmp/r', 'seed': 1, 'repeat': 0, 'label': ''},
+                              explicit=sets)
+    return {p['name']: p for p in render(s['processes'], params) if enabled(p)}
+
+
+def _own_params(name):
+    """Actions가 받는 이름: 장면 파일 자체의 params 절 (extends 값은 안 본다)."""
+    import yaml
+    return set(yaml.safe_load((Path(run.HERE) / 'scenarios' / f'{name}.yaml').read_text(encoding='utf-8'))['params'])
+
+
+@pytest.mark.parametrize('name', ['demo_s2a', 'demo_s2b'])
+def test_scene2_runs_the_scene_script_instead_of_the_task_generator(name):
+    s = run.load_scenario(name)
+    assert s['processes'] == run.load_scenario('demo_restaurant')['processes']   # 공통 프로세스 그대로
+    procs = _demo_procs(name)
+    assert 'task_generator' not in procs
+    cmd = procs['scene']['cmd']
+    assert cmd.startswith('python3 /repo/tools/harness/demo_scene.py ')
+    assert f'/repo/tools/harness/tasks/{name}.yaml' in cmd and '--out /tmp/r/scene.json' in cmd
+    assert '--num-robots 5' in cmd
+    stack = procs['stack']['cmd']
+    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant.yaml' in stack     # 손님 평상시
+    assert 'num_robots:=5' in stack and 'body:=serving' in stack
+    # 측정 bag에 #326 측정 스크립트가 읽는 토픽과 /demo/t0
+    for topic in ('/fleet/task_status', '/fleet/robot_states', '/fleet/task_table', '/demo/t0'):
+        assert topic in procs['rosbag']['cmd']
+    # Actions로 넘길 이름 (켬/끔, 위치추정)이 장면 파일 params에 있다
+    assert {'collect_priority', 'fleet_params', 'localization'} <= _own_params(name)
+
+
+@pytest.mark.parametrize('name', ['demo_s2a', 'demo_s2b'])
+def test_scene2_scene_script_is_one_line_to_swap(name):
+    # 연우 장면 스크립트로 바꿀 때 장면 파일의 scene_script 한 줄만 바꾼다 (같은 인자를 받는 명령)
+    assert 'scene_script' in _own_params(name)
+    cmd = _demo_procs(name, scene_script='python3 /repo/tools/harness/other_scene.py')['scene']['cmd']
+    assert cmd.startswith(f'python3 /repo/tools/harness/other_scene.py /repo/tools/harness/tasks/{name}.yaml ')
+    assert 'scene' not in _demo_procs(name, scene_script='')        # 비우면 안 띄운다
+
+
+def test_scene2_act1_on_off_is_collect_priority_only():
+    on, off = _demo_procs('demo_s2a', collect_priority='200'), _demo_procs('demo_s2a', collect_priority='100')
+    assert '--set collect_priority=200' in on['scene']['cmd'] and '--set collect_priority=100' in off['scene']['cmd']
+    assert on['stack']['cmd'] == off['stack']['cmd']
+    assert 'fleet_params_file:=""' in on['stack']['cmd']        # aging은 둘 다 끔
+
+
+def test_scene2_act2_on_off_is_aging_only():
+    on = _demo_procs('demo_s2b', fleet_params='fleet_manager_restaurant.yaml')
+    off = _demo_procs('demo_s2b')
+    assert 'fleet_params_file:="fleet_manager_restaurant.yaml"' in on['stack']['cmd']
+    assert 'fleet_params_file:=""' in off['stack']['cmd']
+    assert on['scene']['cmd'] == off['scene']['cmd']
+
+
+def test_scene2_localization_can_be_ground_truth():
+    assert 'localization:=ground_truth' in _demo_procs('demo_s2a', localization='ground_truth')['stack']['cmd']
+    assert 'localization:=amcl' in _demo_procs('demo_s2b')['stack']['cmd']
+
+
+def test_scene12_runs_its_scene_script_with_the_scene12_guests():
+    procs = _demo_procs('demo_s12')
+    assert 'task_generator' not in procs
+    assert procs['scene']['cmd'].startswith(
+        'python3 /repo/tools/harness/demo_scene.py /repo/tools/harness/tasks/demo_s12.yaml ')
+    stack = procs['stack']['cmd']
+    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak_scene12.yaml' in stack
+    assert 'robots_restaurant_s12.yaml' in stack
+    assert {'scene_script', 'congestion_filter', 'guests', 'localization'} <= _own_params('demo_s12')
+    on = _demo_procs('demo_s12', congestion_filter='keepout', localization='ground_truth')['stack']['cmd']
+    assert 'congestion_filter:=keepout' in on and 'localization:=ground_truth' in on
+
+
+@pytest.mark.parametrize('name', ['demo_s11', 'demo_smoke'])
+def test_other_demo_scenes_keep_the_task_generator(name):
+    procs = _demo_procs(name)
+    assert 'task_generator' in procs and 'scene' not in procs
+    assert 'fleet_params_file:=""' in procs['stack']['cmd']     # 서버 설정 덮어쓰기 없음 (지금과 같다)

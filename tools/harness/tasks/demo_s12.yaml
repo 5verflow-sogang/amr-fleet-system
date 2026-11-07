@@ -1,0 +1,22 @@
+# 식당 시연 1-2 혼잡 구간 우회 (tools/harness/demo_scene.py 장면 파일, 하네스 demo_s12)
+# 2~5호에 먼저 다른 배달을 주고(동쪽), 0초에 1호에게 배식대 2번 자리(buffet_2) → 11번 테이블 배달을 요청하며 /demo/t0을 낸다.
+# 켬(congestion_filter keepout)은 1호가 서쪽 통로 대신 x -7.275 우회 통로로 배식대에 가고, 끔은 서쪽 통로로 간다.
+#
+# 누가 어느 작업을 맡나: 1호는 서쪽 입구 옆(robots_restaurant_s12.yaml), 2~5호는 동쪽 벽 대기 줄에 있다. 시작 작업 픽업을
+# 동쪽 매장(stall_3·stall_4)으로 두면 최소거리(nearest) 배정에서 1호보다 2~5호가 늘 가깝다 (낸 순서대로 05, 04, 03, 02).
+# 그래서 0초에 비어 있는 로봇은 1호뿐이라 핵심 요청이 1호에게 간다.
+# 시작 작업 정차 자리(픽업·하역)는 동쪽이고 핵심 요청 자리(buffet_2, t11)와 1 m 넘게 떨어져 있다 - 1-2 화면(서쪽)에 안 들어온다
+steps:
+  - name: busy
+    gap_s: 0.5
+    tasks:
+      - {id: s12_busy_L01, type: delivery, pickup: stall_4, dropoff: L01}   # amr_05
+      - {id: s12_busy_b02, type: delivery, pickup: stall_3, dropoff: b02}   # amr_04
+      - {id: s12_busy_L02, type: delivery, pickup: stall_4, dropoff: L02}   # amr_03
+      - {id: s12_busy_b03, type: delivery, pickup: stall_3, dropoff: b03}   # amr_02
+  # 2~5호가 모두 할당받은 것을 작업표로 확인하고 3 s 뒤 = 0초 (/demo/t0)
+  - name: request
+    after: {assigned: 4, delay_s: 3, timeout_s: 60}
+    t0: true
+    tasks:
+      - {id: s12_buffet2_t11, type: delivery, pickup: buffet_2, dropoff: t11}
