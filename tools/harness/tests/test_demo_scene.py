@@ -48,7 +48,7 @@ def test_act1_order_and_times_with_fake_clock():
     scene, out = run_scene(steps, {4.0: assign_all})
     busy = [o for o in out if o[2].startswith('a_busy')]
     queue = [o for o in out if o[2].startswith('a_wait')]
-    assert [o[0] for o in busy] == [0.0] * 5
+    assert [o[0] for o in busy] == [0.0, 0.5, 1.0, 1.5, 2.0]        # 0.5 s 간격 (배정 순서를 못 박는다)
     assert [o[0] for o in queue] == [4.0] * 4                      # 할당 확인 즉시
     assert [o[2] for o in queue] == ['a_wait_t09', 'a_wait_t15', 'a_wait_t04', 'a_wait_t02']
     # 대기 4건 확인 + 3 s 뒤 /demo/t0과 회수 호출이 같은 시각, t0이 먼저
@@ -91,7 +91,7 @@ def test_condition_timeout_sends_anyway_and_logs_it():
     steps = ds.load_scene(TASKS / 'demo_s2a.yaml', {'collect_priority': '200'})
     scene, out = run_scene(steps, {})                 # 아무것도 할당되지 않는다
     queue_at = next(o[0] for o in out if o[2] == 'a_wait_t09')
-    assert queue_at == 60.0
+    assert queue_at == 2.0 + 60.0                    # 마지막 busy 작업(2.0 s) 뒤 60 s
     assert any(e.get('step') == 'queue' and e['why'] == 'timeout' for e in scene.log)
     assert scene.done
 
@@ -131,34 +131,52 @@ def test_scene_stations_exist_and_start_tasks_avoid_the_key_request(scene):
     assert near == []
 
 
-def _busy_owners(scene):
-    """nearest(로봇 → 픽업 직선 거리, 탐욕)로 busy 작업을 낸 순서대로 배정했을 때 {로봇: (작업, 직선 거리 합)}."""
+def _busy_owners(scene, robots_file=ROBOTS):
+    """nearest(로봇 → 픽업 직선 거리, 탐욕)로 busy 작업을 낸 순서대로 배정했을 때 {로봇: (작업 id, 직선 거리 합, path_m)}."""
     st = stations()
-    robots = {k: tuple(v[:2]) for k, v in yaml.safe_load(ROBOTS.read_text(encoding='utf-8'))['robots'].items()}
-    busy = ds.load_scene(TASKS / scene, {'collect_priority': '200'})[0].tasks
+    robots = {k: tuple(v[:2]) for k, v in yaml.safe_load(robots_file.read_text(encoding='utf-8'))['robots'].items()}
+    raw = yaml.safe_load((TASKS / scene).read_text(encoding='utf-8'))['steps'][0]['tasks']
     idle, owners = dict(robots), {}
-    for task in busy:
-        pickup = st[task.pickup][:2]
+    for task in raw:
+        pickup = st[task['pickup']][:2]
         robot = min(idle, key=lambda r: (math.dist(idle[r], pickup), r))
-        trip = math.dist(idle.pop(robot), pickup) + math.dist(pickup, st[task.dropoff][:2])
-        owners[robot] = (task.task_id, trip)
+        straight = math.dist(idle.pop(robot), pickup) + math.dist(pickup, st[task['dropoff']][:2])
+        owners[robot] = (task['id'], straight, task.get('path_m'))
     return owners
 
 
-def test_act1_robot_2_has_the_shortest_start_trip():
-    # 연우 시나리오: 켬이면 다음에 일을 마친 2호가 회수에 바로 배정된다 → 2호 busy 작업이 가장 짧아야 한다
-    owners = _busy_owners('demo_s2a.yaml')
-    assert [owners[r][0] for r in ('amr_05', 'amr_04', 'amr_03', 'amr_02', 'amr_01')] == \
-        [t.task_id for t in ds.load_scene(TASKS / 'demo_s2a.yaml', {'collect_priority': '1'})[0].tasks]
-    trips = {r: trip for r, (_, trip) in owners.items()}
-    assert min(trips, key=trips.get) == 'amr_02'
-    assert min(v for r, v in trips.items() if r != 'amr_02') > 1.3 * trips['amr_02']
+ORDER = ['amr_05', 'amr_04', 'amr_03', 'amr_02', 'amr_01']
 
 
-def test_act2_robot_4_has_the_shortest_start_trip():
-    # 켬이면 0초 뒤 다음에 일을 마친 4호가 2인석 배달에 배정된다 → 4호 busy 작업이 가장 짧되 60 s보다 길어야 한다
-    owners = _busy_owners('demo_s2b.yaml')
-    trips = {r: trip for r, (_, trip) in owners.items()}
-    assert min(trips, key=trips.get) == 'amr_04'
-    assert trips['amr_04'] > 22.0          # 서빙 로봇 평균 약 0.3 m/s로 60 s를 넘긴다 (리허설 1-2: 9.75 m / 40 s)
-    assert min(v for r, v in trips.items() if r != 'amr_04') > 1.1 * trips['amr_04']
+def _check_first_to_finish(scene, first):
+    owners = _busy_owners(scene)
+    raw = yaml.safe_load((TASKS / scene).read_text(encoding='utf-8'))['steps'][0]['tasks']
+    assert [owners[r][0] for r in ORDER] == [t['id'] for t in raw]          # 낸 순서대로 05, 04, 03, 02, 01
+    path = {r: v[2] for r, v in owners.items()}
+    straight = {r: v[1] for r, v in owners.items()}
+    # A* 경로 길이: 먼저 끝날 로봇이 가장 짧고 다음 로봇과 10 m 넘게 차이 난다
+    assert min(v for r, v in path.items() if r != first) >= path[first] + 10.0
+    # 직선 거리로도 가장 짧다 (적어 둔 path_m이 엉뚱하지 않은지)
+    assert min(straight, key=straight.get) == first
+    return path
+
+
+def test_act1_robot_2_finishes_first_by_more_than_10m():
+    # 연우 시나리오: 켬이면 다음에 일을 마친 2호가 회수에 바로 배정된다
+    _check_first_to_finish('demo_s2a.yaml', 'amr_02')
+    raw = yaml.safe_load((TASKS / 'demo_s2a.yaml').read_text(encoding='utf-8'))['steps'][0]['tasks']
+    assert len({t['pickup'] for t in raw}) == 5                             # 픽업 예약으로 기다리지 않는다
+
+
+def test_act2_robot_4_finishes_first_but_not_before_second_zero():
+    # 켬이면 0초 뒤 다음에 일을 마친 4호가 2인석 배달에 배정된다. 0초는 배달 요청 + 60 s (busy 시작 뒤 약 63 s)
+    path = _check_first_to_finish('demo_s2b.yaml', 'amr_04')
+    max_v, dwell = 0.5, 2.0                                                 # DWA max_v, amr_bt dwell_s (픽업·하역)
+    assert path['amr_04'] / max_v + 2 * dwell >= 63.0 + 10.0               # 최고 속도로도 0초 뒤 10 s 넘게 남는다
+    steps = yaml.safe_load((TASKS / 'demo_s2b.yaml').read_text(encoding='utf-8'))['steps']
+    busy = {t['id']: t['pickup'] for t in steps[0]['tasks']}
+    queue_pickup = steps[1]['tasks'][0]['pickup']
+    pickups = list(busy.values())
+    # 4호 픽업과 대기 배달 픽업은 혼자 쓴다 (예약으로 4호가 늦어지거나 배달이 막히지 않게)
+    assert pickups.count(busy['b_busy_L03']) == 1 and queue_pickup not in pickups
+    assert max(pickups.count(p) for p in pickups) <= 2
