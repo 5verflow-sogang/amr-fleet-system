@@ -54,7 +54,7 @@ ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose \
 | `amr_gazebo spawn_robot` | 스폰, ROS ↔ Gazebo 브리지 | 스폰 자세, `publish_odom_tf:=false`(EKF가 odom TF를 냄), `enable_camera` |
 | `amr_odometry odometry` | 휠 오도메트리 `/<ns>/odom` | `encoder_seed` (아래 seed) |
 | `amr_odometry sensor_filters` | `/<ns>/scan`, `/<ns>/imu/data` | — |
-| `amr_localization localization` | AMCL + EKF 두 개 | 초기 위치(스폰 자세를 map 좌표로), 지도 서버는 첫 로봇에서 한 번 |
+| `amr_localization localization`(`localization:=amcl`, 기본) 또는 `ground_truth_localization`(`localization:=ground_truth`) | AMCL + EKF 두 개, 또는 시뮬레이터 정답 위치(식당 시연 전용) | 초기 위치(스폰 자세를 map 좌표로, amcl만)·지도 서버는 첫 로봇에서 한 번(amcl만), `map_origin_in_world`(둘 다) |
 | `amr_bt amr_bt` | Fleet 작업 수신 | `fleet:=true`면 `relayed:=true`(장애 주입기 중계본) |
 | `amr_bringup nav2` | planner·controller·behavior·bt_navigator | `nav2:=true`. 프레임 접두어, 스캔 절대 이름, 속도 출력 `cmd_vel_nav` |
 | `amr_zone_client` | 좁은 통로 진입 허가·속도 제한 | `zone_client:=true`. 서버와 같은 `zones.yaml`, `use_sim_time` |
@@ -93,12 +93,12 @@ Nav2는 `nav2_params.yaml`의 DWA를 `FollowPath` 이름으로 등록해 쓴다(
 | `spawn_interval_s` | `3.0` | 로봇 스폰 시차 |
 | `payload_mass` | `0.0` | 모든 로봇의 적재물 질량 [kg] (연구 2 Gazebo 평가) |
 | `seed` | `0` | 실행 seed. 엔코더 노이즈(로봇마다 `seed × 100 + 번호`), 동적 장애물, 손실 난수. 하네스는 1부터 준다. 0이면 엔코더 노이즈는 매번 무작위 |
-| `localization` | `true` | 끄면 DiffDrive odom TF를 쓴다 |
+| `localization` | `amcl` | `amcl`(AMCL+EKF, 물류센터 KPI) / `ground_truth`(시뮬레이터 정답 위치, **식당 시연 녹화 전용 - 아래 참고**) / `off`(DiffDrive odom TF). 예전 값 `true`는 `amcl`, `false`는 `off`로 받는다 |
 | `map` | `amr_mapping maps/warehouse_v2_0025.yaml` | 지도 v2 0.025 m (#242 재매핑, 물체별 밀림 최대 4.0 cm). 0.025 m는 정렬 원점과 함께 쓰면 0.05 m보다 정지 오차가 작다 (v1 GCP 10회 2.09 vs 2.84 cm). Nav2 전역 costmap도 이 해상도를 따라가 칸이 4배다. 경로 계획이 느리면 Nav2만 0.05 m 지도(`warehouse_v2`, 원점 `[0.0173, 1.4556, 0.00026]`)로 나눈다 |
 | `map_origin_in_world` | `[-0.0439, 1.4712, -0.00088]` | world에서 본 map 원점. 지도 v2 0.025 m의 지도↔월드 정렬값(B안, amr_mapping README "지도 v2"). 지도를 바꾸면 그 지도의 정렬값 (v1 0.025 m: `[-0.0562, 1.5317, 0.00009]`) |
 | `use_imu` | `true` | EKF에 IMU |
 | `bt` | `true` | `amr_bt` |
-| `nav2` | `false` | Nav2. `localization:=true`가 필요하다 (map → odom TF) |
+| `nav2` | `false` | Nav2. `localization:=amcl` 또는 `ground_truth`가 필요하다 (map → odom TF) |
 | `zone_client` | `false` | 구역 클라이언트 |
 | `tracking` | `false` | 장애물 추적·TTC |
 | `safety` | `false` | 안전 노드 |
@@ -108,6 +108,18 @@ Nav2는 `nav2_params.yaml`의 DWA를 `FollowPath` 이름으로 등록해 쓴다(
 | `algorithm`, `delay_ms`, `loss_pct`, `relay_auction` | `nearest`, `100.0`, `0.0`, `false` | Fleet·장애 조건 ([amr_fleet_manager](../../fleet/amr_fleet_manager/README.md), [amr_fault_injector](../../fleet/amr_fault_injector/README.md)) |
 | `assignments_csv`, `epoch_file`, `kill_at_s`, `restart_after_s`, `fault_events_file` | | 하네스용 Fleet 서버 인자 |
 | `zones_file`, `deadlock_strategy` | `amr_fleet_manager/config/zones.yaml`, `revoke` | 구역 목록(서버와 구역 클라이언트가 같이 쓴다)과 교착 해소 전략. 교착 유도 실험([experiments/fleet_deadlock](../../../experiments/fleet_deadlock/README.md))이 바꾼다 |
+
+### `localization:=ground_truth` — 식당 시연 녹화 전용
+
+> **물류센터 KPI에는 쓰지 않는다.** 위치추정(AMCL+EKF) 성능을 전혀 반영하지 않고 시뮬레이터
+> 정답 위치를 그대로 내므로, 이 설정으로 잰 위치 오차·수렴 같은 KPI는 의미가 없다.
+> **이 옵션으로 찍은 시연 영상은 정답 위치를 썼다는 것을 영상에 밝힌다.**
+
+식당 리허설에서 AMCL 오차 0.9~2.3 m 때문에 로봇이 테이블 안에 있다고 믿고 멈추거나 거짓 도착이
+났다(원인: 손님·가구에 걸린 채 바퀴가 헛돌면 AMCL 파티클이 오도메트리를 따라 통째로 밀리고, recovery_alpha가 0이라 다시 퍼지지 않는다). `body:=serving`(식당) 실행에서 시연 영상을 찍을
+때만 쓰는 옵션이다 - `amr_localization localization.launch.py`와 같은 토픽·TF를 내므로 Nav2·구역
+클라이언트 등 나머지 노드는 바뀐 걸 모른다. 자세한 내용은
+[amr_localization README "정답 위치로 대신하기"](../../localization/amr_localization/README.md#정답-위치로-대신하기-ground_truth_localizationlaunchpy--식당-시연-녹화-전용).
 
 ## 테스트
 

@@ -41,7 +41,7 @@ map
 
 | TF | 발행 노드 | 입력 | 끄는 설정 |
 | --- | --- | --- | --- |
-| `world → map` | `amr_bringup system.launch.py` (`static_transform_publisher`, 10/13) | `map_origin_in_world` | `localization:=false`면 안 띄움 |
+| `world → map` | `amr_bringup system.launch.py` (`static_transform_publisher`, 10/13) | `map_origin_in_world` | `localization:=off`면 안 띄움. `ground_truth`(식당 시연 녹화 전용, 물류센터 KPI에는 안 씀 - amr_localization README)도 이 TF를 쓴다 |
 | `map → odom` | `ekf_global` (민지) | `odom`, `imu/data`, `amcl_pose` | AMCL `tf_broadcast: false` |
 | `odom → base_footprint` | `ekf_local` (민지) | `odom`, `imu/data` (전역 입력 없음) | `amr_odometry` `publish_tf: false`, Gazebo DiffDrive `publish_odom_tf:=false` |
 
