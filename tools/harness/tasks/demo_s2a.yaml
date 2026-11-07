@@ -6,18 +6,21 @@
 # aging은 둘 다 끔 (fleet_params 비움 = aging_rate 0.0).
 #
 # 누가 어느 작업을 맡나: 로봇이 동쪽 벽(x 11.2)에 amr_01(남) ~ amr_05(북) 한 줄로 서 있고 픽업은 모두 북쪽(y 4.15)이라,
-# 최소거리(nearest) 배정이면 busy 작업을 낸 순서대로 amr_05, 04, 03, 02, 01이 맡는다. 2호가 먼저 일을 마치게
-# 4번째 작업(2호)을 가장 짧게 둔다 (직선 거리 합: 2호 약 17 m, 나머지 23~30 m).
+# 최소거리(nearest) 배정이면 busy 작업을 낸 순서대로 amr_05, 04, 03, 02, 01이 맡는다 (0.5 s 간격으로 내 순서를 못 박는다).
+# 2호가 먼저 일을 마치게 4번째 작업(2호)을 가장 짧게, 다음 로봇과 10 m 넘게 차이 나게 둔다.
+# path_m: 시작 자리 → 픽업 → 하역 A* 경로 길이 (amr_planning_core, restaurant_gt + 식당 프로필 costmap, 11/8 계산).
+#   2호 16.7 m, 나머지 26.7~27.2 m (차이 10.0 m 이상). 픽업은 서로 달라 픽업 자리 예약으로 기다리지 않는다
 # 정차 자리는 stations_restaurant.yaml. 시작 작업(busy·queue)은 핵심 요청 자리(t03, return_1)와 1 m 안을 쓰지 않는다
 # (서버 스테이션 예약 1 m - 겹치면 핵심 요청이 예약 때문에 밀려 우선순위 효과가 섞인다)
 steps:
   - name: busy
+    gap_s: 0.5
     tasks:
-      - {id: a_busy_t11, type: delivery, pickup: buffet_1, dropoff: t11}   # amr_05, 약 30 m
-      - {id: a_busy_t12, type: delivery, pickup: stall_1, dropoff: t12}    # amr_04, 약 25 m
-      - {id: a_busy_t13, type: delivery, pickup: buffet_2, dropoff: t13}   # amr_03, 약 30 m
-      - {id: a_busy_t10, type: delivery, pickup: stall_4, dropoff: t10}    # amr_02, 약 17 m (먼저 끝난다)
-      - {id: a_busy_t07, type: delivery, pickup: stall_2, dropoff: t07}    # amr_01, 약 23 m
+      - {id: a_busy_L02, type: delivery, pickup: stall_3, dropoff: L02, path_m: 26.7}    # amr_05
+      - {id: a_busy_t07, type: delivery, pickup: stall_1, dropoff: t07, path_m: 27.0}    # amr_04
+      - {id: a_busy_t13, type: delivery, pickup: stall_2, dropoff: t13, path_m: 26.8}    # amr_03
+      - {id: a_busy_t05, type: delivery, pickup: stall_4, dropoff: t05, path_m: 16.7}    # amr_02 (먼저 끝난다)
+      - {id: a_busy_t01, type: delivery, pickup: buffet_2, dropoff: t01, path_m: 27.2}   # amr_01
   # 5대가 모두 할당받은 뒤 배달 4건 (빈 로봇이 없어 대기한다)
   - name: queue
     after: {assigned: 5, timeout_s: 60}
