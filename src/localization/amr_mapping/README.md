@@ -77,6 +77,16 @@ python3 tools/restaurant_map.py ../../simulation/amr_gazebo/worlds/restaurant.sd
 
 ![restaurant_gt](maps/restaurant_gt.png)
 
+넓은 식당(`restaurant_wide.sdf`, 32 x 24 m, amr_gazebo README)은 `--extent`로 외벽 안쪽 범위를 준다. 원점 [−8.5, −12.5], 664 x 500칸이다. 정차 자세 80곳 모두 도달한다 (반폭·외접원 둘 다).
+
+```bash
+python3 tools/restaurant_map.py ../../simulation/amr_gazebo/worlds/restaurant_wide.sdf maps/restaurant_wide_gt.yaml \
+    --extent -8 24.2 -12 12 --stations ../../fleet/amr_fleet_manager/config/stations_restaurant_wide.yaml \
+    --png maps/restaurant_wide_gt.png
+```
+
+![restaurant_wide_gt](maps/restaurant_wide_gt.png)
+
 ## 정답 지도 (`maps/warehouse_gt.*`, 5주차, #183 후속)
 
 월드 SDF의 물체를 LiDAR 스캔 높이에서 잘라 그린 지도다 (SLAM 아님). SLAM 지도의 휨(v1 서쪽·북쪽 끝 14–22 cm, #183)과 벽 띠 두께(좁은 통로가 22칸으로 좁아짐) 없이 내비·Fleet 실험을 하려고 만들었다. **위치추정 KPI(맵 품질·위치 오차)는 SLAM 지도(기본 v2)로 잰다.**

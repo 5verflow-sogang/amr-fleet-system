@@ -1,0 +1,10 @@
+# 자동 생성 (amr_gazebo/tools/make_restaurant_wide.py) - 손으로 고치지 않는다. 넓은 식당 월드 restaurant_wide.sdf용.
+# 원래 식당 좌표를 90° 돌린 서쪽 홀 + 거울 복사본(이름 끝 _e) 동쪽 홀. 원래 설명의 방위는 돌기 전 기준이다
+# 서빙 로봇 스폰 자세 [x, y, yaw] (Gazebo world). 북쪽 대기 줄 양쪽 wait_1·wait_1_e·wait_2·wait_2_e·wait_3
+# (stations_restaurant_wide.yaml과 같다). 앞에서부터 num_robots대를 쓴다
+robots:
+  amr_01: [7, 11.2, -1.5707963]
+  amr_02: [9.2, 11.2, -1.5707963]
+  amr_03: [5.8, 11.2, -1.5707963]
+  amr_04: [10.4, 11.2, -1.5707963]
+  amr_05: [4.6, 11.2, -1.5707963]

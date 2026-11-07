@@ -117,3 +117,17 @@ def test_world_to_map_tf_args():
         '--x', '0.0', '--y', '1.5', '--z', '0.0', '--yaw', '0.0', '--frame-id', 'world', '--child-frame-id', 'map']
     # 문자열 원점(launch 인자를 yaml로 읽은 값)도 받는다
     assert world_to_map_tf_args(['-0.0562', '1.5317', '0.00009'])[1:8:2] == ['-0.0562', '1.5317', '0.0', '9e-05']
+
+
+def test_restaurant_wide_robots_at_wait_stations():
+    # 넓은 식당 5대 (robots_restaurant_wide.yaml, 자동 생성): 북쪽 대기 줄 양쪽에서 시작하고 손님·직원 경로와 떨어져 있다
+    robots = load_robots(str(Path(ROBOTS).with_name('robots_restaurant_wide.yaml')), 5)
+    root = Path(__file__).resolve().parents[3]
+    stations = yaml.safe_load((root / 'fleet' / 'amr_fleet_manager' / 'config' / 'stations_restaurant_wide.yaml')
+                              .read_text(encoding='utf-8'))['stations']
+    names = ['wait_1', 'wait_1_e', 'wait_2', 'wait_2_e', 'wait_3']
+    assert [(r.x, r.y, r.yaw) for r in robots] == [tuple(stations[n]) for n in names]
+    config = root / 'simulation' / 'amr_gazebo' / 'config'
+    for name in ('dynamic_obstacles_restaurant_wide.yaml', 'dynamic_obstacles_restaurant_wide_peak.yaml'):
+        obstacles = yaml.safe_load((config / name).read_text(encoding='utf-8'))['obstacles']
+        assert all(obstacle_clearance(r.x, r.y, o) >= CLEARANCE_M for r in robots for o in obstacles), name

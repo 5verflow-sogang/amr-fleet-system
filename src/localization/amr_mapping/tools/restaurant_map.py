@@ -11,6 +11,7 @@ SLAM 지도로는 테이블 밑이 빈 곳이라, 키 1.29 m 로봇이 경로를
 AMCL은 스캔 점(다리)이 점유 칸 안에 떨어지므로 그대로 맞는다.
 
 - 좌표: map = world (map_origin_in_world [0, 0, 0]). 0.05 m 칸, 원점 [-12.5, -8.5], 500 x 340 칸
+  (--extent로 외벽 안쪽 범위를 바꾼다. 넓은 식당 restaurant_wide는 --extent -8 24.2 -12 12 → 664 x 500 칸)
 - 외벽 안쪽 바닥은 빈 칸(254), 바깥은 미관측(205), 물체는 점유(0). 칸 중심이 물체 안이면 점유
 - --stations를 주면 로봇 크기로 지나갈 수 있는지 잰다: 점유 칸을 로봇 반폭(내접원)만큼 부풀린 뒤
   wait_1에서 모든 정차 자세까지 이어지는지 (Nav2가 통과 불가로 보는 기준과 같다)
@@ -28,9 +29,10 @@ import numpy as np
 import yaml
 
 RESOLUTION = 0.05
+EXTENT = (-12.0, 12.0, -8.0, 8.0)   # 외벽 안쪽 면 [x_min, x_max, y_min, y_max] (--extent)
+MARGIN = 0.5                        # 외벽 바깥으로 더 그리는 폭 (m)
 ORIGIN = (-12.5, -8.5)
-SIZE = (500, 340)           # 칸 수 (가로, 세로)
-INSIDE = (12.0, 8.0)        # 외벽 안쪽 면 |x|, |y|
+SIZE = (500, 340)           # 칸 수 (가로, 세로). set_extent가 EXTENT에서 다시 정한다
 ROBOT_HEIGHT = 1.29         # body:=serving (Pudu BellaBot 크기)
 ROBOT_HALF = (0.2825, 0.2685)   # 반길이, 반폭
 FLOOR_EPS = 0.03            # 이보다 낮은 것(바닥 표시, 충전 패드)은 넘어간다
@@ -93,6 +95,17 @@ def load_shapes(sdf_path):
     return shapes
 
 
+def set_extent(extent):
+    """외벽 안쪽 범위로 지도 원점·칸 수를 정한다 (기본 식당은 원점 [-12.5, -8.5], 500 x 340 칸)."""
+    global EXTENT, ORIGIN, SIZE
+    x0, x1, y0, y1 = (float(v) for v in extent)
+    if not (x0 < x1 and y0 < y1):
+        raise ValueError(f'--extent는 x_min x_max y_min y_max: {extent}')
+    EXTENT = (x0, x1, y0, y1)
+    ORIGIN = (x0 - MARGIN, y0 - MARGIN)
+    SIZE = (int(round((x1 - x0 + 2 * MARGIN) / RESOLUTION)), int(round((y1 - y0 + 2 * MARGIN) / RESOLUTION)))
+
+
 def cell_centers():
     w, h = SIZE
     xs = ORIGIN[0] + (np.arange(w) + 0.5) * RESOLUTION
@@ -102,7 +115,8 @@ def cell_centers():
 
 def rasterize(shapes, robot_height=ROBOT_HEIGHT):
     wx, wy = cell_centers()
-    img = np.where((np.abs(wx) < INSIDE[0]) & (np.abs(wy) < INSIDE[1]), FREE, UNKNOWN).astype(np.uint8)
+    x0, x1, y0, y1 = EXTENT
+    img = np.where((wx > x0) & (wx < x1) & (wy > y0) & (wy < y1), FREE, UNKNOWN).astype(np.uint8)
     used = 0
     for cx, cy, yaw, hx, hy, zmin, zmax, kind in shapes:
         if zmax <= FLOOR_EPS or zmin >= robot_height:
@@ -157,7 +171,10 @@ def main(argv=None):
     ap.add_argument('--robot-height', type=float, default=ROBOT_HEIGHT)
     ap.add_argument('--stations', help='stations_restaurant.yaml: 로봇 크기로 모든 정차 자세에 갈 수 있는지 잰다')
     ap.add_argument('--png', help='README 표시용 PNG')
+    ap.add_argument('--extent', type=float, nargs=4, default=EXTENT, metavar=('X_MIN', 'X_MAX', 'Y_MIN', 'Y_MAX'),
+                    help='외벽 안쪽 범위 [m] (기본 식당 -12 12 -8 8, 넓은 식당 -8 24.2 -12 12)')
     a = ap.parse_args(argv)
+    set_extent(a.extent)
 
     img, used = rasterize(load_shapes(a.sdf), a.robot_height)
     base = os.path.splitext(a.out_yaml)[0]
