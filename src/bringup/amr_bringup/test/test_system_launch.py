@@ -22,6 +22,7 @@ INCLUDED = [
     ('amr_odometry', 'odometry.launch.py'),
     ('amr_odometry', 'sensor_filters.launch.py'),
     ('amr_localization', 'localization.launch.py'),
+    ('amr_localization', 'ground_truth_localization.launch.py'),
     ('amr_bt', 'amr_bt.launch.py'),
     ('amr_fleet_manager', 'fleet_manager.launch.py'),
     ('amr_fleet_manager', 'congestion.launch.py'),
@@ -76,9 +77,27 @@ def test_options_off():
 
 def test_world_to_map_tf_only_with_localization():
     module = load_module()
-    actions = module._system(context_with_defaults(module, num_robots=1, fleet='false', localization='false'))
+    actions = module._system(context_with_defaults(module, num_robots=1, fleet='false', localization='off'))
     assert not any(isinstance(a, Node) for a in actions)
 
+
+def test_world_to_map_tf_published_for_ground_truth_too():
+    # ground_truth도 world → map TF가 필요하다 (ground_truth_localization_node가 정답을 map 기준으로 바꿀 때 같은 원점을 씀)
+    module = load_module()
+    actions = module._system(context_with_defaults(
+        module, num_robots=1, fleet='false', localization='ground_truth'))
+    assert any(isinstance(a, Node) for a in actions)
+
+
+
+@pytest.mark.parametrize('old, has_tf', [('true', True), ('True', True), ('false', False), ('False', False)])
+def test_old_boolean_localization_values_still_launch(old, has_tf):
+    # localization이 true/false → amcl/ground_truth/off로 바뀌었다. 예전 값은 true = amcl, false = off
+    module = load_module()
+    declared = {a.name: a for a in module.generate_launch_description().get_launch_arguments()}
+    assert old in declared['localization'].choices
+    actions = module._system(context_with_defaults(module, num_robots=1, fleet='false', localization=old))
+    assert any(isinstance(a, Node) for a in actions) == has_tf   # world → map TF는 위치추정이 있을 때만
 
 def test_stage_flags_do_not_change_robot_count():
     # 2·3단계를 켜도 로봇마다 TimerAction 하나 (스택 내용은 test_stack.py가 ROS 없이 본다)
@@ -91,7 +110,7 @@ def test_stage_flags_do_not_change_robot_count():
 def test_nav2_needs_localization():
     module = load_module()
     with pytest.raises(RuntimeError, match='localization'):
-        module._system(context_with_defaults(module, nav2=True, localization=False))
+        module._system(context_with_defaults(module, nav2=True, localization='off'))
 
 
 @pytest.mark.parametrize('name', ['detection', 'docking'])

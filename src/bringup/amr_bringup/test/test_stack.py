@@ -2,7 +2,7 @@
 
 import pytest
 
-from amr_bringup.stack import Options, robot_stack
+from amr_bringup.stack import LOCALIZATION_CHOICES, Options, localization_mode, robot_stack
 
 POSE = (21.0, -19.0, 1.57)
 MAP_POSE = (21.0, -20.5, 1.57)
@@ -96,13 +96,64 @@ def test_map_server_only_on_first_robot():
 
 
 def test_localization_off_uses_diffdrive_tf():
-    items = stack(localization=False)
+    items = stack(localization='off')
     assert 'localization.launch.py' not in launches(items)
+    assert 'ground_truth_localization.launch.py' not in launches(items)
     assert args(items, 'spawn_robot.launch.py')['publish_odom_tf'] == 'true'
 
 
+def test_localization_ground_truth_uses_gt_launch_and_no_diffdrive_tf():
+    items = stack(localization='ground_truth')
+    assert 'localization.launch.py' not in launches(items)
+    gt = args(items, 'ground_truth_localization.launch.py')
+    assert args(items, 'spawn_robot.launch.py')['publish_odom_tf'] == 'false'
+    assert gt['map_origin_in_world'] == '[0, 0, 0]'  # Options 기본값
+
+
+def test_ground_truth_starts_map_server_only_on_first_robot():
+    # Nav2 전역 costmap이 /map을 구독한다. amcl처럼 첫 로봇에서만 지도 서버를 띄운다
+    first = args(robot_stack(Options(localization='ground_truth', map='m.yaml'), 0, 'amr_01', POSE, MAP_POSE),
+                 'ground_truth_localization.launch.py')
+    second = args(robot_stack(Options(localization='ground_truth', map='m.yaml'), 1, 'amr_02', POSE, MAP_POSE),
+                  'ground_truth_localization.launch.py')
+    assert (first['start_map_server'], first['map']) == ('true', 'm.yaml')
+    assert second['start_map_server'] == 'false'
+
+
+
+@pytest.mark.parametrize('old, mode', [
+    ('true', 'amcl'), ('True', 'amcl'), (True, 'amcl'), (' TRUE ', 'amcl'),
+    ('false', 'off'), ('False', 'off'), (False, 'off'),
+    ('amcl', 'amcl'), ('ground_truth', 'ground_truth'), ('off', 'off')])
+def test_old_boolean_localization_values_still_work(old, mode):
+    # 아직 머지 안 된 브랜치·하네스 시나리오가 localization:=true/false를 쓸 수 있다
+    assert localization_mode(old) == mode
+    assert Options(localization=old).localization == mode
+
+
+def test_localization_true_is_the_old_amcl_stack():
+    assert launches(stack(localization='true')) == launches(stack(localization='amcl'))
+    assert args(stack(localization='true'), 'spawn_robot.launch.py')['publish_odom_tf'] == 'false'
+
+
+def test_localization_false_is_the_old_diffdrive_tf():
+    items = stack(localization='false')
+    assert launches(items) == launches(stack(localization='off'))
+    assert args(items, 'spawn_robot.launch.py')['publish_odom_tf'] == 'true'
+
+
+def test_nav2_with_localization_false_still_rejected():
+    with pytest.raises(RuntimeError, match='localization'):
+        Options(nav2=True, localization='false').validate()
+
+
+def test_launch_choices_accept_old_values():
+    for value in ('amcl', 'ground_truth', 'off', 'true', 'false', 'True', 'False'):
+        assert value in LOCALIZATION_CHOICES
+
 @pytest.mark.parametrize('flags, message', [
-    ({'nav2': True, 'localization': False}, 'localization'),
+    ({'nav2': True, 'localization': 'off'}, 'localization'),
+    ({'localization': 'warehouse'}, 'localization'),
     ({'detection': True}, 'enable_camera'),
     ({'docking': True, 'enable_camera': True}, 'nav2'),
     ({'docking': True, 'nav2': True}, 'enable_camera'),

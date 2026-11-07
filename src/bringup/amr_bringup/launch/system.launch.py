@@ -12,16 +12,24 @@
         dynamic_obstacles:=true dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak.yaml \
         staff_file:=dynamic_obstacles_restaurant_staff.yaml congestion:=restaurant cost_fn:=congestion congestion_filter:=keepout \
         enable_camera:=amr_01                                               # 식당 5대 (혼잡도 켬, 1호만 카메라)
+    ros2 launch amr_bringup system.launch.py world:=restaurant.sdf body:=serving nav2:=true \
+        localization:=ground_truth                                         # 식당 시연 녹화 전용 - KPI에는 안 씀
 
 기본은 1단계라 BT의 이동이 가짜(stub)여서 로봇이 움직이지 않는다. nav2 등은 꺼 둔 채로 시작해, 패키지가 준비되는 대로 인자로 켠다 (README "단계").
 nav2:=true면 BT의 이동(MoveTo)도 Nav2를 부르고(amr_bt use_nav2), docking:=true면 도킹(Dock)이 도킹 서버를 부른다(use_docking).
 Nav2에 직접 목표를 보내려면 `ros2 action send_goal /<ns>/navigate_to_pose ...`.
 
+localization:=ground_truth는 AMCL+EKF 대신 시뮬레이터 정답 위치를 그대로 쓴다 - 식당 시연 녹화
+전용이다(AMCL 오차 0.9~2.3 m로 로봇이 테이블 안에 있다고 믿어 멈추거나 거짓 도착이 나는 문제를
+피한다). **물류센터 KPI에는 쓰지 않는다. 이 옵션으로 찍은 시연 영상은 정답 위치를 썼다는 것을
+밝힌다** (amr_localization README "정답 위치로 대신하기").
+
 로봇마다 (<ns> = robots.yaml의 이름):
-    amr_gazebo spawn_robot      스폰, ROS ↔ Gazebo 브리지. odom TF는 EKF가 내므로 끈다
+    amr_gazebo spawn_robot      스폰, ROS ↔ Gazebo 브리지. odom TF는 위치추정이 내므로 끈다(localization:=off면 켬)
     amr_odometry odometry       휠 오도메트리 /<ns>/odom (TF 안 냄)
     amr_odometry sensor_filters /<ns>/scan, /<ns>/imu/data
-    amr_localization            AMCL + EKF 두 개. map → <ns>/odom → <ns>/base_footprint. 지도 서버는 첫 로봇에서 한 번
+    amr_localization            localization:=amcl(기본)면 AMCL+EKF 두 개, ground_truth면 시뮬레이터 정답 위치(식당
+                                 시연 전용), off면 안 띄움(DiffDrive odom TF). map → <ns>/odom → <ns>/base_footprint
     amr_bt                      Fleet 작업 수신·Ack·상태 보고. fleet:=true면 장애 주입기 중계본을 구독한다
     nav2.launch.py              (nav2:=true) planner·controller·behavior·bt_navigator. 속도는 cmd_vel_nav로
     amr_zone_client             (zone_client:=true) 좁은 통로 진입 허가·속도 제한. cmd_vel_nav → cmd_vel_zone_limited
@@ -49,7 +57,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from amr_bringup.robots import load_robots, world_to_map, world_to_map_tf_args
-from amr_bringup.stack import Options, robot_stack
+from amr_bringup.stack import LOCALIZATION_CHOICES, Options, robot_stack
 
 
 def _launch(package, launch_file, **arguments):
@@ -77,11 +85,12 @@ def _system(context):
     interval = float(arg('spawn_interval_s'))
     # 로봇마다 무엇을 띄울지는 amr_bringup/stack.py가 정한다 (ROS 없이 테스트)
     opt = Options(
-        localization=flag('localization'), bt=flag('bt'), fleet=fleet, nav2=flag('nav2'),
+        localization=arg('localization'), bt=flag('bt'), fleet=fleet, nav2=flag('nav2'),
         zone_client=flag('zone_client'), tracking=flag('tracking'), safety=flag('safety'),
         detection=flag('detection'), docking=flag('docking'), enable_camera=arg('enable_camera'),
         congestion_filter=arg('congestion_filter'), nav2_composition=flag('nav2_composition'),
-        payload_mass=arg('payload_mass'), seed=seed, map=arg('map'), use_imu=arg('use_imu'),
+        payload_mass=arg('payload_mass'), seed=seed, map=arg('map'), map_origin_in_world=arg('map_origin_in_world'),
+        use_imu=arg('use_imu'),
         zones_file=arg('zones_file'), body=arg('body'))
     opt.validate([r.name for r in robots])
 
@@ -93,7 +102,7 @@ def _system(context):
     obstacles = gazebo_config(arg('dynamic_obstacles_file'))
 
     actions = [_launch('amr_gazebo', 'world.launch.py', gui=arg('gui'), world=arg('world'))]
-    if opt.localization:
+    if opt.localization != 'off':
         # world → map 정적 TF. 지도 원점(map_origin_in_world)을 여기 한 곳에서만 발행하고, world 좌표 설정
         # (zones.yaml 등)을 쓰는 노드는 이 TF로 바꾼다. 원점 값을 노드마다 복사하지 않기 위해서다
         actions.append(Node(
@@ -174,8 +183,7 @@ def generate_launch_description():
         ('payload_mass', '0.0', '모든 로봇의 적재물 질량 [kg] (연구 2 Gazebo 평가)'),
         ('body', 'amr', '몸체: amr(물류 0.6 x 0.4 m) 또는 serving(식당 0.565 x 0.537 m). 스폰 몸체와 Nav2 footprint(nav2_profile)가 같이 바뀐다'),
         ('seed', '0', '실행 seed. 엔코더 노이즈·동적 장애물·손실 난수에 쓴다. 하네스는 1부터 준다'),
-        # 위치추정
-        ('localization', 'true', 'AMCL + EKF. 끄면 DiffDrive odom TF를 쓴다'),
+        # 위치추정 (localization은 choices가 있어 아래에서 따로 선언한다)
         ('map', default_map, '지도 yaml'),
         ('map_origin_in_world', '[-0.0439, 1.4712, -0.00088]',
          'world에서 본 map 원점 [x, y, yaw] (지도 정렬값, amr_mapping README). AMCL 초기 위치 계산'),
@@ -183,7 +191,7 @@ def generate_launch_description():
         # 작업 수행
         ('bt', 'true', 'amr_bt (Fleet 작업 수신). nav2:=true면 이동도 Nav2, 아니면 자리채움'),
         # 2·3단계 (꺼 두면 1단계와 같다)
-        ('nav2', 'false', 'Nav2 (경로 계획·주행). localization:=true 필요'),
+        ('nav2', 'false', 'Nav2 (경로 계획·주행). localization:=amcl 또는 ground_truth 필요'),
         ('zone_client', 'false', '구역 클라이언트 (좁은 통로 진입 허가·속도 제한)'),
         ('tracking', 'false', 'LiDAR 장애물 추적·TTC'),
         ('safety', 'false', '안전 노드 (최종 cmd_vel)'),
@@ -212,4 +220,9 @@ def generate_launch_description():
     ]
     return LaunchDescription(
         [DeclareLaunchArgument(name, default_value=default, description=desc) for name, default, desc in args]
+        + [DeclareLaunchArgument(
+            'localization', default_value='amcl', choices=list(LOCALIZATION_CHOICES),
+            description='위치추정. amcl(AMCL+EKF, 기본, 물류센터 KPI) / ground_truth(시뮬레이터 정답 위치 - '
+                        '식당 시연 녹화 전용, KPI에는 안 씀, amr_localization README) / off(DiffDrive odom TF). '
+                        '예전 값 true는 amcl, false는 off로 받는다')]
         + [OpaqueFunction(function=_system)])
