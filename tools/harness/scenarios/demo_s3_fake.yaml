@@ -1,0 +1,48 @@
+# 식당 시연 3 충전 스케줄링을 Gazebo 없이 미리 돌린다: 실제 Fleet 서버 + 가짜 로봇 5대 + 장면 스크립트 (실제 시계).
+# 배터리·충전 값과 장면 파일(배달 간격)을 Gazebo 녹화 전에 맞추는 데 쓴다. 몇 분이면 끝난다.
+#   tools/harness/docker_run.sh demo_s3_fake -n 1 --set policy=on --label on
+#   tools/harness/docker_run.sh demo_s3_fake -n 1 --set policy=off --label off
+#   python3 experiments/restaurant_demo/analyze.py tools/harness/results/   # 장면 3 지표 (홀 운영 대수 등)
+# 서버 충전 정책·장면 파일은 demo_s3와 같다. 로봇만 가짜(tasks/demo_s3_fake_robots.yaml, 직선 0.4 m/s)라 시간은 Gazebo와 다르다
+name: demo_s3_fake
+packages: amr_fleet_manager
+num_robots: 5
+use_sim_time: false
+seed_base: 1
+timeout_s: 900
+params:
+  num_robots: 5
+  policy: "on"
+  duration_s: 240
+param_sets:
+  policy:
+    "on": {charging: "true", charge_low_percent: "30.0", min_in_service: "3"}
+    "off": {charging: "true", charge_low_percent: "20.0", min_in_service: "0"}
+processes:
+  - name: fleet_manager
+    cmd: >-
+      ros2 launch amr_fleet_manager fleet_manager.launch.py algorithm:=nearest
+      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
+      charging:={charging} charge_low_percent:={charge_low_percent} min_in_service:={min_in_service}
+      stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
+      map_origin_in_world:="[0.0, 0.0, 0.0]"
+    ready_topic: /fleet/heartbeat
+  - name: fake_robots
+    cmd: >-
+      ros2 launch amr_fleet_manager fake_robots.launch.py count:={num_robots}
+      config:=/repo/tools/harness/tasks/demo_s3_fake_robots.yaml speed_mps:=0.4
+    settle_s: 3
+  - name: rosbag
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '^(/fleet/task_status|/fleet/robot_states|/fleet/task_table|/demo/t0)$'
+    settle_s: 3
+  - name: scene
+    cmd: >-
+      python3 /repo/tools/harness/demo_scene.py /repo/tools/harness/tasks/demo_s3.yaml
+      --stations $(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
+      --map-origin "[0.0, 0.0, 0.0]" --num-robots {num_robots} --wall-clock --settle-s 2
+      --out {run_dir}/scene.json
+    settle_s: 1
+driver:
+  mode: wait
+  use_sim_time: false
+  duration_s: "{duration_s}"

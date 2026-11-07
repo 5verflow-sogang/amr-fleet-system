@@ -1,0 +1,39 @@
+# 식당 시연 3 충전 스케줄링 (연우). 켬/끔은 서버 충전 정책(policy)만 다르다. 같은 seed로 슬롯 둘에서 동시에:
+#   Actions Fleet Regression Test: scenario=demo_s3, repeats=1, label=on,  params="policy=on slot=c1"
+#                                  scenario=demo_s3, repeats=1, label=off, params="policy=off slot=c2"
+#   결과: gs://amr-fleet-results/runs/demo_s3-on/… (끔은 demo_s3-off). 측정: experiments/restaurant_demo (장면 3)
+# 끔 (fleet_battery B1): 놀고 있는 로봇이 20 % 밑이면 충전하러 간다. 동시 충전 제한 없음(충전기 3개) → 홀 2대까지 준다
+# 켬 (fleet_battery P1에서 에너지 예측 배정을 뺀 것): 30 % 밑이면 미리 보내고, 홀 최소 3대(5대 - 3 = 동시 충전 2대).
+#   차례를 기다리는 로봇은 20 % 위면 계속 배달한다 (서버 할당 하한 min_battery_percent 20)
+# 작업은 장면 스크립트가 장면 파일 tasks/demo_s3.yaml대로 넣는다 (5대에게 한꺼번에 → 7 s 간격으로 계속).
+# 0초는 로봇 하나가 31 % 밑이 된 순간
+# 배터리: amr_bt config/amr_bt_battery_demo_s3.yaml (움직일 때만 0.6 %/m, 충전 3 %/s로 80 %까지, 시작 38·37·85·70·36 %)
+# 손님은 서쪽에만(아래 guests 주석), 위치는 시뮬레이터 정답(영상에 표기, 11/8 회의). 카메라: 탑뷰 + 남쪽(충전소)
+# 길이: 0초는 시작 뒤 약 60 s, 끔에서 세 대가 충전을 마치고 돌아오는 것까지 시뮬레이션 240 s 녹화한다
+name: demo_s3
+extends: demo_restaurant
+# docker_run.sh는 이 파일의 packages: 줄만 읽는다 (extends를 따라가지 않는다)
+packages: amr_bringup
+timeout_s: 7200
+params:
+  robots: robots_restaurant_s3.yaml             # 홀에 흩어진 시작 자리 (대기 줄에서 한꺼번에 나가면 막힌다)
+  # 손님: 서쪽에만 7명 (amr_gazebo config/dynamic_obstacles_restaurant_s3.yaml, 11/8 회의 "혼잡한 곳에만"). 피크 13명에서는
+  # 240 s 동안, 평상시 7명(매장 앞·가운데·동쪽 통로)에서도 200 s 동안 배달이 한 건도 끝나지 않았다 (11/8 맥 스모크)
+  guests: dynamic_obstacles_restaurant_s3.yaml
+  task_generator: "false"
+  scene_script: python3 /repo/tools/harness/demo_scene.py
+  scene_file: demo_s3.yaml
+  # 켬 on / 끔 off (아래 param_sets가 charging·charge_low_percent·min_in_service를 채운다)
+  policy: "on"
+  bt_params_file: amr_bt_battery_demo_s3.yaml
+  stations_file: stations_restaurant.yaml
+  cameras: top,south
+  robot_camera: "false"
+  # 워크플로는 이 파일 params만 받는다 (extends의 값은 안 본다)
+  localization: ground_truth
+  fleet_params: ""
+  duration_s: 240
+param_sets:
+  policy:
+    "on": {charging: "true", charge_low_percent: "30.0", min_in_service: "3"}
+    "off": {charging: "true", charge_low_percent: "20.0", min_in_service: "0"}

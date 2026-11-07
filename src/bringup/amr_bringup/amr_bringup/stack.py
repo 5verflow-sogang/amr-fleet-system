@@ -9,7 +9,8 @@ from typing import List, NamedTuple, Optional
 
 from amr_bringup.robots import cmd_vel_chain, encoder_seed
 
-# 몸체(spawn_robot body) → Nav2 프로필(nav2.launch.py nav2_profile). serving이면 footprint가 서빙 로봇 크기가 된다
+# 몸체(spawn_robot body) → Nav2 프로필(nav2.launch.py nav2_profile)·안전 프로필(safety.launch.py profile).
+# serving이면 footprint가 서빙 로봇 크기, 순항 속도·안전 노드 근접 저속이 식당 값이 된다
 NAV2_PROFILE = {'amr': 'warehouse', 'serving': 'restaurant'}
 
 # off: DiffDrive odom TF를 그대로 씀 (지도 매핑 등 위치추정 자체가 필요 없을 때)
@@ -63,6 +64,8 @@ class Options:
     use_imu: str = 'true'
     zones_file: str = ''
     body: str = 'amr'
+    # amr_bt.yaml 위에 얹을 파일 (배터리 실험). 비우면 없음
+    bt_params_file: str = ''
 
     def __post_init__(self) -> None:
         self.localization = localization_mode(self.localization)
@@ -131,7 +134,8 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
     if opt.bt:
         stack.append(Include('amr_bt', 'amr_bt.launch.py', dict(
             namespace=name, relayed='true' if opt.fleet else 'false', use_sim_time='true',
-            use_nav2='true' if opt.nav2 else 'false', use_docking='true' if opt.docking else 'false')))
+            use_nav2='true' if opt.nav2 else 'false', use_docking='true' if opt.docking else 'false',
+            params_file=opt.bt_params_file)))
     if opt.nav2:
         stack.append(Include('amr_bringup', 'nav2.launch.py', dict(
             namespace=name, cmd_vel_topic=chain['nav_out'], nav2_profile=NAV2_PROFILE[opt.body],
@@ -154,5 +158,6 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
         stack.append(Include('amr_detection', 'detection.launch.py', dict(namespace=name, use_sim_time='true')))
     if opt.safety:
         stack.append(Include('amr_safety', 'safety.launch.py', dict(
-            namespace=name, cmd_vel_in_topic=chain['safety_in'], use_sim_time='true')))
+            namespace=name, cmd_vel_in_topic=chain['safety_in'], profile=NAV2_PROFILE[opt.body],
+            use_sim_time='true')))
     return stack

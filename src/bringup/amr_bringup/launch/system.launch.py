@@ -91,7 +91,7 @@ def _system(context):
         congestion_filter=arg('congestion_filter'), nav2_composition=flag('nav2_composition'),
         payload_mass=arg('payload_mass'), seed=seed, map=arg('map'), map_origin_in_world=arg('map_origin_in_world'),
         use_imu=arg('use_imu'),
-        zones_file=arg('zones_file'), body=arg('body'))
+        zones_file=arg('zones_file'), body=arg('body'), bt_params_file=arg('bt_params_file'))
     opt.validate([r.name for r in robots])
 
     # 상대 이름이면 amr_gazebo config/ 아래 파일 (식당: dynamic_obstacles_restaurant_peak.yaml 등)
@@ -137,6 +137,10 @@ def _system(context):
 
     if fleet:
         # 시연별 서버 설정 덮어쓰기 (예: fleet_manager_restaurant.yaml의 aging_rate). 상대 이름이면 amr_fleet_manager config/
+        # 충전기(charger_*)·대기 위치(wait_*) 스테이션 파일. 상대 이름이면 amr_fleet_manager config/
+        stations_file = arg('stations_file')
+        if not os.path.isabs(stations_file):
+            stations_file = os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', stations_file)
         fleet_params = arg('fleet_params_file')
         if fleet_params and not os.path.isabs(fleet_params):
             fleet_params = os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', fleet_params)
@@ -146,7 +150,13 @@ def _system(context):
             kill_at_s=arg('kill_at_s'), restart_after_s=arg('restart_after_s'),
             fault_events_file=arg('fault_events_file'), zones_file=arg('zones_file'),
             deadlock_strategy=arg('deadlock_strategy'), cost_fn=arg('cost_fn'),
-            congestion_weight=arg('congestion_weight'), extra_params_file=fleet_params, use_sim_time='true'))
+            congestion_weight=arg('congestion_weight'), extra_params_file=fleet_params, use_sim_time='true',
+            # 배터리 인지 운영 (1·2·3단계). 충전기·대기 위치는 stations_file, 좌표는 이 launch의 지도 원점
+            charging=arg('charging'), charge_low_percent=arg('charge_low_percent'),
+            min_in_service=arg('min_in_service'), energy_check=arg('energy_check'),
+            energy_move_per_m=arg('energy_move_per_m'), energy_idle_per_s=arg('energy_idle_per_s'),
+            energy_speed_mps=arg('energy_speed_mps'), interrupt=arg('interrupt'),
+            stations_file=stations_file, map_origin_in_world=arg('map_origin_in_world')))
         injector_config = os.path.join(
             get_package_share_directory('amr_fault_injector'), 'config', 'fault_injector.yaml')
         actions.append(Node(
@@ -223,6 +233,19 @@ def generate_launch_description():
         ('zones_file', os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', 'zones.yaml'),
          '구역 목록 (world 좌표)'),
         ('deadlock_strategy', 'revoke', '교착 해소 전략: revoke / avoid'),
+        # 배터리 인지 운영 (1단계 자동 충전, 2단계 에너지 예측 배정, 3단계 작업 중 인터럽트). 기본은 모두 꺼짐
+        ('charging', 'false', '자동 충전 배정 (낮은 로봇을 빈 충전기로, 최소 운영 대수 유지)'),
+        ('charge_low_percent', '30.0', '놀고 있는 로봇이 이보다 낮으면 충전하러 보낸다 (%)'),
+        ('min_in_service', '0', '운영 중 로봇 최소 대수 N (0이면 충전기 수로만 묶는다)'),
+        ('energy_check', 'false', '에너지 예측 배정 (작업 + 충전기까지 갈 배터리가 없으면 그 작업에서 뺀다)'),
+        ('energy_move_per_m', '0.05', '서버 배터리 모델: 이동 1 m당 소모 (%, 로봇 amr_bt battery.move_per_m과 같게)'),
+        ('energy_idle_per_s', '0.002', '서버 배터리 모델: 정지 소모 (%/s, 로봇 battery.idle_per_s와 같게)'),
+        ('energy_speed_mps', '0.5', '서버 배터리 모델: 평균 주행 속도 (m/s)'),
+        ('interrupt', 'false', '작업 중 배터리 부족 인터럽트 (3단계): 픽업 전 배송을 끊고 바로 충전'),
+        ('stations_file', 'stations.yaml',
+         '충전기·대기 위치 스테이션 파일 (amr_fleet_manager config/ 아래 이름 또는 절대 경로). 식당 stations_restaurant.yaml'),
+        ('bt_params_file', '',
+         'amr_bt.yaml 위에 얹을 파일 (amr_bt config/ 아래 이름). 배터리 실험: amr_bt_battery_restaurant.yaml'),
     ]
     return LaunchDescription(
         [DeclareLaunchArgument(name, default_value=default, description=desc) for name, default, desc in args]

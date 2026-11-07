@@ -14,6 +14,7 @@
 | --- | --- | --- |
 | `s12` → 1-2 (붐비는 통로 돌아가기) | `/fleet/task_table`, `/fleet/task_status`, `/fleet/robot_states` | 요청 → 배식대 2번 자리(`buffet_2`) 도착 시간, 그 사이 멈춘 횟수 |
 | `s2…` → 2 (회수 호출 + aging) | `/fleet/task_table` | 1막 회수 대기 시간(평균·최대·미할당), 2막 기아 시간 |
+| `s3` → 3 (충전 스케줄링) | `/fleet/robot_states`, `/fleet/task_table`, `/demo/t0` | 홀 운영 대수 최저, 동시 충전 최대, 대기 배달 최대, 배달 대기(평균·최대·미할당), 0초 배터리, 충전 작업 시각. 실행 폴더에 시간별 `scene3_timeline.csv` |
 
 녹화할 때 이 토픽이 bag에 들어가야 한다. 시각은 메시지 안 시각(use_sim_time이면 시뮬레이션 s)이다.
 
@@ -25,6 +26,7 @@
 - 멈춘 횟수: 그 로봇 `RobotState` 자세 차분 속도가 0.05 m/s 밑으로 1 s 이상 머문 구간 수(`--stop-speed`, `--stop-min-s`). 출발 전 대기와 도착 직전 정차는 빼고 따로 낸다. 정지 비율 = 멈춘 시간 합 / (출발 ~ 도착) `RobotState.velocity`는 amr_bt가 채우지 않아 자세로 잰다(2 Hz)
 - 도착하지 못한 실행: 도착 시간은 `-`, 멈춘 횟수·시간·정지 비율은 녹화 끝까지로 낸다 (끝까지 멈춰 있던 구간도 멈춤 하나)
 - 회수 대기: 회수 호출(`TYPE_COLLECT`)마다 첫 할당(작업표 `assignee_id`가 처음 찬 시각) − 요청
+- 홀 운영 대수 (장면 3): 0초(`/demo/t0`, 로봇 하나가 31 % 밑이 된 순간)부터 녹화 끝까지 0.5 s마다 센다. `hall` = 충전 작업(`TYPE_CHARGE`)을 맡지 않은 로봇 수(충전소로 가는 중도 뺀다, 서버 `min_in_service`와 같은 뜻), `hall_mode` = `MODE_CHARGING`이 아닌 로봇 수(시나리오 문서의 계산). 배달 대기는 0초 뒤 요청된 배달의 할당 − 요청. `--plot 그림.png`이면 켬/끔 `hall`을 0초에 맞춰 한 그래프에
 - 기아 시간: 일반 작업이 기다리는데 일반 작업 할당이 하나도 없던 가장 긴 구간. #306 `experiments/fleet_collect_aging/collect_aging.py`의 `starvation`과 같은 식이다(그쪽은 하네스 csv, 여기는 `/fleet/task_table`). `--act2 START END`(첫 요청 기준 s)를 주면 그 구간과 겹치는 것만 본다
 
 ## 실행

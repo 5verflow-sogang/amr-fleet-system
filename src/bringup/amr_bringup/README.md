@@ -22,6 +22,7 @@ ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true tracking:=
 # 손님은 1-1·1-2 모두 피크 파일(peak_1~3 서쪽 통로 → 1-2 우회, peak_4~6 배식대 앞 → 1-1). 직원은 staff_file로 따로 띄워 혼잡도에 안 센다.
 # 장면별 시작 위치: robots_restaurant_s11.yaml(1-1), robots_restaurant_s12.yaml(1-2). 기본 robots_restaurant.yaml은 대기 위치
 # 기능 끔: 1-1 cost_fn:=euclidean(기본), 1-2 congestion_filter:=none(기본).
+# body:=serving이면 Nav2(footprint, 순항 0.8 m/s)와 안전 노드(amr_safety safety_restaurant.yaml)가 식당 값을 쓴다
 # enable_camera:=amr_01이면 1호만 카메라를 켠다(로봇 시점). 구역 클라이언트는 켜지 않는다(물류센터 구역이 홀과 겹친다)
 # 작업 생성기에는 stations_file:=.../stations_restaurant.yaml map_origin_in_world:='[0.0, 0.0, 0.0]' (실수로 쓴다. [0, 0, 0]이면 작업 생성기가 시작하자마자 죽는다)
 ros2 launch amr_bringup system.launch.py world:=restaurant.sdf body:=serving nav2:=true tracking:=true safety:=true \

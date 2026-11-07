@@ -89,6 +89,9 @@ def _server(context):
                 'energy.speed_mps': float(arg('energy_speed_mps')),
                 'energy.path_factor': float(arg('energy_path_factor')),
                 'assignment.battery_weight': float(arg('battery_weight')),
+                # 작업 중 배터리 부족 인터럽트 (3단계): 픽업 전 배송을 끊고 바로 충전. 판단은 energy_* 모델
+                'interrupt.enabled': arg('interrupt').lower() == 'true',
+                'interrupt.reserve_percent': float(arg('interrupt_reserve_percent')),
             }, *([{
                 # 우선순위 aging 비교용 (설정 파일 값을 이 실행만 바꾼다). 비우면 설정 파일(extra_params_file 포함) 값
                 'assignment.aging_rate': float(arg('aging_rate')),
@@ -158,6 +161,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'battery_weight', default_value='0.0',
             description='비용 + 이 값 × (필요 배터리 / 남은 배터리) [m]. 배터리가 많은 로봇이 먼 작업을 맡는다. 0이면 끔'),
+        DeclareLaunchArgument(
+            'interrupt', default_value='false',
+            description='작업 중 배터리 부족 인터럽트 (3단계): 픽업 전인데 남은 경로 + 충전기까지 모자라면 작업을 되돌리고 바로 충전'),
+        DeclareLaunchArgument(
+            'interrupt_reserve_percent', default_value='2.0',
+            description='인터럽트 판단 여유 (%, 배정 여유 5 %보다 작게 둬 배정 직후 바로 끊기지 않게)'),
         DeclareLaunchArgument(
             'stations_file', default_value=os.path.join(share, 'config', 'stations.yaml'),
             description='충전기(charger_*)·대기 위치(wait_*) 스테이션 파일 (world 좌표). 식당은 stations_restaurant.yaml'),

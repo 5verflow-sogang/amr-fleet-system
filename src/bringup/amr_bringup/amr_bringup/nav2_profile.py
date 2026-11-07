@@ -1,4 +1,4 @@
-"""Nav2 식당 프로필(footprint)과 혼잡도 costmap 필터 오버레이 (nav2.launch.py nav2_profile·congestion_filter 인자).
+"""Nav2 식당 프로필(footprint·순항 속도)과 혼잡도 costmap 필터 오버레이 (nav2.launch.py nav2_profile·congestion_filter 인자).
 
 nav2_params.yaml 전체를 복사하지 않고 바뀌는 키만 돌려준다 - nav2.launch.py가 controller_server의
 FollowPath(DWA) override와 같은 방식으로, 로봇별 임시 yaml에 이 값만 더 써서 RewrittenYaml 뒤에
@@ -18,6 +18,9 @@ _RESTAURANT_FOOTPRINT = (
     f'[-{_RESTAURANT_HALF_LENGTH}, -{_RESTAURANT_HALF_WIDTH}], '
     f'[-{_RESTAURANT_HALF_LENGTH}, {_RESTAURANT_HALF_WIDTH}]]'
 )
+# 식당 순항 속도 [m/s]. 물류센터 DWA max_v(0.5)는 Nav KPI 기준 속도라 그대로 두고 식당만 올린다.
+# 사람이 가까우면 안전 노드가 따로 묶는다(amr_safety config/safety.yaml warning_speed_limit)
+_RESTAURANT_MAX_V = 0.8
 
 
 def profile_overrides(nav2_params: dict, profile: str) -> dict:
@@ -38,6 +41,7 @@ def profile_overrides(nav2_params: dict, profile: str) -> dict:
         'DWA': {
             'footprint_half_length': _RESTAURANT_HALF_LENGTH,
             'footprint_half_width': _RESTAURANT_HALF_WIDTH,
+            'max_v': _RESTAURANT_MAX_V,
         },
     }
 

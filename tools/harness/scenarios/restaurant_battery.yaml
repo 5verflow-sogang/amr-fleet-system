@@ -1,0 +1,77 @@
+# 식당 배터리 인지 운영 (Gazebo + amr_bt 실제 로봇 스택). fleet_battery(가짜 로봇)의 마무리 검증과 3단계 확인.
+# 식당(restaurant.sdf) + 서빙 로봇 5대 + Nav2 + 서버 자동 충전·에너지 예측 배정·작업 중 배터리 부족 인터럽트.
+# 로봇 배터리는 빨리 닳게 압축했고(amr_bt_battery_restaurant.yaml, 시작 70·50·38·30·24 %) 서버 배터리 모델도 같은 값을 쓴다.
+# 손님은 RTF 때문에 기본으로 끈다 (Gazebo 손님 24명이 RTF를 0.2 → 0.12로 떨어뜨렸다, 11/7 로컬 측정).
+#
+#   tools/harness/docker_run.sh restaurant_battery -n 1 --label smoke --set duration_s=300
+#   tools/harness/gcp_run.sh restaurant_battery -n 1 --label p3 --set interrupt=true
+#   tools/harness/gcp_run.sh restaurant_battery -n 1 --label p2 --set interrupt=false     # 3단계 끔 비교
+#
+# 보는 것: 서버 로그의 "배터리 부족 인터럽트"·"충전:" 줄, task_outcomes.csv(배송 완료·실패), summary fleet.battery_*
+# (방전 정지 battery_depleted, 최저 배터리 battery_min)
+name: restaurant_battery
+packages: amr_bringup
+num_robots: 5
+use_sim_time: true
+seed_base: 1
+# 시뮬레이션 900 s를 RTF 0.15까지 견딘다 (6000 s + 기동)
+timeout_s: 7200
+params:
+  num_robots: 5
+  spawn_interval_s: 25
+  delay_ms: 100
+  loss_pct: 0
+  algorithm: nearest
+  duration_s: 900
+  # 배터리 정책: 자동 충전(1단계)·에너지 예측 배정(2단계)·작업 중 인터럽트(3단계)
+  charging: "true"
+  charge_low_percent: "30.0"
+  min_in_service: "3"
+  energy_check: "true"
+  interrupt: "true"
+  # 로봇(amr_bt_battery_restaurant.yaml)과 같은 배터리 모델
+  energy_move_per_m: "0.3"
+  energy_idle_per_s: "0.01"
+  guests: "false"
+processes:
+  - name: stack
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py world:=restaurant.sdf body:=serving num_robots:={num_robots}
+      nav2:=true seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct} algorithm:={algorithm}
+      robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant.yaml
+      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
+      dynamic_obstacles:={guests} dynamic_obstacles_file:=dynamic_obstacles_restaurant.yaml
+      stations_file:=stations_restaurant.yaml bt_params_file:=amr_bt_battery_restaurant.yaml
+      charging:={charging} charge_low_percent:={charge_low_percent} min_in_service:={min_in_service}
+      energy_check:={energy_check} interrupt:={interrupt}
+      energy_move_per_m:={energy_move_per_m} energy_idle_per_s:={energy_idle_per_s}
+      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:={spawn_interval_s}
+    ready_topic: /fleet/heartbeat
+    ready_cmds:
+      - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
+    ready_timeout_s: 600
+    settle_s: 5
+  - name: cpu_monitor
+    cmd: python3 /repo/tools/harness/cpu_monitor.py --out {run_dir}/cpu.csv --interval 1.0
+    settle_s: 1
+  - name: rosbag
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/amr_[0-9][0-9]/odom'
+    settle_s: 3
+  # 작업 생성기의 지도 원점은 실수로 준다 ('[0, 0, 0]'이면 launch 형식 검사에서 꺼진다)
+  - name: task_generator
+    cmd: >-
+      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json use_sim_time:=true
+      map_origin_in_world:="[0.0, 0.0, 0.0]"
+      stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
+      scenario_file:=/repo/tools/harness/tasks/restaurant_battery.yaml
+driver:
+  mode: wait
+  use_sim_time: true
+  duration_s: "{duration_s}"
+postprocess:
+  - name: fleet_metrics
+    cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots {num_robots}
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
+  - pkill -9 -f "[c]pu_monitor.py" || true
