@@ -1,0 +1,41 @@
+# 장면 3을 Gazebo 없이 미리 돌리는 가짜 로봇 5대 (하네스 demo_s3_fake, fake_robots.launch.py config:=이 파일).
+# 시작 위치는 Gazebo와 같다 (amr_bringup config/robots_restaurant_s3.yaml).
+# 배터리는 amr_bt config/amr_bt_battery_demo_s3.yaml과 같은 값이어야 한다 (tests/test_scenarios.py가 확인).
+# 가짜 로봇은 직선으로 가고 손님에 막히지 않아, Gazebo(경로 우회·안전 감속)를 흉내 내려고 0.4 m/s·싣기 3 s로 둔다
+/**:
+  ros__parameters:
+    speed_mps: 0.4
+    dwell_s: 3.0
+    state_rate_hz: 2.0
+    step_hz: 10.0
+    battery:
+      move_per_m: 0.6
+      idle_per_s: 0.0
+      charge_per_s: 2.0
+      charge_target_percent: 80.0
+      reject_below_percent: 10.0
+/amr_01/fake_robot:
+  ros__parameters:
+    start_xy: [-10.5, -6.5]
+    battery:
+      initial_percent: 38.0
+/amr_02/fake_robot:
+  ros__parameters:
+    start_xy: [6.0, -5.0]
+    battery:
+      initial_percent: 37.0
+/amr_03/fake_robot:
+  ros__parameters:
+    start_xy: [9.0, -5.5]
+    battery:
+      initial_percent: 85.0
+/amr_04/fake_robot:
+  ros__parameters:
+    start_xy: [10.0, -3.0]
+    battery:
+      initial_percent: 70.0
+/amr_05/fake_robot:
+  ros__parameters:
+    start_xy: [7.5, -2.0]
+    battery:
+      initial_percent: 36.0

@@ -13,7 +13,10 @@
 - after.delay_s: 앞 단계 마지막 작업을 낸 뒤 N s (시뮬레이션 시각)
 - after.timeout_s: 앞 단계 뒤 N s가 지나면 조건이 안 맞아도 낸다 (scene.json에 timeout으로 남는다)
 - gap_s: 단계 안 작업 사이 간격 (기본 0, 연달아 넣기)
+- repeat: 단계 작업 목록을 N번 되풀이한다 (작업 id 뒤에 _01, _02, ...). 일정한 간격의 배달 흐름 (장면 3)
 - t0: true면 그 단계 첫 작업을 낼 때 /demo/t0(std_msgs/Header, stamp = 시뮬레이션 시각, frame_id = 첫 작업 id)을 낸다
+단계와 따로 0초를 배터리로 정할 수도 있다 (장면 3, 켬/끔을 같은 배터리 순간에 맞춘다. 단계의 t0과 같이 쓰지 않는다):
+- t0_when.battery_below: 로봇 하나라도 /fleet/robot_states 배터리가 이 값(%) 밑이면 그때 /demo/t0 (frame_id = battery)
 작업 값 안의 {이름}은 --set 이름=값으로 채운다 (예: priority: "{collect_priority}").
 Task.created_time은 시뮬레이션 시각이다 (aging이 노드 시계로 대기 시간을 잰다). 정차 자세는 stations 파일(world)을
 map_origin_in_world로 map 좌표로 바꾼다 (작업 생성기와 같다).
@@ -66,9 +69,16 @@ def load_scene(path, params: Optional[dict] = None) -> list[Step]:
     steps, seen = [], set()
     for s in data['steps']:
         tasks = []
-        for t in s['tasks']:
-            task = SceneTask(task_id=str(t['id']), type=str(t['type']), pickup=str(t['pickup']),
-                             dropoff=str(t['dropoff']), priority=int(_fill(t.get('priority', 100), params)))
+        repeat = int(s.get('repeat', 1))
+        if repeat < 1:
+            raise ValueError(f'{s["name"]}: repeat은 1 이상: {repeat}')
+        for k in range(1, repeat + 1):
+            for t in s['tasks']:
+                task_id = str(t['id']) if repeat == 1 else f'{t["id"]}_{k:02d}'
+                task = SceneTask(task_id=task_id, type=str(t['type']), pickup=str(t['pickup']),
+                                 dropoff=str(t['dropoff']), priority=int(_fill(t.get('priority', 100), params)))
+                tasks.append(task)
+        for task in tasks:
             if task.type not in TASK_TYPES:
                 raise ValueError(f'{task.task_id}: type은 {sorted(TASK_TYPES)} 중 하나: {task.type!r}')
             if not 0 <= task.priority <= 255:
@@ -76,12 +86,23 @@ def load_scene(path, params: Optional[dict] = None) -> list[Step]:
             if task.task_id in seen:
                 raise ValueError(f'작업 id 중복: {task.task_id}')
             seen.add(task.task_id)
-            tasks.append(task)
         steps.append(Step(name=str(s['name']), tasks=tasks, after=dict(s.get('after') or {}),
                           gap_s=float(s.get('gap_s', 0.0)), t0=bool(s.get('t0', False))))
     if sum(s.t0 for s in steps) > 1:
         raise ValueError('t0 단계는 하나만')
+    if data.get('t0_when') and any(s.t0 for s in steps):
+        raise ValueError('t0_when과 단계의 t0은 같이 쓰지 않는다')
     return steps
+
+
+def load_t0_when(path) -> Optional[dict]:
+    """장면 파일의 t0_when (배터리로 정하는 0초). 없으면 None."""
+    rule = yaml.safe_load(Path(path).read_text(encoding='utf-8')).get('t0_when')
+    if not rule:
+        return None
+    if set(rule) != {'battery_below'}:
+        raise ValueError(f't0_when은 battery_below만: {sorted(rule)}')
+    return {'battery_below': float(rule['battery_below'])}
 
 
 def stations_near(stations: dict, a: str, b: str, radius: float = STATION_RESERVE_M) -> bool:
@@ -91,10 +112,12 @@ def stations_near(stations: dict, a: str, b: str, radius: float = STATION_RESERV
 
 
 class Scene:
-    """단계 진행. tick(지금 시각, 작업표 {task_id: assignee})이 이번에 할 일 [('t0', t) | ('task', SceneTask)]을 돌려준다."""
+    """단계 진행. tick(지금 시각, 작업표 {task_id: assignee}, 배터리 {robot_id: %})이 이번에 할 일
+    [('t0', t, frame_id) | ('task', SceneTask)]을 돌려준다. t0_when이 있으면 배터리로 0초를 찍는다 (단계와 따로)."""
 
-    def __init__(self, steps: list[Step]):
+    def __init__(self, steps: list[Step], t0_when: Optional[dict] = None):
         self.steps = steps
+        self.t0_when = t0_when
         self.index = 0          # 다음 단계
         self.queue: list[SceneTask] = []   # 지금 단계에서 아직 안 낸 작업
         self.next_at = 0.0      # 다음 작업을 낼 수 있는 시각
@@ -105,7 +128,8 @@ class Scene:
 
     @property
     def done(self) -> bool:
-        return self.index >= len(self.steps) and not self.queue
+        # 배터리 0초를 기다리는 장면은 0초가 찍힐 때까지 끝내지 않는다
+        return self.index >= len(self.steps) and not self.queue and (self.t0_when is None or self.t0 is not None)
 
     def _ready(self, step: Step, now: float, table: dict) -> Optional[str]:
         """조건이 맞으면 'ok', 시간 초과면 'timeout', 아직이면 None."""
@@ -122,10 +146,16 @@ class Scene:
             return 'timeout'
         return None
 
-    def tick(self, now: float, table: dict) -> list[tuple]:
+    def tick(self, now: float, table: dict, batteries: Optional[dict] = None) -> list[tuple]:
         if self.step_start is None:
             self.step_start = now
         out = []
+        if self.t0_when and self.t0 is None and batteries \
+                and min(batteries.values()) < self.t0_when['battery_below']:
+            self.t0 = now
+            out.append(('t0', now, 'battery'))
+            self.log.append({'t': round(now, 3), 'ev': 't0', 'why': 'battery',
+                             'battery': {k: round(v, 2) for k, v in sorted(batteries.items())}})
         while True:
             if self.queue:
                 if now < self.next_at:
@@ -178,19 +208,22 @@ def _run(args, scene, stations, origin):
 
     rclpy.init()
     node = Node('demo_scene', parameter_overrides=[rclpy.parameter.Parameter(
-        'use_sim_time', rclpy.Parameter.Type.BOOL, True)])
+        'use_sim_time', rclpy.Parameter.Type.BOOL, not args.wall_clock)])
     reliable = QoSProfile(depth=50, reliability=ReliabilityPolicy.RELIABLE)
     latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
     pub = node.create_publisher(Task, '/fleet/task_requests', reliable)
     t0_pub = node.create_publisher(Header, '/demo/t0', latched)
-    table, robots = {}, set()
+    table, robots = {}, {}
 
     def on_table(m):
         table.clear()
         table.update({r.task.task_id: r.assignee_id for r in m.records})
 
+    def on_state(m):
+        robots[m.robot_id] = float(m.battery_percent)
+
     node.create_subscription(FleetTaskTable, '/fleet/task_table', on_table, 10)
-    node.create_subscription(RobotState, '/fleet/robot_states', lambda m: robots.add(m.robot_id), 10)
+    node.create_subscription(RobotState, '/fleet/robot_states', on_state, 10)
 
     def now():
         return node.get_clock().now().nanoseconds * 1e-9
@@ -212,7 +245,7 @@ def _run(args, scene, stations, origin):
     t_end = now() + args.timeout_s
     while not scene.done and now() < t_end:
         rclpy.spin_once(node, timeout_sec=0.05)
-        for action in scene.tick(now(), table):
+        for action in scene.tick(now(), table, robots):
             if action[0] == 't0':
                 h = Header(frame_id=action[2])
                 h.stamp = node.get_clock().now().to_msg()
@@ -245,15 +278,17 @@ def main(argv=None):
     ap.add_argument('--timeout-s', type=float, default=600.0, help='장면 전체 한도 (시뮬레이션 s)')
     ap.add_argument('--ready-timeout-s', type=float, default=900.0, help='준비 대기 한도 (실제 s)')
     ap.add_argument('--out', help='장면 기록 json')
+    ap.add_argument('--wall-clock', action='store_true', help='시뮬레이션 시계 대신 실제 시계 (Gazebo 없는 가짜 로봇)')
     a = ap.parse_args(argv)
     params = dict(item.split('=', 1) for item in a.set)
     steps = load_scene(a.scene, params)
+    t0_when = load_t0_when(a.scene)
     stations = {k: tuple(float(x) for x in v) for k, v in
                 yaml.safe_load(Path(a.stations).read_text(encoding='utf-8'))['stations'].items()}
     unknown = sorted({n for s in steps for t in s.tasks for n in (t.pickup, t.dropoff)} - set(stations))
     if unknown:
         raise SystemExit(f'stations 파일에 없는 자리: {unknown}')
-    scene = Scene(steps)
+    scene = Scene(steps, t0_when)
     status = 'interrupted'
     try:
         status = _run(a, scene, stations, [float(v) for v in yaml.safe_load(a.map_origin)])

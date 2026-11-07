@@ -1,0 +1,39 @@
+# 식당 시연 3 충전 스케줄링용 가상 배터리 (amr_bt.yaml 위에 얹는다, 하네스 demo_s3 bt_params_file).
+#
+# 장면 안에 낮은 세 대가 비슷한 때에 충전 기준(켬 30 %, 끔 20 %) 밑으로 내려가고, 충전을 마치고 돌아오도록 압축했다.
+# - 움직일 때만 닳는다 (idle_per_s 0). 로봇이 25 s 간격으로 하나씩 뜨는 동안 닳지 않아 장면 시작 배터리가 켬/끔에서 같다.
+#   시간으로 닳게 하면 스폰 시차(실제 시간 x RTF)만큼 로봇마다 다르게 닳아 켬/끔 실행마다 시작 상태가 달라진다
+# - 이동 0.6 %/m: 장면 배달 1건(로봇 → 매장 → 테이블 약 10–15 m)이 6–9 %
+# - 충전 3 %/s, 80 %까지: 30 → 80 %가 17 s라 켬에서 먼저 간 로봇이 장면 안에 돌아오고, 차례를 기다리던 로봇이
+#   20 % 밑으로 떨어지기 전에 이어서 간다. 끔에서 20 % 밑으로 간 세 대가 같이 빠져 있는 시간이 생길 만큼은 길다
+# 시작 배터리: 낮은 세 대(5·2·1호 36·37·38 %)는 거의 같이 닳고, 넉넉한 두 대(4·3호 70·85 %)는 장면 안에 기준에 안 닿는다.
+#   켬은 5·2호를 먼저 보내고 1호는 기다리며 일한다. 끔은 세 대가 20 % 밑에서 거의 같이 간다. 같은 값으로 켬/끔을 돌린다
+/**:
+  ros__parameters:
+    battery:
+      move_per_m: 0.6
+      idle_per_s: 0.0
+      charge_per_s: 2.0
+      charge_target_percent: 80.0
+      reject_below_percent: 10.0
+
+/amr_01/amr_bt:
+  ros__parameters:
+    battery:
+      initial_percent: 38.0
+/amr_02/amr_bt:
+  ros__parameters:
+    battery:
+      initial_percent: 37.0
+/amr_03/amr_bt:
+  ros__parameters:
+    battery:
+      initial_percent: 85.0
+/amr_04/amr_bt:
+  ros__parameters:
+    battery:
+      initial_percent: 70.0
+/amr_05/amr_bt:
+  ros__parameters:
+    battery:
+      initial_percent: 36.0

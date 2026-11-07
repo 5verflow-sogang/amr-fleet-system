@@ -180,3 +180,54 @@ def test_act2_robot_4_finishes_first_but_not_before_second_zero():
     # 4호 픽업과 대기 배달 픽업은 혼자 쓴다 (예약으로 4호가 늦어지거나 배달이 막히지 않게)
     assert pickups.count(busy['b_busy_L03']) == 1 and queue_pickup not in pickups
     assert max(pickups.count(p) for p in pickups) <= 2
+
+
+# ---------------------------------------------------------------- 장면 3 (배달 흐름 반복, 배터리 0초)
+def test_repeat_cycles_the_task_list_with_numbered_ids(tmp_path):
+    path = tmp_path / 's.yaml'
+    path.write_text(yaml.safe_dump({'steps': [{'name': 'flow', 'gap_s': 8, 'repeat': 2, 'tasks': [
+        {'id': 'a', 'type': 'delivery', 'pickup': 'stall_4', 'dropoff': 'L03'},
+        {'id': 'b', 'type': 'delivery', 'pickup': 'stall_3', 'dropoff': 't10'}]}]}), encoding='utf-8')
+    steps = ds.load_scene(path)
+    assert [t.task_id for t in steps[0].tasks] == ['a_01', 'b_01', 'a_02', 'b_02']
+    _, out = run_scene(steps, {})
+    assert [(o[0], o[2]) for o in out] == [(0.0, 'a_01'), (8.0, 'b_01'), (16.0, 'a_02'), (24.0, 'b_02')]
+
+
+def test_battery_t0_fires_once_when_any_robot_drops_below_and_logs_the_batteries():
+    scene = ds.Scene(ds.load_scene(TASKS / 'demo_s3.yaml'), ds.load_t0_when(TASKS / 'demo_s3.yaml'))
+    assert scene.t0_when == {'battery_below': 31.0}
+    assert ('t0', 0.0, 'battery') not in scene.tick(0.0, {}, {'amr_01': 45.0, 'amr_05': 31.0})
+    out = scene.tick(10.0, {}, {'amr_01': 44.0, 'amr_05': 30.9})
+    assert out[0] == ('t0', 10.0, 'battery') and scene.t0 == 10.0
+    assert {'t': 10.0, 'ev': 't0', 'why': 'battery', 'battery': {'amr_01': 44.0, 'amr_05': 30.9}} in scene.log
+    assert all(o[0] == 'task' for o in scene.tick(20.0, {}, {'amr_05': 20.0}))   # 한 번만
+
+
+def test_battery_t0_scene_is_not_done_until_t0(tmp_path):
+    path = tmp_path / 's.yaml'
+    path.write_text(yaml.safe_dump({'t0_when': {'battery_below': 31}, 'steps': [{'name': 'a', 'tasks': [
+        {'id': 'a', 'type': 'delivery', 'pickup': 'stall_4', 'dropoff': 'L03'}]}]}), encoding='utf-8')
+    scene = ds.Scene(ds.load_scene(path), ds.load_t0_when(path))
+    scene.tick(0.0, {}, {'amr_01': 50.0})
+    assert not scene.done                            # 작업은 다 냈지만 0초가 아직
+    scene.tick(1.0, {}, {'amr_01': 30.0})
+    assert scene.done and scene.t0 == 1.0
+
+
+def test_battery_t0_cannot_be_mixed_with_a_t0_step(tmp_path):
+    path = tmp_path / 's.yaml'
+    path.write_text(yaml.safe_dump({'t0_when': {'battery_below': 31}, 'steps': [{'name': 'a', 't0': True, 'tasks': [
+        {'id': 'a', 'type': 'delivery', 'pickup': 'stall_4', 'dropoff': 'L03'}]}]}), encoding='utf-8')
+    with pytest.raises(ValueError, match='t0_when'):
+        ds.load_scene(path)
+
+
+def test_scene3_flow_uses_restaurant_stations_away_from_the_west_aisle_and_buffet():
+    st = stations()
+    steps = ds.load_scene(TASKS / 'demo_s3.yaml')
+    names = {n for s in steps for t in s.tasks for n in (t.pickup, t.dropoff)}
+    assert names <= set(st), names - set(st)
+    # 손님 피크가 몰리는 서쪽 통로·배식대 앞(x < -6)은 쓰지 않는다
+    assert all(st[n][0] > -6.0 for n in names)
+    assert len({t.pickup for s in steps for t in s.tasks}) >= 3     # 매장 셋을 돌려 쓴다
