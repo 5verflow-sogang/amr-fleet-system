@@ -19,6 +19,7 @@
   <exec_depend>nav2_bt_navigator</exec_depend>
   <exec_depend>nav2_behaviors</exec_depend>
   <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>rclcpp_components</exec_depend>
   <exec_depend>nav2_common</exec_depend>
   <exec_depend>amr_nav2_plugins</exec_depend>
   <!-- config/robots.yaml 읽기. 단위 테스트에서도 쓴다 -->

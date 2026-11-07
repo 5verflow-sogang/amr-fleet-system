@@ -47,3 +47,16 @@ def test_nav2_builds_for_every_profile_and_filter_combination(profile, filter_ch
     # planner_server, controller_server, behavior_server, bt_navigator, lifecycle_manager
     assert len(nodes) == 5
     assert all(isinstance(n, Node) for n in nodes)
+
+
+def test_nav2_composition_puts_five_servers_in_one_container():
+    from launch_ros.actions import ComposableNodeContainer
+
+    module = load_module()
+    actions = module._nav2(context_with_defaults(module, nav2_profile='restaurant', use_composition='true'))
+    assert len(actions) == 1 and isinstance(actions[0], ComposableNodeContainer)
+    descriptions = actions[0]._ComposableNodeContainer__composable_node_descriptions
+    plugins = [perform_substitutions(LaunchContext(), d.node_plugin) for d in descriptions]
+    assert plugins == ['nav2_planner::PlannerServer', 'nav2_controller::ControllerServer',
+                       'behavior_server::BehaviorServer', 'nav2_bt_navigator::BtNavigator',
+                       'nav2_lifecycle_manager::LifecycleManager']

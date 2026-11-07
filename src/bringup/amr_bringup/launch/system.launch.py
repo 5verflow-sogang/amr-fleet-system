@@ -80,7 +80,7 @@ def _system(context):
         localization=flag('localization'), bt=flag('bt'), fleet=fleet, nav2=flag('nav2'),
         zone_client=flag('zone_client'), tracking=flag('tracking'), safety=flag('safety'),
         detection=flag('detection'), docking=flag('docking'), enable_camera=arg('enable_camera'),
-        congestion_filter=arg('congestion_filter'),
+        congestion_filter=arg('congestion_filter'), nav2_composition=flag('nav2_composition'),
         payload_mass=arg('payload_mass'), seed=seed, map=arg('map'), use_imu=arg('use_imu'),
         zones_file=arg('zones_file'), body=arg('body'))
     opt.validate([r.name for r in robots])
@@ -189,6 +189,7 @@ def generate_launch_description():
         ('safety', 'false', '안전 노드 (최종 cmd_vel)'),
         ('detection', 'false', 'YOLO 인식. 카메라를 켠 로봇에서만 뜬다 (CPU 렌더링 RTF 0.37)'),
         ('congestion_filter', 'none', 'Nav2 전역 costmap 혼잡도 필터: none / keepout(돌아가기) / speed(느려짐). 혼잡도 노드 필요'),
+        ('nav2_composition', 'false', 'Nav2 서버 5개를 로봇마다 컨테이너 하나로. 5대에 추적·안전까지 켜면 프로세스가 많아 DDS 탐색이 실패해 켠다'),
         ('docking', 'false', 'ArUco 도킹 서버 + 마커판. BT 도킹이 이걸 부른다. enable_camera:=true가 필요하다'),
         # Fleet
         ('fleet', 'true', 'Fleet 서버 + 장애 주입기'),

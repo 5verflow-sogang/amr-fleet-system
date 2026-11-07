@@ -1,65 +1,13 @@
-# 식당 시연 녹화 스모크: 화면 없는 러너에서 고정 카메라가 실제로 그려지는지, 그때 RTF와 녹화 용량이 얼마인지 본다.
-# 식당 월드 + 서빙 로봇 5대 + Nav2 + 피크 손님 + 고정 카메라(amr_gazebo demo_cameras.launch.py) + 배달 작업.
-# 결과: run.real_time_factor(요약), bag_info.txt(카메라별 이미지 수·용량), rosbag/ (영상 변환 시험용)
-#
-#   tools/harness/gcp_run.sh demo_smoke -n 1 --label cpu3            # 카메라 3대
-#   tools/harness/gcp_run.sh demo_smoke -n 1 --label cpu1 --set cameras=top
-#
-# 기대: 카메라마다 duration_s x 15장 안팎. 이보다 크게 적으면 렌더링이 밀리거나 녹화가 못 따라간 것이다.
+# 식당 시연 녹화 스모크: 화면 없는 러너에서 카메라 렌더링·RTF·녹화·mp4 변환을 확인한다 (demo_restaurant 그대로).
+#   Actions Fleet Regression Test: scenario=demo_smoke, label=cpu3, params="cameras=top,west,stalls slot=b1"
+# 기대: video/에 카메라마다 duration_s x 15프레임 안팎의 mp4, rosbag의 /fleet/task_status가 0건이 아니다
 name: demo_smoke
+extends: demo_restaurant
+# docker_run.sh는 이 파일의 packages: 줄만 읽는다 (extends를 따라가지 않는다)
 packages: amr_bringup
-num_robots: 5
-use_sim_time: true
-seed_base: 1
-# 시뮬레이션 60 s를 RTF 0.1까지 견딘다 (600 s + 기동)
-timeout_s: 2400
 params:
-  num_robots: 5
-  delay_ms: 100
-  loss_pct: 0
-  duration_s: 60
   cameras: top,west,stalls
-  guests: dynamic_obstacles_restaurant_peak.yaml
-processes:
-  - name: stack
-    cmd: >-
-      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true
-      world:=restaurant.sdf body:=serving seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct}
-      robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant.yaml
-      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0, 0, 0]"
-      dynamic_obstacles:=true dynamic_obstacles_file:={guests}
-      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:=5.0
-    ready_topic: /fleet/heartbeat
-    ready_cmds:
-      - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
-    ready_timeout_s: 300
-    settle_s: 5
-  - name: cameras
-    cmd: ros2 launch amr_gazebo demo_cameras.launch.py cameras:={cameras}
-    ready_cmds:
-      - timeout 20 ros2 topic list | grep -q '^/demo_cam/'
-    ready_timeout_s: 60
-    settle_s: 5
-  - name: cpu_monitor
-    cmd: python3 /repo/tools/harness/cpu_monitor.py --out {run_dir}/cpu.csv --interval 1.0
-    settle_s: 1
-  - name: rosbag
-    cmd: ros2 bag record -o {run_dir}/rosbag -e '/demo_cam/.*|/fleet/task_status|/fleet/robot_states|/fleet/task_table|/clock'
-    settle_s: 3
-  - name: task_generator
-    cmd: >-
-      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json use_sim_time:=true
-      map_origin_in_world:="[0, 0, 0]"
-      stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
-      scenario_file:=/repo/tools/harness/tasks/restaurant_smoke.yaml
-driver:
-  mode: wait
-  use_sim_time: true
-  duration_s: "{duration_s}"
-postprocess:
-  - name: bag_info
-    cmd: bash -c 'ros2 bag info {run_dir}/rosbag > {run_dir}/bag_info.txt; du -sh {run_dir}/rosbag >> {run_dir}/bag_info.txt; cat {run_dir}/bag_info.txt'
-cleanup:
-  - pkill -9 -f "[i]gn gazebo" || true
-  - pkill -9 -f "[p]arameter_bridge" || true
-  - pkill -9 -f "[c]pu_monitor.py" || true
+  robot_camera: "false"
+  duration_s: 60
+  tracking: "true"
+  safety: "true"
