@@ -36,15 +36,32 @@ def test_kpi_scenarios_extend_loc_basic(name, origin):
     assert s['params']['dynamic_obstacles'] == base['params']['dynamic_obstacles']
 
 
-def test_nav_avoidance_stack_and_eval_share_map_origin():
+@pytest.mark.parametrize('name', ['nav_avoidance', 'nav_avoidance_headon'])
+def test_nav_avoidance_stack_and_eval_share_map_origin(name):
     # 스택(지도·AMCL 초기 위치)과 회피 평가(기준 경로 map → world)가 같은 원점을 써야 경로 이탈에 원점 차이가 안 섞인다.
     # #249로 기본 지도가 v2가 됐을 때 평가만 v1 원점으로 남았다 (#262 이진 리뷰)
-    s = run.load_scenario('nav_avoidance')
+    s = run.load_scenario(name)
     params = apply_param_sets(s, {**s['params'], 'run_dir': '/tmp/r', 'seed': 1, 'repeat': 0, 'label': ''})
     cmds = {p['name']: p['cmd'] for p in render(s['processes'], params)}
     origin = s['params']['map_origin']
     assert f'map:={s["params"]["map"]} map_origin_in_world:="{origin}"' in cmds['system']
     assert f'"map_origin_in_world:={origin}"' in cmds['avoidance_eval']
+
+
+def test_nav_avoidance_headon_differs_from_crossing_only_in_worker_and_goal():
+    # 정면 접근은 가로지르기를 복사한 시나리오다. 작업자 움직임(--mode headon, 원 명세 1.0 m/s)과 목표(map x 9 m, 작업자가
+    # 첫 전역 경로에 끼지 않게) 말고는 스택·기록·평가·드라이버가 같아야 두 결과를 나란히 볼 수 있다
+    base, s = run.load_scenario('nav_avoidance'), run.load_scenario('nav_avoidance_headon')
+    params = apply_param_sets(s, {**s['params'], 'run_dir': '/tmp/r', 'seed': 1, 'repeat': 0, 'label': ''})
+    cmds = {p['name']: p['cmd'] for p in render(s['processes'], params)}
+    assert '--mode headon --speed 1.0' in cmds['obstacles']
+    assert float(s['params']['goal_x']) == 9.0
+    others = [k for k in s['params'] if k not in ('goal_x', 'worker_speed')]
+    assert {k: s['params'][k] for k in others} == {k: base['params'][k] for k in others}
+    assert set(base['params']) == set(others) | {'goal_x'}
+    rest = [p for p in s['processes'] if p['name'] != 'obstacles']
+    assert rest == [p for p in base['processes'] if p['name'] != 'obstacles']
+    assert s['driver'] == base['driver']
 
 
 def test_config_patch_values_are_filled_from_params():

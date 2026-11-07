@@ -331,6 +331,7 @@ tools/harness/results/<run_id>/
 | 지연 신뢰구간 | 실행 단위 부트스트랩 (메시지 단위로 섞지 않음) | 하연·민지, #33 |
 | `meta.json` 추가 필드 | `rmw_implementation`, `qos_profile`, `observation_cutoff` | 하연·민지, #33 |
 | 장애 주입 방향 (D8) | 서버 → 로봇만. 로봇 → 서버(`zone_requests`, `task_assignment_acks`)는 그대로 둔다. 양방향이 필요하면 연구 1 After 실험 때 역방향 링크를 추가하고 `fault.direction`으로 구분한다. 보완(10/7): 분산·하이브리드 비교군은 경매 토픽(로봇 → 로봇)에도 같은 지연·손실을 건다(장애 주입기 `relay_auction:=true`, `fault.relay_auction`) | 하연·민지, D8 |
+| 회피 복귀 시간 기준 (I17·정면 접근, 11/4) | 원 명세 7장 "회피 후 원래 경로로 복귀하는 시간이 5초 이내"대로, 장애물이 차체 뒤로 지나간 뒤부터 잰다(`return_from: pass`). 회피 시작부터 잰 값(test-plan I17 처음 정의)도 늘 함께 보고하고, 성능 리포트·PPT에도 두 값을 같이 쓴다. 11/4 로컬 연습 시드 결과를 본 뒤, 본 측정 전에 정했다 | 연우·이진·하연, #293 |
 
 남은 것 (실측 후 확정)
 

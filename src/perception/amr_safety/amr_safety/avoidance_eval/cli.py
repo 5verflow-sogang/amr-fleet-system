@@ -94,11 +94,18 @@ def report_main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument('--runs', type=int, default=AvoidanceParams.kpi_runs, help='KPI 실행 횟수 (기본 30)')
     ap.add_argument('--out', help='Markdown 표 저장 경로 (없으면 화면에만)')
     ap.add_argument('--json', help='판정 JSON 저장 경로')
+    ap.add_argument('--return-from', choices=('start', 'pass'),
+                    help='복귀 시간 기준: start 회피 시작부터, pass 장애물 통과 뒤부터(원 명세 "회피 후"). 기본은 기록 때 값')
+    ap.add_argument('--require-avoidance', action='store_true',
+                    help='유효 실행마다 회피 구간이 있어야 통과 (정면 접근: 재계획 회피를 보였는지)')
     args = ap.parse_args(argv)
     runs, failed = find_summaries(args.dirs)
     # KPI 기준값은 첫 요약의 params를 쓴다 (실행마다 같은 설정이어야 한다)
     base = next((params_from_dict(s.get('params', {})) for _, s in runs if s), AvoidanceParams())
-    result = aggregate(runs, replace(base, kpi_runs=args.runs), failed)
+    params = replace(base, kpi_runs=args.runs)
+    if args.return_from:
+        params = replace(params, return_from=args.return_from)
+    result = aggregate(runs, params, failed, args.require_avoidance)
     md = aggregate_markdown(result)
     print(md)
     if args.out:
