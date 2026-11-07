@@ -31,6 +31,9 @@ def generate_launch_description():
             description='JSON Task 파일. 주면 시나리오 대신 이 일정을 그대로 발행한다'),
         DeclareLaunchArgument('seed', default_value='0', description='작업 일정 난수 seed. 하네스 반복 번호'),
         DeclareLaunchArgument(
+            'load', default_value='',
+            description='시나리오 loads 중 하나 (예: collect_aging.yaml normal·collect_burst). 비우면 시나리오 그대로'),
+        DeclareLaunchArgument(
             'stations_file', default_value=os.path.join(config, 'stations.yaml'),
             description='스테이션 자세 (world 좌표)'),
         DeclareLaunchArgument(
@@ -55,6 +58,7 @@ def generate_launch_description():
                 'scenario_file': ParameterValue(LaunchConfiguration('scenario_file'), value_type=str),
                 'tasks_file': ParameterValue(LaunchConfiguration('tasks_file'), value_type=str),
                 'seed': ParameterValue(LaunchConfiguration('seed'), value_type=int),
+                'load': ParameterValue(LaunchConfiguration('load'), value_type=str),
                 'stations_file': ParameterValue(LaunchConfiguration('stations_file'), value_type=str),
                 'schedule_out': ParameterValue(LaunchConfiguration('schedule_out'), value_type=str),
                 'map_origin_in_world': ParameterValue(LaunchConfiguration('map_origin_in_world'), value_type=List[float]),

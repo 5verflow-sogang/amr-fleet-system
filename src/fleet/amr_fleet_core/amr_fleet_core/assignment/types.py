@@ -61,6 +61,29 @@ class RobotInfo:
     load: int = 0
 
 
+@dataclass(frozen=True)
+class Aging:
+    """대기 시간만큼 우선순위를 올린다 (sort_by_priority, 인터럽트 관제).
+
+    유효 우선순위 = priority + rate × max(0, now − created). now는 TaskInfo.created와 같은 시계다(시뮬레이션에서는
+    시뮬레이션 시간, Task.created_time). 우선순위 차이 Δ는 Δ / rate 초를 더 기다리면 따라잡는다 - 급한 작업이 먼저
+    나가되 일반 작업이 끝없이 밀리지 않게 한다. 값 근거는 amr_fleet_core README '우선순위 aging'.
+    """
+
+    # 대기 1초당 더하는 우선순위 (0 이상). 0이면 aging 없이 지금 순서와 같다
+    rate: float
+    # 지금 시각 (s)
+    now: float
+
+    def __post_init__(self):
+        if not self.rate >= 0:
+            raise ValueError(f'aging rate는 0 이상이어야 한다: {self.rate}')
+
+    def effective(self, task: 'TaskInfo') -> float:
+        """작업의 유효 우선순위. created가 now보다 뒤면(시계 차이) 대기 0으로 본다."""
+        return task.priority + self.rate * max(0.0, self.now - task.created)
+
+
 @dataclass
 class AssignmentResult:
     """할당 결과. 알고리즘 3종이 같은 형식을 돌려준다."""

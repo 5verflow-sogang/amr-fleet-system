@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import math
-from typing import Callable, Sequence
+from typing import Callable, Optional, Sequence
 
-from .types import MODE_IDLE, AssignmentResult, CostFn, FeasibleFn, RobotInfo, TaskInfo
+from .types import MODE_IDLE, Aging, AssignmentResult, CostFn, FeasibleFn, RobotInfo, TaskInfo
 
 
 def filter_candidates(robots: Sequence[RobotInfo], min_battery_percent: float) -> list[RobotInfo]:
@@ -17,12 +17,23 @@ def filter_candidates(robots: Sequence[RobotInfo], min_battery_percent: float) -
     return sorted(candidates, key=lambda r: r.robot_id)
 
 
-def sort_by_priority(tasks: Sequence[TaskInfo]) -> list[TaskInfo]:
-    """priority 내림차순 → deadline 오름차순 (None은 맨 뒤) → created 오름차순 → task_id."""
+def sort_by_priority(tasks: Sequence[TaskInfo], aging: Optional[Aging] = None) -> list[TaskInfo]:
+    """priority 내림차순 → deadline 오름차순 (None은 맨 뒤) → created 오름차순 → task_id.
+
+    aging을 주면 priority 대신 유효 우선순위(Aging.effective = priority + rate × 대기 시간)로 줄 세운다. 유효 우선순위가
+    같으면 뒤 키는 그대로라, 같은 값이 된 순간에는 먼저 들어온(created가 작은) 작업이 앞선다. aging이 없거나 rate가
+    0이면 지금 순서와 똑같다.
+    """
+    if aging is None or aging.rate == 0:
+        def first(t: TaskInfo) -> float:
+            return -t.priority
+    else:
+        def first(t: TaskInfo) -> float:
+            return -aging.effective(t)
     return sorted(
         tasks,
         key=lambda t: (
-            -t.priority,
+            first(t),
             t.deadline if t.deadline is not None else math.inf,
             t.created,
             t.task_id,
@@ -46,6 +57,7 @@ def assign_greedy(
     cost_fn: CostFn,
     rank: Callable[[RobotInfo, float], tuple],
     feasible: FeasibleFn = None,
+    aging: Optional[Aging] = None,
 ) -> AssignmentResult:
     """우선순위 순으로 작업을 꺼내, 남은 로봇 중 rank(로봇, 비용)이 가장 작은 로봇에 맡긴다.
 
@@ -55,7 +67,7 @@ def assign_greedy(
     check_unique_ids(tasks, robots)
     result = AssignmentResult()
     remaining = list(robots)
-    for task in sort_by_priority(tasks):
+    for task in sort_by_priority(tasks, aging):
         able = [r for r in remaining if feasible is None or feasible(r, task)]
         if not able:
             result.unassigned.append(task.task_id)

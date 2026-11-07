@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from amr_fleet_manager.task_gen import (TaskSpec, count_ready, dump_tasks_json, expand, generate, load_stations,
-                                        load_tasks_json, world_to_map, yaw_to_quaternion)
+                                        load_tasks_json, select_load, world_to_map, yaw_to_quaternion)
 
 CONFIG = Path(__file__).resolve().parents[1] / 'config'
 
@@ -82,6 +82,33 @@ def test_charge_flow_has_no_pickup(stations):
         assert t.dropoff.startswith('charger_')
 
 
+def test_collect_flow_has_pickup_and_its_own_priority(stations):
+    scenario = {'count': 20, 'interval_s': 1.0, 'priority': [100, 100],
+                'flows': [{'type': 'delivery', 'pickup': ['dock_1'], 'dropoff': ['rack_*']},
+                          {'type': 'collect', 'pickup': ['rack_c*'], 'dropoff': ['dock_b'], 'priority': [200, 200]}]}
+    tasks = generate(scenario, stations, seed=3)
+    collects = [t for t in tasks if t.type == 'collect']
+    assert collects and len(collects) < len(tasks)
+    for t in collects:
+        assert t.pickup.startswith('rack_c') and t.dropoff == 'dock_b' and t.item == 'none' and t.priority == 200
+    assert {t.priority for t in tasks if t.type == 'delivery'} == {100}
+
+
+def test_flow_priority_keeps_the_random_sequence(stations, basic):
+    # 흐름에 시나리오와 같은 priority를 적어도 일정(시각·스테이션·물품)은 그대로다 - 난수 순서가 안 바뀐다
+    flows = [dict(f, priority=basic['priority']) for f in basic['flows']]
+    assert generate(dict(basic, flows=flows), stations, seed=4) == generate(basic, stations, seed=4)
+
+
+def test_collect_aging_scenario_mix(stations):
+    # 시연 2 리허설 일정: 회수 호출 약 20 %, 일반 100 / 회수 200, 평균 간격 6 s
+    scenario = yaml.safe_load((CONFIG / 'scenarios' / 'collect_aging.yaml').read_text(encoding='utf-8'))
+    tasks = [t for seed in range(1, 6) for t in generate(scenario, stations, seed=seed)]
+    share = sum(t.type == 'collect' for t in tasks) / len(tasks)
+    assert 0.1 < share < 0.3
+    assert {(t.type, t.priority) for t in tasks} == {('delivery', 100), ('collect', 200)}
+
+
 def test_task_spec_validation():
     with pytest.raises(ValueError):
         TaskSpec(0.0, 't', 'fly', 'small', 'a', 'b')
@@ -89,6 +116,8 @@ def test_task_spec_validation():
         TaskSpec(0.0, 't', 'charge', 'none', 'dock_1', 'charger_c1')
     with pytest.raises(ValueError):
         TaskSpec(0.0, 't', 'delivery', 'small', 'a', 'b', priority=300)
+    with pytest.raises(ValueError):
+        TaskSpec(0.0, 't', 'collect', 'none', '', 'dock_b')  # 회수는 테이블(pickup)이 있어야 한다
 
 
 def test_json_round_trip(tmp_path, stations, basic):
@@ -140,3 +169,37 @@ def test_profile_changes_interval_by_time(stations, basic):
     with pytest.raises(ValueError):
         generate(dict(scenario, profile=[{'until_s': 10, 'interval_s': 1}, {'until_s': 5, 'interval_s': 1}]),
                  stations, seed=1)
+
+
+def test_select_load_overlays_and_rejects_unknown():
+    scenario = {'count': 60, 'interval_s': 6.0, 'flows': [], 'loads': {'calm': {'interval_s': 12.5}, 'same': {}}}
+    assert select_load(scenario) == {'count': 60, 'interval_s': 6.0, 'flows': []}
+    assert select_load(scenario, 'same') == select_load(scenario)
+    assert select_load(scenario, 'calm')['interval_s'] == 12.5
+    with pytest.raises(ValueError):
+        select_load(scenario, 'storm')
+
+
+def test_burst_adds_only_its_flow_inside_the_window(stations, basic):
+    burst = {'start_s': 60.0, 'duration_s': 120.0, 'interval_s': 6.0,
+             'flow': {'type': 'collect', 'pickup': ['rack_c*'], 'dropoff': ['dock_b'], 'priority': [200, 200]}}
+    plain = generate(dict(basic, count=20), stations, seed=7)
+    tasks = generate(dict(basic, count=20, bursts=[burst]), stations, seed=7)
+    extra = [t for t in tasks if '_b' in t.task_id]
+    # 본 일정은 그대로이고, 몰림 작업은 구간 안에만 그 흐름으로 들어간다. 결과는 시각 순
+    assert [t for t in tasks if '_b' not in t.task_id] == plain
+    assert 10 <= len(extra) <= 35
+    assert all(60.0 <= t.at_s < 180.0 and t.type == 'collect' and t.priority == 200 for t in extra)
+    assert [t.at_s for t in tasks] == sorted(t.at_s for t in tasks)
+
+
+def test_collect_aging_loads(stations):
+    # 첫 측정(overload)은 loads 없이 만든 일정과 같다. normal은 간격 12.5 s, collect_burst는 normal + 60~180 s 회수 몰림
+    scenario = yaml.safe_load((CONFIG / 'scenarios' / 'collect_aging.yaml').read_text(encoding='utf-8'))
+    base = {k: v for k, v in scenario.items() if k != 'loads'}
+    assert generate(select_load(scenario, 'overload'), stations, seed=1) == generate(base, stations, seed=1)
+    normal = generate(select_load(scenario, 'normal'), stations, seed=1)
+    burst = generate(select_load(scenario, 'collect_burst'), stations, seed=1)
+    assert [t for t in burst if '_b' not in t.task_id] == normal
+    extra = [t for t in burst if '_b' in t.task_id]
+    assert extra and all(t.type == 'collect' and 60.0 <= t.at_s < 180.0 for t in extra)

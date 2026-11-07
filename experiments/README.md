@@ -10,6 +10,7 @@
 - `aruco_localizer/`: ArUco 위치 노드(마커판 → 로봇 map 자세) 거리별 인식·오차와 공분산 (지수, Kidnapped 다른 통로용)
 - `bt_kidnap/`: 배송 중 순간 이동(Kidnapped) → 위치 복구 노드와 BT 멈춤·재개·실패, 서버 재할당 (지수, 4주차 작업 5)
 - `bt_cycle/`: Fleet 작업 → BT → Nav2 이동 → ArUco 도킹 → COMPLETED 한 사이클과 단일 작업 성공률 (지수, 4주차 작업 1·3)
+- `fleet_collect_aging/`: 식당 시연 2 리허설, 회수 호출(priority 200) + 우선순위 aging 켬/끔 비교 (가짜 로봇 3대, 이진)
 - `tracking_kpi/`: 추적 정확도 KPI 본 측정의 조건·받기·검사·표·분석 (연우, [perception.md 1-7](../docs/algorithms/perception.md))
 - `restaurant_demo/`: 식당 시연 녹화 rosbag 지표 (1-2 요청 → 배식대 도착·멈춘 횟수, 2 회수 대기·기아 시간)
 

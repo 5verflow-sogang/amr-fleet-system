@@ -18,7 +18,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 from .task_gen import (ITEMS, TASK_TYPES, TaskSpec, count_ready, dump_tasks_json, generate, load_stations,
-                       load_tasks_json, world_to_map, yaw_to_quaternion)
+                       load_tasks_json, select_load, world_to_map, yaw_to_quaternion)
 
 
 class TaskGenerator(Node):
@@ -28,6 +28,8 @@ class TaskGenerator(Node):
         scenario_file = self.declare_parameter('scenario_file', '').value
         tasks_file = self.declare_parameter('tasks_file', '').value
         seed = self.declare_parameter('seed', 0).value
+        # 시나리오 loads 중 하나 (select_load). 비우면 시나리오 그대로
+        load = self.declare_parameter('load', '').value
         stations_file = self.declare_parameter('stations_file', '').value
         self._origin = list(self.declare_parameter('map_origin_in_world', [-0.0439, 1.4712, -0.00088]).value)
         schedule_out = self.declare_parameter('schedule_out', '').value
@@ -47,8 +49,8 @@ class TaskGenerator(Node):
         elif scenario_file:
             with open(scenario_file, encoding='utf-8') as f:
                 scenario = yaml.safe_load(f)
-            self._tasks = generate(scenario, self._stations, seed)
-            source = f'{scenario_file} (seed={seed})'
+            self._tasks = generate(select_load(scenario, load), self._stations, seed)
+            source = f'{scenario_file} (seed={seed}{f", load={load}" if load else ""})'
         else:
             raise ValueError('scenario_file 또는 tasks_file 중 하나는 있어야 한다')
         unknown = {n for t in self._tasks for n in (t.pickup, t.dropoff) if n and n not in self._stations}
@@ -56,7 +58,7 @@ class TaskGenerator(Node):
             raise ValueError(f'stations_file에 없는 스테이션: {sorted(unknown)}')
         if schedule_out:
             dump_tasks_json(self._tasks, schedule_out, meta={
-                'source': os.path.abspath(scenario_file or tasks_file), 'seed': seed,
+                'source': os.path.abspath(scenario_file or tasks_file), 'seed': seed, 'load': load,
                 'stations_file': os.path.abspath(stations_file), 'map_origin_in_world': self._origin,
             })
 
