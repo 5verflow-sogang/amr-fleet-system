@@ -1,6 +1,12 @@
 terraform {
   required_version = ">= 1.6"
 
+  # 상태 파일은 버킷에 둔다 (state.tf). 처음 한 번 terraform init -migrate-state로 로컬 상태를 옮긴다 (README "상태 파일")
+  backend "gcs" {
+    bucket = "amr-fleet-tfstate"
+    prefix = "gcp"
+  }
+
   required_providers {
     google = {
       source  = "hashicorp/google"

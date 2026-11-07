@@ -207,4 +207,4 @@ jobs:
       - name: Harness unit tests
         run: |
           python -m pip install --quiet pytest pyyaml
-          python -m pytest -q tools/harness/tests tools/dev/tests
+          python -m pytest -q tools/harness/tests tools/dev/tests tools/infra/gcp/tests

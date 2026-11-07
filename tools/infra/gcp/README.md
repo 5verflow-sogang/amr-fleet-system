@@ -198,6 +198,47 @@ gcloud storage cp -r gs://amr-fleet-results/runs/<폴더> .
 gcloud storage cp -r tools/harness/results/<실행 폴더> gs://amr-fleet-results/runs/<폴더>/
 ```
 
+## 모니터링 (BigQuery)
+
+`monitoring.tf`가 BigQuery 데이터셋 `fleet_ops`를 만든다. 실행 목록 `gs://amr-fleet-results/index.csv`를 외부 테이블로 읽어서, 실험이 끝나 한 줄이 더해지면 바로 보인다(적재 작업 없음).
+
+| 이름 | 내용 |
+| --- | --- |
+| `fleet_ops.runs_index` | `index.csv` 그대로 (모든 열 문자열) |
+| `fleet_ops.runs` | 실행 한 번 = 한 줄. 완료 시각·완료율·`run_id`(Actions 실행 번호 = 러너 VM 라벨 `run`) |
+| `fleet_ops.runs_daily` | 날짜(KST)·시나리오별 실행 수·반복 수·완료율 |
+| `billing_export` | 결제 내보내기 자리 (아래 1번에서 켠다) |
+
+```sql
+-- 최근 실행 20개
+SELECT finished_at, scenario, label, completed, repeats, machine_type, triggered_by
+FROM `amr-fleet.fleet_ops.runs` ORDER BY finished_at DESC LIMIT 20
+```
+
+하연이 한 번 할 일:
+
+1. 결제 내보내기 켜기 (콘솔에서만 된다): 결제 → 결제 내보내기 → BigQuery 내보내기 → **표준 사용량 비용** → 프로젝트 `amr-fleet`, 데이터셋 `billing_export`. 테이블이 생기면 실행별 비용 뷰(라벨 `run` ↔ `runs.run_id`)를 더한다
+2. 대시보드: [Looker Studio](https://lookerstudio.google.com) → 만들기 → 보고서 → BigQuery → `amr-fleet` · `fleet_ops` · `runs_daily`(일별 추이)·`runs`(실행 목록). 보고서를 팀원에게 보기 권한으로 공유한다
+
+### 비용 알림 (디스코드)
+
+`.github/workflows/cost-report.yml`이 매일 09:00 KST에 어제 비용·이번 달 누적·서비스별·실험별(VM 라벨 `run`) 비용을 디스코드로 보낸다. 누적이 예산의 50·90·100 %를 넘은 날은 맨 위에 🚨 줄이 붙는다. GCP 예산 알림은 메일만 되므로 결제 내보내기를 읽어 보낸다.
+
+- 설정: 저장소 secret `COST_DISCORD_WEBHOOK`(받을 채널 웹훅), variable `GCP_BUDGET_KRW`(없으면 100000)
+- 바로 보기: Actions → GCP Cost Report → Run workflow. 로컬: `python3 tools/infra/gcp/cost_report.py --dry-run`
+- 결제 데이터는 몇 시간 늦게 들어와 어제 비용이 덜 잡힐 수 있다 (다음 날 누적에는 들어간다)
+
+## 상태 파일 (GCS)
+
+상태(`terraform.tfstate`)는 `state.tf`의 버킷 `amr-fleet-tfstate`(버전 보관)에 둔다. 처음 한 번 로컬 상태를 옮긴다:
+
+```bash
+terraform init -migrate-state        # "yes" → 로컬 상태를 버킷으로 복사 (backend는 versions.tf)
+terraform plan                       # 바뀌는 것 없음이면 끝. 로컬 terraform.tfstate*는 지워도 된다
+```
+
+새로 받은 사람은 `gcloud auth application-default login` 후 `terraform init`만 하면 버킷의 상태를 쓴다 (버킷 읽기·쓰기 권한 필요).
+
 ## 문제 해결
 
 | 증상 | 확인 |

@@ -15,6 +15,7 @@ locals {
     "storage.googleapis.com",
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
+    "bigquery.googleapis.com",
   ], var.billing_account_id == "" ? [] : ["billingbudgets.googleapis.com"])
 }
 
@@ -33,6 +34,18 @@ resource "google_storage_bucket" "results" {
   public_access_prevention    = "enforced"
   # 논문 원자료라 실수로 지우지 않게 한다
   force_destroy = false
+
+  # 시연 녹화 카메라 원본(demo_* camera_bag/, 장면당 약 8 GB)은 mp4 변환에 실패했을 때만 올라온다.
+  # 변환기를 고쳐 다시 바꿀 시간(3일)만 두고 지운다. 측정용 rosbag/(rosbag_0.db3)은 이름이 달라 남는다
+  lifecycle_rule {
+    condition {
+      age            = 3
+      matches_suffix = ["camera_bag_0.db3"]
+    }
+    action {
+      type = "Delete"
+    }
+  }
 
   depends_on = [google_project_service.this]
 }
