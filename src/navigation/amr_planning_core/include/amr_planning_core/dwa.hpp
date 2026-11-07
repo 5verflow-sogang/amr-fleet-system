@@ -304,6 +304,13 @@ public:
   bool lastUsedAvoidFallback() const noexcept {return used_avoid_fallback_;}
   std::size_t avoidFallbackCount() const noexcept {return avoid_fallback_count_;}
 
+  // 비켜 지나가기 추종 모드 (passing.hpp). 켜면 heading을 매기는 궤적 길이를 heading_time [s](sim_time 이하)로,
+  // heading 기준점의 궤적 끝 앞 여유를 lookahead [m]로 줄이고 제자리 회전 모드를 쓰지 않는다 - 옮긴 경로의 S자를
+  // 평소 기준점(궤적 끝 |v|*sim_time + lookahead_distance 앞, 0.5 m/s면 1.5 m)으로 따라가면 1.5 m 거리로 뭉개져
+  // 처음 경로로 늦게 돌아온다(복귀 시간상수 약 3 s, 정면 접근 시험 11/4). 충돌 검사(궤적 길이·여유)는 그대로다.
+  void setPassingTracking(bool active, double heading_time, double lookahead);
+  bool passingTracking() const noexcept {return passing_tracking_;}
+
   // 마지막 computeVelocityCommand가 제자리 회전 모드였는지(히스테리시스 상태).
   bool rotatingInPlace() const noexcept {return rotating_in_place_;}
 
@@ -367,6 +374,9 @@ private:
   // 제자리 회전 모드 히스테리시스 상태 - 주기 사이에 이어진다. computeVelocityCommand가 const라
   // mutable로 둔다(플러그인은 컨트롤러 하나에 DwaPlanner 하나, 한 스레드에서 부른다).
   mutable bool rotating_in_place_ = false;
+  bool passing_tracking_ = false;
+  double passing_heading_time_ = 0.0;
+  double passing_lookahead_ = 0.0;
   mutable bool used_avoid_fallback_ = false;
   mutable std::size_t avoid_fallback_count_ = 0;
 };

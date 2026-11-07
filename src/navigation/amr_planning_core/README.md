@@ -2,7 +2,7 @@
 
 - 담당: 이진
 - 빌드 타입: ament_cmake (C++17)
-- 책임: A*, 경로 평활화, DWA 핵심 로직 (ROS 비의존 라이브러리)
+- 책임: A*, 경로 평활화, DWA 핵심 로직, 정면 비켜 지나가기 (ROS 비의존 라이브러리)
 
 ## 공개 API
 
@@ -119,9 +119,27 @@ planner.computeVelocityCommand(state, goal, grid, obstacles);
 | `dynamic_obstacle_influence_radius` | `1.0` m | 소프트 비용이 미치는 거리(표면 기준) |
 | `dynamic_weight` | `0.3` | 동적 장애물 거리비용 가중치(나머지 세 가중치와 합이 1일 필요는 없다) |
 
+### `amr_planning_core::PassingManeuver` (`passing.hpp`)
+
+정면으로 마주 오는 동적 장애물을 옆으로 비켜 지나간다. 전역 경로는 그대로 두고, 경로 좌표(경로 길이 s, 옆 거리 d)에서
+옆 이탈을 나가기 S자 → 유지 → 들어오기 S자로 옮긴 경로를 돌려준다. 근거와 값은
+[navigation.md](../../../docs/algorithms/navigation.md#4-11-정면-비켜-지나가기-passing_enabled) 4-11절.
+
+```cpp
+amr_planning_core::PassingConfig pc;
+pc.enabled = true;
+amr_planning_core::PassingManeuver passing(pc);
+// 제어 주기마다: 비켜 지나가는 중이면 옮긴 경로, 아니면 path 그대로 (path·obstacles는 Grid 로컬 좌표, now [s])
+const std::vector<amr_planning_core::Point2D> follow = passing.update(state, path, grid, obstacles, now);
+planner.setPassingTracking(passing.active(), /*heading_time=*/0.8, /*lookahead=*/0.2);  // 가까운 기준점으로 따라가기
+planner.computeVelocityCommand(state, follow, grid, obstacles);
+```
+
+`engaged()`는 곧 비킬 예정이거나 비키는 중이다(이 동안 플러그인이 DWA 회피 모드를 끈다).
+
 ## 파라미터
 
-ROS 비의존 라이브러리이므로 파라미터는 `AStarConfig`·`SmoothingConfig`·`DwaConfig`로 받는다. YAML 로딩은
+ROS 비의존 라이브러리이므로 파라미터는 `AStarConfig`·`SmoothingConfig`·`DwaConfig`·`PassingConfig`로 받는다. YAML 로딩은
 이 라이브러리를 쓰는 노드 패키지(`amr_nav2_plugins`)가 `amr_bringup/config/nav2_params.yaml`에서 담당한다
 (`planner_server.AStar`, `controller_server.DWA`).
 

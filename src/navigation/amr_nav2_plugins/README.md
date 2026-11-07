@@ -32,6 +32,10 @@
    `perception/collision_risks`(`amr_msgs/msg/CollisionRiskArray`)를 구독해 움직이는 트랙의
    최소 TTC로 켜고 끈다(`avoid_mode.hpp`의 `AvoidModeSwitch`, 시간 처리). 바뀌면
    `DwaPlanner::setAvoidMode`로 넘기고 `dwa/avoid_mode`(`std_msgs/msg/Bool`, transient local)를 발행한다.
+6. 정면 비켜 지나가기(`passing_enabled`, docs/algorithms/navigation.md 4-11절): 매 주기 전역 경로를
+   `amr_planning_core::PassingManeuver`에 넘겨, 마주 오는 장애물이 막으면 옆으로 옮긴 경로를 `DwaPlanner`에 준다.
+   비키는 동안 `DwaPlanner::setPassingTracking`으로 가까운 기준점으로 따라가고, 곧 비킬 예정이거나 비키는 중이면
+   회피 모드를 끈다. 바뀌면 `dwa/passing`(`std_msgs/msg/Bool`, transient local)을 발행하고 INFO 로그를 남긴다.
 
 ### `AStarGlobalPlanner`가 하는 일
 
@@ -71,6 +75,7 @@
 | `adaptive_lookahead` | `true` | heading 기준점을 궤적 길이(`|v|·sim_time`)만큼 앞으로 늘린다 |
 | `use_admissible_velocity` | `true` | 허용 속도 조건 `v <= sqrt(2·acc_v·dist)` (dist: 궤적상 장애물까지) |
 | `use_goal_slowdown` | `true` | 목표 앞 감속 `v <= sqrt(2·acc_v·d_goal)` (d_goal: 최종 목표까지 직선 거리) |
+| `passing_enabled` 외 `passing_*` | `false` (창고 스택 yaml `true`) | 정면 비켜 지나가기(`PassingConfig` 필드와 같은 이름, 근거는 yaml 주석·navigation.md 4-11절). `passing_heading_time`·`passing_lookahead`는 비키는 동안 DWA 기준점 |
 
 ## 실행
 
