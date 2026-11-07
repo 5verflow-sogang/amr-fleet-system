@@ -210,7 +210,8 @@ def test_scene2_localization_can_be_ground_truth():
 def test_scene12_runs_its_scene_script_with_the_scene12_guests():
     procs = _demo_procs('demo_s12')
     assert 'task_generator' not in procs
-    assert procs['scene']['cmd'].startswith('python3 /repo/tools/harness/demo_scene.py /repo/tools/harness/tasks/demo_s12.yaml ')
+    assert procs['scene']['cmd'].startswith(
+        'python3 /repo/tools/harness/demo_scene.py /repo/tools/harness/tasks/demo_s12.yaml ')
     stack = procs['stack']['cmd']
     assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak_scene12.yaml' in stack
     assert 'robots_restaurant_s12.yaml' in stack

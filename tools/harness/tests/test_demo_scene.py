@@ -215,7 +215,9 @@ def test_scene12_start_tasks_go_to_robots_2_to_5_and_the_request_to_robot_1():
     assert set(owners) == {'amr_05', 'amr_04', 'amr_03', 'amr_02'}
     steps = ds.load_scene(TASKS / 'demo_s12.yaml')
     core = [s for s in steps if s.t0]
-    assert len(core) == 1 and [(t.task_id, t.type, t.pickup, t.dropoff) for t in core[0].tasks] ==         [('s12_buffet2_t11', 'delivery', 'buffet_2', 't11')]
+    assert len(core) == 1
+    assert [(t.task_id, t.type, t.pickup, t.dropoff) for t in core[0].tasks] == [
+        ('s12_buffet2_t11', 'delivery', 'buffet_2', 't11')]
 
 
 def test_scene12_request_is_sent_with_t0_after_robots_2_to_5_are_busy():
