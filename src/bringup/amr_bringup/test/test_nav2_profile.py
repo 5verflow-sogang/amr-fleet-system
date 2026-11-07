@@ -1,4 +1,4 @@
-"""식당 프로필(footprint)·혼잡도 costmap 필터 오버레이 (amr_bringup.nav2_profile). ROS 없이 돈다."""
+"""식당 프로필(footprint·순항 속도)·혼잡도 costmap 필터 오버레이 (amr_bringup.nav2_profile). ROS 없이 돈다."""
 
 import ast
 import os
@@ -34,6 +34,9 @@ def test_restaurant_profile_matches_serving_robot_footprint(nav2_params):
     assert ys == pytest.approx({0.537 / 2})
     assert overrides['DWA']['footprint_half_length'] == pytest.approx(0.565 / 2)
     assert overrides['DWA']['footprint_half_width'] == pytest.approx(0.537 / 2)
+    # 순항 속도는 식당만 0.8 (물류센터 0.5는 Nav KPI 기준이라 그대로)
+    assert overrides['DWA']['max_v'] == pytest.approx(0.8)
+    assert nav2_params['controller_server']['ros__parameters']['DWA']['max_v'] == pytest.approx(0.5)
 
 
 def test_unknown_profile_is_rejected(nav2_params):
@@ -100,9 +103,10 @@ def test_build_overrides_restaurant_keepout_combines_footprint_and_filter(nav2_p
     assert 'plugins' not in lc  # 필터는 전역 costmap에만 붙는다
     assert dwa['footprint_half_length'] == pytest.approx(0.565 / 2)
     assert dwa['footprint_half_width'] == pytest.approx(0.537 / 2)
-    # DWA 블록의 다른 값(footprint 말고)은 기존 nav2_params.yaml 그대로다
+    assert dwa['max_v'] == pytest.approx(0.8)
+    # DWA 블록의 다른 값(footprint·max_v 말고)은 기존 nav2_params.yaml 그대로다
     base_dwa = nav2_params['controller_server']['ros__parameters']['DWA']
-    assert dwa['max_v'] == base_dwa['max_v']
+    assert dwa['max_w'] == base_dwa['max_w']
 
 
 def test_build_overrides_speed_filter_threads_speed_limit_topic_through(nav2_params):

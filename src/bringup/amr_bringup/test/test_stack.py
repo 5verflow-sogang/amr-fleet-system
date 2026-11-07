@@ -90,6 +90,12 @@ def test_body_picks_spawn_body_and_nav2_profile():
         == ('serving', 'restaurant')
 
 
+@pytest.mark.parametrize('body, profile', [('amr', 'warehouse'), ('serving', 'restaurant')])
+def test_body_picks_safety_profile(body, profile):
+    # 식당(serving)은 안전 노드도 식당 값(서빙 로봇 몸체, 근접 저속)을 쓴다
+    assert args(stack(nav2=True, safety=True, body=body), 'safety.launch.py')['profile'] == profile
+
+
 def test_map_server_only_on_first_robot():
     assert args(stack(index=0), 'localization.launch.py')['start_map_server'] == 'true'
     assert args(stack(index=1), 'localization.launch.py')['start_map_server'] == 'false'
