@@ -8,7 +8,7 @@
 # 작업은 장면 스크립트가 장면 파일 tasks/demo_s3.yaml대로 넣는다 (5대에게 한꺼번에 → 7 s 간격으로 계속).
 # 0초는 로봇 하나가 31 % 밑이 된 순간
 # 배터리: amr_bt config/amr_bt_battery_demo_s3.yaml (움직일 때만 0.6 %/m, 충전 3 %/s로 80 %까지, 시작 38·37·85·70·36 %)
-# 손님 평상시(아래 guests 주석), 위치는 시뮬레이터 정답(영상에 표기, 11/8 회의). 카메라: 탑뷰 + 남쪽(충전소)
+# 손님은 서쪽에만(아래 guests 주석), 위치는 시뮬레이터 정답(영상에 표기, 11/8 회의). 카메라: 탑뷰 + 남쪽(충전소)
 # 길이: 0초는 시작 뒤 약 60 s, 끔에서 세 대가 충전을 마치고 돌아오는 것까지 시뮬레이션 240 s 녹화한다
 name: demo_s3
 extends: demo_restaurant
@@ -17,9 +17,9 @@ packages: amr_bringup
 timeout_s: 7200
 params:
   robots: robots_restaurant_s3.yaml             # 홀에 흩어진 시작 자리 (대기 줄에서 한꺼번에 나가면 막힌다)
-  # 손님 평상시. 피크(dynamic_obstacles_restaurant_peak.yaml)에서는 240 s 동안 배달이 한 건도 끝나지 않았다(11/8 맥 스모크).
-  # 장면 3의 주제는 충전 순서라 손님은 평상시로 둔다. 손님 줄인 파일(11/8 회의, 지수)이 오면 이 값만 바꾼다
-  guests: dynamic_obstacles_restaurant.yaml
+  # 손님: 서쪽에만 7명 (amr_gazebo config/dynamic_obstacles_restaurant_s3.yaml, 11/8 회의 "혼잡한 곳에만"). 피크 13명에서는
+  # 240 s 동안, 평상시 7명(매장 앞·가운데·동쪽 통로)에서도 200 s 동안 배달이 한 건도 끝나지 않았다 (11/8 맥 스모크)
+  guests: dynamic_obstacles_restaurant_s3.yaml
   task_generator: "false"
   scene_script: python3 /repo/tools/harness/demo_scene.py
   scene_file: demo_s3.yaml

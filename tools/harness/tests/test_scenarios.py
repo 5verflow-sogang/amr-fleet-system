@@ -224,7 +224,7 @@ def test_scene3_runs_the_scene_script_with_battery_and_charging_on_the_stack():
     assert 'bt_params_file:=amr_bt_battery_demo_s3.yaml' in _args(stack)
     assert 'stations_file:=stations_restaurant.yaml' in stack
     assert 'charging:=true' in stack and 'localization:=ground_truth' in stack
-    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant.yaml' in stack    # 손님 평상시 (피크면 못 움직였다)
+    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_s3.yaml' in stack    # 손님은 서쪽에만
 
 
 def test_scene3_on_off_is_the_charging_policy_only():
