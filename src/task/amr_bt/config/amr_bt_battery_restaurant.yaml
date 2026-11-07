@@ -1,0 +1,36 @@
+# 식당 Gazebo 배터리 실험용 가상 배터리 (amr_bt.yaml 위에 얹는다):
+#   ros2 launch amr_bringup system.launch.py ... bt_params_file:=amr_bt_battery_restaurant.yaml \
+#       energy_move_per_m:=0.3 energy_idle_per_s:=0.01   # 서버 배터리 모델도 같은 값으로
+#
+# 시간 압축: 기본(이동 0.05 %/m, 정지 0.002 %/s)이면 Gazebo 한 실행(시뮬레이션 15–20분)에 거의 닳지 않는다.
+# 식당 배송 1건은 픽업까지 포함해 약 20–40 m라 0.3 %/m면 6–12 %, 쉬는 동안 분당 0.6 %다. 시작 배터리를 낮게
+# 다르게 두어 실행 초반부터 충전 차례·배터리 부족 인터럽트(3단계)가 일어나게 한다. 충전 30 → 100 % 140 s.
+/**:
+  ros__parameters:
+    battery:
+      move_per_m: 0.3
+      idle_per_s: 0.01
+      charge_per_s: 0.5
+      charge_target_percent: 100.0
+      reject_below_percent: 10.0
+
+/amr_01/amr_bt:
+  ros__parameters:
+    battery:
+      initial_percent: 70.0
+/amr_02/amr_bt:
+  ros__parameters:
+    battery:
+      initial_percent: 50.0
+/amr_03/amr_bt:
+  ros__parameters:
+    battery:
+      initial_percent: 38.0
+/amr_04/amr_bt:
+  ros__parameters:
+    battery:
+      initial_percent: 30.0
+/amr_05/amr_bt:
+  ros__parameters:
+    battery:
+      initial_percent: 24.0
