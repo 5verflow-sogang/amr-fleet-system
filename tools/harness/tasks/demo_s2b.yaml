@@ -1,0 +1,45 @@
+# 식당 시연 2 2막: 오래 기다린 배달 보호 (tools/harness/demo_scene.py 장면 파일, 하네스 demo_s2b)
+# 5대 모두 배달 중 + 2인석(c01) 배달 1건 대기 → 그 배달이 60 s 기다린 0초(/demo/t0)부터 1·6·8·12·14번 테이블
+# 회수 호출 5건을 2 s 간격으로. 회수 priority는 둘 다 200.
+# 기대 (연우 시나리오):
+#   켬 (fleet_manager_restaurant.yaml aging 1.667/s): 배달이 회수보다 60 s 더 기다려 회수와 같은 순서가 되고(같으면 먼저
+#       들어온 쪽), 다음에 일을 마친 4호가 배달에 배정된다
+#   끔 (aging 0): 2인석 배달이 회수 5건 뒤로 계속 밀린다
+#   회수 5건은 퇴식구 두 곳(return_1·2 예약) 때문에 한 번에 두 건까지만 배정되고 줄을 선다 (서버 동작, 둘 다 같다)
+# 왜 60 s 뒤에 회수를 넣나: aging은 모든 작업에 같은 속도로 더해져 차이(200 - 100)가 "회수보다 60 s 먼저 들어옴"이어야
+# 없어진다. 그래서 회수 호출은 배달 요청 60 s 뒤에 넣고, 그동안 5대가 모두 바빠야 한다 (busy 작업을 길게).
+#
+# 누가 어느 작업을 맡나: 1막과 같이 busy 작업을 낸 순서대로 amr_05, 04, 03, 02, 01 (0.5 s 간격).
+# 4호가 0초 뒤에 가장 먼저 일을 마치게 2번째 작업(4호)을 가장 짧게, 다음 로봇과 10 m 넘게 차이 나게 둔다.
+# 4호는 0초(배달 요청 + 60 s, busy 시작 뒤 약 63 s)보다 늦게 끝나야 한다: 최고 속도 0.5 m/s(DWA max_v)로 달려도
+# 35.4 m / 0.5 + 머무름 2 s x 2 = 75 s라 약 12 s 여유가 있다 (실제 평균은 더 느리다).
+# path_m: 시작 자리 → 픽업 → 하역 A* 경로 길이 (amr_planning_core, restaurant_gt + 식당 프로필 costmap, 11/8 계산).
+#   4호 35.4 m, 나머지 50.8~51.4 m (차이 15.4 m). 50 m 넘는 작업은 배식대 픽업뿐이라 나머지 넷은 배식대 1·2를 둘씩 나눠 쓴다
+#   (같은 픽업 둘째 로봇은 예약으로 더 기다려 늦어질 뿐이다). 4호 픽업(stall_1)과 대기 배달 픽업(stall_3)은 혼자 쓴다
+# 정차 자리는 stations_restaurant.yaml. 시작 작업(busy·queue)은 핵심 요청 자리(t01·t06·t08·t12·t14, return_1·2)와
+# 1 m 안을 쓰지 않는다 (서버 스테이션 예약 1 m)
+steps:
+  - name: busy
+    gap_s: 0.5
+    tasks:
+      - {id: b_busy_b01, type: delivery, pickup: buffet_2, dropoff: b01, path_m: 51.4}   # amr_05
+      - {id: b_busy_L03, type: delivery, pickup: stall_1, dropoff: L03, path_m: 35.4}    # amr_04 (0초 뒤 먼저 끝난다)
+      - {id: b_busy_b03, type: delivery, pickup: buffet_1, dropoff: b03, path_m: 51.4}   # amr_03
+      - {id: b_busy_b02, type: delivery, pickup: buffet_2, dropoff: b02, path_m: 50.9}   # amr_02
+      - {id: b_busy_L02, type: delivery, pickup: buffet_1, dropoff: L02, path_m: 50.8}   # amr_01
+  # 5대가 모두 할당받은 뒤 2인석 배달 1건 (빈 로봇이 없어 대기한다)
+  - name: queue
+    after: {assigned: 5, timeout_s: 60}
+    tasks:
+      - {id: b_wait_c01, type: delivery, pickup: stall_3, dropoff: c01}
+  # 배달이 60 s 기다린 뒤(대기 중인지 작업표로 확인) 회수 호출 5건 = 0초 (/demo/t0). 같은 우선순위가 되는 순간이다
+  - name: collects
+    after: {pending: 1, delay_s: 60, timeout_s: 90}
+    t0: true
+    gap_s: 2.0
+    tasks:
+      - {id: b_collect_t01, type: collect, pickup: t01, dropoff: return_1, priority: 200}
+      - {id: b_collect_t06, type: collect, pickup: t06, dropoff: return_2, priority: 200}
+      - {id: b_collect_t08, type: collect, pickup: t08, dropoff: return_1, priority: 200}
+      - {id: b_collect_t12, type: collect, pickup: t12, dropoff: return_2, priority: 200}
+      - {id: b_collect_t14, type: collect, pickup: t14, dropoff: return_1, priority: 200}
