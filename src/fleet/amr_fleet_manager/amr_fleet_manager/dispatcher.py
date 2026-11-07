@@ -17,7 +17,7 @@ from amr_fleet_core.charging import (ChargeConfig, Station, charge_target, max_c
                                      plan_charging)
 from amr_fleet_core.claims import TaskClaims
 from amr_fleet_core.energy import (ChargeQueue, EnergyModel, charge_remaining_s, make_battery_cost,
-                                   make_energy_feasible)
+                                   make_energy_feasible, required_percent)
 
 # amr_msgs/msg/TaskStatus.STATE_* 와 같은 값
 STATE_PENDING = 0
@@ -80,6 +80,15 @@ class DispatcherConfig:
     # aging_now와 같은 시계)로 잰다 - 보낸 쪽 시계(Task.created_time)가 다를 수 있어 그 값은 쓰지 않는다.
     # 서버가 직접 내는 충전·복귀(for_robot)는 할당 알고리즘을 거치지 않아 aging과 상관없다
     aging_rate: float = 0.0
+    # 작업 중 배터리 부족 인터럽트 (3단계): 배송을 맡은 로봇이 아직 픽업 전(interruptible_phases)인데, 지금 위치 →
+    # 픽업 → 배달지 → 가장 가까운 충전기를 갈 배터리(energy 모델 + interrupt_reserve_percent)가 없으면 작업을 취소해
+    # 큐로 되돌리고(재시도로 세지 않음) 그 로봇을 바로 가장 가까운 빈 충전기로 보낸다(최소 운영 대수와 상관없이).
+    # 짐을 실은 뒤에는 끊지 않는다 (amr_bt CheckBattery가 배달지 출발 전 경고). 충전기(chargers)가 없으면 쓰지 않는다
+    interrupt_enabled: bool = False
+    # 판단 여유 (%). 배정 때 여유(energy.reserve_percent)보다 작게 둬, 배정 직후 바로 끊기지 않게 한다
+    interrupt_reserve_percent: float = 2.0
+    # 끊어도 되는 작업 단계 (TaskStatus.phase). 빈 문자열은 수락 직후 단계 보고 전
+    interruptible_phases: tuple[str, ...] = ('', 'move_to_pickup')
 
     def __post_init__(self):
         if self.algorithm not in ALGORITHMS:
@@ -102,6 +111,8 @@ class DispatcherConfig:
             raise ValueError(f'failed_retries는 0 이상이어야 한다: {self.failed_retries}')
         if not self.station_clearance_m >= 0:
             raise ValueError(f'station_clearance_m는 0 이상이어야 한다: {self.station_clearance_m}')
+        if not self.interrupt_reserve_percent >= 0:
+            raise ValueError(f'interrupt_reserve_percent는 0 이상이어야 한다: {self.interrupt_reserve_percent}')
         if 0 < self.reclaim_timeout_s < self.robot_timeout_s:
             raise ValueError(f'reclaim_timeout_s({self.reclaim_timeout_s})는 robot_timeout_s'
                              f'({self.robot_timeout_s}) 이상이어야 한다 (0 이하면 끈다)')
@@ -127,6 +138,10 @@ class TaskEntry:
     # add_task가 이 작업을 받았을 때 서버 시계(aging_now와 같은 시계). aging은 info.created(Task.created_time,
     # 보낸 쪽 시계) 대신 이 값으로 잰다 - 대시보드 등 외부 클라이언트의 시계가 서버와 다를 수 있다
     received_at: float = 0.0
+    # 맡은 로봇이 마지막으로 보고한 단계 (TaskStatus.phase). 인터럽트(3단계)가 픽업 전인지 본다
+    phase: str = ''
+    # 배터리 부족 인터럽트로 되돌린 횟수
+    interrupts: int = 0
 
 
 @dataclass
@@ -208,6 +223,9 @@ class Dispatcher:
         self.sched_t: Optional[float] = None
         self._stopping: dict[str, tuple[int, float]] = {}
         self.charge_waiting: list[str] = []
+        # 3단계 인터럽트: 취소를 보낸 배송 작업 → (명령 번호, 마지막 발송), 취소가 끝나 바로 충전하러 보낼 로봇
+        self._interrupting: dict[str, tuple[int, float]] = {}
+        self._charge_now: set[str] = set()
 
     # ---- 입력 ----
 
@@ -274,7 +292,7 @@ class Dispatcher:
         return True
 
     def on_status(self, task_id: str, robot_id: str, state: int, error_code: int = 0,
-                  start: float = 0.0, now: float = 0.0) -> bool:
+                  start: float = 0.0, now: float = 0.0, phase: Optional[str] = None) -> bool:
         """TaskStatus 수신. 장부가 바뀌지 않았으면(모르는 작업, 이미 끝난 작업, 주인이 아닌 로봇) False.
 
         start는 그 로봇의 수락 시각(TaskStatus.start_time), now는 update_robot과 같은 시계다.
@@ -284,6 +302,9 @@ class Dispatcher:
         FAILED는 failed_retries번까지 큐로 되돌려(state PENDING) 다시 할당받게 한다. 그 뒤에는 실패로 남긴다.
         취소(error_code ERROR_CANCELED)로 온 FAILED는 서버가 스스로 멈춘 것이므로 다시 할당하지 않는다.
         다른 로봇이 먼저 맡아 물러난 FAILED(ERROR_TASK_TAKEN)는 주인에게 넘기고 재시도로 세지 않는다.
+        배터리 부족 인터럽트(interrupt_low_battery)로 취소한 작업의 취소 완료는 큐로 되돌리고(재시도로 세지 않음)
+        그 로봇을 바로 충전하러 보낸다.
+        phase: TaskStatus.phase (None이면 장부의 단계를 그대로 둔다).
         """
         # 작업 요청보다 먼저 온 보고도 남긴다 (분산 경매가 서버보다 먼저 맡을 수 있다). assign()이 본다
         self.claims.observe(task_id, robot_id, state, start, now)
@@ -297,6 +318,16 @@ class Dispatcher:
             return True
         # 상태 보고가 왔으면 명령을 받은 것이다
         self._confirm(robot_id, task_id)
+        if phase is not None:
+            task.phase = phase
+        if task_id in self._interrupting and state in FINISHED:
+            del self._interrupting[task_id]
+            if state == STATE_FAILED and error_code == ERROR_CANCELED:
+                task.interrupts += 1
+                self._release(task_id, robot_id)
+                task.phase = ''
+                self._charge_now.add(robot_id)
+                return True
         if state == STATE_FAILED and error_code == ERROR_TASK_TAKEN:
             owner = self.claims.owner(task_id, now)
             if owner is not None:
@@ -380,6 +411,7 @@ class Dispatcher:
             task = self.tasks[info.task_id]
             task.assignee = robot_id
             task.assignment_id = assignment_id
+            task.phase = ''
             robot = self.robots[robot_id]
             robot.task_id = info.task_id
             robot.load += 1
@@ -401,10 +433,12 @@ class Dispatcher:
         t는 피크 대비용 일정 시각이다 (ChargeConfig.peaks와 같은 시계, 없으면 피크 대비를 끈다).
         """
         self.sched_t = t
-        if not self.config.charging_enabled or not self.config.chargers:
-            return []
         alive = {rid: r for rid, r in self.robots.items()
                  if not r.decentral and now - r.last_seen <= self.config.robot_timeout_s}
+        # 배터리 부족 인터럽트로 작업을 놓은 로봇: 최소 운영 대수와 상관없이 가장 가까운 빈 충전기로 (자동 충전을 꺼도)
+        created = self._charge_interrupted(alive, now)
+        if not self.config.charging_enabled or not self.config.chargers:
+            return created
         for task_id, entry in list(self.tasks.items()):
             if entry.for_robot and not entry.assignee and entry.state == STATE_PENDING and entry.for_robot not in alive:
                 del self.tasks[task_id]
@@ -414,7 +448,6 @@ class Dispatcher:
                              self._charging(), self.config.chargers, self.config.charge, t)
         self.charge_waiting = plan.waiting
         by_name = {s.name: s for s in self.config.chargers}
-        created = []
         for order in plan.orders:
             self._return_after.discard(order.robot_id)
             created.append(self._add_directed(order.robot_id, TYPE_CHARGE, by_name[order.station], now))
@@ -482,6 +515,55 @@ class Dispatcher:
                 self._stopping[task_id] = (sent[0], now)
                 out.append(Outgoing(sent[0], entry.assignee, task_id, first=False))
         return out
+
+    def interrupt_low_battery(self, now: float) -> list[Outgoing]:
+        """작업 중 배터리 부족 인터럽트 (3단계, interrupt_enabled): 픽업 전 배송 작업의 취소 명령.
+
+        지금 위치에서 그 작업을 끝내고 가장 가까운 충전기까지 갈 배터리가 없으면 취소한다. 같은 작업에는 같은 명령
+        번호로 resend_interval_s마다 다시 보낸다. 로봇이 취소 완료(FAILED + ASSIGN_CANCELED)를 보고하면 on_status가
+        작업을 큐로 되돌리고 로봇을 충전하러 보낸다. 그 전에 로봇이 짐을 싣는 단계로 넘어가면 취소를 거둔다.
+        """
+        if not self.config.interrupt_enabled or not self.config.chargers:
+            return []
+        model = replace(self.config.energy, reserve_percent=self.config.interrupt_reserve_percent)
+        out = []
+        for task_id, entry in self.tasks.items():
+            sent = self._interrupting.get(task_id)
+            if sent is not None:
+                if entry.state in FINISHED or entry.phase not in self.config.interruptible_phases:
+                    # 그 사이 끝났거나 짐을 실었다: 끝까지 하게 둔다 (로봇은 이미 받은 취소로 멈췄을 수 있다)
+                    del self._interrupting[task_id]
+                elif now - sent[1] >= self.config.resend_interval_s:
+                    self._interrupting[task_id] = (sent[0], now)
+                    out.append(Outgoing(sent[0], entry.assignee, task_id, first=False))
+                continue
+            if (entry.for_robot or entry.state != STATE_IN_PROGRESS or not entry.assignee
+                    or entry.phase not in self.config.interruptible_phases):
+                continue
+            robot = self.robots.get(entry.assignee)
+            if robot is None or now - robot.last_seen > self.config.robot_timeout_s:
+                continue
+            need = required_percent(robot.info.xy, entry.info, self.config.chargers, model)
+            if robot.info.battery_percent >= need:
+                continue
+            assignment_id = self._next_assignment_id
+            self._next_assignment_id += 1
+            self._interrupting[task_id] = (assignment_id, now)
+            out.append(Outgoing(assignment_id, entry.assignee, task_id, first=True))
+        return out
+
+    def interrupting(self) -> set[str]:
+        """인터럽트 취소를 보내고 완료 보고를 기다리는 작업."""
+        return set(self._interrupting)
+
+    def interrupt_need(self, task_id: str) -> Optional[float]:
+        """인터럽트 판단에 쓴 필요 배터리 [%] (로그용). 맡은 로봇이 없으면 None."""
+        entry = self.tasks.get(task_id)
+        robot = self.robots.get(entry.assignee) if entry is not None and entry.assignee else None
+        if robot is None or not self.config.chargers:
+            return None
+        model = replace(self.config.energy, reserve_percent=self.config.interrupt_reserve_percent)
+        return required_percent(robot.info.xy, entry.info, self.config.chargers, model)
 
     def charging_robots(self) -> dict[str, str]:
         """충전 작업을 맡았거나 맡을 로봇 → 충전기 (이동 중·충전 중 포함, 작업이 끝나면 빠진다)."""
@@ -565,9 +647,33 @@ class Dispatcher:
         return not robot.task_id and not robot.decentral and now - robot.last_seen <= self.config.robot_timeout_s
 
     def _reserved(self) -> set[str]:
-        """아직 보내지 않은 충전 작업이 기다리는 로봇 (다른 작업을 주지 않는다)."""
+        """아직 보내지 않은 충전 작업이 기다리는 로봇, 인터럽트로 충전하러 갈 로봇 (다른 작업을 주지 않는다)."""
         return {t.for_robot for t in self.tasks.values()
-                if t.for_robot and not t.assignee and t.state == STATE_PENDING and t.info.task_type == TYPE_CHARGE}
+                if t.for_robot and not t.assignee and t.state == STATE_PENDING
+                and t.info.task_type == TYPE_CHARGE} | self._charge_now
+
+    def _charge_interrupted(self, alive: dict[str, RobotEntry], now: float) -> list[ChargeTask]:
+        """인터럽트로 작업을 놓은 로봇에게 가장 가까운 빈 충전기 작업을 낸다. 빈 충전기가 없으면 다음에 다시 본다."""
+        created = []
+        for rid in sorted(self._charge_now):
+            robot = alive.get(rid)
+            if robot is None:
+                if rid not in self.robots:
+                    self._charge_now.discard(rid)
+                continue
+            charging = self._charging()
+            if rid in charging:
+                self._charge_now.discard(rid)
+                continue
+            if robot.task_id:
+                continue
+            station = nearest_free(robot.info.xy, self.config.chargers, set(charging.values()))
+            if station is None:
+                continue
+            self._charge_now.discard(rid)
+            self._return_after.discard(rid)
+            created.append(self._add_directed(rid, TYPE_CHARGE, station, now))
+        return created
 
     def _charging(self) -> dict[str, str]:
         """끝나지 않은 충전 작업의 로봇 → 충전기 이름. 작업 생성기가 낸 충전 작업도 센다 (충전기는 목적지에서 가장 가까운 곳)."""
