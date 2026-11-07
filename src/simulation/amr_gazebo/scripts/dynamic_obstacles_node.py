@@ -37,6 +37,9 @@ class DynamicObstacles(Node):
         # 움직일 장애물 id. 비우면 yaml의 전부
         only = [s for s in self.declare_parameter('only', ['']).value if s]
         rate = self.declare_parameter('control_rate_hz', 20.0).value
+        # 로봇 중심이 이 반경 [m] 안에 있고 그쪽으로 걷는 중이면 선다 (0이면 끔). 볼 로봇은 keep_away_robots
+        keep_away_m = float(self.declare_parameter('keep_away_m', 0.0).value)
+        keep_away_robots = [s for s in self.declare_parameter('keep_away_robots', ['']).value if s]
 
         with open(config, encoding='utf-8') as f:
             specs = yaml.safe_load(f)['obstacles']
@@ -52,7 +55,8 @@ class DynamicObstacles(Node):
         self._cmd_pub = {}
         for spec in specs:
             oid = spec['id']
-            self._motions[oid] = ObstacleMotion(spec, random.Random(master.random()))
+            self._motions[oid] = ObstacleMotion(spec, random.Random(master.random()),
+                                                keep_away_m=keep_away_m if keep_away_robots else 0.0)
             self._cmd_pub[oid] = self.create_publisher(Twist, f'/dynamic_obstacles/{oid}/cmd_vel', 10)
             self.create_subscription(
                 Odometry, f'/dynamic_obstacles/{oid}/ground_truth/odom',
@@ -61,7 +65,7 @@ class DynamicObstacles(Node):
         # 멈춘 로봇에 비키는 장애물이 볼 로봇: 이름 → (x, y, yaw, 속력, 받은 시각 [ns])
         self._robots = {}
         yield_to = sorted({name for m in self._motions.values() for name in m.yield_to})
-        for name in yield_to:
+        for name in sorted(set(yield_to) | set(keep_away_robots)):
             self.create_subscription(
                 Odometry, f'/{name}/ground_truth/odom',
                 lambda msg, name=name: self._on_robot(name, msg), 10)
@@ -72,6 +76,8 @@ class DynamicObstacles(Node):
             f'동적 장애물 {len(self._motions)}개: '
             + ', '.join(f'{m.id}({m.pattern})' for m in self._motions.values())
             + f', seed={seed}'
+            + (f', 로봇 {keep_away_m:g} m 안이면 섬: {", ".join(keep_away_robots)}'
+               if keep_away_m > 0 and keep_away_robots else '')
             + (f', 멈춘 로봇에 비킴: {", ".join(yield_to)}' if yield_to else ''))
 
     def _on_odom(self, oid: str, msg: Odometry):
@@ -91,10 +97,13 @@ class DynamicObstacles(Node):
             if pose is None:
                 continue
             x, y, yaw = pose
-            waiting, turn_backs = motion.waiting, motion.turn_backs
+            waiting, turn_backs, keeping = motion.waiting, motion.turn_backs, motion.keeping_away
             vx, vy = motion.step((x, y), robots, now * 1e-9)
             if motion.turn_backs != turn_backs:
                 self.get_logger().info(f'{oid}: 로봇이 계속 멈춰 있어 돌아선다')
+            elif motion.keeping_away != keeping:
+                self.get_logger().info(
+                    f'{oid}: ' + ('로봇이 가까워 선다' if motion.keeping_away else '로봇이 멀어져 다시 걷는다'))
             elif motion.waiting != waiting:
                 self.get_logger().info(
                     f'{oid}: ' + ('멈춘 로봇이 앞길을 막아 선다' if motion.waiting else '앞길이 비어 다시 걷는다'))

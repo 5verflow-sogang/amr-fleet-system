@@ -455,3 +455,71 @@ def test_peak_scene12_changes_only_the_west_aisle_guests():
                 {k: v for k, v in peak[gid].items() if k not in ('spawn', 'waypoints', 'note')}, gid
         else:
             assert spec == peak[gid], gid
+
+
+# ---- keep_away_m: 로봇 근처면 손님이 선다 (움직이는 로봇 포함) ----
+
+def _line(x0=0.0, x1=10.0, pattern='straight'):
+    pts = [{'x': x0, 'y': 0.0}, {'x': x1, 'y': 0.0}]
+    if pattern == 'curve':
+        pts.insert(1, {'x': 0.5 * (x0 + x1), 'y': 0.5})
+    return {'id': 'g', 'type': 'customer', 'pattern': pattern, 'speed_range_mps': [0.5, 0.5],
+            'spawn': {'x': x0, 'y': 0.0}, 'waypoints': pts}
+
+
+def test_keep_away_off_by_default_walks_into_robot():
+    m = ObstacleMotion(_line(), random.Random(0))
+    assert m.step((2.0, 0.0), {'amr_01': (2.5, 0.0, 0.0, 0.5)}, 0.0) != (0.0, 0.0)
+
+
+@pytest.mark.parametrize('pattern', ['straight', 'curve'])
+def test_keep_away_stops_before_robot_ahead_even_if_moving(pattern):
+    # 출발점(0, 0)에서 +x로 걷는다. 마주 오는 로봇이 1.0 m 앞
+    m = ObstacleMotion(_line(pattern=pattern), random.Random(0), keep_away_m=1.2)
+    assert m.step((0.0, 0.0), {'amr_01': (1.0, 0.0, math.pi, 0.5)}, 0.0) == (0.0, 0.0) and m.keeping_away
+    # 로봇이 반경 밖(2.0 m)이면 걷는다
+    assert m.step((0.0, 0.0), {'amr_01': (2.0, 0.0, math.pi, 0.5)}, 0.1) != (0.0, 0.0) and not m.keeping_away
+
+
+def test_keep_away_walks_when_robot_is_behind():
+    # 로봇이 등 뒤(걷는 방향 반대쪽)에 있으면 멀어지는 중이라 계속 걷는다
+    m = ObstacleMotion(_line(), random.Random(0), keep_away_m=1.2)
+    vx, _ = m.step((2.0, 0.0), {'amr_01': (1.5, 0.0, 0.0, 0.5)}, 0.0)
+    assert vx > 0 and not m.keeping_away
+
+
+def test_keep_away_resumes_when_robot_leaves():
+    m = ObstacleMotion(_line(), random.Random(0), keep_away_m=1.2)
+    assert m.step((2.0, 0.0), {'amr_01': (2.8, 0.0, 0.0, 0.0)}, 0.0) == (0.0, 0.0)
+    assert m.step((2.0, 0.0), {'amr_01': (2.8, 3.0, 0.0, 0.5)}, 1.0) != (0.0, 0.0)
+    assert m.turn_backs == 0
+
+
+def test_keep_away_turns_back_after_patience():
+    from amr_gazebo.obstacle_motion import KEEP_AWAY_PATIENCE_S
+    m = ObstacleMotion(_line(), random.Random(0), keep_away_m=1.2)
+    parked = {'amr_01': (2.8, 0.0, 0.0, 0.0)}
+    assert m.step((2.0, 0.0), parked, 0.0) == (0.0, 0.0)
+    assert m.step((2.0, 0.0), parked, KEEP_AWAY_PATIENCE_S - 0.1) == (0.0, 0.0)
+    vx, _ = m.step((2.0, 0.0), parked, KEEP_AWAY_PATIENCE_S + 0.1)
+    assert m.turn_backs == 1 and vx < 0          # 온 쪽(로봇 반대쪽)으로 걷는다
+    vx, _ = m.step((1.98, 0.0), parked, KEEP_AWAY_PATIENCE_S + 0.2)
+    assert vx < 0 and not m.keeping_away
+
+
+def test_keep_away_simulated_guest_never_enters_radius_of_parked_robot():
+    # 길 한가운데 멈춘 로봇: 손님은 1.2 m 안으로 들어가지 않고 돌아서 왕복한다
+    m = ObstacleMotion(_line(), random.Random(0), keep_away_m=1.2)
+    robot = {'amr_01': (6.0, 0.0, 0.0, 0.0)}
+    xy, t, closest = (0.0, 0.0), 0.0, 99.0
+    for _ in range(int(60 / DT)):
+        vx, vy = m.step(xy, robot, t)
+        xy = (xy[0] + vx * DT, xy[1] + vy * DT)
+        t += DT
+        closest = min(closest, math.dist(xy, (6.0, 0.0)))
+    assert closest >= 1.2 - 0.5 * DT and m.turn_backs >= 2
+
+
+def test_negative_keep_away_rejected():
+    with pytest.raises(ValueError):
+        ObstacleMotion(_line(), random.Random(0), keep_away_m=-1.0)
