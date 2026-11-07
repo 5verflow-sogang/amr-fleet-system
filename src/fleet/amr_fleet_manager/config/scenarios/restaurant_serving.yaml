@@ -1,0 +1,24 @@
+# 식당 시연 1-1 켬/끔 측정용 서빙 일정 (민지, 작업 5). stations_file은 stations_restaurant.yaml을 준다.
+#
+# 1-1은 작업이 들어올 때 놀고 있는 로봇이 2대 이상이어야 할당이 달라질 수 있다(#247). 그래서 로봇 5대 처리량보다
+# 느리게 넣는다: 서빙 1건 ≈ 이동 15~25 m(0.5 m/s 안팎) + 싣기·내리기 → 1분 남짓이라 5대 처리량은 약 4건/분이고,
+# 평균 20 s 간격(3건/분)이면 약 0.7배다. 피크 손님이 몰리는 배식대(buffet_line·west_aisle) 픽업을 2/3로 둔다.
+count: 24
+start_delay_s: 10.0
+arrival: poisson
+interval_s: 20.0
+flows:
+  # 배식대 → 테이블 (혼잡 구역에서 픽업)
+  - type: delivery
+    pickup: [buffet_1, buffet_2]
+    dropoff: [t*, c0*, b0*]
+    weight: 2.0
+  # 매장 카운터 → 테이블
+  - type: delivery
+    pickup: [stall_*]
+    dropoff: [t*, c0*, b0*]
+    weight: 1.0
+items:
+  small: 1.0
+priority: [0, 0]
+deadline_s: 0.0
