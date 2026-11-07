@@ -30,6 +30,9 @@ from rosgraph_msgs.msg import Clock
 from clock_watch import ClockStall  # 같은 폴더 (runner가 이 파일을 스크립트로 부른다)
 from proc import TIMEOUT, run_group
 
+# /clock이 60 s 안에 안 옴. runner가 기동 실패로 보고 다시 시도한다 (runner.DRIVE_NO_CLOCK과 같은 값)
+NO_CLOCK = 4
+
 
 def main(argv):
     spec = json.loads(argv[1])
@@ -63,7 +66,7 @@ def main(argv):
         rclpy.spin_once(node, timeout_sec=0.1)
         if time.monotonic() - t_wait > 60:
             print('시계(/clock)가 오지 않음', file=sys.stderr)
-            return 2
+            return NO_CLOCK
 
     class ClockStalled(Exception):
         pass
