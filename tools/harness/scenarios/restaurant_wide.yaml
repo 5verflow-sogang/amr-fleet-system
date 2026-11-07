@@ -10,8 +10,9 @@ packages: amr_bringup
 num_robots: 5
 use_sim_time: true
 seed_base: 1
-# 시뮬레이션 900 s를 RTF 0.25까지 견딘다 (3600 s + 기동)
-timeout_s: 5400
+# 시뮬레이션 900 s를 RTF 0.11까지 견딘다 (8000 s + 기동). GCP n2d-standard-16(GPU 없음)에서 RTF가 약 0.15라
+# 5400 s로는 900 s를 못 채우고 잘렸다 (11/6)
+timeout_s: 9000
 params:
   num_robots: 5
   delay_ms: 100
@@ -30,11 +31,12 @@ processes:
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_wide_gt.yaml map_origin_in_world:="[0, 0, 0]"
       dynamic_obstacles:=true dynamic_obstacles_file:={guests}
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
-      fault_events_file:={run_dir}/fault_events.csv spawn_interval_s:=5.0
+      fault_events_file:={run_dir}/fault_events.csv spawn_interval_s:=25.0
     ready_topic: /fleet/heartbeat
     ready_cmds:
       - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
-    ready_timeout_s: 300
+    # 스폰 25 s 간격 x 5대 + Nav2 기동. 5 s 간격·300 s는 5대 기동이 자주 실패한 조합이다 (11/6 측정, #323 리뷰)
+    ready_timeout_s: 600
     settle_s: 5
   - name: cpu_monitor
     cmd: python3 /repo/tools/harness/cpu_monitor.py --out {run_dir}/cpu.csv --interval 1.0
