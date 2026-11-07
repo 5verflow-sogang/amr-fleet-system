@@ -6,7 +6,14 @@
     speed_mps: 1.0
     # 싣기·내리기에 걸리는 시간 (s)
     dwell_s: 1.0
-    battery_percent: 100.0
+    # 가상 배터리 (fake_robots.yaml과 같다. 기본은 닳지 않는다)
+    battery:
+      initial_percent: 100.0
+      move_per_m: 0.0
+      idle_per_s: 0.0
+      charge_per_s: 0.5
+      charge_target_percent: 100.0
+      reject_below_percent: 10.0
     state_rate_hz: 2.0
     step_hz: 10.0
 
