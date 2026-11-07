@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import time
+import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DASHBOARD = os.path.join(HERE, '..', '..', 'dashboard', 'index.html')
@@ -118,6 +119,7 @@ def main(argv=None) -> int:
     ap.add_argument('--dashboard', default=DASHBOARD, help='dashboard/index.html')
     ap.add_argument('--channel', default=None, help='브라우저 채널 (예: chrome = 설치된 Chrome, dashboard/test와 같다)')
     ap.add_argument('--headed', action='store_true', help='브라우저 창을 띄운다 (확인용)')
+    ap.add_argument('--query', default='', help='대시보드 주소 옵션 더 붙이기 (예: min_hall=3&charge_why=배터리 20%% 미만)')
     args = ap.parse_args(argv)
 
     from playwright.sync_api import sync_playwright
@@ -131,6 +133,8 @@ def main(argv=None) -> int:
     start = max(items[0]['t'], t0 - args.lead)
     end = items[-1]['t'] if args.length is None else min(items[-1]['t'], t0 + args.length)
     url = f'file://{os.path.abspath(args.dashboard)}?ws=off&clock={args.clock}'
+    if args.query:
+        url += '&' + urllib.parse.quote(args.query, safe='=&')
     with sync_playwright() as pw:
         # 스크린캐스트는 창의 실제 화면을 받는다: Playwright 화면 흉내(viewport·배율)가 아니라 창 크기와
         # --force-device-scale-factor로 맞춘다. 창 테두리만큼 키워 안쪽을 정확히 1280x720으로 (11/7 확인: 머리 87 px)

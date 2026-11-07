@@ -7,6 +7,8 @@
 첫 줄: {"t0": /demo/t0 시뮬레이션 시각 또는 null, "scene": 장면 이름}
 다음 줄마다: {"t": 시뮬레이션 시각(s), "topic": 토픽, "msg": rosbridge와 같은 JSON}
 bag의 시각은 받은 실제 시각이라(RTF 0.07이면 14배 느리다), 직전 /clock 값을 메시지의 시뮬레이션 시각으로 쓴다.
+/clock이 없는 bag(실제 시계로 돈 가짜 로봇 실행, 하네스 demo_s3_fake)은 받은 시각을 그대로 쓰고, 그 시각으로 /clock을
+0.5 s마다 만들어 넣는다 (/clock이 없으면 대시보드가 브라우저 시계를 써 녹화 시각과 메시지 시각이 어긋난다).
 대시보드가 rosbridge에 거는 throttle_rate(dashboard/index.html SUBS)와 같게 토픽마다 간격을 줄인다.
 """
 
@@ -64,9 +66,17 @@ def export(bag, out, storage='sqlite3'):
     reader.set_filter(rosbag2_py.StorageFilter(topics=list(keep)))
     classes = {t: get_message(types[t]) for t in keep}
     sim, last, lines, head, counts = None, {}, [], {'t0': None, 'scene': ''}, {}
+    wall = '/clock' not in types
     while reader.has_next():
-        topic, data, _ = reader.read_next()
+        topic, data, recv = reader.read_next()
         msg = deserialize_message(data, classes[topic])
+        if wall:
+            sim = recv * 1e-9
+            if sim - last.get('/clock', -math.inf) >= 0.5:
+                last['/clock'] = sim
+                counts['/clock'] = counts.get('/clock', 0) + 1
+                lines.append({'t': round(sim, 3), 'topic': '/clock',
+                              'msg': {'clock': {'sec': int(sim), 'nanosec': int(round((sim % 1) * 1e9)) % 1_000_000_000}}})
         if topic == '/clock':
             sim = msg.clock.sec + msg.clock.nanosec * 1e-9
         if topic == '/demo/t0':

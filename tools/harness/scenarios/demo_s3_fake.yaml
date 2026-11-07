@@ -46,3 +46,7 @@ driver:
   mode: wait
   use_sim_time: false
   duration_s: "{duration_s}"
+postprocess:
+  # 대시보드 화면 녹화용 (가짜 로봇 + 관제 대시보드로 장면 3을 보일 때). 맥에서 tools/demo/record_dashboard.py
+  - name: dashboard_feed
+    cmd: python3 /repo/tools/demo/bag_export.py {run_dir}/rosbag --out {run_dir}/dashboard.jsonl
