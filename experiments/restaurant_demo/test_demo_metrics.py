@@ -89,6 +89,7 @@ def test_stops_counts_only_stops_during_driving():
     assert [d for _, d in out['intervals']] == [pytest.approx(2.0), pytest.approx(4.0)]
     assert out['stop_s'] == pytest.approx(6.0)
     assert out['end_stop_s'] == pytest.approx(1.0)
+    assert out['stop_ratio'] == pytest.approx(6.0 / (123.5 - 103.5))   # 출발 ~ 도착 중 멈춘 비율
 
 
 def test_stops_never_departing():
@@ -107,8 +108,28 @@ def test_scene12_reports_request_to_arrival_and_stops_for_the_station_tasks_only
     assert r['stops'] == 1
 
 
-def test_scene12_unreached_station_has_no_arrival():
-    rows = dm.scene12({'d1': _task()}, [], {'amr_01': _track([(5, 0.4)])})
+def test_scene12_unreached_station_reports_stops_until_the_end_of_the_recording():
+    # 도착 못 함: 도착 시간은 비우고, 녹화 끝까지 멈춤을 센다. 끝까지 멈춰 있던 6 s도 멈춤 하나
+    track = _track([(1, 0), (5, 0.4), (2, 0), (3, 0.4), (6, 0)])     # 100 ~ 117 s
+    rows = dm.scene12({'d1': _task()}, [], {'amr_01': track})
+    r = rows[0]
+    assert r['arrive_s'] is None and r['request_to_arrival_s'] is None
+    assert r['stops'] == 2
+    assert [d for _, d in r['intervals']] == [pytest.approx(2.0), pytest.approx(6.0)]
+    assert r['stop_s'] == pytest.approx(8.0)
+    assert r['stop_ratio'] == pytest.approx(8.0 / (117.0 - 101.5), abs=1e-3)
+    assert r['end_stop_s'] == 0.0
+
+
+def test_scene12_unreached_uses_recording_end_when_given():
+    # 로봇 자세가 117 s에서 끊겨도 녹화가 120 s까지면 120 s까지 멈춘 것으로 본다
+    track = _track([(1, 0), (5, 0.4), (2, 0), (3, 0.4), (6, 0)])
+    r = dm.scene12({'d1': _task()}, [], {'amr_01': track}, end=120.0)[0]
+    assert r['stop_s'] == pytest.approx(2.0 + 9.0)
+
+
+def test_scene12_unreached_without_robot_track_has_no_stop_metrics():
+    rows = dm.scene12({'d1': _task(assignee='')}, [], {'amr_01': _track([(5, 0.4)])})
     assert rows[0]['arrive_s'] is None and 'stops' not in rows[0]
 
 
@@ -159,20 +180,68 @@ def test_scene2_assign_order_and_counts():
 # ---------------------------------------------------------------- 폴더 이름·표
 @pytest.mark.parametrize('name, want', [
     ('demo_1-2-on', ('1-2', 'on')), ('demo_1-2-off', ('1-2', 'off')), ('demo_2-on', ('2', 'on')),
-    ('demo_2-1-off', ('2-1', 'off')), ('demo_1-2', None), ('run_1-2-on', None), ('demo_1-2-maybe', None)])
+    ('demo_2-1-off', ('2-1', 'off')), ('demo_1-2', None), ('run_1-2-on', None), ('demo_1-2-maybe', None),
+    # 하네스·버킷 이름 (#319): s11 → 1-1, s12 → 1-2, s2… → 2 (1막·2막 이름 미정)
+    ('demo_s11-on', ('1-1', 'on')), ('demo_s12-off', ('1-2', 'off')), ('demo_s2-on', ('2', 'on')),
+    ('demo_s21-on', ('2', 'on')), ('demo_s2_act2-off', ('2', 'off')), ('demo_smoke', None)])
 def test_parse_run_name(name, want):
     assert analyze.parse_run_name(name) == want
 
 
+def _fake_bag(path):
+    path.mkdir(parents=True)
+    (path / 'metadata.yaml').write_text('x', encoding='utf-8')
+    return path
+
+
+def test_find_bag_prefers_measurement_bag_and_skips_camera_bag(tmp_path):
+    run = tmp_path / 'demo_s12-on_20261107-090000_00'
+    _fake_bag(run / 'camera_bag')            # mp4로 못 바꿔 남은 카메라 bag (이름순으로 먼저 온다)
+    _fake_bag(run / 'rosbag')
+    assert analyze.find_bag(run) == run / 'rosbag'
+    # rosbag/ 이름이 아니어도 카메라 bag은 고르지 않는다
+    other = tmp_path / 'other'
+    _fake_bag(other / 'camera_bag')
+    _fake_bag(other / 'measure')
+    assert analyze.find_bag(other) == other / 'measure'
+    only_camera = tmp_path / 'only_camera'
+    _fake_bag(only_camera / 'camera_bag')
+    assert analyze.find_bag(only_camera) is None
+
+
+def test_run_dirs_oldest_first_by_harness_stamp(tmp_path):
+    scene = tmp_path / 'demo_s12-on'
+    names = ['demo_s12-on_20261107-101500_00', 'demo_s12-on_20261106-235900_01',
+             'demo_s12-on_20261107-101500_01', 'demo_s12-on_20261106-235900_00']
+    for n in names:
+        (scene / n).mkdir(parents=True)
+    _fake_bag(scene / 'camera_bag')          # 장면 폴더의 카메라 bag은 실행이 아니다
+    assert [p.name for p in analyze.run_dirs(scene)] == sorted(names)
+
+
+def test_run_dirs_scene_folder_with_bag_is_one_run(tmp_path):
+    scene = tmp_path / 'demo_s12-on'
+    _fake_bag(scene / 'rosbag')
+    assert analyze.run_dirs(scene) == [scene]
+
+
+def test_latest_keeps_the_last_run_per_scene_folder():
+    rows = [{'scene_dir': 'demo_s12-on', 'run': 'a'}, {'scene_dir': 'demo_s12-on', 'run': 'b'},
+            {'scene_dir': 'demo_s12-off', 'run': 'c'}]
+    assert [r['run'] for r in analyze.latest(rows)] == ['b', 'c']
+
+
 def test_table_md_marks_unreached_and_missing_bag():
     md = analyze.table_md([
-        {'run': 'demo_1-2-on', 'scene12': [{'task_id': 'd1', 'request_to_arrival_s': None}]},
+        {'run': 'demo_1-2-on', 'scene12': [{'task_id': 'd1', 'request_to_arrival_s': None, 'stops': 2,
+                                            'stop_s': 8.0, 'stop_ratio': 0.516, 'start_wait_s': 1.5}]},
         {'run': 'demo_2-on', 'error': 'rosbag 없음'}])
-    assert '도착 못 함' in md and 'demo_2-on: rosbag 없음' in md
+    assert '| demo_1-2-on | d1 | - | 2 (8.0) | 52% | 1.5 |' in md   # 도착 시간은 -, 멈춤 지표는 채운다
+    assert 'demo_2-on: rosbag 없음' in md
 
 
 # ---------------------------------------------------------------- 가짜 rosbag 끝까지
-def _write_bag(path, scene):
+def _write_bag(path, scene, arrive=True):
     rosbag2_py = pytest.importorskip('rosbag2_py')
     msgs = pytest.importorskip('amr_msgs.msg')
     from builtin_interfaces.msg import Time
@@ -210,9 +279,10 @@ def _write_bag(path, scene):
             m.header.stamp = stamp(t)
             m.pose.position.x = x
             put('/fleet/robot_states', m, t)
-        s = msgs.TaskStatus(task_id='d1', robot_id='amr_01', state=1, phase='unloading')
-        s.header.stamp = stamp(28.0)
-        put('/fleet/task_status', s, 28.0)
+        if arrive:
+            s = msgs.TaskStatus(task_id='d1', robot_id='amr_01', state=1, phase='unloading')
+            s.header.stamp = stamp(28.0)
+            put('/fleet/task_status', s, 28.0)
     else:
         rows = [(0.0, [record('n1', 0, 't03', 0.0, '', 0), record('c1', 3, 'return_1', 0.0, '', 0)]),
                 (2.0, [record('n1', 0, 't03', 0.0, '', 0), record('c1', 3, 'return_1', 0.0, 'amr_01', 0)]),
@@ -232,7 +302,7 @@ def test_analyze_end_to_end_on_fake_bags(tmp_path):
     out = tmp_path / 'results.md'
     assert analyze.main([str(tmp_path), '--out', str(out)]) == 0
     import json
-    res = {r['run']: r for r in json.loads(out.with_suffix('.json').read_text(encoding='utf-8'))}
+    res = {r['scene_dir']: r for r in json.loads(out.with_suffix('.json').read_text(encoding='utf-8'))}
     assert set(res) == {'demo_1-2-on', 'demo_2-off', 'demo_2-on'}
     r12 = res['demo_1-2-on']['scene12'][0]
     assert r12['request_to_arrival_s'] == pytest.approx(18.0)
@@ -242,3 +312,36 @@ def test_analyze_end_to_end_on_fake_bags(tmp_path):
     assert s2['starvation_s'] == pytest.approx(12.0)          # n1 100 → 112
     assert s2['assign_order'] == ['c1', 'n1']
     assert res['demo_2-on']['error'] == 'rosbag 없음'
+
+
+def test_analyze_harness_layout_runs_latest_in_table_all_in_json(tmp_path):
+    # runs/demo_s12-on/<실행 id>/{rosbag, camera_bag}: 실행 id마다 한 줄, 표에는 가장 최근만
+    scene = tmp_path / 'demo_s12-on'
+    old = scene / 'demo_s12-on_20261106-235900_00'
+    new = scene / 'demo_s12-on_20261107-101500_00'
+    _write_bag(old / 'rosbag', '1-2')
+    _write_bag(new / 'rosbag', '1-2', arrive=False)    # 최근 실행은 buffet_2에 못 닿았다
+    _fake_bag(new / 'camera_bag')                      # 읽으면 깨지는 가짜 - 고르면 안 된다
+    _write_bag(tmp_path / 'demo_s2-off' / 'demo_s2-off_20261107-090000_00' / 'rosbag', '2')
+    out = tmp_path / 'results.md'
+    assert analyze.main([str(tmp_path), '--out', str(out)]) == 0
+    import json
+    rows = json.loads(out.with_suffix('.json').read_text(encoding='utf-8'))
+    assert [r['run_id'] for r in rows if r['scene_dir'] == 'demo_s12-on'] == [old.name, new.name]
+    by_id = {r['run_id']: r for r in rows}
+    assert by_id[old.name]['scene'] == '1-2' and by_id[old.name]['bag'].endswith('rosbag')
+    assert by_id[old.name]['scene12'][0]['request_to_arrival_s'] == pytest.approx(18.0)
+    unreached = by_id[new.name]['scene12'][0]
+    assert unreached['request_to_arrival_s'] is None
+    assert unreached['stops'] == 1 and unreached['stop_s'] == pytest.approx(2.0)   # 녹화 끝(30 s)까지
+    assert by_id['demo_s2-off_20261107-090000_00']['scene'] == '2'
+    md = out.read_text(encoding='utf-8')
+    assert f'demo_s12-on/{new.name}' in md and old.name not in md
+    assert analyze.main([str(tmp_path), '--out', str(out), '--all']) == 0
+    assert old.name in out.read_text(encoding='utf-8')
+
+
+def test_analyze_stops_with_a_clear_message_when_no_scene_folder(tmp_path):
+    (tmp_path / 'demo_smoke').mkdir()
+    with pytest.raises(SystemExit, match='demo_s12-on'):
+        analyze.main([str(tmp_path)])
