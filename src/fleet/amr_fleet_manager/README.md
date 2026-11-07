@@ -160,7 +160,7 @@ ros2 launch amr_fleet_manager task_generator.launch.py
 | 작업을 맡은 로봇의 `RobotState`가 `assignment.reclaim_timeout_s`(5초) 동안 없음 (로봇 장애) | 작업을 회수해 다른 로봇에 다시 할당 (새 `assignment_id`). 죽은 로봇의 늦은 보고는 무시. FAILED 재시도 횟수와 따로 센다 |
 
 - Ack 유실 확인에 `RobotState.last_assignment_id`를 쓰지 않는 이유: 서버가 재시작하면 번호가 1부터 다시 시작해, 로봇이 새 epoch를 보기 전에 보낸 큰 번호를 확인으로 잘못 볼 수 있다.
-- 재전송·heartbeat·로봇 생존 판정은 실제 시간(단조 시계)으로 잰다. 메시지의 `header.stamp`는 노드 시계(`use_sim_time`이면 시뮬레이션 시간)다.
+- 재전송·로봇 생존 판정·작업 회수·혼잡도 만료·자동 충전은 노드 시계(`use_sim_time`이면 시뮬레이션 시간)로 잰다. 시뮬레이터가 느릴 때(카메라를 켠 녹화, RTF 0.08) 실제 시간으로 재면 시뮬레이션 시간 2 Hz RobotState가 실제 6 s마다 와 살아 있는 로봇의 작업을 회수했다(11/6). 이 판정을 몇 번 할지(타이머)와 heartbeat·작업표 방송 주기는 실제 시간(단조 시계)이다. 그래서 시뮬레이터가 멈추면(`/clock`이 안 오면) 회수·재전송도 멈춘다. 메시지의 `header.stamp`는 노드 시계다.
 - 하네스 관측 마감의 Ack 여유 시간은 기본값으로 `interval_s × max_resends` = 5초다 ([하네스 README](../../../tools/harness/README.md) "관측 마감").
 
 ### 로봇 측 수신 규칙 (`amr_bt` 참고)
