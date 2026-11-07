@@ -60,7 +60,9 @@ def test_restaurant_scene_robots(scene):
     stations = yaml.safe_load((root / 'fleet' / 'amr_fleet_manager' / 'config' / 'stations_restaurant.yaml')
                               .read_text(encoding='utf-8'))['stations']
     first = robots['amr_01']
-    assert (first.x, first.y) == (-10.5, -5.6) and first.x < -9.73   # 1-1 성립 조건: 1호가 x -9.73보다 서쪽
+    # 1-1은 입구 옆(-10.5, -5.6), 1-2는 우회 경로가 짧아지게 동쪽으로 0.5 m 옮긴 자리 (robots_restaurant_s12.yaml 머리말)
+    assert (first.x, first.y) == {'s11': (-10.5, -5.6), 's12': (-10.0, -5.8)}[scene]
+    assert first.x < -9.73   # 1-1 성립 조건: 1호가 x -9.73(서쪽 통로 구역 동쪽 끝)보다 서쪽
     special = {'amr_01': None, 'amr_03': 'stall_3'} if scene == 's11' else {'amr_01': None}
     for name, robot in robots.items():
         if name in special:
@@ -161,6 +163,6 @@ def test_scene12_first_robot_faces_east_and_scene11_faces_north():
     # 1-2: 혼잡도를 켜면 1호가 남쪽 통로를 따라 동쪽(x -7.275 우회 통로)으로 출발한다 → 동쪽을 보고 선다. 1-1은 그대로 북쪽
     s12 = {r.name: r for r in load_robots(str(Path(ROBOTS).with_name('robots_restaurant_s12.yaml')), 5)}
     s11 = {r.name: r for r in load_robots(str(Path(ROBOTS).with_name('robots_restaurant_s11.yaml')), 5)}
-    assert (s12['amr_01'].x, s12['amr_01'].y, s12['amr_01'].yaw) == (-10.5, -5.6, 0.0)
+    assert (s12['amr_01'].x, s12['amr_01'].y, s12['amr_01'].yaw) == (-10.0, -5.8, 0.0)
     assert s11['amr_01'].yaw == pytest.approx(math.pi / 2)
 
