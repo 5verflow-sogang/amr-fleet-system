@@ -41,7 +41,7 @@ params:
   # 위치추정. #327 머지 뒤 1-2 녹화는 ground_truth (바퀴 헛돎으로 AMCL이 2 m씩 밀려 거짓 도착, 이진 11/6).
   # 지금 dev는 true/false만 받고, #327 뒤에는 true가 amcl이다
   localization: "true"
-  # 작업 일정 (amr_fleet_manager 작업 생성기 형식). 연우 장면 스크립트가 생기면 그쪽으로 바꾼다
+  # 작업 일정. .yaml이면 작업 생성기 시나리오(무작위 생성), .json이면 시각이 정해진 작업 파일(tasks_file, 예: tasks/demo_s11.json)
   task_schedule: /repo/tools/harness/tasks/restaurant_smoke.yaml
 processes:
   - name: stack
@@ -81,7 +81,7 @@ processes:
       ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json use_sim_time:=true
       map_origin_in_world:="[0.0, 0.0, 0.0]"
       stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
-      scenario_file:={task_schedule}
+      $([[ {task_schedule} == *.json ]] && echo tasks_file || echo scenario_file):={task_schedule}
 driver:
   mode: wait
   use_sim_time: true
