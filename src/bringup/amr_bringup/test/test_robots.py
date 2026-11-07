@@ -155,3 +155,12 @@ def test_world_to_map_tf_args():
         '--x', '0.0', '--y', '1.5', '--z', '0.0', '--yaw', '0.0', '--frame-id', 'world', '--child-frame-id', 'map']
     # 문자열 원점(launch 인자를 yaml로 읽은 값)도 받는다
     assert world_to_map_tf_args(['-0.0562', '1.5317', '0.00009'])[1:8:2] == ['-0.0562', '1.5317', '0.0', '9e-05']
+
+
+def test_scene12_first_robot_faces_east_and_scene11_faces_north():
+    # 1-2: 혼잡도를 켜면 1호가 남쪽 통로를 따라 동쪽(x -7.275 우회 통로)으로 출발한다 → 동쪽을 보고 선다. 1-1은 그대로 북쪽
+    s12 = {r.name: r for r in load_robots(str(Path(ROBOTS).with_name('robots_restaurant_s12.yaml')), 5)}
+    s11 = {r.name: r for r in load_robots(str(Path(ROBOTS).with_name('robots_restaurant_s11.yaml')), 5)}
+    assert (s12['amr_01'].x, s12['amr_01'].y, s12['amr_01'].yaw) == (-10.5, -5.6, 0.0)
+    assert s11['amr_01'].yaw == pytest.approx(math.pi / 2)
+
