@@ -573,3 +573,17 @@ def test_fleet_battery_metrics_and_server_tasks(tmp_path):
     # 배터리 열이 없는 옛 결과는 배터리 지표를 내지 않는다
     (run / 'robot_states.csv').write_text('time,robot,x,y,mode,task_id\n1,amr_01,0,0,0,\n')
     assert 'fleet.battery_min' not in fleet_metrics(run)
+
+
+def test_response_skips_commands_at_first_goal(tmp_path):
+    # 명령 순간 첫 목표(픽업)에 서 있던 로봇은 싣기 대기 뒤에 움직여 7 s로 잡힌다 (11/2 station_resv). KPI에서 빼고 센다
+    run = tmp_path / 'r'
+    run.mkdir()
+    header = ['cmd_time', 'response_time', 'latency_ms', 'robot', 'task_id', 'latency_sim_ms', 'assignment_id',
+              'ack_time', 'ack_rtt_ms', 'resends', 'recv_time', 'latency_recv_ms', 'moving_at_cmd', 'at_goal_at_cmd']
+    rows = [['1.0', '1.4', '400.0', 'amr_01', 't1', '200.0', '1', '', '', '0', '', '', '0', '0'],
+            ['2.0', '9.0', '7000.0', 'amr_02', 't2', '3400.0', '2', '', '', '0', '', '', '0', '1']]
+    _csv(run / 'response_time.csv', header, rows)
+    m = fleet_metrics(run)
+    assert m['fleet.response_ms.mean'] == pytest.approx(400.0) and m['fleet.response_sim_ms.mean'] == pytest.approx(200.0)
+    assert m['fleet.response_at_goal'] == 1 and m['fleet.commands'] == 2
