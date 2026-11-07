@@ -1,0 +1,16 @@
+# 식당(서빙 로봇, amr_bringup body:=serving) 덮어쓰기. safety.launch.py profile:=restaurant가 safety.yaml 뒤에 얹어
+# 여기 적은 키만 바뀐다. 물류센터 값(safety.yaml)과 I17 회피 판정은 그대로다.
+# 11/6~7 식당 녹화 6번(0초부터 50 s, 5대)에서 안전 상태가 정지 27 %, 근접 저속 0.15 m/s 22 %, 0.6 m/s 상한 37 %,
+# 제한 없음 15 %였다. 정지 규칙(진행 경로 0.3 m·TTC 1 s)과 0.6 m/s 상한은 사람과 부딪히지 않게 하는 마지막 장치라 그대로 두고,
+# 근접 저속만 식당 손님(0.3~1.0 m/s)에 맞춘다
+/**/safety:
+  ros__parameters:
+    # 서빙 로봇 몸체 (amr_bringup nav2_profile, #299). 물류 0.6 x 0.4 m 그대로면 양옆 약 7 cm를 차체 밖으로 본다
+    robot_length: 0.565
+    robot_width: 0.537
+    # 좁은 홀에서는 손님이 거의 늘 1.5 m 안이라 0.6 m/s 상한이 계속 걸린다 (녹화에서 10~23 %)
+    dynamic_warning_distance: 1.0
+    # 0.3 m/s여도 추적 지연 0.5 s + 반응 0.2 s + 1.0 m/s² 정지 동안 약 0.26 m만 가서 0.4 m 안에 선다
+    # (safety.yaml 0.15 m/s·0.5 m와 같은 계산)
+    dynamic_slow_distance: 0.4
+    dynamic_slow_speed_limit: 0.3

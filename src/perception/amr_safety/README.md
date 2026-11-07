@@ -59,11 +59,21 @@ cmd_vel 체인: `cmd_vel_nav` (Nav2·`amr_control`) → `amr_zone_client` → `c
 
 `config/safety.yaml`. 값마다 근거를 주석으로 적었다.
 
+식당(서빙 로봇)은 `profile:=restaurant`로 `config/safety_restaurant.yaml`을 그 위에 얹는다. amr_bringup은 `body:=serving`이면 이걸 넘긴다. 정지 규칙과 0.6 m/s 상한은 같고 바뀌는 것은 아래뿐이다 (근거: 식당 녹화 6번에서 근접 저속 0.15 m/s가 22 %, 사람 1.5 m 안 0.6 m/s 상한이 10~23 %)
+
+| 값 | 물류센터 | 식당 |
+|---|---|---|
+| `robot_length` × `robot_width` | 0.6 × 0.4 m | 0.565 × 0.537 m (서빙 로봇 몸체) |
+| `dynamic_warning_distance` | 1.5 m | 1.0 m |
+| `dynamic_slow_distance` | 0.5 m | 0.4 m |
+| `dynamic_slow_speed_limit` | 0.15 m/s | 0.3 m/s |
+
 ## 실행
 
 ```bash
 ros2 launch amr_safety safety.launch.py                                   # 네임스페이스 amr_01
 ros2 launch amr_safety safety.launch.py cmd_vel_in_topic:=cmd_vel_nav     # 구역 허가 없이 시험
+ros2 launch amr_safety safety.launch.py profile:=restaurant               # 식당 값 (safety_restaurant.yaml)
 ros2 service call /amr_01/safety/estop std_srvs/srv/SetBool "{data: true}"
 ros2 topic echo /amr_01/safety/status
 ```
@@ -240,4 +250,5 @@ colcon test --packages-select amr_perception_core amr_safety
 ```
 
 - `test_gate.py`, `test_safety_node.py`: 노드 없이 게이트·판정 입력·메시지 변환
+- `test_safety_profile.py`: 식당 설정이 있는 키만 바꾸는지, 정지 규칙을 건드리지 않는지, 합친 값이 `SafetyConfig` 검사를 통과하는지, `profile`에 따라 launch가 고르는 설정 파일
 - `test_safety_launch.py` (I14, `launch_testing`): `safety_node`를 띄우고 가짜 입력으로 NORMAL → 진행 경로 장애물 CRITICAL → TTC WARNING(0.6 m/s, 곡률 유지) → 스캔 끊김 CRITICAL을 차례로 걸어 `safety/status`와 최종 `cmd_vel`을 본다
