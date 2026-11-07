@@ -1,0 +1,47 @@
+{
+  "meta": {
+    "note": "식당 시연 1-1 (demo_s11). 0초: 동쪽 대기 2·4·5호에 동쪽 회수 3건을 줘 남쪽 퇴식구로 보낸다. 5초: 배식대(buffet_1) 배달 1건이 들어올 때 놀고 있는 로봇은 1호(입구 옆)와 3호(3번 매장 앞)뿐이다 (#247: 1대뿐이면 비용 함수와 상관없이 그 로봇이 간다). 혼잡도 끔(euclidean)이면 직선으로 더 가까운 1호(9.8 m)가 서쪽 통로·배식대 줄을 지나고, 켬(congestion)이면 1호 비용이 서쪽 통로 8 m 때문에 커져 3호(11.4 m)가 매장 앞으로 간다 퇴식구가 2곳(return_1·2)뿐이라 같은 곳으로 두 건을 보내면 한 건이 앞 건이 끝날 때까지 배정되지 않는다(서버가 같은 스테이션을 동시에 주지 않는다) → 세 번째는 홀 남동쪽 t15로 보낸다."
+  },
+  "tasks": [
+    {
+      "at_s": 0.0,
+      "task_id": "s11_east_1",
+      "type": "collect",
+      "item": "none",
+      "pickup": "b03",
+      "dropoff": "return_2",
+      "priority": 0,
+      "deadline_s": 0.0
+    },
+    {
+      "at_s": 0.0,
+      "task_id": "s11_east_2",
+      "type": "collect",
+      "item": "none",
+      "pickup": "L04",
+      "dropoff": "return_1",
+      "priority": 0,
+      "deadline_s": 0.0
+    },
+    {
+      "at_s": 0.0,
+      "task_id": "s11_east_3",
+      "type": "collect",
+      "item": "none",
+      "pickup": "c02",
+      "dropoff": "t15",
+      "priority": 0,
+      "deadline_s": 0.0
+    },
+    {
+      "at_s": 5.0,
+      "task_id": "s11_buffet",
+      "type": "delivery",
+      "item": "small",
+      "pickup": "buffet_1",
+      "dropoff": "t02",
+      "priority": 0,
+      "deadline_s": 0.0
+    }
+  ]
+}
