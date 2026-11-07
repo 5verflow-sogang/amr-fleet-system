@@ -67,7 +67,7 @@
 - `stale_s`(2 s) 넘게 위치가 안 온 손님은 세지 않는다
 - 마스크는 구역 둘레를 `mask.padding`(1 m)만큼 값 0 칸으로 감싼다. Nav2 Humble 속도 필터는 로봇이 마스크 밖이면 마지막 제한을 유지해서, 혼잡 구역에서 바로 마스크 밖으로 나가면 감속이 안 풀린다
 - `site`가 구역 파일·손님 파일·map 원점 기본값을 고른다. `warehouse`(기본)는 물류센터 통로에 붙인 가짜 구역(`config/congestion_zones.yaml`), `restaurant`는 `config/congestion_zones_restaurant.yaml` + amr_gazebo `dynamic_obstacles_restaurant(_peak).yaml` + 원점 [0, 0, 0]이다. 식당에 물류센터 원점이 들어가면 손님이 1.47 m 밀려 다른 구역에 세어진다
-- 식당의 서 있는 손님(`static_people_restaurant.yaml`)과 직원은 세지 않는다. 서 있는 손님까지 세면 카운터 앞이 늘 0.83이라 켬/끔 비교가 섞인다 (11/5 결정)
+- 식당 직원(`dynamic_obstacles_restaurant_staff.yaml`)은 세지 않는다. 정지한 손님 모델은 11/8에 월드에서 지웠다 (전에도 세지 않았다: 카운터 앞이 늘 0.83이라 켬/끔 비교가 섞인다, 11/5 결정)
 
 ```bash
 ros2 launch amr_fleet_manager congestion.launch.py                                  # 물류센터 가짜 구역 + 동적 장애물 5개

@@ -77,6 +77,10 @@ def _obstacles(context):
             parameters=[{
                 'config': config,
                 'seed': int(LaunchConfiguration('seed').perform(context)),
+                # 로봇 근처면 손님이 선다 (0이면 끔). 볼 로봇: 쉼표로 구분한 네임스페이스
+                'keep_away_m': float(LaunchConfiguration('keep_away_m').perform(context)),
+                'keep_away_robots': [r.strip() for r in LaunchConfiguration('keep_away_robots').perform(context).split(',')
+                                     if r.strip()] or [''],
                 'only': only or [''],
                 'use_sim_time': use_sim_time,
             }],
@@ -97,6 +101,12 @@ def generate_launch_description():
             'seed', default_value='0',
             description='속도·무작위 경로 seed. 0이면 실행마다 무작위'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
+        DeclareLaunchArgument(
+            'keep_away_m', default_value='0.0',
+            description='로봇 중심이 이 반경 [m] 안이고 그쪽으로 걷는 중이면 장애물이 선다. 0이면 끔'),
+        DeclareLaunchArgument(
+            'keep_away_robots', default_value='',
+            description='keep_away_m에서 볼 로봇 네임스페이스 (쉼표로 구분, 예: amr_01,amr_02). 비우면 끔'),
         DeclareLaunchArgument(
             'name', default_value='dynamic_obstacles',
             description='이동 노드 이름 (브리지는 <name>_bridge). 파일 두 개(손님·직원)를 같이 띄울 때 하나를 바꾼다'),

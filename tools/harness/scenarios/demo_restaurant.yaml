@@ -28,7 +28,7 @@ params:
   robots: robots_restaurant.yaml                 # amr_bringup config/ 시작 위치
   # 손님(amr_gazebo config/). 혼잡도 노드도 같은 파일을 센다. 피크: peak_1~3 서쪽 통로(1-2), peak_4~6 배식대 앞(1-1)
   guests: dynamic_obstacles_restaurant_peak.yaml
-  staff: dynamic_obstacles_restaurant_staff.yaml # 직원: 따로 띄워 혼잡도에 안 센다
+  staff: none                                   # 직원: 띄우지 않음 (11/8 매장 안 직원 빼기, 홀 손님만). 쓰려면 dynamic_obstacles_restaurant_staff.yaml
   cost_fn: euclidean                             # 1-1 켬: congestion
   congestion_weight: "3.0"
   congestion_filter: none                        # 1-2 켬: keepout
@@ -41,7 +41,7 @@ params:
   # 위치추정. #327 머지 뒤 1-2 녹화는 ground_truth (바퀴 헛돎으로 AMCL이 2 m씩 밀려 거짓 도착, 이진 11/6).
   # 지금 dev는 true/false만 받고, #327 뒤에는 true가 amcl이다
   localization: "true"
-  # 작업 일정 (amr_fleet_manager 작업 생성기 형식). 연우 장면 스크립트가 생기면 그쪽으로 바꾼다
+  # 작업 일정. .yaml이면 작업 생성기 시나리오(무작위 생성), .json이면 시각이 정해진 작업 파일(tasks_file, 예: tasks/demo_s11.json)
   task_schedule: /repo/tools/harness/tasks/restaurant_smoke.yaml
 processes:
   - name: stack
@@ -52,7 +52,7 @@ processes:
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
       dynamic_obstacles:=true dynamic_obstacles_file:={guests} staff_file:={staff} congestion:=restaurant
       cost_fn:={cost_fn} congestion_weight:={congestion_weight} congestion_filter:={congestion_filter} nav2_composition:=true
-      enable_camera:={robot_camera}
+      enable_camera:={robot_camera} guest_keep_away_m:=1.2
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:={spawn_interval_s}
     ready_topic: /fleet/heartbeat
     ready_cmds:
@@ -81,7 +81,7 @@ processes:
       ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json use_sim_time:=true
       map_origin_in_world:="[0.0, 0.0, 0.0]"
       stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
-      scenario_file:={task_schedule}
+      $([[ {task_schedule} == *.json ]] && echo tasks_file || echo scenario_file):={task_schedule}
 driver:
   mode: wait
   use_sim_time: true
