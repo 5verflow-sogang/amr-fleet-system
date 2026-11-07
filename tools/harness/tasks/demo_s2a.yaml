@@ -1,0 +1,34 @@
+# 식당 시연 2 1막: 회수 호출 우선 처리 (tools/harness/demo_scene.py 장면 파일, 하네스 demo_s2a)
+# 5대 모두 배달 중 + 배달 4건(9·15·4·2번 테이블) 대기 → 0초에 3번 테이블 회수 호출(TYPE_COLLECT → return_1)과 /demo/t0.
+# 기대 (연우 시나리오):
+#   켬 (회수 priority 200): 회수가 대기열 맨 위로 가고, 다음에 일을 마친 2호가 바로 배정 → 3번 테이블 → 퇴식구
+#   끔 (회수 priority 100): 배달과 같은 우선순위라 대기열 맨 뒤, 배달 4건이 배정된 뒤에 배정
+# aging은 둘 다 끔 (fleet_params 비움 = aging_rate 0.0).
+#
+# 누가 어느 작업을 맡나: 로봇이 동쪽 벽(x 11.2)에 amr_01(남) ~ amr_05(북) 한 줄로 서 있고 픽업은 모두 북쪽(y 4.15)이라,
+# 최소거리(nearest) 배정이면 busy 작업을 낸 순서대로 amr_05, 04, 03, 02, 01이 맡는다. 2호가 먼저 일을 마치게
+# 4번째 작업(2호)을 가장 짧게 둔다 (직선 거리 합: 2호 약 17 m, 나머지 23~30 m).
+# 정차 자리는 stations_restaurant.yaml. 시작 작업(busy·queue)은 핵심 요청 자리(t03, return_1)와 1 m 안을 쓰지 않는다
+# (서버 스테이션 예약 1 m - 겹치면 핵심 요청이 예약 때문에 밀려 우선순위 효과가 섞인다)
+steps:
+  - name: busy
+    tasks:
+      - {id: a_busy_t11, type: delivery, pickup: buffet_1, dropoff: t11}   # amr_05, 약 30 m
+      - {id: a_busy_t12, type: delivery, pickup: stall_1, dropoff: t12}    # amr_04, 약 25 m
+      - {id: a_busy_t13, type: delivery, pickup: buffet_2, dropoff: t13}   # amr_03, 약 30 m
+      - {id: a_busy_t10, type: delivery, pickup: stall_4, dropoff: t10}    # amr_02, 약 17 m (먼저 끝난다)
+      - {id: a_busy_t07, type: delivery, pickup: stall_2, dropoff: t07}    # amr_01, 약 23 m
+  # 5대가 모두 할당받은 뒤 배달 4건 (빈 로봇이 없어 대기한다)
+  - name: queue
+    after: {assigned: 5, timeout_s: 60}
+    tasks:
+      - {id: a_wait_t09, type: delivery, pickup: stall_3, dropoff: t09}
+      - {id: a_wait_t15, type: delivery, pickup: stall_4, dropoff: t15}
+      - {id: a_wait_t04, type: delivery, pickup: stall_1, dropoff: t04}
+      - {id: a_wait_t02, type: delivery, pickup: stall_2, dropoff: t02}
+  # 4건이 대기 중인 것을 작업표로 확인하고 3 s 뒤 회수 호출 = 0초 (/demo/t0)
+  - name: collect
+    after: {pending: 4, delay_s: 3, timeout_s: 30}
+    t0: true
+    tasks:
+      - {id: a_collect_t03, type: collect, pickup: t03, dropoff: return_1, priority: "{collect_priority}"}
