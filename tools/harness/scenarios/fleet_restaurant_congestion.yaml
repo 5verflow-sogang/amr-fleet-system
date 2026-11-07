@@ -26,31 +26,34 @@ params:
   # 시뮬레이션 시간 (s). 일정 약 490 s(10 s + 23 × 평균 20 s) 뒤 마지막 서빙을 끝낼 여유 약 3.5분
   duration_s: 700
   guests: peak
+  # 스폰 간격(실제 s). 5 s면 5대 Nav2 기동이 자주 멈췄다(11/6 시도 기준 8번). 시연 녹화(demo_restaurant)와 같은 값
+  spawn_interval_s: 25
+  # 위치추정. 식당에서 바퀴 헛돎으로 AMCL이 밀려 로봇이 가구 안에 있다고 믿고 이동 실패가 났다(11/6·11/7, 완료 0~3 / 24).
+  # #330 머지 뒤 ground_truth로 돌린다 (1-1은 할당 효과만 재므로 정답 위치를 써도 된다. 결과에 밝힌다). 지금 dev는 true(=amcl)
+  localization: "true"
 processes:
   - name: stack
     cmd: >-
-      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true
-      world:=restaurant.sdf body:=serving
+      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true localization:={localization}
+      world:=restaurant.sdf body:=serving nav2_composition:=true
       robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant.yaml
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0, 0, 0]"
       dynamic_obstacles:=true dynamic_obstacles_file:=dynamic_obstacles_restaurant_{guests}.yaml
+      staff_file:=dynamic_obstacles_restaurant_staff.yaml congestion:=restaurant
       seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct} algorithm:={algorithm}
       cost_fn:={cost_fn} congestion_weight:={congestion_weight}
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
-      fault_events_file:={run_dir}/fault_events.csv spawn_interval_s:=5.0
+      fault_events_file:={run_dir}/fault_events.csv spawn_interval_s:={spawn_interval_s}
     ready_topic: /fleet/heartbeat
     # fleet_stack과 같다: 모든 로봇의 bt_navigator가 active여야 작업을 받아 움직인다
     ready_cmds:
       - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
-    # 11/5 스모크 첫 시도가 240 s 안에 5대 Nav2를 못 올렸다(두 번째 194 s). 스폰 5대 × 5 s + 식당 손님 13명
-    ready_timeout_s: 360
+      # 혼잡도 노드는 system.launch congestion:=restaurant가 손님 스폰과 같은 파일로 띄운다(#315). 끔 조건도 띄운다:
+      # 혼잡도 체류 비교와 녹화를 같게 하려고. 서버는 cost_fn:=congestion일 때만 구독한다
+      - timeout 10 ros2 topic echo --once /fleet/congestion > /dev/null
+    # 스폰 25 s × 5대 + Nav2 기동. 시연 녹화와 같은 값
+    ready_timeout_s: 600
     settle_s: 5
-  # 끔 조건도 띄운다: 혼잡도 체류 비교와 녹화를 같게 하려고. 서버는 cost_fn:=congestion일 때만 구독한다
-  - name: congestion
-    cmd: >-
-      ros2 launch amr_fleet_manager congestion.launch.py site:=restaurant guests:={guests} use_sim_time:=true
-    ready_topic: /fleet/congestion
-    settle_s: 2
   - name: rosbag
     cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/amr_[0-9][0-9]/odom'
     settle_s: 3
