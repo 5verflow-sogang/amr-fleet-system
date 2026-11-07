@@ -63,6 +63,8 @@ class Options:
     use_imu: str = 'true'
     zones_file: str = ''
     body: str = 'amr'
+    # amr_bt.yaml 위에 얹을 파일 (배터리 실험). 비우면 없음
+    bt_params_file: str = ''
 
     def __post_init__(self) -> None:
         self.localization = localization_mode(self.localization)
@@ -131,7 +133,8 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
     if opt.bt:
         stack.append(Include('amr_bt', 'amr_bt.launch.py', dict(
             namespace=name, relayed='true' if opt.fleet else 'false', use_sim_time='true',
-            use_nav2='true' if opt.nav2 else 'false', use_docking='true' if opt.docking else 'false')))
+            use_nav2='true' if opt.nav2 else 'false', use_docking='true' if opt.docking else 'false',
+            params_file=opt.bt_params_file)))
     if opt.nav2:
         stack.append(Include('amr_bringup', 'nav2.launch.py', dict(
             namespace=name, cmd_vel_topic=chain['nav_out'], nav2_profile=NAV2_PROFILE[opt.body],
