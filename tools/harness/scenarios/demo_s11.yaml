@@ -5,7 +5,8 @@
 # 시작 위치: 1호 입구 옆(-10.5, -5.6), 3호 3번 매장 앞 (robots_restaurant_s11.yaml). 경로 필터는 끈다.
 # 로봇 시점: 끔은 1호, 켬은 3호가 주인공 → params에 robot_camera=amr_01 또는 amr_03 (RTF가 더 떨어진다)
 # 손님: 피크 파일 그대로 (지수 11/6: peak_1~3 서쪽 통로 몰림 → 1-2, peak_4~6 배식대 앞 → 1-1). 직원은 혼잡도에 안 센다
-# TODO(연우): 장면 스크립트(2·4·5호 먼 배달 → 0초 요청, /demo/t0)가 생기면 task_schedule 대신 쓴다
+# 작업: tasks/demo_s11.json. 0초에 2·4·5호를 동쪽 회수로 내보내고, 5초에 배식대 배달 1건 → 놀고 있는 1호·3호 중 고른다
+#   끔: 직선으로 가까운 1호가 서쪽 통로·배식대 줄로, 켬: 3호가 매장 앞으로 (분석 계산은 json meta)
 name: demo_s11
 extends: demo_restaurant
 # docker_run.sh는 이 파일의 packages: 줄만 읽는다 (extends를 따라가지 않는다)
@@ -20,4 +21,5 @@ params:
   robot_camera: "false"
   # 워크플로는 이 파일 params만 받는다 (extends의 값은 안 본다). 녹화: localization=ground_truth
   localization: "true"
-  duration_s: 60
+  duration_s: 180
+  task_schedule: /repo/tools/harness/tasks/demo_s11.json
