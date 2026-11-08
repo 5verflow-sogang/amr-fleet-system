@@ -1,4 +1,4 @@
-"""Nav2 식당 프로필(footprint·순항 속도)과 혼잡도 costmap 필터 오버레이 (nav2.launch.py nav2_profile·congestion_filter 인자).
+"""Nav2 식당 프로필(footprint·순항 속도·장애물 높이)과 혼잡도 costmap 필터 오버레이 (nav2.launch.py nav2_profile·congestion_filter 인자).
 
 nav2_params.yaml 전체를 복사하지 않고 바뀌는 키만 돌려준다 - nav2.launch.py가 controller_server의
 FollowPath(DWA) override와 같은 방식으로, 로봇별 임시 yaml에 이 값만 더 써서 RewrittenYaml 뒤에
@@ -36,8 +36,16 @@ def profile_overrides(nav2_params: dict, profile: str) -> dict:
         return {}
     del nav2_params
     return {
-        'global_costmap': {'footprint': _RESTAURANT_FOOTPRINT},
-        'local_costmap': {'footprint': _RESTAURANT_FOOTPRINT},
+        'global_costmap': {
+            'footprint': _RESTAURANT_FOOTPRINT,
+            # 바닥에서 0.38 m 높이의 LiDAR 관측을 식당에서만 장애물로 반영한다.
+            'obstacle_layer': {'scan': {'max_obstacle_height': 2.0}},
+        },
+        'local_costmap': {
+            'footprint': _RESTAURANT_FOOTPRINT,
+            # 바닥에서 0.38 m 높이의 LiDAR 관측을 식당에서만 장애물로 반영한다.
+            'obstacle_layer': {'scan': {'max_obstacle_height': 2.0}},
+        },
         'DWA': {
             'footprint_half_length': _RESTAURANT_HALF_LENGTH,
             'footprint_half_width': _RESTAURANT_HALF_WIDTH,

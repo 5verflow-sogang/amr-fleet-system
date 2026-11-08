@@ -1,6 +1,7 @@
 """식당 프로필(footprint·순항 속도)·혼잡도 costmap 필터 오버레이 (amr_bringup.nav2_profile). ROS 없이 돈다."""
 
 import ast
+import copy
 import os
 
 import pytest
@@ -30,8 +31,8 @@ def test_restaurant_profile_matches_serving_robot_footprint(nav2_params):
     overrides = profile_overrides(nav2_params, 'restaurant')
     assert overrides['global_costmap']['footprint'] == overrides['local_costmap']['footprint']
     xs, ys = _footprint_half_extents(overrides['global_costmap']['footprint'])
-    assert xs == pytest.approx({0.565 / 2})
-    assert ys == pytest.approx({0.537 / 2})
+    assert sorted(xs) == pytest.approx([0.565 / 2])
+    assert sorted(ys) == pytest.approx([0.537 / 2])
     assert overrides['DWA']['footprint_half_length'] == pytest.approx(0.565 / 2)
     assert overrides['DWA']['footprint_half_width'] == pytest.approx(0.537 / 2)
     # 순항 속도는 식당만 0.8 (물류센터 0.5는 Nav KPI 기준이라 그대로)
@@ -107,6 +108,21 @@ def test_build_overrides_restaurant_keepout_combines_footprint_and_filter(nav2_p
     # DWA 블록의 다른 값(footprint·max_v 말고)은 기존 nav2_params.yaml 그대로다
     base_dwa = nav2_params['controller_server']['ros__parameters']['DWA']
     assert dwa['max_w'] == base_dwa['max_w']
+
+
+@pytest.mark.parametrize('filter_choice', ['none', 'keepout', 'speed'])
+def test_restaurant_scan_height_reaches_both_costmaps_without_changing_base(nav2_params, filter_choice):
+    original = copy.deepcopy(nav2_params)
+    overrides = build_overrides(nav2_params, 'restaurant', filter_choice, 'odometry/local')
+    # 최종 YAML 직렬화 이후에도 관측 소스(scan) 아래에 높이가 전달되어야 한다.
+    restored = yaml.safe_load(yaml.safe_dump(overrides))
+    for costmap in ('global_costmap', 'local_costmap'):
+        params = restored[costmap][costmap]['ros__parameters']
+        assert params['obstacle_layer']['scan']['max_obstacle_height'] == 2.0
+    assert nav2_params == original
+    warehouse = build_overrides(nav2_params, 'warehouse', filter_choice, 'odometry/local')
+    for costmap in ('global_costmap', 'local_costmap'):
+        assert 'obstacle_layer' not in warehouse[costmap][costmap]['ros__parameters']
 
 
 def test_build_overrides_speed_filter_threads_speed_limit_topic_through(nav2_params):
