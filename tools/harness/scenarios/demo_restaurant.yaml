@@ -36,6 +36,8 @@ params:
   robot_camera: "false"                          # 로봇 시점: amr_01 등 (카메라 하나마다 RTF가 더 떨어진다)
   # 추적·안전 노드 (로봇마다 추적·안전·E-Stop 버튼 3개). 노드가 130개를 넘으면 마지막 로봇의 Nav2가
   # 서로를 못 찾는 것으로 보여(11/6, 늘 amr_05만) 끄고 확인 중이다
+  bt: "true"
+  delayed_bt: "false"
   tracking: "true"
   safety: "true"
   # 위치추정. #327 머지 뒤 1-2 녹화는 ground_truth (바퀴 헛돎으로 AMCL이 2 m씩 밀려 거짓 도착, 이진 11/6).
@@ -64,7 +66,7 @@ params:
 processes:
   - name: stack
     cmd: >-
-      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true localization:={localization} tracking:={tracking} safety:={safety}
+      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true bt:={bt} localization:={localization} tracking:={tracking} safety:={safety}
       world:=restaurant.sdf body:=serving seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct}
       robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/{robots}
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
@@ -97,6 +99,11 @@ processes:
     # -e는 토픽 이름 안에서 찾기라 ^( … )$로 묶는다 (안 묶으면 /clock이 /clock_raw 약 1000 Hz까지 녹화한다)
     cmd: ros2 bag record -o {run_dir}/rosbag -e '^(/fleet/task_status|/fleet/robot_states|/fleet/task_table|/fleet/congestion|/demo/t0|/clock)$'
     settle_s: 3
+  # 장면 3에서만: 모든 로봇·카메라·측정 bag 준비 뒤 배터리/작업 노드를 함께 시작한다.
+  - name: battery_group
+    enabled: "{delayed_bt}"
+    cmd: ros2 launch amr_bringup demo_bt_group.launch.py num_robots:={num_robots} params_file:={bt_params_file}
+    settle_s: 1
   # 지도 원점은 실수로 준다 ('[0, 0, 0]'이면 작업 생성기가 시작하자마자 죽는다, 11/6 스모크)
   - name: task_generator
     enabled: "{task_generator}"

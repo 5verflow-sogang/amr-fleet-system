@@ -1,20 +1,20 @@
-# 장면 3 Gazebo 전용. 켬/끔 동일 배터리. 교대 및 동시 충전 구간을 확보한다.
+# 장면 3 공통 가상 부하: 동시 기동 뒤 0.2 %/s 소모, 0.4 %/s 충전. 두 조건 동일.
 /**:
   ros__parameters:
     battery:
-      move_per_m: 0.6
-      idle_per_s: 0.0
-      charge_per_s: 0.5
+      move_per_m: 0.0
+      idle_per_s: 0.2
+      charge_per_s: 0.4
       charge_target_percent: 60.0
       reject_below_percent: 10.0
 /amr_01/amr_bt:
   ros__parameters:
     battery:
-      initial_percent: 34.0
+      initial_percent: 31.0
 /amr_02/amr_bt:
   ros__parameters:
     battery:
-      initial_percent: 33.0
+      initial_percent: 32.0
 /amr_03/amr_bt:
   ros__parameters:
     battery:
@@ -26,4 +26,4 @@
 /amr_05/amr_bt:
   ros__parameters:
     battery:
-      initial_percent: 35.5
+      initial_percent: 40.0

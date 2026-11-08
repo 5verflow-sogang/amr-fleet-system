@@ -311,15 +311,25 @@ def test_scene3_gazebo_uses_same_service_poses_for_scene_and_charging():
     assert 'safety:=true' in _args(procs['stack']['cmd'])
 
 
-def test_scene3_gazebo_collection_returns_do_not_block_each_other():
-    import math
+def test_scene3_battery_clock_starts_after_recording_and_workload_is_fixed():
     import yaml
 
+    procs = _demo_procs('demo_s3_gazebo')
+    names = list(procs)
+    assert names.index('camera_bag') < names.index('battery_group') < names.index('scene')
+    assert names.index('rosbag') < names.index('battery_group')
+    assert 'bt:=false' in _args(procs['stack']['cmd'])
     scene = yaml.safe_load((Path(run.HERE) / 'tasks/demo_s3_gazebo.yaml').read_text())
-    returns = [task['dropoff'] for task in scene['steps'][0]['tasks'] if task['type'] == 'collect']
-    assert len(returns) == len(set(returns)) == 3
-    root = Path(run.HERE).parents[1]
-    stations = yaml.safe_load((root / 'src/fleet/amr_fleet_manager/config/stations_restaurant_s3.yaml').read_text())['stations']
-    # 서버 예약 반경 1 m 밖이며, 앞 작업을 끝내고 대기하는 로봇도 다른 하역 자리를 막지 않는다.
-    assert all(math.dist(stations[a][:2], stations[b][:2]) > 1.1
-               for i, a in enumerate(returns) for b in returns[i + 1:])
+    elapsed, collections = 0, []
+    for step in scene['steps']:
+        elapsed += step.get('after', {}).get('delay_s', 0)
+        for task in step['tasks']:
+            if task['type'] == 'collect':
+                collections.append((elapsed, task['dropoff']))
+    assert collections == [(75, 'return_s3_side'), (105, 'return_s3_side')]
+
+
+def test_delayed_battery_group_is_disabled_in_other_demo_scenes():
+    procs = _demo_procs('demo_smoke')
+    assert 'battery_group' not in procs
+    assert 'bt:=true' in _args(procs['stack']['cmd'])
