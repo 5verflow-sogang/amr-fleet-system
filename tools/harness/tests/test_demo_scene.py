@@ -203,3 +203,26 @@ def test_act2_robot_4_is_the_first_to_free_up_after_second_zero():
         first = next(t['pickup'] for t in rnd if t['id'] == mine)
         assert pickups.count(first) == 1 and queue_pickup not in pickups
         assert max(pickups.count(p) for p in pickups) <= 2
+
+
+# ---------------------------------------------------------------- 1-2 (demo_s12)
+S12_ROBOTS = REPO / 'src' / 'bringup' / 'amr_bringup' / 'config' / 'robots_restaurant_s12.yaml'
+
+
+def test_scene12_start_tasks_go_to_robots_2_to_5_and_the_request_to_robot_1():
+    owners = _busy_owners('demo_s12.yaml', S12_ROBOTS)
+    # 동쪽 매장 픽업이라 1호(서쪽 입구 옆)보다 2~5호가 늘 가깝다
+    assert set(owners) == {'amr_05', 'amr_04', 'amr_03', 'amr_02'}
+    steps = ds.load_scene(TASKS / 'demo_s12.yaml')
+    core = [s for s in steps if s.t0]
+    assert len(core) == 1
+    assert [(t.task_id, t.type, t.pickup, t.dropoff) for t in core[0].tasks] == [
+        ('s12_buffet2_t11', 'delivery', 'buffet_2', 't11')]
+
+
+def test_scene12_request_is_sent_with_t0_after_robots_2_to_5_are_busy():
+    steps = ds.load_scene(TASKS / 'demo_s12.yaml')
+    scene, out = run_scene(steps, {3.0: assign_all})
+    # 마지막 시작 작업(1.5 s) 뒤 3 s, 그 전에(3.0 s) 넷 다 할당됐다
+    assert (4.5, 't0', 's12_buffet2_t11') in out and (4.5, 'task', 's12_buffet2_t11') in out
+    assert [o[0] for o in out if o[2].startswith('s12_busy')] == [0.0, 0.5, 1.0, 1.5]
