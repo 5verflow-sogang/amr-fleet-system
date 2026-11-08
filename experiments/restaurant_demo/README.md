@@ -38,3 +38,5 @@ python3 -m pytest experiments/restaurant_demo -q   # 가짜 데이터 시험 (�
 ```
 
 `results.md`(표)와 `results.json`(실행별 원값, 멈춘 구간·할당 순서 포함)을 쓴다. 원자료(`runs/`)는 커밋하지 않는다.
+
+실제 Gazebo 장면 3의 실행 조건·동선·녹화 성공 기준은 [scene3_gazebo.md](scene3_gazebo.md)를 참고한다.
