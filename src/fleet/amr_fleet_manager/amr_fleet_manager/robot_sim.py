@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 Point = Tuple[float, float]
+# 경로: (지금 위치, 갈 곳) → 지나갈 점들 (지금 위치는 빼고 갈 곳으로 끝난다). grid_route.GridRoute.route
+Route = Callable[[Point, Point], List[Point]]
 
 NEW = 'new'              # 처음 받은 명령: 처리하고 Ack
 DUPLICATE = 'duplicate'  # 마지막으로 처리한 명령의 재전송: 다시 처리하지 않고 같은 Ack만
@@ -133,15 +135,19 @@ class _Leg:
     # 갈 곳. None이면 제자리에서 duration초 기다린다 (싣기·내리기)
     target: Optional[Point]
     duration: float = 0.0
+    # 남은 경유점 (구간을 시작할 때 route로 정한다. route가 없으면 [target], 직선)
+    waypoints: Optional[List[Point]] = None
 
 
 class TaskRun:
     """작업 1건을 직선 이동과 고정 대기로 흉내 낸다. Nav2·도킹 없이 Fleet 메시지 흐름만 확인하는 용도.
 
-    단계 이름은 architecture.md 5-1절의 TaskStatus.phase를 쓴다.
+    route를 주면 이동 구간을 시작할 때 그 경로(지도의 통로, grid_route)를 따라간다. 새로 정한 경로는 new_path에 남긴다
+    (가짜 로봇이 plan으로 낸다). 단계 이름은 architecture.md 5-1절의 TaskStatus.phase를 쓴다.
     """
 
-    def __init__(self, xy: Point, pickup: Optional[Point], dropoff: Point, speed: float, dwell_s: float):
+    def __init__(self, xy: Point, pickup: Optional[Point], dropoff: Point, speed: float, dwell_s: float,
+                 route: Optional[Route] = None):
         if speed <= 0:
             raise ValueError(f'speed는 0보다 커야 한다: {speed}')
         legs = []
@@ -156,9 +162,12 @@ class TaskRun:
         # 지금 구간을 시작했는지(조금이라도 움직이거나 기다렸는지). 허가 지점 대기에 쓴다
         self._progress = False
         self._speed = speed
+        self._route = route
         self.xy: Point = xy
         self.velocity: Point = (0.0, 0.0)
         self.distance = 0.0
+        # 마지막으로 정한 이동 구간 경로 [지금 위치, 경유점..., 갈 곳]. 읽은 쪽이 None으로 비운다
+        self.new_path: Optional[List[Point]] = None
 
     @property
     def done(self) -> bool:
@@ -191,7 +200,11 @@ class TaskRun:
                     remaining -= need
                     self._next()
                 continue
-            dx, dy = leg.target[0] - self.xy[0], leg.target[1] - self.xy[1]
+            if leg.waypoints is None:
+                leg.waypoints = list(self._route(self.xy, leg.target)) if self._route else [leg.target]
+                self.new_path = [self.xy] + leg.waypoints
+            point = leg.waypoints[0]
+            dx, dy = point[0] - self.xy[0], point[1] - self.xy[1]
             dist = math.hypot(dx, dy)
             travel = self._speed * remaining
             if travel < dist:
@@ -200,10 +213,12 @@ class TaskRun:
                 self.distance += travel
                 remaining = 0.0
             else:
-                self.xy = leg.target
+                self.xy = point
                 self.distance += dist
                 remaining -= dist / self._speed
-                self._next()
+                leg.waypoints.pop(0)
+                if not leg.waypoints:
+                    self._next()
         # dwell이 0이면 dt가 0이어도 대기 단계를 넘긴다
         while not hold_at_boundary and not self.done and self._legs[self._index].target is None \
                 and self._legs[self._index].duration <= self._waited:

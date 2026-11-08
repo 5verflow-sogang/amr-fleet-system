@@ -3,7 +3,8 @@
 #   tools/harness/docker_run.sh demo_s3_fake -n 1 --set policy=on --label on
 #   tools/harness/docker_run.sh demo_s3_fake -n 1 --set policy=off --label off
 #   python3 experiments/restaurant_demo/analyze.py tools/harness/results/   # 장면 3 지표 (홀 운영 대수 등)
-# 서버 충전 정책·장면 파일은 demo_s3와 같다. 로봇만 가짜(tasks/demo_s3_fake_robots.yaml, 직선 0.4 m/s)라 시간은 Gazebo와 다르다
+# 서버 충전 정책·장면 파일은 demo_s3와 같다. 로봇만 가짜(tasks/demo_s3_fake_robots.yaml, 지도 통로를 0.4 m/s로 따라가고
+# 다른 로봇·손님은 피하지 않는다)라 시간은 Gazebo와 다르다
 name: demo_s3_fake
 packages: amr_fleet_manager
 num_robots: 5
@@ -33,7 +34,8 @@ processes:
       config:=/repo/tools/harness/tasks/demo_s3_fake_robots.yaml speed_mps:=0.4
     settle_s: 3
   - name: rosbag
-    cmd: ros2 bag record -o {run_dir}/rosbag -e '^(/fleet/task_status|/fleet/robot_states|/fleet/task_table|/demo/t0)$'
+    # 가짜 로봇 경로(/amr_0N/plan)도 녹화한다: 대시보드가 지도 위에 그린다
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '^(/fleet/task_status|/fleet/robot_states|/fleet/task_table|/demo/t0|/amr_[0-9]+/plan)$'
     settle_s: 3
   - name: scene
     cmd: >-

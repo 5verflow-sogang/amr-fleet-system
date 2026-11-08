@@ -10,6 +10,8 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>amr_msgs</exec_depend>
   <exec_depend>builtin_interfaces</exec_depend>
+  <!-- fake_robot: 지도 통로 경로를 plan(nav_msgs/Path)으로 낸다 -->
+  <exec_depend>geometry_msgs</exec_depend>
   <!-- congestion: 손님 정답 위치(Odometry), costmap 마스크(OccupancyGrid)·필터 정보. 단위 테스트에서도 import한다 -->
   <depend>nav_msgs</depend>
   <depend>nav2_msgs</depend>
