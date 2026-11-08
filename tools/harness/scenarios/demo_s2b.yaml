@@ -1,0 +1,31 @@
+# 식당 시연 2 2막 오래 기다린 배달 보호. 켬/끔은 aging만 다르다(회수 priority는 둘 다 200). 같은 seed로 슬롯 둘에서 동시에:
+#   Actions Fleet Regression Test: scenario=demo_s2b, repeats=1, label=on,  params="fleet_params=fleet_manager_restaurant.yaml slot=c1"
+#                                  scenario=demo_s2b, repeats=1, label=off, params="slot=c2"
+#   (끔은 fleet_params를 넘기지 않는다 - 기본이 비어 있고, 워크플로 params는 빈 값을 못 받는다). 결과: gs://amr-fleet-results/runs/demo_s2b-on/…
+#   측정: experiments/restaurant_demo (2막 기아 시간)
+# 작업은 장면 스크립트(지금은 임시로 tools/harness/demo_scene.py, params scene_script)가 장면 파일 tasks/demo_s2b.yaml대로 넣는다:
+#   5대 배달 → 2인석(c01) 배달 1건 대기 → 60 s 뒤 0초(/demo/t0)부터 1·6·8·12·14번 테이블 회수 호출 5건(2 s 간격)
+# 기대: 켬은 배달이 회수와 같은 순서가 되어 다음에 일을 마친 4호가 배정, 끔은 배달이 회수 5건 뒤로 계속 밀림.
+#   회수 5건은 퇴식구 두 곳 때문에 한 번에 두 건까지 (장면 파일 머리말)
+# 손님은 평상시(normal). 시작 위치는 공통(robots_restaurant.yaml)
+# 길이: 0초는 시작 약 70 s 뒤(배달이 60 s 기다린 뒤). 끔에서 배달이 밀리는 것까지 보려고 시뮬레이션 240 s 녹화한다.
+#   영상은 1막·2막 합쳐 60 s로 자른다 (/demo/t0 기준)
+name: demo_s2b
+extends: demo_restaurant
+# docker_run.sh는 이 파일의 packages: 줄만 읽는다 (extends를 따라가지 않는다)
+packages: amr_bringup
+timeout_s: 6600
+params:
+  guests: dynamic_obstacles_restaurant.yaml
+  task_generator: "false"
+  # 작업 넣기 (임시: tools/harness/demo_scene.py + 장면 파일). 연우 장면 스크립트가 오면 이 한 줄만 바꾼다
+  scene_script: python3 /repo/tools/harness/demo_scene.py
+  scene_file: demo_s2b.yaml
+  collect_priority: "200"
+  # 켬: fleet_manager_restaurant.yaml (aging 1.667, #303), 끔: 비움 (aging 0.0). 워크플로는 이 파일 params만 받는다
+  fleet_params: ""
+  cameras: top,west,stalls
+  robot_camera: "false"
+  # 녹화: localization=ground_truth 가능 (#327)
+  localization: amcl
+  duration_s: 240
