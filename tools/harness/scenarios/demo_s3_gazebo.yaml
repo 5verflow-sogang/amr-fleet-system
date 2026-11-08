@@ -4,6 +4,7 @@ extends: demo_s3
 packages: amr_bringup
 timeout_s: 7200
 params:
+  spawn_interval_s: 25
   robots: robots_restaurant_s3_gazebo.yaml
   scene_file: demo_s3_gazebo.yaml
   bt_params_file: amr_bt_battery_demo_s3_gazebo.yaml
