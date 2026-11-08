@@ -82,6 +82,7 @@ def _system(context):
     origin = [float(v) for v in yaml.safe_load(arg('map_origin_in_world'))]
     seed = int(arg('seed'))
     fleet = flag('fleet')
+    robot_names = ','.join(r.name for r in robots)
     interval = float(arg('spawn_interval_s'))
     # 로봇마다 무엇을 띄울지는 amr_bringup/stack.py가 정한다 (ROS 없이 테스트)
     opt = Options(
@@ -110,11 +111,12 @@ def _system(context):
             arguments=world_to_map_tf_args(origin), parameters=[{'use_sim_time': True}], output='screen'))
     if flag('dynamic_obstacles'):
         actions.append(_launch('amr_gazebo', 'dynamic_obstacles.launch.py', seed=seed, use_sim_time='true',
-                               config=obstacles))
-    if arg('staff_file'):
+                               config=obstacles, keep_away_m=arg('guest_keep_away_m'), keep_away_robots=robot_names))
+    if arg('staff_file') not in ('', 'none'):
         # 직원은 손님 파일과 따로 띄워 혼잡도 노드가 세지 않게 한다. 이동 노드·브리지 이름이 겹치지 않게 name을 바꾼다
         actions.append(_launch('amr_gazebo', 'dynamic_obstacles.launch.py', seed=seed, use_sim_time='true',
-                               config=gazebo_config(arg('staff_file')), name='staff_obstacles'))
+                               config=gazebo_config(arg('staff_file')), name='staff_obstacles',
+                               keep_away_m=arg('guest_keep_away_m'), keep_away_robots=robot_names))
     if arg('congestion') != 'none':
         # 혼잡도를 세는 손님이 실제로 스폰한 손님과 같아야 한다: 손님 파일과 지도 원점을 여기서 같이 넘긴다.
         # 손님 파일을 비우면 혼잡도 노드의 site 기본 손님(normal)
@@ -192,7 +194,9 @@ def generate_launch_description():
          'RGBD 카메라: true / false / 켤 로봇 이름 목록(amr_01,amr_03). CPU로 5대를 그리면 RTF 0.37 (명세서 11-3절)'),
         ('dynamic_obstacles', 'false', '동적 장애물 5개'),
         ('dynamic_obstacles_file', '', '동적 장애물 yaml (amr_gazebo config/ 아래 이름 또는 절대 경로). 비우면 물류센터 기본'),
-        ('staff_file', '', '직원 동적 장애물 yaml (같은 형식). 혼잡도에 세지 않는다. 식당: dynamic_obstacles_restaurant_staff.yaml'),
+        ('guest_keep_away_m', '0.0',
+         '손님·직원이 로봇 중심 이 반경 [m] 안에서 로봇 쪽으로 걷지 않고 선다 (식당 시연 1.2). 0이면 끔(물류센터 회피 시험 조건)'),
+        ('staff_file', '', '직원 동적 장애물 yaml (같은 형식). 혼잡도에 세지 않는다. 비우거나 none이면 띄우지 않는다. 식당: dynamic_obstacles_restaurant_staff.yaml'),
         ('spawn_interval_s', '3.0', '로봇 스폰 시차 (실제 시간, s)'),
         ('payload_mass', '0.0', '모든 로봇의 적재물 질량 [kg] (연구 2 Gazebo 평가)'),
         ('body', 'amr', '몸체: amr(물류 0.6 x 0.4 m) 또는 serving(식당 0.565 x 0.537 m). 스폰 몸체와 Nav2 footprint(nav2_profile)가 같이 바뀐다'),

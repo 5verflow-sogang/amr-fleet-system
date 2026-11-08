@@ -1,0 +1,99 @@
+<?xml version="1.0"?>
+<!--
+  로봇 번호판 (시각 전용, 충돌체 없음): 네임스페이스 끝 숫자(amr_03 → 3)를 로봇 꼭대기 판 위에 7세그먼트로 그린다.
+  위에서 보면(탑뷰 녹화 카메라·Gazebo 화면) 로봇 앞(+x)이 숫자 위쪽이다. 판 색은 번호마다 달라 멀리서도 구분된다.
+  텍스처·메시 파일 없이 상자만 쓴다 (robot_description 문자열로 스폰해 package:// 경로를 찾지 않아도 된다).
+  숫자가 없는 네임스페이스면 그리지 않는다. 두 자리(10 이상)까지 그린다.
+
+    판 위에서 본 세그먼트 (위 = 로봇 앞 +x, 오른쪽 = -y)
+         a
+       f   b
+         g
+       e   c
+         d
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="label_suffix" value="${namespace.split('_')[-1] if namespace else ''}"/>
+  <xacro:property name="label_number" value="${int(str(label_suffix)) if str(label_suffix).isdigit() else 0}"/>
+
+  <!-- 판: 한 변, 두께, 지면 높이. serving은 타워 머리(지면 1.29 m) 위, amr은 몸체 윗면 위 -->
+  <xacro:property name="plate_size" value="0.32"/>
+  <xacro:property name="plate_thickness" value="0.01"/>
+  <xacro:property name="plate_ground_z" value="${1.295 if body == 'serving' else ground_clearance + base_height + 0.005}"/>
+  <xacro:property name="plate_x" value="${extrinsics['lidar']['xyz'][0] if body == 'serving' else -0.1}"/>  <!-- amr: 라이다(앞쪽) 뒤 -->
+  <!-- 숫자 한 개: 높이(x), 너비(y), 획 굵기. 두 자리면 0.7배 -->
+  <xacro:property name="digit_scale" value="${1.0 if 10 > label_number else 0.7}"/>
+  <xacro:property name="digit_h" value="${0.22 * digit_scale}"/>
+  <xacro:property name="digit_w" value="${0.13 * digit_scale}"/>
+  <xacro:property name="stroke" value="${0.03 * digit_scale}"/>
+  <!-- 번호별 판 색 (1~10, 그 뒤는 되풀이) -->
+  <xacro:property name="plate_colors" value="${['0.95 0.75 0.10 1', '0.15 0.55 0.95 1', '0.25 0.75 0.30 1',
+                                                 '0.95 0.35 0.30 1', '0.65 0.40 0.90 1', '0.10 0.75 0.75 1',
+                                                 '0.95 0.55 0.15 1', '0.90 0.45 0.70 1', '0.60 0.60 0.60 1',
+                                                 '0.55 0.80 0.20 1']}"/>
+
+  <!-- 세그먼트 하나: 판 윗면 위, 판 기준 (x, y)에 길이 방향이 along('x'·'y')인 상자 -->
+  <xacro:macro name="segment" params="name x y along length">
+    <visual name="number_${name}">
+      <origin xyz="${x} ${y} ${plate_thickness / 2 + 0.002}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${length if along == 'x' else stroke} ${stroke if along == 'x' else length} 0.004"/>
+      </geometry>
+      <material name="number_digit"><color rgba="0.05 0.05 0.05 1"/></material>
+    </visual>
+  </xacro:macro>
+
+  <!-- 숫자 하나 (d: 0~9), 판 기준 y 중심 cy -->
+  <xacro:macro name="digit" params="d cy tag">
+    <xacro:property name="hx" value="${digit_h / 2}"/>
+    <xacro:property name="hy" value="${digit_w / 2}"/>
+    <xacro:if value="${int(d) in (0, 2, 3, 5, 6, 7, 8, 9)}">
+      <xacro:segment name="${tag}a" x="${hx}" y="${cy}" along="y" length="${digit_w}"/>
+    </xacro:if>
+    <xacro:if value="${int(d) in (0, 1, 2, 3, 4, 7, 8, 9)}">
+      <xacro:segment name="${tag}b" x="${hx / 2}" y="${cy - hy}" along="x" length="${hx}"/>
+    </xacro:if>
+    <xacro:if value="${int(d) in (0, 1, 3, 4, 5, 6, 7, 8, 9)}">
+      <xacro:segment name="${tag}c" x="${-hx / 2}" y="${cy - hy}" along="x" length="${hx}"/>
+    </xacro:if>
+    <xacro:if value="${int(d) in (0, 2, 3, 5, 6, 8, 9)}">
+      <xacro:segment name="${tag}d" x="${-hx}" y="${cy}" along="y" length="${digit_w}"/>
+    </xacro:if>
+    <xacro:if value="${int(d) in (0, 2, 6, 8)}">
+      <xacro:segment name="${tag}e" x="${-hx / 2}" y="${cy + hy}" along="x" length="${hx}"/>
+    </xacro:if>
+    <xacro:if value="${int(d) in (0, 4, 5, 6, 8, 9)}">
+      <xacro:segment name="${tag}f" x="${hx / 2}" y="${cy + hy}" along="x" length="${hx}"/>
+    </xacro:if>
+    <xacro:if value="${int(d) in (2, 3, 4, 5, 6, 8, 9)}">
+      <xacro:segment name="${tag}g" x="0" y="${cy}" along="y" length="${digit_w}"/>
+    </xacro:if>
+  </xacro:macro>
+
+  <xacro:if value="${label_number > 0}">
+    <link name="${prefix}number_plate_link">
+      <visual name="number_plate">
+        <geometry><box size="${plate_size} ${plate_size} ${plate_thickness}"/></geometry>
+        <material name="number_plate_${label_number}">
+          <color rgba="${plate_colors[(label_number - 1) % len(plate_colors)]}"/>
+        </material>
+      </visual>
+      <xacro:if value="${10 > label_number}">
+        <xacro:digit d="${label_number}" cy="0" tag="u"/>
+      </xacro:if>
+      <xacro:unless value="${10 > label_number}">
+        <!-- 두 자리: 십의 자리가 왼쪽(+y) -->
+        <xacro:digit d="${(label_number // 10) % 10}" cy="${0.6 * digit_w + stroke}" tag="t"/>
+        <xacro:digit d="${label_number % 10}" cy="${-(0.6 * digit_w + stroke)}" tag="u"/>
+      </xacro:unless>
+      <xacro:box_inertia m="0.01" x="${plate_size}" y="${plate_size}" z="${plate_thickness}"/>
+    </link>
+    <joint name="${prefix}number_plate_joint" type="fixed">
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}number_plate_link"/>
+      <origin xyz="${plate_x} 0 ${plate_ground_z + plate_thickness / 2 - base_z}" rpy="0 0 0"/>
+    </joint>
+  </xacro:if>
+
+</robot>
