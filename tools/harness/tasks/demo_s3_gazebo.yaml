@@ -1,9 +1,9 @@
-# 장면 3: 서쪽 회수 로봇을 먼저 출발시켜 남쪽 통로에서 따라잡지 않게 한다. 켬/끔은 같은 일정이다.
+# 장면 3: 회수 정차 3곳을 분리해 완료 후 대기 중인 로봇이 다음 회수를 막지 않게 한다. 켬/끔은 같은 일정이다.
 t0_when:
   battery_below: 31
 steps:
 - name: start
-  gap_s: 3
+  gap_s: 6
   tasks:
   - &id002
     id: s3_c01
@@ -19,7 +19,7 @@ steps:
     id: s3_c01_alt
     type: collect
     pickup: c01
-    dropoff: return_2
+    dropoff: return_s3_side
   - &id004
     id: s3_north_1
     type: delivery

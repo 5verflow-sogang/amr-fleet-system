@@ -4,7 +4,7 @@
     battery:
       move_per_m: 0.6
       idle_per_s: 0.0
-      charge_per_s: 0.6
+      charge_per_s: 0.5
       charge_target_percent: 60.0
       reject_below_percent: 10.0
 /amr_01/amr_bt:
@@ -26,4 +26,4 @@
 /amr_05/amr_bt:
   ros__parameters:
     battery:
-      initial_percent: 39.5
+      initial_percent: 35.5
