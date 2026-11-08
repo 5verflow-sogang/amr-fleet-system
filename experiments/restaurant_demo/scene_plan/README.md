@@ -13,8 +13,9 @@ g++ -O2 -std=c++17 -I/ros2_ws/install/amr_planning_core/include $D/astar_cli.cpp
 python3 $D/plan_tools.py trips --ws /ros2_ws/src --astar /tmp/astar_cli --out /tmp/plan   # 로봇 → 픽업 → 하역 길이
 python3 $D/plan_tools.py start --ws /ros2_ws/src --astar /tmp/astar_cli --out /tmp/plan   # 1-2 1호 출발 자리 후보
 python3 $D/pairs.py /ros2_ws/src /tmp/astar_cli /tmp/plan                          # 정차 자리 쌍 길이 → pairs.json
-python3 $D/search_act1.py /tmp/plan/pairs.json src/fleet/amr_fleet_manager/config/stations_restaurant.yaml
-python3 $D/search_act2.py /tmp/plan/pairs.json src/fleet/amr_fleet_manager/config/stations_restaurant.yaml
+S="src/fleet/amr_fleet_manager/config/stations_restaurant.yaml src/bringup/amr_bringup/config/robots_restaurant.yaml"
+python3 $D/search_reserved.py act1 /tmp/plan/pairs.json $S                         # 장면 2 1막 시작 작업
+python3 $D/search_reserved.py act2 /tmp/plan/pairs.json $S                         # 장면 2 2막 두 바퀴
 python3 $D/detour.py --map ... --zones ... --stations ... --astar /tmp/astar_cli --out /tmp/plan --start -10.0 -5.8  # 그림
 ```
 
@@ -23,40 +24,56 @@ python3 $D/detour.py --map ... --zones ... --stations ... --astar /tmp/astar_cli
 - `plan_tools.py trips`: 대기 줄 5대(robots_restaurant.yaml) × 픽업 6곳 × 하역(테이블·부스·6인석·2인석) A* 길이
 - `plan_tools.py start`: 1-2 출발 자리 후보마다 (a)·(b) 경로와 손님 경로(피크·1-2 피크·직원 파일)까지 거리
 
+## 서버 스테이션 예약 (11/8 녹화에서 배운 것)
+
+Fleet 서버는 맡긴 작업의 픽업·하역 자리를 그 작업이 끝날 때까지 잡아 둔다(`assignment.station_clearance_m` 1 m). 그 안을 쓰는
+다른 작업은 큐에서 기다리고, 큐 안에서 겹치면 하나만 맡긴다. 11/8 녹화에서 1-2 시작 작업 넷이 stall_3·stall_4를 둘씩, 2막
+1바퀴가 배식대 1·2를 둘씩 나눠 써 둘째 작업들이 할당되지 않았고, 장면 스크립트의 assigned 조건이 60 s 시간 초과로 끝나
+0초가 늦었다. 그래서 장면의 작업은 0초 단계 안(2막 회수 5건의 퇴식구)을 빼면 자리가 모두 서로 달라야 한다
+(`tools/harness/demo_scene.py station_conflicts`, 시작할 때와 `test_demo_scene.py`가 tasks/ 장면 파일 전부를 확인한다).
+`search_reserved.py`는 이 조건을 지키고, 시작 작업을 서버와 같은 최소거리 탐욕 배정으로 흉내 내 낸 순서대로
+amr_05, 04, 03, 02, 01이 맡는 조합만 고른다.
+
 ## 장면 2 시작 작업 (tasks/demo_s2a.yaml·demo_s2b.yaml `path_m`)
 
-11/8 #341(지도 재생성)·#338(식당 속도 0.8 m/s) 뒤 다시 계산했다. 배정: 로봇이 동쪽 벽(x 11.2) 한 줄, 픽업이 모두 북쪽(y 4.15)이라
-최소거리 배정은 낸 순서대로 amr_05, 04, 03, 02, 01이다. 길이는 A* (m). 픽업·하역 머무름 2 s씩.
+길이는 A* (m, 새 restaurant_gt #341). 식당 속도 0.8 m/s(#338), 픽업·하역 머무름 2 s씩.
 
-| 막 | 로봇 | 1바퀴 (시작 → 픽업 → 하역) | 길이 | 비고 |
+| 막 | 로봇 | 픽업 → 하역 | 길이 | 비고 |
 | --- | --- | --- | --- | --- |
-| 1막 | amr_05 | stall_3 → t06 | 27.6 | |
-| 1막 | amr_04 | stall_1 → t08 | 27.6 | |
-| 1막 | amr_03 | buffet_1 → t01 | 27.9 | |
-| 1막 | **amr_02** | stall_4 → L01 | **16.6** | 가장 짧다. 다음 로봇과 11.0 m. 0.8 m/s로도 25 s (0초 = 시작 뒤 약 8 s) |
-| 1막 | amr_01 | stall_2 → t13 | 27.9 | |
-| 2막 | amr_05 | buffet_2 → b01 | 42.6 | |
-| 2막 | **amr_04** | stall_4 → t13 | **25.9** | 가장 짧다. 다음 로봇과 15.8 m |
-| 2막 | amr_03 | buffet_1 → t10 | 41.8 | |
-| 2막 | amr_02 | buffet_1 → t15 | 44.3 | |
-| 2막 | amr_01 | buffet_2 → L03 | 44.1 | |
+| 1막 | amr_05 | t06 → t11 | 26.6 | |
+| 1막 | amr_04 | L03 → buffet_1 | 26.2 | |
+| 1막 | amr_03 | t07 → t13 | 24.8 | |
+| 1막 | **amr_02** | b01 → b02 | **12.0** | 가장 짧다. 다음 로봇과 12.6 m. 0.8 m/s로도 19 s (0초 = 시작 뒤 약 8 s) |
+| 1막 | amr_01 | b03 → t12 | 24.6 | |
+| 2막 1바퀴 | amr_05 | buffet_1 → L02 | 44.2 | |
+| 2막 1바퀴 | **amr_04** | t10 → t02 | **21.1** | 가장 짧다. 다음 로봇과 17.4 m |
+| 2막 1바퀴 | amr_03 | t03 → b02 | 38.5 | |
+| 2막 1바퀴 | amr_02 | stall_1 → L04 | 39.1 | |
+| 2막 1바퀴 | amr_01 | t07 → b01 | 39.8 | |
+| 2막 2바퀴 | (4호) | b03 → t05 | 12.3 | t02 → b03 21.0 m, 4호 두 바퀴 합 54.5 m |
+| 2막 2바퀴 | (먼저 빈 다른 로봇) | stall_2 → c02 | 15.4 | |
+| 2막 2바퀴 | | t13 → stall_4 | 12.9 | |
+| 2막 2바퀴 | | t04 → L03 | 12.8 | |
+| 2막 2바퀴 | | t09 → L01 | 11.4 | |
 
-2막은 시작 작업을 두 바퀴 준다. 0.8 m/s에서는 한 작업으로 0초(시작 뒤 약 66 s)까지 5대를 붙잡을 수 없다(가장 긴 작업 약 55 m ≈ 70 s).
-2바퀴 5건(stall_2 → b02, buffet_1 → b01, stall_1 → b03, buffet_1 → t05, buffet_2 → L04)을 2인석 배달보다 먼저 넣어 두면, 같은 우선순위에서
-먼저 들어온 작업이 앞서므로 1바퀴를 마친 로봇이 차례로 가져가고 2인석 배달은 계속 대기한다.
+1막: 대기 배달 4건(stall_3 → t09, stall_4 → t15, stall_1 → t04, stall_2 → t02)과 회수(t03 → return_1)는 그대로이고, 시작 작업이
+그 자리와 겹치지 않게 테이블·부스에서 픽업한다. 겹치면 대기 배달이 시작 작업이 끝날 때까지 큐에서 빠져 끔에서 회수가 4번째로
+나갈 수 있다.
 
 | 2막 조건 | 값 |
 | --- | --- |
-| 4호 1바퀴가 가장 짧다 (먼저 끝나 2바퀴 첫 작업 stall_2 → b02를 가져간다) | 25.9 m, 다른 로봇 최소 41.8 m (차이 15.8 m) |
-| 4호 두 바퀴 합 | 54.4 m → 0.8 m/s로도 54.4 / 0.8 + 8 = 76 s, 0초(66 s)보다 10 s 늦다 |
-| 4호 두 바퀴가 다른 로봇 1바퀴보다 길다 (2바퀴 나머지 넷은 다른 로봇이 가져간다) | 54.4 m ≥ 44.3 + 10.1 m |
-| 다른 로봇 두 바퀴 합 (2바퀴 어느 작업을 받아도) | 71.6 m 이상 = 4호 + 17.2 m |
+| 4호 1바퀴가 가장 짧다 (먼저 끝나 2바퀴 첫 작업 b03 → t05를 가져간다) | 21.1 m, 다른 로봇 최소 38.5 m (차이 17.4 m) |
+| 4호 두 바퀴 합 | 54.5 m → 0.8 m/s로도 54.5 / 0.8 + 8 = 76 s, 0초(66 s)보다 10 s 늦다 |
+| 4호 두 바퀴가 다른 로봇 1바퀴보다 길다 (2바퀴 나머지 넷은 다른 로봇이 가져간다) | 54.5 m ≥ 44.2 + 10.3 m |
+| 다른 로봇 두 바퀴 합 (2바퀴 어느 작업을 받아도) | 61.1 m 이상 = 4호 + 6.6 m |
+| 자리 | 1바퀴·2바퀴·2인석 배달 22곳이 모두 다르고, 1-2·2막 핵심 자리(buffet_2, t11, c01, 회수 대상 t01·t06·t08·t12·t14, return_1·2)와 그 1 m 안은 쓰지 않는다 |
 
-→ 0초 뒤 처음 일을 마치는 로봇은 4호이고, 그때 남은 대기 작업은 2인석 배달과 회수 호출뿐이다(켬: 배달, 끔: 회수).
+다른 로봇 두 바퀴 여유가 6.6 m인 것은 자리를 모두 다르게 하면 남는 자리가 21곳뿐이라서다(10 m는 맞추는 조합이 없었다).
 
-고른 기준: 핵심 요청 자리(1막 t03·return_1과 대기 배달 하역 t09·t15·t04·t02, 2막 회수 5곳·return_1·2·c01과 c01 픽업 stall_3)와
-1 m 안을 쓰지 않는다. 한 바퀴 안에서 한 픽업은 둘까지, 4호 픽업은 혼자. 1막은 픽업이 모두 다르고 다음 로봇과 10 m 넘는 것 중
-합이 가장 짧은 것. 2막은 위 표 여유를 크게 하는 조합을 무작위 탐색(150만 번)으로 골랐다.
+## 1-2 시작 작업 (tasks/demo_s12.yaml)
+
+1호보다 동쪽 로봇이 가까운 픽업은 stall_3·stall_4 둘뿐이라 시작 작업은 둘(5호 stall_4 → L01 14.4 m, 4호 stall_3 → b02 31.0 m)이다.
+핵심 요청(buffet_2 → t11)은 buffet_2에 1호가 가장 가까워(약 10 m, 동쪽 로봇은 20 m 넘게) 남은 로봇이 비어 있어도 1호에게 간다.
 
 ## 1-2 1호 출발 자리 (robots_restaurant_s12.yaml)
 
