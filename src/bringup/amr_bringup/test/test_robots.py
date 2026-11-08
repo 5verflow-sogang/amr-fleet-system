@@ -185,3 +185,11 @@ def test_scene12_first_robot_faces_east_and_scene11_faces_north():
     assert (s12['amr_01'].x, s12['amr_01'].y, s12['amr_01'].yaw) == (-10.5, -5.6, 0.0)
     assert s11['amr_01'].yaw == pytest.approx(math.pi / 2)
 
+
+
+def test_scene3_gazebo_starts_clear_of_furniture_and_each_other():
+    robots = load_robots(str(Path(ROBOTS).with_name('robots_restaurant_s3_gazebo.yaml')), 5)
+    pgm = Path(__file__).resolve().parents[3] / 'localization/amr_mapping/maps/restaurant_gt.pgm'
+    assert all(free_on_map(pgm, r.x, r.y, half=0.4) for r in robots)
+    assert all(math.hypot(a.x - b.x, a.y - b.y) >= 1.5
+               for i, a in enumerate(robots) for b in robots[i + 1:])

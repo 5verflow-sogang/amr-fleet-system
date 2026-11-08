@@ -1,0 +1,14 @@
+# Gazebo 실주행용 장면 3. 켬/끔 동일 시작·작업·배터리. policy만 변경한다.
+name: demo_s3_gazebo
+extends: demo_s3
+packages: amr_bringup
+timeout_s: 7200
+params:
+  robots: robots_restaurant_s3_gazebo.yaml
+  scene_file: demo_s3_gazebo.yaml
+  bt_params_file: amr_bt_battery_demo_s3_gazebo.yaml
+  policy: 'on'
+  duration_s: 300
+  localization: ground_truth
+  fleet_params: ''
+  cameras: top,south

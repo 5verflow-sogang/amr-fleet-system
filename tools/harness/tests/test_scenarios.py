@@ -271,3 +271,15 @@ def test_scene3_fake_robots_start_where_the_gazebo_robots_spawn():
     for name, (x, y, _) in robots['robots'].items():
         assert fake[f'/{name}/fake_robot']['ros__parameters']['start_xy'] == [x, y], name
     assert run.load_scenario('demo_s3')['params']['robots'] == 'robots_restaurant_s3.yaml'
+
+
+def test_scene3_gazebo_policy_preserves_common_recording_conditions():
+    on = _demo_procs('demo_s3_gazebo', policy='on')
+    off = _demo_procs('demo_s3_gazebo', policy='off')
+    assert on['scene']['cmd'] == off['scene']['cmd']
+    on_args, off_args = _args(on['stack']['cmd']), _args(off['stack']['cmd'])
+    assert 'charge_low_percent:=30.0' in on_args and 'min_in_service:=3' in on_args
+    assert 'charge_low_percent:=20.0' in off_args and 'min_in_service:=0' in off_args
+    differing = lambda a: {v for v in a if not v.startswith(('charge_low_percent:=', 'min_in_service:='))}
+    assert differing(on_args) == differing(off_args)
+    assert '/repo/tools/harness/tasks/demo_s3_gazebo.yaml' in on['scene']['cmd']

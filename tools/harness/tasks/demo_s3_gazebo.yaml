@@ -1,0 +1,44 @@
+# 장면 3: 실제 남쪽 테이블 회수와 북쪽 매장 서빙을 지속한다. 켬/끔은 이 파일을 공유한다.
+t0_when:
+  battery_below: 31
+steps:
+- name: start
+  gap_s: 3
+  tasks:
+  - &id001
+    id: s3_c02
+    type: collect
+    pickup: c02
+    dropoff: return_2
+  - &id002
+    id: s3_c01
+    type: collect
+    pickup: c01
+    dropoff: return_1
+  - &id003
+    id: s3_t15
+    type: collect
+    pickup: t15
+    dropoff: return_2
+  - &id004
+    id: s3_north_1
+    type: delivery
+    pickup: stall_1
+    dropoff: t02
+  - &id005
+    id: s3_north_2
+    type: delivery
+    pickup: stall_2
+    dropoff: t03
+- name: flow
+  after:
+    assigned: 5
+    timeout_s: 30
+  gap_s: 7
+  repeat: 20
+  tasks:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
