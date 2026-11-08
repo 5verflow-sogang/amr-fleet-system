@@ -5,11 +5,15 @@
 # 1초 재계획 BT는 body:=serving이면 자동(#307 머지 뒤)
 # 손님: 1-2 전용 피크 파일 peak_scene12 (#340: customer_2 뺌, 서쪽 통로 peak_1~3은 중간~북쪽이라 1호 출발 자리가 빈다)
 # 작업: 장면 스크립트(지금은 임시로 tools/harness/demo_scene.py, params scene_script)가 tasks/demo_s12.yaml대로 넣는다:
-#   2~5호 동쪽 배달 → 0초에 1호에게 buffet_2 → 11번 테이블 배달과 /demo/t0. 연우 장면 스크립트가 오면 scene_script 한 줄만 바꾼다
+#   5·4호 동쪽 배달 2건 → 0초에 1호에게 buffet_2 → 11번 테이블 배달과 /demo/t0. 연우 장면 스크립트가 오면 scene_script 한 줄만 바꾼다
+# 길이: 0초는 시작 약 10 s 뒤. 켬은 우회 경로 12.8 m를 손님 사이로 가고, 배식대 2번 자리 도착(docking → loading)까지 찍으려고
+#   시뮬레이션 180 s 녹화한다 (11/8 녹화는 120 s로는 도착 전에 끝났다)
 name: demo_s12
 extends: demo_restaurant
 # docker_run.sh는 이 파일의 packages: 줄만 읽는다 (extends를 따라가지 않는다)
 packages: amr_bringup
+# 시뮬레이션 180 s: 11/8 2막 녹화가 RTF 약 0.05(240 s에 5334 s)였다 → 180 s면 약 3600 s + 기동
+timeout_s: 5400
 params:
   robots: robots_restaurant_s12.yaml
   guests: dynamic_obstacles_restaurant_peak_scene12.yaml
@@ -23,5 +27,4 @@ params:
   robot_camera: "false"
   # 워크플로는 이 파일 params만 받는다 (extends의 값은 안 본다). 녹화: localization=ground_truth
   localization: "true"
-  # 0초는 시작 약 10 s 뒤. 켬은 우회 경로 12.8 m를 손님 사이로 가야 해 배식대 도착까지 보려고 시뮬레이션 120 s
-  duration_s: 120
+  duration_s: 180

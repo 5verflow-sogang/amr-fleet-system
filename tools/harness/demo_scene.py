@@ -8,7 +8,8 @@
         --stations <stations_restaurant.yaml> --num-robots 5 --set collect_priority=200 --out <run_dir>/scene.json
 
 장면은 단계(steps)의 목록이다. 단계마다 조건(after)이 맞으면 그 단계 작업을 차례로 /fleet/task_requests에 낸다.
-- after.assigned: 이 장면이 낸 작업 중 할당받은(작업표 assignee_id가 찬) 작업이 N건 이상
+- after.assigned: 이 장면이 낸 작업 중 할당받은(작업표 assignee_id가 찬) 작업이 N건 이상. 서버는 할당한 뒤 IN_PROGRESS·
+  COMPLETED가 되어도 assignee_id를 그대로 두므로 그 작업도 센다. 실패 뒤 다시 큐에 들어가면(assignee_id 빔) 안 센다
 - after.pending: 이 장면이 낸 작업 중 아직 할당 안 된 작업이 N건 이상
 - after.delay_s: 앞 단계 마지막 작업을 낸 뒤 N s (시뮬레이션 시각)
 - after.timeout_s: 앞 단계 뒤 N s가 지나면 조건이 안 맞아도 낸다 (scene.json에 timeout으로 남는다)
@@ -17,6 +18,15 @@
 작업 값 안의 {이름}은 --set 이름=값으로 채운다 (예: priority: "{collect_priority}").
 Task.created_time은 시뮬레이션 시각이다 (aging이 노드 시계로 대기 시간을 잰다). 정차 자세는 stations 파일(world)을
 map_origin_in_world로 map 좌표로 바꾼다 (작업 생성기와 같다).
+
+서버 스테이션 예약 (Fleet 서버 assignment.station_clearance_m, 1 m): 서버는 맡긴 작업의 픽업·하역 자리를 그 작업이 끝날
+때까지 잡아 두고, 그 안을 쓰는 작업은 큐에서 기다리게 한다(큐 안에서 겹치면 하나만 맡긴다). 같은 픽업을 쓰는 시작 작업 둘은
+둘째가 첫째가 끝날 때까지 할당되지 않아 assigned 조건이 시간 초과로 끝난다 (11/8 녹화: 1-2 request, 2막 more 단계).
+그래서 같이 잡혀 있을 수 있는 작업은 자리가 서로 1 m 넘게 떨어져야 한다 - station_conflicts()가 확인하고, 시작할 때
+걸리면 멈춘다. 0초(t0) 단계 작업끼리(2막 회수 5건이 퇴식구 둘을 나눠 씀)는 일부러 줄을 세우므로 뺀다.
+
+scene.json에는 1 s(시뮬레이션)마다 이 장면 작업의 작업표 상태(assigned·pending·done·failed)를 남긴다 (ev: count).
+단계를 다 낸 뒤에도 하네스가 멈출 때까지(또는 --timeout-s) 계속 남긴다.
 
 단계 진행(Scene)은 rclpy 없이 돈다 - tests/test_demo_scene.py가 가짜 시계·작업표로 시험한다.
 """
@@ -34,7 +44,8 @@ from typing import Optional
 import yaml
 
 TASK_TYPES = {'delivery': 0, 'charge': 1, 'return': 2, 'collect': 3}   # amr_msgs/msg/Task.TYPE_*
-STATION_RESERVE_M = 1.0   # 서버 스테이션 예약 반경: 시작 작업이 핵심 요청과 이 안의 자리를 쓰면 핵심 요청이 밀린다
+STATION_RESERVE_M = 1.0   # 서버 스테이션 예약 반경 (fleet_manager.yaml assignment.station_clearance_m)
+STATE_COMPLETED, STATE_FAILED = 2, 3   # amr_msgs/msg/TaskStatus.STATE_* (작업표 TaskRecord.state)
 
 
 @dataclass(frozen=True)
@@ -87,7 +98,36 @@ def load_scene(path, params: Optional[dict] = None) -> list[Step]:
 def stations_near(stations: dict, a: str, b: str, radius: float = STATION_RESERVE_M) -> bool:
     ax, ay = stations[a][:2]
     bx, by = stations[b][:2]
-    return math.hypot(ax - bx, ay - by) < radius
+    return math.hypot(ax - bx, ay - by) <= radius   # 서버 _station_free와 같은 비교
+
+
+def station_conflicts(steps: list[Step], stations: dict, radius: float = STATION_RESERVE_M) -> list[tuple]:
+    """같이 잡혀 있을 수 있는 작업끼리 자리가 radius 안에 겹치는 쌍 [(작업, 작업, 자리, 자리)].
+
+    서버는 맡긴 작업의 픽업·하역을 끝날 때까지 잡아 두므로, 장면의 작업은 서로 자리가 달라야 차례대로 할당된다.
+    0초 단계 안의 작업끼리는 뺀다 (일부러 같은 자리로 줄을 세운다).
+    """
+    tasks = [(i, t) for i, step in enumerate(steps) for t in step.tasks]
+    t0_step = next((i for i, step in enumerate(steps) if step.t0), None)
+    out = []
+    for k, (i, a) in enumerate(tasks):
+        for j, b in tasks[k + 1:]:
+            if i == j == t0_step:
+                continue
+            for sa in (a.pickup, a.dropoff):
+                for sb in (b.pickup, b.dropoff):
+                    if stations_near(stations, sa, sb, radius):
+                        out.append((a.task_id, b.task_id, sa, sb))
+    return out
+
+
+def table_counts(sent: list[str], table: dict, states: Optional[dict] = None) -> dict:
+    """이 장면이 낸 작업의 작업표 상태. table = {task_id: assignee_id}, states = {task_id: TaskRecord.state}."""
+    states = states or {}
+    assigned = sum(1 for t in sent if table.get(t))
+    return {'sent': len(sent), 'assigned': assigned, 'pending': len(sent) - assigned,
+            'done': sum(1 for t in sent if states.get(t) == STATE_COMPLETED),
+            'failed': sum(1 for t in sent if states.get(t) == STATE_FAILED)}
 
 
 class Scene:
@@ -121,6 +161,10 @@ class Scene:
         if 'timeout_s' in a and waited >= float(a['timeout_s']):
             return 'timeout'
         return None
+
+    def record(self, now: float, table: dict, states: Optional[dict] = None) -> None:
+        """작업표 상태를 기록에 남긴다 (scene.json ev: count)."""
+        self.log.append({'t': round(now, 3), 'ev': 'count', **table_counts(self.sent, table, states)})
 
     def tick(self, now: float, table: dict) -> list[tuple]:
         if self.step_start is None:
@@ -183,11 +227,13 @@ def _run(args, scene, stations, origin):
     latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
     pub = node.create_publisher(Task, '/fleet/task_requests', reliable)
     t0_pub = node.create_publisher(Header, '/demo/t0', latched)
-    table, robots = {}, set()
+    table, states, robots = {}, {}, set()
 
     def on_table(m):
         table.clear()
         table.update({r.task.task_id: r.assignee_id for r in m.records})
+        states.clear()
+        states.update({r.task.task_id: r.state for r in m.records})
 
     node.create_subscription(FleetTaskTable, '/fleet/task_table', on_table, 10)
     node.create_subscription(RobotState, '/fleet/robot_states', lambda m: robots.add(m.robot_id), 10)
@@ -209,9 +255,15 @@ def _run(args, scene, stations, origin):
     start = now()
     spin_until(lambda: now() - start >= args.settle_s, 'settle', args.ready_timeout_s)
 
+    # 단계를 다 낸 뒤에도 timeout_s까지(보통은 하네스가 녹화를 끝내며 SIGINT로 멈출 때까지) 1 s마다 작업표 상태를 남긴다 -
+    # 0초 뒤 할당이 멈춘 구간을 scene.json으로 본다
     t_end = now() + args.timeout_s
-    while not scene.done and now() < t_end:
+    last_count = -1e9
+    while now() < t_end:
         rclpy.spin_once(node, timeout_sec=0.05)
+        if now() - last_count >= 1.0:
+            last_count = now()
+            scene.record(last_count, table, states)
         for action in scene.tick(now(), table):
             if action[0] == 't0':
                 h = Header(frame_id=action[2])
@@ -242,8 +294,11 @@ def main(argv=None):
     ap.add_argument('--num-robots', type=int, default=5)
     ap.add_argument('--set', action='append', default=[], metavar='이름=값', help='장면 파일의 {이름}')
     ap.add_argument('--settle-s', type=float, default=5.0, help='준비된 뒤 첫 작업까지 (시뮬레이션 s)')
-    ap.add_argument('--timeout-s', type=float, default=600.0, help='장면 전체 한도 (시뮬레이션 s)')
+    ap.add_argument('--timeout-s', type=float, default=600.0,
+                    help='장면 전체 한도 (시뮬레이션 s). 단계를 다 낸 뒤에도 이때까지 작업표 상태를 기록한다')
     ap.add_argument('--ready-timeout-s', type=float, default=900.0, help='준비 대기 한도 (실제 s)')
+    ap.add_argument('--clearance', type=float, default=STATION_RESERVE_M,
+                    help='서버 스테이션 예약 반경 (assignment.station_clearance_m). 장면 작업끼리 이 안에 겹치면 시작하지 않는다')
     ap.add_argument('--out', help='장면 기록 json')
     a = ap.parse_args(argv)
     params = dict(item.split('=', 1) for item in a.set)
@@ -253,12 +308,17 @@ def main(argv=None):
     unknown = sorted({n for s in steps for t in s.tasks for n in (t.pickup, t.dropoff)} - set(stations))
     if unknown:
         raise SystemExit(f'stations 파일에 없는 자리: {unknown}')
+    conflicts = station_conflicts(steps, stations, a.clearance)
+    if conflicts:
+        raise SystemExit(f'같이 잡힐 수 있는 작업의 자리가 {a.clearance} m 안에 겹친다 (서버 스테이션 예약으로 할당이 '
+                         f'멈춘다): {conflicts}')
     scene = Scene(steps)
     status = 'interrupted'
     try:
         status = _run(a, scene, stations, [float(v) for v in yaml.safe_load(a.map_origin)])
     except KeyboardInterrupt:
-        pass   # 하네스가 녹화 시간이 끝나 SIGINT로 멈췄다. 그때까지 낸 것을 남긴다
+        # 하네스가 녹화 시간이 끝나 SIGINT로 멈췄다. 그때까지 낸 것을 남긴다 (단계를 다 냈으면 done)
+        status = 'done' if scene.done else 'interrupted'
     except Exception as e:   # rclpy 종료 예외 등도 기록은 남긴다
         status = f'error: {e!r}'
     finally:
