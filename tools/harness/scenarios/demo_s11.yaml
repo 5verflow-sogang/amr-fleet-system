@@ -21,5 +21,5 @@ params:
   robot_camera: "false"
   # 워크플로는 이 파일 params만 받는다 (extends의 값은 안 본다). 녹화: localization=ground_truth
   localization: "true"
-  duration_s: 90
+  duration_s: 180
   task_schedule: /repo/tools/harness/tasks/demo_s11.json
