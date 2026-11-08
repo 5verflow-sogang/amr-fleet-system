@@ -1,4 +1,5 @@
-# Gazebo 실주행용 장면 3. 켬/끔 동일 시작·작업·배터리. policy만 변경한다.
+# 실제 Gazebo 장면 3. 켬/끔은 충전 정책만 다르다.
+# 서쪽 손님과 분리된 충전 장면: 추적 노드는 생략하고 LiDAR 비용 지도·안전 노드는 유지한다.
 name: demo_s3_gazebo
 extends: demo_s3
 packages: amr_bringup
@@ -12,3 +13,5 @@ params:
   localization: ground_truth
   fleet_params: ''
   cameras: top,south
+  stations_file: stations_restaurant_s3.yaml
+  tracking: 'false'

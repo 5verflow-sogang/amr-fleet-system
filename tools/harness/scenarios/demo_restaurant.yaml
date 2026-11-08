@@ -110,7 +110,7 @@ processes:
     enabled: "{scene_script}"
     cmd: >-
       {scene_script} /repo/tools/harness/tasks/{scene_file}
-      --stations $(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
+      --stations $(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/{stations_file}
       --map-origin "[0.0, 0.0, 0.0]" --num-robots {num_robots} --set collect_priority={collect_priority}
       --out {run_dir}/scene.json
     settle_s: 1

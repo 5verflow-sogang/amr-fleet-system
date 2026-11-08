@@ -283,3 +283,10 @@ def test_scene3_gazebo_policy_preserves_common_recording_conditions():
     differing = lambda a: {v for v in a if not v.startswith(('charge_low_percent:=', 'min_in_service:='))}
     assert differing(on_args) == differing(off_args)
     assert '/repo/tools/harness/tasks/demo_s3_gazebo.yaml' in on['scene']['cmd']
+
+
+def test_scene3_gazebo_uses_same_service_poses_for_scene_and_charging():
+    procs = _demo_procs('demo_s3_gazebo')
+    assert 'config/stations_restaurant_s3.yaml' in procs['scene']['cmd']
+    assert 'stations_file:=stations_restaurant_s3.yaml' in _args(procs['stack']['cmd'])
+    assert 'safety:=true' in _args(procs['stack']['cmd'])

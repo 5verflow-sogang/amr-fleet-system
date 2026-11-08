@@ -1,10 +1,10 @@
-# 장면 3 Gazebo 전용 압축 배터리. 켬/끔 동일. 움직일 때만 소모, 60%까지 충전해 교대 장면을 확보한다.
+# 장면 3 Gazebo 전용. 켬/끔 동일 배터리. 교대 및 동시 충전 구간을 확보한다.
 /**:
   ros__parameters:
     battery:
       move_per_m: 0.6
       idle_per_s: 0.0
-      charge_per_s: 1.5
+      charge_per_s: 0.6
       charge_target_percent: 60.0
       reject_below_percent: 10.0
 /amr_01/amr_bt:
@@ -14,7 +14,7 @@
 /amr_02/amr_bt:
   ros__parameters:
     battery:
-      initial_percent: 37.0
+      initial_percent: 33.0
 /amr_03/amr_bt:
   ros__parameters:
     battery:
@@ -26,4 +26,4 @@
 /amr_05/amr_bt:
   ros__parameters:
     battery:
-      initial_percent: 33.5
+      initial_percent: 39.5
