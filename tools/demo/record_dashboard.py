@@ -119,6 +119,7 @@ def main(argv=None) -> int:
     ap.add_argument('--dashboard', default=DASHBOARD, help='dashboard/index.html')
     ap.add_argument('--channel', default=None, help='브라우저 채널 (예: chrome = 설치된 Chrome, dashboard/test와 같다)')
     ap.add_argument('--headed', action='store_true', help='브라우저 창을 띄운다 (확인용)')
+    ap.add_argument('--view', choices=('overview', 'battery'), default='overview', help='녹화할 화면: 전체 관제 / 배터리 창')
     ap.add_argument('--query', default='', help='대시보드 주소 옵션 더 붙이기 (예: min_hall=3&charge_why=배터리 20%% 미만)')
     args = ap.parse_args(argv)
 
@@ -155,13 +156,16 @@ def main(argv=None) -> int:
             page.evaluate('ms => ms.forEach(m => dashTest.feed(m.topic, m.msg))', before[k:k + 500])
         page.evaluate('() => dashTest.tick()')
         page.wait_for_timeout(1200)                      # 로봇 이동 애니메이션(0.5 s)이 끝나게
+        if args.view == 'battery':
+            page.locator('[data-tile="hall"]').click()
+            page.wait_for_timeout(300)
         frames = record(page, cdp, items, start, end, args.speed)
         browser.close()
     if not frames:
         raise SystemExit('스크린캐스트 장면을 하나도 못 받았다')
     n = encode(frames, start, end, args.fps, args.out, args.crf)
     meta = {'jsonl': os.path.abspath(args.jsonl), 'scene': head.get('scene', ''), 't0_sim': t0, 'start_sim': start,
-            'lead_s': t0 - start, 'fps': args.fps, 'frames': n, 'captured': len(frames), 'clock': args.clock}
+            'lead_s': t0 - start, 'fps': args.fps, 'frames': n, 'captured': len(frames), 'clock': args.clock, 'view': args.view}
     with open(os.path.splitext(args.out)[0] + '.json', 'w', encoding='utf-8') as f:
         json.dump(meta, f, indent=1, ensure_ascii=False)
     print(f'{args.out}: {n}프레임 ({n / args.fps:.1f} s, 0초는 {t0 - start:.1f} s 지점), 받은 장면 {len(frames)}장')
