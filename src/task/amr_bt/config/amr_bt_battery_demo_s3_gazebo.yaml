@@ -10,7 +10,7 @@
 /amr_01/amr_bt:
   ros__parameters:
     battery:
-      initial_percent: 36.0
+      initial_percent: 34.0
 /amr_02/amr_bt:
   ros__parameters:
     battery:
