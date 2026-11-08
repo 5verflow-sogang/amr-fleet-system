@@ -1,6 +1,7 @@
 """시나리오 파일 불러오기 (ROS 없이). extends로 물려받은 시나리오가 기반과 같은 프로세스를 쓰고 params만 바뀌는지 본다."""
 
 import sys
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -145,12 +146,6 @@ def _demo_procs(name, **sets):
     return {p['name']: p for p in render(s['processes'], params) if enabled(p)}
 
 
-def _args(cmd):
-    """stack cmd의 $(test -n "값" && echo 인자)를 bash처럼 풀어 쓴다 (값이 비면 인자 없음)."""
-    import re
-    return re.sub(r'\$\(test -n "([^"]*)" && echo ([^)]*)\)', lambda m: m[2] if m[1] else '', cmd)
-
-
 def _own_params(name):
     """Actions가 받는 이름: 장면 파일 자체의 params 절 (extends 값은 안 본다)."""
     import yaml
@@ -186,18 +181,24 @@ def test_scene2_scene_script_is_one_line_to_swap(name):
     assert 'scene' not in _demo_procs(name, scene_script='')        # 비우면 안 띄운다
 
 
+def _stack_launch_args(procs):
+    # ros2를 대역 함수로 바꿔 실제 실행 없이 셸 확장 후 전달될 인자를 검사한다.
+    stub = 'ros2() { if [ "$1" = pkg ]; then printf /mock; else printf "%s\\n" "$@"; fi; }; '
+    return subprocess.check_output(['bash', '-c', stub + procs['stack']['cmd']], text=True).splitlines()
+
+
 def test_scene2_act1_on_off_is_collect_priority_only():
     on, off = _demo_procs('demo_s2a', collect_priority='200'), _demo_procs('demo_s2a', collect_priority='100')
     assert '--set collect_priority=200' in on['scene']['cmd'] and '--set collect_priority=100' in off['scene']['cmd']
     assert on['stack']['cmd'] == off['stack']['cmd']
-    assert 'fleet_params_file' not in _args(on['stack']['cmd'])        # aging은 둘 다 끔
+    assert not any(arg.startswith('fleet_params_file:=') for arg in _stack_launch_args(on))  # aging은 둘 다 끔
 
 
 def test_scene2_act2_on_off_is_aging_only():
     on = _demo_procs('demo_s2b', fleet_params='fleet_manager_restaurant.yaml')
     off = _demo_procs('demo_s2b')
-    assert 'fleet_params_file:=fleet_manager_restaurant.yaml' in _args(on['stack']['cmd'])
-    assert 'fleet_params_file' not in _args(off['stack']['cmd'])
+    assert 'fleet_params_file:=fleet_manager_restaurant.yaml' in _stack_launch_args(on)
+    assert not any(arg.startswith('fleet_params_file:=') for arg in _stack_launch_args(off))
     assert on['scene']['cmd'] == off['scene']['cmd']
 
 
@@ -206,14 +207,32 @@ def test_scene2_localization_can_be_ground_truth():
     assert 'localization:=amcl' in _demo_procs('demo_s2b')['stack']['cmd']
 
 
-@pytest.mark.parametrize('name', ['demo_s11', 'demo_s12', 'demo_smoke'])
+def test_scene12_runs_its_scene_script_with_the_scene12_guests():
+    procs = _demo_procs('demo_s12')
+    assert 'task_generator' not in procs
+    assert procs['scene']['cmd'].startswith(
+        'python3 /repo/tools/harness/demo_scene.py /repo/tools/harness/tasks/demo_s12.yaml ')
+    stack = procs['stack']['cmd']
+    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak_scene12.yaml' in stack
+    assert 'robots_restaurant_s12.yaml' in stack
+    assert {'scene_script', 'congestion_filter', 'guests', 'localization'} <= _own_params('demo_s12')
+    on = _demo_procs('demo_s12', congestion_filter='keepout', localization='ground_truth')['stack']['cmd']
+    assert 'congestion_filter:=keepout' in on and 'localization:=ground_truth' in on
+
+
+@pytest.mark.parametrize('name', ['demo_s11', 'demo_smoke'])
 def test_other_demo_scenes_keep_the_task_generator(name):
     procs = _demo_procs(name)
     assert 'task_generator' in procs and 'scene' not in procs
-    assert 'fleet_params_file' not in _args(procs['stack']['cmd'])     # 서버 설정 덮어쓰기 없음 (지금과 같다)
+    assert not any(arg.startswith('fleet_params_file:=') for arg in _stack_launch_args(procs))
 
 
-# ---------------------------------------------------------------- 식당 시연 장면 3 (demo_s3 충전 스케줄링)
+def _args(cmd):
+    """stack cmd의 $(test -n "값" && echo 인자)를 bash처럼 풀어 쓴다 (값이 비면 인자 없음)."""
+    import re
+    return re.sub(r'\$\(test -n "([^"]*)" && echo ([^)]*)\)', lambda m: m[2] if m[1] else '', cmd)
+
+
 def test_scene3_runs_the_scene_script_with_battery_and_charging_on_the_stack():
     s = run.load_scenario('demo_s3')
     assert s['processes'] == run.load_scenario('demo_restaurant')['processes']   # 공통 프로세스 그대로

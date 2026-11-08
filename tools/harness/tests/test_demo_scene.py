@@ -64,18 +64,22 @@ def test_act1_off_fills_collect_priority_100():
     assert all(t.priority == 100 for s in steps for t in s.tasks if t.type == 'delivery')
 
 
-def test_act2_collects_60s_after_the_delivery_request_two_seconds_apart():
+def test_act2_second_round_then_delivery_then_collects_60s_later():
     steps = ds.load_scene(TASKS / 'demo_s2b.yaml')
     scene, out = run_scene(steps, {3.0: assign_all})
-    wait = [o for o in out if o[2] == 'b_wait_c01']
-    assert wait == [(3.0, 'task', 'b_wait_c01')]
+    # 1바퀴 0~2 s → 할당 확인(3 s) 뒤 2바퀴 5건 3~5 s → 1 s 뒤 2인석 배달(6 s) → 60 s 뒤 회수 5건 2 s 간격
+    more = [o for o in out if o[2].startswith('b_more')]
+    assert [o[0] for o in more] == [3.0, 3.5, 4.0, 4.5, 5.0] and more[0][2] == 'b_more_b02'
+    assert [o for o in out if o[2] == 'b_wait_c01'] == [(6.0, 'task', 'b_wait_c01')]
     collects = [o for o in out if o[1] == 'task' and o[2].startswith('b_collect')]
-    # 배달 요청(3 s) + 60 s = 63 s에 첫 회수와 /demo/t0, 그 뒤 2 s 간격
-    assert [o[0] for o in collects] == [63.0, 65.0, 67.0, 69.0, 71.0]
+    assert [o[0] for o in collects] == [66.0, 68.0, 70.0, 72.0, 74.0]
     assert [o[2] for o in collects] == ['b_collect_t01', 'b_collect_t06', 'b_collect_t08', 'b_collect_t12',
                                         'b_collect_t14']
-    assert (63.0, 't0', 'b_collect_t01') in out and scene.t0 == 63.0
+    assert (66.0, 't0', 'b_collect_t01') in out and scene.t0 == 66.0
     assert {t.priority for s in steps for t in s.tasks if t.type == 'collect'} == {200}
+    # 2바퀴 작업은 2인석 배달보다 먼저 들어가 같은 우선순위에서 앞선다 (작업표 created 순)
+    order = [o[2] for o in out if o[1] == 'task']
+    assert all(order.index(m[2]) < order.index('b_wait_c01') for m in more)
 
 
 def test_act2_does_not_send_collects_if_the_delivery_got_assigned():
@@ -83,8 +87,8 @@ def test_act2_does_not_send_collects_if_the_delivery_got_assigned():
     steps = ds.load_scene(TASKS / 'demo_s2b.yaml')
     scene, out = run_scene(steps, {3.0: assign_all, 10.0: assign_all})
     first = next(o[0] for o in out if o[2] == 'b_collect_t01')
-    assert first == 3.0 + 90.0
-    assert {'t': 93.0, 'ev': 'step', 'step': 'collects', 'why': 'timeout'} in scene.log
+    assert first == 6.0 + 90.0
+    assert {'t': 96.0, 'ev': 'step', 'step': 'collects', 'why': 'timeout'} in scene.log
 
 
 def test_condition_timeout_sends_anyway_and_logs_it():
@@ -168,21 +172,66 @@ def test_act1_robot_2_finishes_first_by_more_than_10m():
     assert len({t['pickup'] for t in raw}) == 5                             # 픽업 예약으로 기다리지 않는다
 
 
-def test_act2_robot_4_finishes_first_but_not_before_second_zero():
-    # 켬이면 0초 뒤 다음에 일을 마친 4호가 2인석 배달에 배정된다. 0초는 배달 요청 + 60 s (busy 시작 뒤 약 63 s)
-    path = _check_first_to_finish('demo_s2b.yaml', 'amr_04')
-    max_v, dwell = 0.5, 2.0                                                 # DWA max_v, amr_bt dwell_s (픽업·하역)
-    assert path['amr_04'] / max_v + 2 * dwell >= 63.0 + 10.0               # 최고 속도로도 0초 뒤 10 s 넘게 남는다
-    steps = yaml.safe_load((TASKS / 'demo_s2b.yaml').read_text(encoding='utf-8'))['steps']
-    busy = {t['id']: t['pickup'] for t in steps[0]['tasks']}
-    queue_pickup = steps[1]['tasks'][0]['pickup']
-    pickups = list(busy.values())
-    # 4호 픽업과 대기 배달 픽업은 혼자 쓴다 (예약으로 4호가 늦어지거나 배달이 막히지 않게)
-    assert pickups.count(busy['b_busy_L03']) == 1 and queue_pickup not in pickups
-    assert max(pickups.count(p) for p in pickups) <= 2
+def test_act2_robot_4_is_the_first_to_free_up_after_second_zero():
+    # 켬이면 0초 뒤 다음에 일을 마친 4호가 2인석 배달에 배정된다. 시작 작업 두 바퀴로 그 순서를 만든다 (장면 파일 머리말)
+    data = yaml.safe_load((TASKS / 'demo_s2b.yaml').read_text(encoding='utf-8'))
+    plan, steps = data['plan'], data['steps']
+    owners = _busy_owners('demo_s2b.yaml')
+    assert [owners[r][0] for r in ORDER] == [t['id'] for t in steps[0]['tasks']]   # 1바퀴: 낸 순서대로 05, 04, 03, 02, 01
+    straight = {r: v[1] for r, v in owners.items()}
+    assert min(straight, key=straight.get) == 'amr_04'                             # 직선 거리로도 4호 1바퀴가 가장 짧다
+    path = {r: v[2] for r, v in owners.items()}
+    assert path['amr_04'] == plan['first_round1_m']
+    assert sorted(v for r, v in path.items() if r != 'amr_04') == sorted(plan['others_round1_m'])
+    # (1) 4호가 1바퀴를 10 m 넘게 먼저 끝내 2바퀴 첫 작업을 가져간다
+    assert min(plan['others_round1_m']) >= plan['first_round1_m'] + 10.0
+    assert steps[1]['name'] == 'more' and steps[1]['tasks'][0]['id'] == 'b_more_b02'
+    # (2) 4호 두 바퀴는 최고 속도로도 0초 뒤 10 s 넘게 남는다 (픽업·하역 4번 머무름)
+    v, dwell, t0 = plan['speed_mps'], plan['dwell_s'], plan['t0_s']
+    assert plan['first_total_m'] / v + 4 * dwell >= t0 + 10.0
+    # (3) 다른 로봇 1바퀴가 4호 두 바퀴보다 짧아 2바퀴 나머지 넷을 다른 로봇이 가져간다
+    assert plan['first_total_m'] >= max(plan['others_round1_m']) + 5.0
+    # (4) 다른 로봇은 2바퀴 어느 작업을 받아도 두 바퀴 합이 4호보다 10 m 넘게 길다
+    assert plan['others_min_total_m'] >= plan['first_total_m'] + 10.0
+    # 0초 계산: 1바퀴 2 s + 할당 확인 + 2바퀴 2 s + 1 s + 60 s
+    scene, _ = run_scene(ds.load_scene(TASKS / 'demo_s2b.yaml'), {3.0: assign_all})
+    assert scene.t0 == t0
+    # 픽업: 4호 것은 같은 바퀴에서 혼자, 2인석 배달 픽업은 시작 작업이 안 쓴다, 한 픽업에 둘까지
+    queue_pickup = steps[2]['tasks'][0]['pickup']
+    for rnd, mine in ((steps[0]['tasks'], 'b_busy_t13'), (steps[1]['tasks'], 'b_more_b02')):
+        pickups = [t['pickup'] for t in rnd]
+        first = next(t['pickup'] for t in rnd if t['id'] == mine)
+        assert pickups.count(first) == 1 and queue_pickup not in pickups
+        assert max(pickups.count(p) for p in pickups) <= 2
 
 
-# ---------------------------------------------------------------- 장면 3 (배달 흐름 반복, 배터리 0초)
+# ---------------------------------------------------------------- 1-2 (demo_s12)
+S12_ROBOTS = REPO / 'src' / 'bringup' / 'amr_bringup' / 'config' / 'robots_restaurant_s12.yaml'
+
+
+def test_scene12_start_tasks_go_to_robots_2_to_5_and_the_request_to_robot_1():
+    owners = _busy_owners('demo_s12.yaml', S12_ROBOTS)
+    # 동쪽 매장 픽업이라 1호(서쪽 입구 옆)보다 2~5호가 늘 가깝다
+    assert set(owners) == {'amr_05', 'amr_04', 'amr_03', 'amr_02'}
+    steps = ds.load_scene(TASKS / 'demo_s12.yaml')
+    core = [s for s in steps if s.t0]
+    assert len(core) == 1
+    assert [(t.task_id, t.type, t.pickup, t.dropoff) for t in core[0].tasks] == [
+        ('s12_buffet2_t11', 'delivery', 'buffet_2', 't11')]
+
+
+def test_scene12_request_is_sent_with_t0_after_robots_2_to_5_are_busy():
+    steps = ds.load_scene(TASKS / 'demo_s12.yaml')
+    scene, out = run_scene(steps, {3.0: assign_all})
+    # 마지막 시작 작업(1.5 s) 뒤 3 s, 그 전에(3.0 s) 넷 다 할당됐다
+    assert (4.5, 't0', 's12_buffet2_t11') in out and (4.5, 'task', 's12_buffet2_t11') in out
+    assert [o[0] for o in out if o[2].startswith('s12_busy')] == [0.0, 0.5, 1.0, 1.5]
+
+
+
+
+
+
 def test_repeat_cycles_the_task_list_with_numbered_ids(tmp_path):
     path = tmp_path / 's.yaml'
     path.write_text(yaml.safe_dump({'steps': [{'name': 'flow', 'gap_s': 8, 'repeat': 2, 'tasks': [
