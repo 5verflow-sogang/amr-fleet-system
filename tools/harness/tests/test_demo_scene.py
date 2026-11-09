@@ -63,6 +63,7 @@ def test_act1_order_and_times_with_fake_clock():
     assert scene.t0 == 20.0
     assert [s.tasks[0].priority for s in steps if s.t0] == [200]
 
+
 def test_act1_off_fills_collect_priority_100():
     steps = ds.load_scene(TASKS / 'demo_s2a.yaml', {'collect_priority': '100'})
     collect = [t for s in steps for t in s.tasks if t.type == 'collect']
@@ -86,6 +87,7 @@ def test_act2_delivery_then_collects_after_60s_and_when_robot_4_is_near():
     scene, out = run_scene(steps, {3.0: assign_all}, at_station_after('t02', 10.0))
     assert scene.t0 == 63.0
 
+
 def test_act2_does_not_send_collects_if_the_delivery_got_assigned():
     # 배달이 0초 전에 할당되면(로봇이 일찍 빔) 기다리다 시간 초과로 보내고 scene.json에 timeout을 남긴다
     steps = ds.load_scene(TASKS / 'demo_s2b.yaml')
@@ -93,6 +95,7 @@ def test_act2_does_not_send_collects_if_the_delivery_got_assigned():
     first = next(o[0] for o in out if o[2] == 'b_collect_t01')
     assert first == 3.0 + 300.0
     assert {'t': 303.0, 'ev': 'step', 'step': 'collects', 'why': 'timeout'} in scene.log
+
 
 def test_condition_timeout_sends_anyway_and_logs_it():
     steps = ds.load_scene(TASKS / 'demo_s2a.yaml', {'collect_priority': '200'})
@@ -197,6 +200,7 @@ def test_act2_robot_4_is_the_first_to_free_up_after_second_zero():
     core_names = ['buffet_2', 't11', 'c01', 't01', 't06', 't08', 't12', 't14', 'return_1', 'return_2']
     start = [n for t in steps[0]['tasks'] for n in (t['pickup'], t['dropoff'])]
     assert not [(a, b) for a in start for b in core_names if ds.stations_near(st, a, b)]
+
 
 # ---------------------------------------------------------------- 1-2 (demo_s12)
 S12_ROBOTS = REPO / 'src' / 'bringup' / 'amr_bringup' / 'config' / 'robots_restaurant_s12.yaml'

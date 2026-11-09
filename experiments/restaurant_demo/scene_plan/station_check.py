@@ -50,7 +50,8 @@ def check(name, pose, img, res, origin, cost, dist):
             if math.hypot(dx, dy) <= XY_TOL and not footprint_hits(lethal, res, origin, x + dx, y + dy, yaw):
                 d = math.hypot(dx, dy)
                 best = d if best is None else min(best, d)
-    return {'station': name, 'xy': [x, y], 'yaw_deg': round(math.degrees(yaw)), 'clear_m': round(float(dist[row, col]), 3),
+    return {'station': name, 'xy': [x, y], 'yaw_deg': round(math.degrees(yaw)),
+            'clear_m': round(float(dist[row, col]), 3),
             'center_cost': int(cost[row, col]), 'footprint_lethal': footprint_hits(lethal, res, origin, x, y, yaw),
             'turn_ok': bool(dist[row, col] > circ + PAD + ROTATE_CLEARANCE),
             'goal_reachable_m': None if best is None else round(best, 2)}
