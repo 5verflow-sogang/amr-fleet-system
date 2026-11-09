@@ -12,6 +12,9 @@
   COMPLETED가 되어도 assignee_id를 그대로 두므로 그 작업도 센다. 실패 뒤 다시 큐에 들어가면(assignee_id 빔) 안 센다
 - after.pending: 이 장면이 낸 작업 중 아직 할당 안 된 작업이 N건 이상
 - after.delay_s: 앞 단계 마지막 작업을 낸 뒤 N s (시뮬레이션 시각)
+- after.near: {task: 작업 id, within_m: D} - 그 작업을 맡은 로봇(작업표 assignee_id)이 그 작업 하역 자리에서 D m 안에 있다
+  (/fleet/robot_states 자세). 0초를 "그 로봇이 곧 비는 때"에 맞춘다 - 실제 속도(녹화에서 약 0.2 m/s)와 상관없이
+  0초 직후 그 로봇이 일을 마친다
 - after.timeout_s: 앞 단계 뒤 N s가 지나면 조건이 안 맞아도 낸다 (scene.json에 timeout으로 남는다)
 - gap_s: 단계 안 작업 사이 간격 (기본 0, 연달아 넣기)
 - t0: true면 그 단계 첫 작업을 낼 때 /demo/t0(std_msgs/Header, stamp = 시뮬레이션 시각, frame_id = 첫 작업 id)을 낸다
@@ -92,6 +95,11 @@ def load_scene(path, params: Optional[dict] = None) -> list[Step]:
                           gap_s=float(s.get('gap_s', 0.0)), t0=bool(s.get('t0', False))))
     if sum(s.t0 for s in steps) > 1:
         raise ValueError('t0 단계는 하나만')
+    ids = {t.task_id for st in steps for t in st.tasks}
+    for st in steps:
+        near = st.after.get('near')
+        if near is not None and near.get('task') not in ids:
+            raise ValueError(f'{st.name}: after.near의 작업이 장면에 없다: {near}')
     return steps
 
 
@@ -131,10 +139,13 @@ def table_counts(sent: list[str], table: dict, states: Optional[dict] = None) ->
 
 
 class Scene:
-    """단계 진행. tick(지금 시각, 작업표 {task_id: assignee})이 이번에 할 일 [('t0', t) | ('task', SceneTask)]을 돌려준다."""
+    """단계 진행. tick(지금 시각, 작업표 {task_id: assignee}, 로봇 자세 {robot: (x, y)})이 이번에 할 일
+    [('t0', t) | ('task', SceneTask)]을 돌려준다. stations는 after.near에 쓴다 (작업 하역 자리 좌표)."""
 
-    def __init__(self, steps: list[Step]):
+    def __init__(self, steps: list[Step], stations: Optional[dict] = None):
         self.steps = steps
+        self.stations = stations or {}
+        self.tasks = {t.task_id: t for s in steps for t in s.tasks}
         self.index = 0          # 다음 단계
         self.queue: list[SceneTask] = []   # 지금 단계에서 아직 안 낸 작업
         self.next_at = 0.0      # 다음 작업을 낼 수 있는 시각
@@ -147,7 +158,14 @@ class Scene:
     def done(self) -> bool:
         return self.index >= len(self.steps) and not self.queue
 
-    def _ready(self, step: Step, now: float, table: dict) -> Optional[str]:
+    def _near(self, cond: dict, table: dict, robots: dict) -> bool:
+        task = self.tasks[cond['task']]
+        robot = table.get(task.task_id)
+        if not robot or robot not in robots or task.dropoff not in self.stations:
+            return False
+        return math.dist(robots[robot], self.stations[task.dropoff][:2]) <= float(cond['within_m'])
+
+    def _ready(self, step: Step, now: float, table: dict, robots: dict) -> Optional[str]:
         """조건이 맞으면 'ok', 시간 초과면 'timeout', 아직이면 None."""
         a = step.after
         mine = [table.get(t) for t in self.sent]
@@ -155,7 +173,8 @@ class Scene:
         pending = sum(1 for x in mine if not x)
         waited = now - self.step_start
         ok = (assigned >= int(a.get('assigned', 0)) and pending >= int(a.get('pending', 0))
-              and waited >= float(a.get('delay_s', 0.0)))
+              and waited >= float(a.get('delay_s', 0.0))
+              and ('near' not in a or self._near(a['near'], table, robots)))
         if ok:
             return 'ok'
         if 'timeout_s' in a and waited >= float(a['timeout_s']):
@@ -166,7 +185,8 @@ class Scene:
         """작업표 상태를 기록에 남긴다 (scene.json ev: count)."""
         self.log.append({'t': round(now, 3), 'ev': 'count', **table_counts(self.sent, table, states)})
 
-    def tick(self, now: float, table: dict) -> list[tuple]:
+    def tick(self, now: float, table: dict, robots: Optional[dict] = None) -> list[tuple]:
+        robots = robots or {}
         if self.step_start is None:
             self.step_start = now
         out = []
@@ -185,7 +205,7 @@ class Scene:
             if self.index >= len(self.steps):
                 return out
             step = self.steps[self.index]
-            why = self._ready(step, now, table)
+            why = self._ready(step, now, table, robots)
             if why is None:
                 return out
             self.log.append({'t': round(now, 3), 'ev': 'step', 'step': step.name, 'why': why})
@@ -227,7 +247,7 @@ def _run(args, scene, stations, origin):
     latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
     pub = node.create_publisher(Task, '/fleet/task_requests', reliable)
     t0_pub = node.create_publisher(Header, '/demo/t0', latched)
-    table, states, robots = {}, {}, set()
+    table, states, poses = {}, {}, {}
 
     def on_table(m):
         table.clear()
@@ -236,7 +256,8 @@ def _run(args, scene, stations, origin):
         states.update({r.task.task_id: r.state for r in m.records})
 
     node.create_subscription(FleetTaskTable, '/fleet/task_table', on_table, 10)
-    node.create_subscription(RobotState, '/fleet/robot_states', lambda m: robots.add(m.robot_id), 10)
+    node.create_subscription(RobotState, '/fleet/robot_states',
+                             lambda m: poses.__setitem__(m.robot_id, (m.pose.position.x, m.pose.position.y)), 10)
 
     def now():
         return node.get_clock().now().nanoseconds * 1e-9
@@ -250,7 +271,7 @@ def _run(args, scene, stations, origin):
                 raise SystemExit(f'준비 안 됨: {what}')
 
     # 서버(작업 요청 구독)와 로봇 N대 상태, 시뮬레이션 시계가 보일 때까지 (실제 시간 기준 한도)
-    spin_until(lambda: pub.get_subscription_count() > 0 and len(robots) >= args.num_robots and now() > 0,
+    spin_until(lambda: pub.get_subscription_count() > 0 and len(poses) >= args.num_robots and now() > 0,
                f'Fleet 서버·로봇 {args.num_robots}대·/clock', args.ready_timeout_s)
     start = now()
     spin_until(lambda: now() - start >= args.settle_s, 'settle', args.ready_timeout_s)
@@ -264,7 +285,7 @@ def _run(args, scene, stations, origin):
         if now() - last_count >= 1.0:
             last_count = now()
             scene.record(last_count, table, states)
-        for action in scene.tick(now(), table):
+        for action in scene.tick(now(), table, poses):
             if action[0] == 't0':
                 h = Header(frame_id=action[2])
                 h.stamp = node.get_clock().now().to_msg()
@@ -312,7 +333,12 @@ def main(argv=None):
     if conflicts:
         raise SystemExit(f'같이 잡힐 수 있는 작업의 자리가 {a.clearance} m 안에 겹친다 (서버 스테이션 예약으로 할당이 '
                          f'멈춘다): {conflicts}')
-    scene = Scene(steps)
+    # after.near의 하역 자리는 map 좌표로 (robot_states 자세가 map 기준)
+    origin = [float(v) for v in yaml.safe_load(a.map_origin)]
+    c, s = math.cos(-origin[2]), math.sin(-origin[2])
+    map_stations = {k: (c * (x - origin[0]) - s * (y - origin[1]), s * (x - origin[0]) + c * (y - origin[1]))
+                    for k, (x, y, *_) in stations.items()}
+    scene = Scene(steps, map_stations)
     status = 'interrupted'
     try:
         status = _run(a, scene, stations, [float(v) for v in yaml.safe_load(a.map_origin)])

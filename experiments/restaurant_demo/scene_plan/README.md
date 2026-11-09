@@ -13,9 +13,11 @@ g++ -O2 -std=c++17 -I/ros2_ws/install/amr_planning_core/include $D/astar_cli.cpp
 python3 $D/plan_tools.py trips --ws /ros2_ws/src --astar /tmp/astar_cli --out /tmp/plan   # 로봇 → 픽업 → 하역 길이
 python3 $D/plan_tools.py start --ws /ros2_ws/src --astar /tmp/astar_cli --out /tmp/plan   # 1-2 1호 출발 자리 후보
 python3 $D/pairs.py /ros2_ws/src /tmp/astar_cli /tmp/plan                          # 정차 자리 쌍 길이 → pairs.json
-S="src/fleet/amr_fleet_manager/config/stations_restaurant.yaml src/bringup/amr_bringup/config/robots_restaurant.yaml"
-python3 $D/search_reserved.py act1 /tmp/plan/pairs.json $S                         # 장면 2 1막 시작 작업
-python3 $D/search_reserved.py act2 /tmp/plan/pairs.json $S                         # 장면 2 2막 두 바퀴
+python3 $D/search_routes.py act1 --ws /ros2_ws/src --astar /tmp/astar_cli           # 장면 2 1막 시작 작업
+python3 $D/search_routes.py act2 --ws /ros2_ws/src --astar /tmp/astar_cli           # 장면 2 2막 시작 작업
+python3 $D/search_routes.py s12 --ws /ros2_ws/src --astar /tmp/astar_cli            # 1-2 시작 작업
+python3 $D/route_overlap.py --ws /ros2_ws/src --astar /tmp/astar_cli --scene tools/harness/tasks/demo_s2b.yaml     --robots src/bringup/amr_bringup/config/robots_restaurant.yaml                    # 시작 작업 경로 겹침
+python3 $D/station_check.py --ws /ros2_ws/src                                       # 자리마다 지도·costmap 확인
 python3 $D/detour.py --map ... --zones ... --stations ... --astar /tmp/astar_cli --out /tmp/plan --start -10.0 -5.8  # 그림
 ```
 
@@ -31,49 +33,65 @@ Fleet 서버는 맡긴 작업의 픽업·하역 자리를 그 작업이 끝날 �
 1바퀴가 배식대 1·2를 둘씩 나눠 써 둘째 작업들이 할당되지 않았고, 장면 스크립트의 assigned 조건이 60 s 시간 초과로 끝나
 0초가 늦었다. 그래서 장면의 작업은 0초 단계 안(2막 회수 5건의 퇴식구)을 빼면 자리가 모두 서로 달라야 한다
 (`tools/harness/demo_scene.py station_conflicts`, 시작할 때와 `test_demo_scene.py`가 tasks/ 장면 파일 전부를 확인한다).
-`search_reserved.py`는 이 조건을 지키고, 시작 작업을 서버와 같은 최소거리 탐욕 배정으로 흉내 내 낸 순서대로
+`search_routes.py`는 이 조건을 지키고, 시작 작업을 서버와 같은 최소거리 탐욕 배정으로 흉내 내 낸 순서대로
 amr_05, 04, 03, 02, 01이 맡는 조합만 고른다.
+
+## 부스·좁은 통로·경로 겹침 (11/9 녹화에서 배운 것)
+
+11/9 녹화(1막 끔·켬, 2막 켬)에서 시작 작업이 끝나지 않았다.
+- 1막: 2호가 b02, 1호가 b03 앞에서 계속 서 있다가 작업이 실패해 다시 큐에 들어갔다(assignments.csv 172 s에 a_busy_b02 미할당).
+  5호는 t06 둘레 손님 무리(평상시 손님 customer_1 경로가 t06에서 0.82 m)에 오래 머물렀다
+- 2막: 4호가 x 4.3, y 0.1(4인석-6인석 사이 1.0 m 세로 통로, L03 벤치 앞)에서 멈췄고, 1·2·3호가 윗줄 t03~t04 사이에 몰려
+  서로 막혔다
+
+확인한 것:
+- `station_check.py`: 지도·costmap만 보면 부스도 4인 테이블과 같다(중심에서 장애물까지 0.45 m, 풋프린트가 점유 칸에 안
+  닿고, 목표 자세에 그대로 설 수 있다)
+- 로컬 재현(Gazebo, 서빙 로봇 1대, 손님 없음, 위치추정 ground_truth): 추적·안전을 끄면 t10·b03·b02·b01·t05에 모두
+  9~26 s에 0.1 m 안으로 도착했다. 추적·안전을 켜면(녹화와 같다) t10·L03·b03은 도착했지만 b03에서 b02로 못 빠져나왔고(150 s
+  초과, "DWA: 유효한 궤적을 못 찾아 정지"), t05로 가다 x 4.49, y 0.25(녹화의 4호 자리와 같은 세로 통로)에서 멈췄다. 손님이
+  없는데도 추적이 가구를 0.40~0.43 m 앞 '움직이는 장애물'로 보고(track 1137) DWA 회피 모드(여유 0.6 m)와 안전 저속이 걸렸다
+- `route_overlap.py`: 예전 2막 시작 작업은 3호(t03 → b02)와 2호(stall_1 → L04)가 31.8 m를 같은 통로로, 그중 10.8 m를 마주
+  보고 갔다. 셋 다 서쪽으로 갔다가 동쪽으로 돌아오는 작업이라 윗줄 통로에서 엇갈렸다
+
+그래서 시작 작업은
+- 부스 b01~b03을 쓰지 않는다 (스테이션 파일은 그대로)
+- 장면이 쓰는 손님 파일(1·2막 평상시, 1-2 peak_scene12)의 손님 경로 1 m 안 자리를 쓰지 않는다
+- 경로가 세로 통로(x 4.0~5.6, y -1.3~4.0)와 부스 칸(x 9.3~)을 지나지 않는다 (`search_routes.py` TIGHT_BOXES)
+- 경로끼리 마주 오는 구간을 최소로 한다
+
+실제 평균 속도는 약 0.2 m/s다(11/8 1-2 녹화 12.75 m / 62 s). 시작 뒤 고정 시각으로 0초를 찍으면 먼저 비어야 할 로봇이 한참
+뒤(2막은 녹화가 끝난 뒤)에 빈다. 그래서 0초 단계는 `after.near`로 "먼저 비는 로봇이 하역 1~2 m 앞"일 때 연다 - 속도와
+상관없이 0초 직후 그 로봇이 빈다. 2막은 배달이 60 s 기다린 뒤라야 하므로 4호 작업이 그 전에 끝나지 않게, 관측 평균의
+1.5배(0.3 m/s)로도 0초 하한(약 66 s) 뒤 10 s 넘게 남는 길이(21.6 m 이상)를 요구한다. 한 바퀴로 된다.
 
 ## 장면 2 시작 작업 (tasks/demo_s2a.yaml·demo_s2b.yaml `path_m`)
 
-길이는 A* (m, 새 restaurant_gt #341). 식당 속도 0.8 m/s(#338), 픽업·하역 머무름 2 s씩.
+길이는 A* (m, 새 restaurant_gt #341). 경로 겹침은 `search_routes.py` 기준: 같은 속도로 동시에 출발할 때 두 로봇이 1 m 안에서
+마주 오는 구간(마주침)과, 시각을 안 따지고 같은 통로를 반대로 지나는 구간(정적).
 
 | 막 | 로봇 | 픽업 → 하역 | 길이 | 비고 |
 | --- | --- | --- | --- | --- |
-| 1막 | amr_05 | t06 → t11 | 26.6 | |
-| 1막 | amr_04 | L03 → buffet_1 | 26.2 | |
-| 1막 | amr_03 | t07 → t13 | 24.8 | |
-| 1막 | **amr_02** | b01 → b02 | **12.0** | 가장 짧다. 다음 로봇과 12.6 m. 0.8 m/s로도 19 s (0초 = 시작 뒤 약 8 s) |
-| 1막 | amr_01 | b03 → t12 | 24.6 | |
-| 2막 1바퀴 | amr_05 | buffet_1 → L02 | 44.2 | |
-| 2막 1바퀴 | **amr_04** | t10 → t02 | **21.1** | 가장 짧다. 다음 로봇과 17.4 m |
-| 2막 1바퀴 | amr_03 | t03 → b02 | 38.5 | |
-| 2막 1바퀴 | amr_02 | stall_1 → L04 | 39.1 | |
-| 2막 1바퀴 | amr_01 | t07 → b01 | 39.8 | |
-| 2막 2바퀴 | (4호) | b03 → t05 | 12.3 | t02 → b03 21.0 m, 4호 두 바퀴 합 54.5 m |
-| 2막 2바퀴 | (먼저 빈 다른 로봇) | stall_2 → c02 | 15.4 | |
-| 2막 2바퀴 | | t13 → stall_4 | 12.9 | |
-| 2막 2바퀴 | | t04 → L03 | 12.8 | |
-| 2막 2바퀴 | | t09 → L01 | 11.4 | |
+| 1막 | amr_05 | L04 → t01 | 24.1 | |
+| 1막 | amr_04 | buffet_2 → t05 | 36.0 | |
+| 1막 | amr_03 | buffet_1 → L01 | 42.2 | |
+| 1막 | **amr_02** | L03 → c01 | **8.9** | 가장 짧다. 다음 로봇과 10.8 m. 0초 = 2호가 c01 1 m 앞 |
+| 1막 | amr_01 | t10 → t14 | 19.8 | |
+| 2막 | amr_05 | t04 → c02 | 32.9 | |
+| 2막 | **amr_04** | L04 → t02 | **21.7** | 가장 짧다. 다음 로봇과 10.5 m. 0.3 m/s로도 76 s(0초 하한 66 s). 0초 = 4호가 t02 2 m 앞 |
+| 2막 | amr_03 | buffet_1 → t03 | 33.9 | |
+| 2막 | amr_02 | stall_2 → L03 | 32.2 | |
+| 2막 | amr_01 | stall_1 → t10 | 32.4 | |
 
-1막: 대기 배달 4건(stall_3 → t09, stall_4 → t15, stall_1 → t04, stall_2 → t02)과 회수(t03 → return_1)는 그대로이고, 시작 작업이
-그 자리와 겹치지 않게 테이블·부스에서 픽업한다. 겹치면 대기 배달이 시작 작업이 끝날 때까지 큐에서 빠져 끔에서 회수가 4번째로
-나갈 수 있다.
-
-| 2막 조건 | 값 |
-| --- | --- |
-| 4호 1바퀴가 가장 짧다 (먼저 끝나 2바퀴 첫 작업 b03 → t05를 가져간다) | 21.1 m, 다른 로봇 최소 38.5 m (차이 17.4 m) |
-| 4호 두 바퀴 합 | 54.5 m → 0.8 m/s로도 54.5 / 0.8 + 8 = 76 s, 0초(66 s)보다 10 s 늦다 |
-| 4호 두 바퀴가 다른 로봇 1바퀴보다 길다 (2바퀴 나머지 넷은 다른 로봇이 가져간다) | 54.5 m ≥ 44.2 + 10.3 m |
-| 다른 로봇 두 바퀴 합 (2바퀴 어느 작업을 받아도) | 61.1 m 이상 = 4호 + 6.6 m |
-| 자리 | 1바퀴·2바퀴·2인석 배달 22곳이 모두 다르고, 1-2·2막 핵심 자리(buffet_2, t11, c01, 회수 대상 t01·t06·t08·t12·t14, return_1·2)와 그 1 m 안은 쓰지 않는다 |
-
-다른 로봇 두 바퀴 여유가 6.6 m인 것은 자리를 모두 다르게 하면 남는 자리가 21곳뿐이라서다(10 m는 맞추는 조합이 없었다).
+경로 겹침: 마주침 1막·2막 모두 0 m. 정적 겹침 최대 1막 3 m, 2막 13 m (예전 2막 15.2 m, route_overlap.py 기준). 2막은 자리를
+모두 다르게 하고 30 m 넘는 작업 넷을 만들어야 해서 정적 겹침을 더 줄일 수 없었다 - 같은 통로를 다른 때 지난다. 1막 대기
+배달 4건(stall_3 → t09, stall_4 → t15, stall_1 → t04, stall_2 → t02)과 회수(t03 → return_1)는 그대로다.
 
 ## 1-2 시작 작업 (tasks/demo_s12.yaml)
 
-1호보다 동쪽 로봇이 가까운 픽업은 stall_3·stall_4 둘뿐이라 시작 작업은 둘(5호 stall_4 → L01 14.4 m, 4호 stall_3 → b02 31.0 m)이다.
-핵심 요청(buffet_2 → t11)은 buffet_2에 1호가 가장 가까워(약 10 m, 동쪽 로봇은 20 m 넘게) 남은 로봇이 비어 있어도 1호에게 간다.
+시작 작업 둘: 4호 t15 → c01 11.9 m, 5호 L03 → L04 8.1 m (1-2 손님 파일 경로 1 m 안·부스·세로 통로를 피하고, 두 경로가 마주
+오지 않는다). 핵심 요청(buffet_2 → t11)은 buffet_2에 1호가 가장 가까워(약 10 m, 동쪽 로봇은 20 m 넘게) 남은 로봇이 비어
+있어도 1호에게 간다.
 
 ## 1-2 1호 출발 자리 (robots_restaurant_s12.yaml)
 
