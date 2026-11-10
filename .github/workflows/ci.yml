@@ -191,8 +191,8 @@ jobs:
             build/*/coverage.xml
             build/*/coverage_cpp.xml
 
-  # 하네스(tools/harness)·개발 도구(tools/dev)는 colcon 패키지가 아니라 따로 돈다. ROS 없이 도는 테스트만이라
-  # ROS 컨테이너·빌드 없이 돌린다
+  # 하네스(tools/harness)·개발 도구(tools/dev)·시연 영상 편집(tools/demo)은 colcon 패키지가 아니라 따로 돈다.
+  # ROS 없이 도는 테스트만이라 ROS 컨테이너·빌드 없이 돌린다 (tools/demo는 Pillow와 가이드 글꼴 wqy-zenhei로 그린다)
   tools-test:
     name: tools unit tests
     needs: changes
@@ -206,5 +206,6 @@ jobs:
           python-version: "3.10"
       - name: Harness unit tests
         run: |
-          python -m pip install --quiet pytest pyyaml
-          python -m pytest -q tools/harness/tests tools/dev/tests tools/infra/gcp/tests
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends fonts-wqy-zenhei > /dev/null
+          python -m pip install --quiet pytest pyyaml pillow
+          python -m pytest -q tools/harness/tests tools/dev/tests tools/infra/gcp/tests tools/demo/tests
