@@ -15,7 +15,8 @@
 - after.near: {task: 작업 id, within_m: D} - 그 작업을 맡은 로봇(작업표 assignee_id)이 그 작업 하역 자리에서 D m 안에 있다
   (/fleet/robot_states 자세). 0초를 "그 로봇이 곧 비는 때"에 맞춘다 - 실제 속도(녹화에서 약 0.2 m/s)와 상관없이
   0초 직후 그 로봇이 일을 마친다
-- after.timeout_s: 앞 단계 뒤 N s가 지나면 조건이 안 맞아도 낸다 (scene.json에 timeout으로 남는다)
+- after.timeout_s: 앞 단계 마지막 작업을 낸 뒤 N s가 지나면 조건이 안 맞아도 낸다 (scene.json에 timeout으로 남는다).
+  near와 같이 쓰면 "위치 조건을 기다리되 N s까지만" - 0초 단계면 scene.json t0_by가 near 또는 timeout
 - gap_s: 단계 안 작업 사이 간격 (기본 0, 연달아 넣기)
 - t0: true면 그 단계 첫 작업을 낼 때 /demo/t0(std_msgs/Header, stamp = 시뮬레이션 시각, frame_id = 첫 작업 id)을 낸다
 작업 값 안의 {이름}은 --set 이름=값으로 채운다 (예: priority: "{collect_priority}").
@@ -153,6 +154,7 @@ class Scene:
         self.sent: list[str] = []
         self.log: list[dict] = []
         self.t0: Optional[float] = None
+        self.t0_by: Optional[str] = None
 
     @property
     def done(self) -> bool:
@@ -214,8 +216,10 @@ class Scene:
             self.next_at = now
             if step.t0:
                 self.t0 = now
+                # 0초를 무엇이 열었나: near(위치 조건이 맞음), timeout(시간 제한), ok(위치 조건 없는 단계가 조건대로)
+                self.t0_by = 'timeout' if why == 'timeout' else ('near' if 'near' in step.after else 'ok')
                 out.append(('t0', now, step.tasks[0].task_id if step.tasks else step.name))
-                self.log.append({'t': round(now, 3), 'ev': 't0', 'step': step.name})
+                self.log.append({'t': round(now, 3), 'ev': 't0', 'step': step.name, 'by': self.t0_by})
             if not self.queue:
                 self.step_start = now
 
@@ -348,8 +352,9 @@ def main(argv=None):
     except Exception as e:   # rclpy 종료 예외 등도 기록은 남긴다
         status = f'error: {e!r}'
     finally:
-        record = {'scene': a.scene, 'params': params, 'status': status, 't0': scene.t0, 'events': scene.log}
-        print(json.dumps({k: record[k] for k in ('status', 't0')}), flush=True)
+        record = {'scene': a.scene, 'params': params, 'status': status, 't0': scene.t0, 't0_by': scene.t0_by,
+                  'events': scene.log}
+        print(json.dumps({k: record[k] for k in ('status', 't0', 't0_by')}), flush=True)
         if a.out:
             Path(a.out).write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding='utf-8')
     return 0 if status == 'done' else 1

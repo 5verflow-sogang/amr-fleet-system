@@ -50,7 +50,10 @@ steps:
   # 배달이 60 s 넘게 기다렸고(같은 우선순위가 된다) 4호(b_busy_t02를 맡은 로봇)가 하역 2 m 앞일 때 회수 호출 5건
   # = 0초 (/demo/t0). 실제 속도와 상관없이 0초 직후 4호가 비어 배달(켬)이나 회수(끔)를 받는다
   - name: collects
-    after: {pending: 1, delay_s: 60, near: {task: b_busy_t02, within_m: 2.0}, timeout_s: 300}
+    # 시간 제한 70 s (배달 요청 뒤): 4호가 손님 사이에 갇혀 near가 안 맞으면 그 시각을 0초로 하고 회수를 낸다 (11/10 off_v3:
+    # 4호가 가운데 통로 손님 사이에서 못 움직여 near가 끝까지 안 맞고, 150 s에 5호가 배달을 가져갔다). on_v3은 배달 요청
+    # 66.7 s 뒤 near로 맞았다. scene.json t0_by가 near 또는 timeout
+    after: {pending: 1, delay_s: 60, near: {task: b_busy_t02, within_m: 2.0}, timeout_s: 70}
     t0: true
     gap_s: 2.0
     tasks:

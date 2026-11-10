@@ -43,7 +43,9 @@ steps:
   # (픽업 L03이 하역 c01에서 1.35 m라 2 m로 두면 픽업하는 동안 0초가 된다)
   # 실제 속도(녹화 약 0.2 m/s)와 상관없이 0초 직후 2호가 일을 마친다
   - name: collect
-    after: {pending: 4, delay_s: 3, near: {task: a_busy_c01, within_m: 1.0}, timeout_s: 180}
+    # 시간 제한 70 s (대기 배달 뒤): 2호가 막혀 near가 안 맞으면 그 시각을 0초로 한다 (2막 11/10 off_v3과 같은 대비).
+    # 2호 8.9 m는 0.2 m/s면 대기 배달 뒤 약 37 s에 하역 1 m 앞이다. scene.json t0_by가 near 또는 timeout
+    after: {pending: 4, delay_s: 3, near: {task: a_busy_c01, within_m: 1.0}, timeout_s: 70}
     t0: true
     tasks:
       - {id: a_collect_t03, type: collect, pickup: t03, dropoff: return_1, priority: "{collect_priority}"}
