@@ -260,7 +260,7 @@ def _congestion_cost(values, weight=3.0):
 def test_scene11_start_tasks_go_to_robots_2_4_5_and_leave_1_and_3_idle():
     owners = _busy_owners('demo_s11.yaml', S11_ROBOTS)
     assert {r: v[0] for r, v in owners.items()} == {
-        'amr_05': 's11_busy_b03', 'amr_04': 's11_busy_c02', 'amr_02': 's11_busy_c01'}
+        'amr_05': 's11_busy_b03', 'amr_04': 's11_busy_c02', 'amr_02': 's11_busy_l04'}
     steps = ds.load_scene(TASKS / 'demo_s11.yaml')
     core = [s for s in steps if s.t0]
     assert [(t.task_id, t.type, t.pickup, t.dropoff) for t in core[0].tasks] == [
@@ -271,6 +271,10 @@ def test_scene11_start_tasks_go_to_robots_2_4_5_and_leave_1_and_3_idle():
     st = stations()
     start = {n for s in steps if not s.t0 for t in s.tasks for n in (t.pickup, t.dropoff)}
     assert not [(a, b) for a in start for b in ('buffet_1', 't01') if ds.stations_near(st, a, b)]
+    # 시작 작업끼리도 자리가 겹치지 않는다: 겹치면 앞 작업이 끝날 때까지 배정이 밀려 0초가 타임아웃으로 나간다 (11/10 녹화)
+    busy = [t for s in steps if not s.t0 for t in s.tasks]
+    assert not [(a.task_id, b.task_id) for i, a in enumerate(busy) for b in busy[i + 1:]
+                if any(ds.stations_near(st, x, y) for x in (a.pickup, a.dropoff) for y in (b.pickup, b.dropoff))]
 
 
 def test_scene11_off_sends_robot_1_and_on_sends_robot_3():
@@ -290,6 +294,6 @@ def test_scene11_off_sends_robot_1_and_on_sends_robot_3():
     # 평상시(hall_west만 1.0)면 둘 다 그 구역을 안 지나 끔과 같다
     calm = _congestion_cost({'hall_west': 1.0})
     assert calm(one, buffet) < calm(three, buffet)
-    # 시작 작업도 켬에서 같다: cafe 혼잡 1.0이어도 c01은 2호가 3호보다 싸다
+    # 시작 작업도 켬에서 같다: cafe 혼잡 1.0이어도 L04는 2호가 3호보다 싸다
     cafe = _congestion_cost({'cafe': 1.0})
-    assert cafe(robots['amr_02'], st['c01'][:2]) < cafe(three, st['c01'][:2])
+    assert cafe(robots['amr_02'], st['L04'][:2]) < cafe(three, st['L04'][:2])

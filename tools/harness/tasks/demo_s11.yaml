@@ -8,16 +8,19 @@
 #
 # buffet_2가 아니라 buffet_1인 까닭: buffet_2(-8.1, 4.15)는 3호가 직선 9.6 m로 1호(10.0 m)보다 가까워 끔에서도 3호가 간다.
 # 시작 작업: 픽업을 매장으로 두면 3호(3번 매장 앞)가 가장 가까워 가져간다. 그래서 동쪽 테이블 회수로 2·4·5호만 묶는다.
-# 최소거리 배정이면 낸 순서대로 b03 → 5호(1.9 m), c02 → 4호(2.6 m), c01 → 2호(5.4 m, 3호 8.7 m). 켬에서도 cafe 구역
-# 혼잡 비용으로 3호가 2호를 앞지르려면 cafe 혼잡도가 1.1을 넘어야 해서 같다 (test_demo_scene.py).
-# 시작 작업 자리(b03·c01·c02·return_1·2)는 핵심 요청 자리(buffet_1, t01)와 1 m 넘게 떨어져 있다 (스테이션 예약).
+# 최소거리 배정이면 낸 순서대로 b03 → 5호(1.9 m), c02 → 4호(2.6 m), L04 → 2호(4.8 m, 3호 9.3 m). 켬에서 cafe 구역이
+# 붐벼도 같다 (test_demo_scene.py).
+# 스테이션 예약(station_clearance_m 1 m): 맡겨진 작업의 자리는 끝날 때까지 잡혀 있어, 자리가 겹친 작업은 앞 작업이 끝날
+# 때까지 배정되지 않는다. 11/10 녹화는 b03·c02가 둘 다 return_2로 가서 c02가 1분 넘게 밀렸고, 0초가 타임아웃(60 s)으로
+# 나갔다. 그래서 시작 작업 셋은 서로 다른 자리(퇴식구 둘 + 동쪽 6인석 → 부스)를 쓰고, 핵심 요청 자리(buffet_1, t01)와도
+# 1 m 넘게 떨어져 있다. L04 → b01은 화면(top_west, x 7 서쪽) 밖에서 2호를 붙잡아 두는 일이다.
 steps:
   - name: busy
     gap_s: 0.5
     tasks:
       - {id: s11_busy_b03, type: collect, pickup: b03, dropoff: return_2}   # amr_05
-      - {id: s11_busy_c02, type: collect, pickup: c02, dropoff: return_2}   # amr_04
-      - {id: s11_busy_c01, type: collect, pickup: c01, dropoff: return_1}   # amr_02
+      - {id: s11_busy_c02, type: collect, pickup: c02, dropoff: return_1}   # amr_04
+      - {id: s11_busy_l04, type: delivery, pickup: L04, dropoff: b01}       # amr_02
   # 2·4·5호가 모두 할당받은 것을 작업표로 확인하고 3 s 뒤 = 0초 (/demo/t0)
   - name: request
     after: {assigned: 3, delay_s: 3, timeout_s: 60}
