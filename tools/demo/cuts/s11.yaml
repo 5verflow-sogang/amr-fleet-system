@@ -1,0 +1,73 @@
+# 시나리오 1-1 혼잡도를 고려한 로봇 배정 컷시트 (tools/demo/compose.py, 하네스 demo_s11 끔·켬 실행 둘).
+#
+# start: 컷 원본 시작 = 요청(/demo/t0) 기준 s. 사건 이름 ± s:
+#   request(0초) · assign · arrive (둘 다 지난 늦은 쪽), assign_off · assign_on · arrive_off · arrive_on (그쪽 실행), end
+#   두 실행 모두 같은 상대 시각을 자른다 (가이드). 시각은 녹화마다 달라 사건으로 적는다
+# length: 완성본 길이(s), speed: 배속, hold: 끝 화면을 멈춰 두는 시간(s)
+# layers: zones · candidates · request · assign · hero · dim · card · clock · arrived (overlay.py 머리말)
+# check: 이 컷 문구가 맞으려면 성립해야 하는 순서. 녹화가 다르면 plan·render가 경고한다 → 문구를 녹화에 맞춘다
+# 제목·자막의 {robot_off}·{robot_on}(1호·3호), {arrive_off}·{arrive_on}(요청 → 도착 s), {stops_off}·{stops_on},
+#   {dist_amr_01}·{dist_amr_03}(0초 직선 거리 m)는 녹화 기록으로 채운다
+# 카메라: demo_cameras_restaurant.yaml (top_west 홀 서쪽 위, west 서쪽 통로 눈높이)
+scene: '시나리오 1-1   /   혼잡도를 고려한 로봇 배정'
+feature: 혼잡도 배정
+candidates: [amr_01, amr_03]
+request_label: '주문 · 배식대 1 → 1번 테이블'
+station_label: 배식대
+camera_names:
+  top_west: 홀 위
+  top: 식당 전체
+  west: 서쪽 통로
+  stalls: 매장 앞
+fps: 20
+crf: 17
+cuts:
+  - title: 배식대 앞과 서쪽 통로에 손님이 몰려 있습니다
+    caption: '입구 옆 1호가 배식대에 더 가깝고({dist_amr_01} m), 3호는 3번 매장 앞에 있습니다({dist_amr_03} m)'
+    camera: top_west
+    start: request-4
+    length: 4
+    speed: 1
+    layers: [zones, candidates, clock]
+  - title: '배식대에 주문이 들어옵니다'
+    caption: '왼쪽은 가장 가까운 {robot_off}, 오른쪽은 혼잡 구역을 피해 {robot_on}가 받습니다'
+    camera: top_west
+    start: request-0.5
+    length: 3
+    speed: 1
+    hold: 1.5
+    layers: [zones, request, assign, card, clock]
+    check: assign < request+3
+  - title: '왼쪽 {robot_off}가 손님 사이로 들어갑니다'
+    caption: '오른쪽 {robot_on}는 매장 앞 통로로 돌아가 서쪽 통로에 들어오지 않습니다'
+    camera: west
+    start: assign+1
+    length: 8
+    speed: 3
+    layers: [hero, clock]
+  - title: '오른쪽 {robot_on}가 먼저 배식대에 도착합니다'
+    caption: '왼쪽 {robot_off}는 아직 서쪽 통로에서 멈췄다 가기를 반복합니다'
+    camera: top_west
+    start: arrive_on-8
+    length: 6
+    speed: 2
+    hold: 1
+    layers: [zones, request, hero, dim, arrived, clock]
+    check: arrive_on < arrive_off
+  - title: '왼쪽 {robot_off}도 배식대에 도착합니다'
+    caption: '요청부터 도착까지 왼쪽 {arrive_off}초, 오른쪽 {arrive_on}초 걸렸습니다'
+    camera: top_west
+    start: arrive_off-9
+    length: 5
+    speed: 2
+    hold: 1
+    layers: [zones, request, hero, dim, arrived, clock]
+  - result: true
+    length: 7
+result:
+  title: 가까운 로봇보다, 덜 막히는 로봇을 보냅니다
+  graph_title: 요청 → 배식대 도착 시간 (s, 짧을수록 좋다)
+  notes:
+    - '시간: 시뮬레이션 기준, 배식대 주문(/demo/t0) = 0초. 도착: 배식대 1번 자리에서 싣기(loading)를 시작한 시각'
+    - '멈춤: 맡은 로봇이 0.05 m/s 밑으로 1 s 이상 머문 구간 (출발 전 대기, 도착 직전 정차 제외)'
+    - '배정 비용: 끔 = 로봇 → 픽업 직선 거리, 켬 = 직선 거리 + 3 × Σ(구역 혼잡도 × 그 구역 안 길이)'
