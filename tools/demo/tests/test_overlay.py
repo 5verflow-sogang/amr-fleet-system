@@ -16,7 +16,7 @@ import compose  # noqa: E402
 import overlay as ov  # noqa: E402
 
 S11 = DEMO / 'cuts' / 's11.yaml'
-ROBOTS_S11 = {'amr_01': (-10.5, -5.6), 'amr_02': (11.2, -5.8), 'amr_03': (1.5, 4.15), 'amr_04': (11.2, -3.4),
+ROBOTS_S11 = {'amr_01': (-10.5, -5.6), 'amr_02': (11.2, -5.8), 'amr_03': (1.5, 4.0), 'amr_04': (11.2, -3.4),
               'amr_05': (11.2, -2.2)}
 
 
