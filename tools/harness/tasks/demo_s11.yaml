@@ -1,0 +1,26 @@
+# 식당 시연 1-1 혼잡도를 고려한 로봇 배정 (tools/harness/demo_scene.py 장면 파일, 하네스 demo_s11)
+# 2·4·5호에 먼저 동쪽 테이블 회수를 주고(화면 밖), 0초에 배식대 1번 자리(buffet_1) → 1번 테이블 배달을 요청하며 /demo/t0을 낸다.
+# 0초에 비어 있는 로봇은 1호(입구 옆)와 3호(3번 매장 앞) 둘뿐이라 핵심 요청은 둘 중 하나가 받는다:
+#   끔 (cost_fn euclidean)   직선 거리 1호 9.8 m < 3호 11.4 m → 1호. 손님이 몰린 서쪽 통로로 간다
+#   켬 (cost_fn congestion)  1호 선분이 west_aisle 8.0 m·buffet_line 1.2 m, 3호는 buffet_line 3.8 m·stall_front 7.6 m를 지난다.
+#                            west_aisle·buffet_line 1.0, stall_front 0.17(customer_1)이면 1호 37.2 > 3호 26.7 → 3호
+#                            (west_aisle이 0.56 밑이면 1호로 돌아간다 = 서쪽 통로 손님 3명 중 2명 넘게 구역 안이어야 한다)
+#
+# buffet_2가 아니라 buffet_1인 까닭: buffet_2(-8.1, 4.15)는 3호가 직선 9.6 m로 1호(10.0 m)보다 가까워 끔에서도 3호가 간다.
+# 시작 작업: 픽업을 매장으로 두면 3호(3번 매장 앞)가 가장 가까워 가져간다. 그래서 동쪽 테이블 회수로 2·4·5호만 묶는다.
+# 최소거리 배정이면 낸 순서대로 b03 → 5호(1.9 m), c02 → 4호(2.6 m), c01 → 2호(5.4 m, 3호 8.7 m). 켬에서도 cafe 구역
+# 혼잡 비용으로 3호가 2호를 앞지르려면 cafe 혼잡도가 1.1을 넘어야 해서 같다 (test_demo_scene.py).
+# 시작 작업 자리(b03·c01·c02·return_1·2)는 핵심 요청 자리(buffet_1, t01)와 1 m 넘게 떨어져 있다 (스테이션 예약).
+steps:
+  - name: busy
+    gap_s: 0.5
+    tasks:
+      - {id: s11_busy_b03, type: collect, pickup: b03, dropoff: return_2}   # amr_05
+      - {id: s11_busy_c02, type: collect, pickup: c02, dropoff: return_2}   # amr_04
+      - {id: s11_busy_c01, type: collect, pickup: c01, dropoff: return_1}   # amr_02
+  # 2·4·5호가 모두 할당받은 것을 작업표로 확인하고 3 s 뒤 = 0초 (/demo/t0)
+  - name: request
+    after: {assigned: 3, delay_s: 3, timeout_s: 60}
+    t0: true
+    tasks:
+      - {id: s11_buffet1_t01, type: delivery, pickup: buffet_1, dropoff: t01}

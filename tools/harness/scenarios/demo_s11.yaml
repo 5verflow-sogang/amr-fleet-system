@@ -3,9 +3,13 @@
 #                                  scenario=demo_s11, repeats=1, label=off, params="cost_fn=euclidean slot=b2"
 #   결과: gs://amr-fleet-results/runs/demo_s11-on/…/video/*.mp4 (끔은 demo_s11-off)
 # 시작 위치: 1호 입구 옆(-10.5, -5.6), 3호 3번 매장 앞 (robots_restaurant_s11.yaml). 경로 필터는 끈다.
+# 작업: 장면 스크립트(tools/harness/demo_scene.py, params scene_script)가 tasks/demo_s11.yaml대로 넣는다:
+#   2·4·5호 동쪽 회수 → 0초에 buffet_1 → 1번 테이블 배달과 /demo/t0. 끔은 1호(직선 최단), 켬은 3호(혼잡 구역 피함)가 받는다
+# 손님: 피크 파일 그대로 (peak_1~3 서쪽 통로 몰림, peak_4~6 배식대 앞). 직원은 혼잡도에 안 센다
+# 카메라: top_west(홀 서쪽 위 12 m, 1호 출발 자리·서쪽 통로·배식대·3번 매장이 한 화면) + west(서쪽 통로 눈높이) + stalls
+# 영상 편집: tools/demo/compose.py가 두 실행(끔·켬)의 영상·rosbag으로 강조 표시(로봇 동그라미·주문·배정·혼잡 구역)를
+#   입힌 비교 영상을 만든다 (컷시트 tools/demo/cuts/s11.yaml)
 # 로봇 시점: 끔은 1호, 켬은 3호가 주인공 → params에 robot_camera=amr_01 또는 amr_03 (RTF가 더 떨어진다)
-# 손님: 피크 파일 그대로 (지수 11/6: peak_1~3 서쪽 통로 몰림 → 1-2, peak_4~6 배식대 앞 → 1-1). 직원은 혼잡도에 안 센다
-# TODO(연우): 장면 스크립트(2·4·5호 먼 배달 → 0초 요청, /demo/t0)가 생기면 task_schedule 대신 쓴다
 name: demo_s11
 extends: demo_restaurant
 # docker_run.sh는 이 파일의 packages: 줄만 읽는다 (extends를 따라가지 않는다)
@@ -13,11 +17,16 @@ packages: amr_bringup
 params:
   robots: robots_restaurant_s11.yaml
   guests: dynamic_obstacles_restaurant_peak.yaml
+  task_generator: "false"
+  # 작업 넣기 (임시: tools/harness/demo_scene.py + 장면 파일). 연우 장면 스크립트가 오면 이 한 줄만 바꾼다
+  scene_script: python3 /repo/tools/harness/demo_scene.py
+  scene_file: demo_s11.yaml
   cost_fn: euclidean
   congestion_weight: "3.0"
   congestion_filter: none
-  cameras: top,west,stalls
+  cameras: top_west,west,stalls
   robot_camera: "false"
-  # 워크플로는 이 파일 params만 받는다 (extends의 값은 안 본다). 녹화: localization=ground_truth
-  localization: "true"
-  duration_s: 60
+  # 녹화 전용이라 시뮬레이터 정답 위치 (AMCL은 손님 사이에서 밀려 거짓 도착이 난다, demo_restaurant 머리말)
+  localization: ground_truth
+  # 0초는 시작 약 10 s 뒤. 지난 녹화(11/8)에서 끔 1호가 서쪽 통로를 지나 배식대까지 약 95 s 걸려 도착까지 담으려고 150 s
+  duration_s: 150
