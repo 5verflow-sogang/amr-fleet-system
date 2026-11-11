@@ -5,11 +5,12 @@
 
 | 표시 (`layers`) | 무엇 | 기록 |
 | --- | --- | --- |
-| `request` | 주문 자리에 주황 고리가 퍼지고 "주문 · 배식대 1 → 1번 테이블" 배지 | `/demo/t0` (장면 스크립트) |
+| `request` | 주문 자리에 주황 고리가 퍼진다 (주문 내용은 `card`가 보여 준다) | `/demo/t0` (장면 스크립트) |
+| `reason` | 주문 순간 후보 → 주문 자리 직선과 배정 비용 (끔 거리, 켬 비용 = 거리 + 혼잡, 혼잡 구역 안 구간은 청록) | `/fleet/robot_states`·`/fleet/congestion` |
 | `assign` | 주문 자리 → 맡은 로봇 점선, 그 로봇 동그라미(끔 빨강 · 켬 파랑) + "1호 배정" | `/fleet/task_table` `assignee_id` |
 | `hero` · `dim` | 맡은 로봇을 따라다니는 동그라미, 그 밖은 어둡게 | `/fleet/robot_states` |
 | `candidates` | 후보 로봇(1-1: 1호·3호)에 흰 동그라미와 주문 자리까지 직선 거리 | `/fleet/robot_states` |
-| `zones` | 혼잡 구역 반투명 빨강 + "혼잡 1.0" | `/fleet/congestion` |
+| `zones` | 컷시트 `zones:`에 적은 혼잡 구역을 반투명 청록(빨강 보색)으로 계속 칠하고 "혼잡 1.0" (값에 따라 진하기) | `/fleet/congestion` |
 | `card` · `clock` · `arrived` | 작업 알림 카드, "요청 후 12.3 s", "도착 · 요청 후 23.4 s" | `/fleet/task_status` 단계 |
 
 월드 좌표 → 화면은 `amr_gazebo/config/demo_cameras_restaurant.yaml`의 카메라 자세·화각으로 옮긴다 (핀홀). 탑뷰는 물론
@@ -31,15 +32,16 @@ python3 tools/demo/compose.py render --off runs/off --on runs/on --out s11.mp4  
 ```
 
 `extract`만 ROS가 필요하다. `timeline.json`이 생기면 `plan`·`render`는 Python + Pillow(+ ffmpeg)만 있으면 어디서든 돈다
-(Windows는 맑은 고딕으로 대신 그린다, `--font`로 바꾼다).
+(Windows는 Pretendard Medium, 없으면 맑은 고딕으로 대신 그린다, `--font`로 바꾼다).
 
 ## 컷시트 (`cuts/s11.yaml`)
 
-컷마다 카메라, 시작 시각, 완성본 길이, 배속, 멈춤, 표시, 제목·자막을 적는다. 시작 시각은 녹화마다 달라 사건으로 적는다:
+컷마다 카메라, 시작 시각, 완성본 길이, 배속, 멈춤, 표시, 설명(`caption`, 화면 위 한 줄)을 적는다. 시작 시각은 녹화마다 달라 사건으로 적는다:
 `request`(0초), `assign`, `arrive`(둘 다 지난 늦은 쪽), `assign_off`·`arrive_on`처럼 한쪽, `end` ± 초. 두 실행은 각자의
 `/demo/t0`를 0초로 맞춰 같은 상대 시각을 자른다 (가이드).
 
-- 제목·자막의 `{robot_off}`·`{robot_on}`(1호·3호), `{arrive_off}`·`{arrive_on}`(초), `{stops_off}`, `{dist_amr_01}`(m)은
+- 설명의 `{robot_off}`·`{robot_on}`(1호·3호), `{arrive_off}`·`{arrive_on}`(초), `{stops_off}`, `{dist_amr_01}`(m),
+  `{cost_amr_03}`·`{jam_amr_01}`(켬 0초 배정 비용·혼잡 몫)은
   녹화 기록으로 채운다. 가이드: 로봇 번호·시각·수치는 녹화 기록을 따른다
 - `check: arrive_on < arrive_off`처럼 문구가 맞으려면 성립해야 하는 순서를 적으면, 녹화가 다를 때 `plan`·`render`가 경고한다
 - 사건이 녹화에 없는 컷(예: 끔 로봇이 끝내 도착하지 못함)은 빼고 경고한다

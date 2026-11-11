@@ -133,7 +133,7 @@ def cmd_plan(args) -> int:
     sheet = ov.CutSheet.load(args.cuts)
     runs = load_runs(args)
     rows, warnings, ev = plan(sheet, runs)
-    values = ov.text_values(runs, ov.load_stations(), sheet.candidates)
+    values = ov.text_values(runs, ov.load_stations(), sheet.candidates, sheet.congestion_weight)
     print('사건 (요청 기준 s): ' + ', '.join(f'{k} {v:.1f}' for k, v in ev.items() if v is not None))
     t = 0.0
     for cut, start, src in rows:
@@ -213,7 +213,7 @@ def cmd_render(args) -> int:
     stations = ov.load_stations()
     fonts = ov.Fonts(args.font)
     painter = ov.Painter(sheet, cameras, stations, fonts)
-    values = ov.text_values(runs, stations, sheet.candidates)
+    values = ov.text_values(runs, stations, sheet.candidates, sheet.congestion_weight)
     fps = sheet.fps
     total = sum(c.total for c, _, _ in rows)
     writer = Writer(args.out, fps, sheet.crf) if args.out else None

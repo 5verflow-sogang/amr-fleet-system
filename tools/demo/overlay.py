@@ -9,7 +9,7 @@
 월드 좌표를 카메라 화면으로 옮기는 식은 demo_cameras_restaurant.yaml의 카메라 자세·화각(핀홀)이다:
 Gazebo 카메라는 자기 +x를 보고 화면 오른쪽이 −y, 위가 +z다.
 
-    zones       혼잡 구역 반투명 빨강 (혼잡도에 따라 진하기)
+    zones       혼잡도 0.6 이상 구역 반투명 청록 (빨강 보색: 끔 쪽 빨간 동그라미·홀 바닥 붉은 톤과 섞이지 않게, 혼잡도에 따라 진하기)
     candidates  cut sheet의 후보 로봇(1-1: 1호·3호)에 흰 동그라미 + 주문 자리까지 직선 거리
     request     주문 자리에 주황 고리가 퍼지고 "주문 · 배식대 1 → 1번 테이블" 배지 (/demo/t0부터)
     assign      배정 순간부터 주문 자리 → 맡은 로봇 점선, 그 로봇 동그라미(끔 빨강·켬 파랑) + "1호 배정"
@@ -51,7 +51,9 @@ SCENE_TEXT = (195, 204, 214)
 MUTED = (162, 173, 186)
 SIDE_COLOR = {'off': (255, 146, 146), 'on': (131, 180, 255)}
 REQUEST_COLOR = (255, 196, 84)
-ZONE_COLOR = (255, 84, 84)
+ZONE_COLOR = (0, 214, 230)          # 청록 (빨강 보색). 식당 바닥이 붉은 나무라 빨강은 묻힌다
+ZONE_CHIP = (0, 84, 96)
+ZONE_MIN = 0.6                      # 이 혼잡도 이상인 구역만 칠한다 (낮은 구역까지 칠하면 홀 전체가 덮인다)
 BAR_BG = (52, 64, 77)
 BAR_FILL = (110, 168, 255)
 PANEL_XY = {'off': (32, 189), 'on': (808, 189)}
@@ -63,7 +65,8 @@ SIDES = ('off', 'on')
 FONT_CANDIDATES = (
     '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',      # 가이드: 녹화 컨테이너 Chromium이 쓴 글꼴, 최종본 전부 이것
     '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc',
-    'C:/Windows/Fonts/malgunbd.ttf',
+    str(Path.home() / 'AppData/Local/Microsoft/Windows/Fonts/Pretendard-Medium.otf'),   # Windows: 얇은 글꼴 먼저
+    'C:/Windows/Fonts/malgun.ttf',
     '/System/Library/Fonts/AppleSDGothicNeo.ttc',
 )
 
@@ -71,6 +74,7 @@ FONT_CANDIDATES = (
 ROBOT_Z = 1.0
 STATION_Z = 0.9
 RING_M = 0.45
+REASON_SS = 3       # 배정 이유 층을 몇 배로 그려 줄일지 (사선이 계단지지 않게)
 
 
 class Fonts:
@@ -243,7 +247,7 @@ class Run:
 
 
 # ---------------------------------------------------------------- 컷시트
-LAYERS = {'zones', 'candidates', 'request', 'assign', 'hero', 'dim', 'card', 'clock', 'arrived'}
+LAYERS = {'zones', 'candidates', 'request', 'reason', 'assign', 'hero', 'dim', 'card', 'clock', 'arrived'}
 EVENT = re.compile(r'^\s*(?P<name>[a-z_]+)\s*(?:(?P<sign>[+-])\s*(?P<off>\d+(?:\.\d+)?))?\s*$')
 
 
@@ -277,6 +281,8 @@ class CutSheet:
     result: dict
     fps: int = 20
     crf: int = 17
+    zones: tuple = ()     # 칠할 혼잡 구역 id (비우면 전부). 장면과 상관없는 구역이 잠깐 0.6을 넘어 깜박이지 않게
+    congestion_weight: float = 3.0   # 켬 배정 비용의 혼잡 가중치 (하네스 params congestion_weight와 같게)
 
     @classmethod
     def load(cls, path) -> 'CutSheet':
@@ -290,7 +296,8 @@ class CutSheet:
             cuts.append(cut)
         return cls(d['scene'], d['feature'], list(d.get('candidates', [])), d['request_label'],
                    d['station_label'], dict(d.get('camera_names', {})), cuts, dict(d.get('result', {})),
-                   int(d.get('fps', 20)), int(d.get('crf', 17)))
+                   int(d.get('fps', 20)), int(d.get('crf', 17)), tuple(d.get('zones', ())),
+                   float(d.get('congestion_weight', 3.0)))
 
 
 def events(runs: dict[str, Run]) -> dict[str, Optional[float]]:
@@ -330,8 +337,10 @@ def check_cut(cut: Cut, ev: dict) -> Optional[str]:
     return None if ok else f'"{cut.title}": {cut.check}가 아니다 ({a} {va:.1f} s, {b} {vb:.1f} s) - 문구를 녹화에 맞춘다'
 
 
-def text_values(runs: dict[str, Run], stations: dict, candidates: Sequence[str]) -> dict:
-    """제목·자막의 {이름} 자리: robot_off·robot_on, arrive_off·arrive_on(s), stops_off·stops_on, dist_<로봇>."""
+def text_values(runs: dict[str, Run], stations: dict, candidates: Sequence[str],
+                weight: Optional[float] = None) -> dict:
+    """제목·자막의 {이름} 자리: robot_off·robot_on, arrive_off·arrive_on(s), stops_off·stops_on, dist_<로봇>,
+    weight를 주면 켬 실행 0초 배정 비용 cost_<로봇>·혼잡 몫 jam_<로봇>."""
     v: dict[str, str] = {}
     for s, r in runs.items():
         v[f'robot_{s}'] = robot_label(r.assignee)
@@ -342,7 +351,56 @@ def text_values(runs: dict[str, Run], stations: dict, candidates: Sequence[str])
     for rid in candidates:
         p = runs['off'].pose(rid, runs['off'].t0)
         v[f'dist_{rid}'] = '-' if (p is None or st is None) else f'{math.dist(p, st):.1f}'
+    if weight is not None:
+        for rid, c in reason_costs(runs['on'], candidates, stations.get(runs['on'].pickup), weight).items():
+            v[f'cost_{rid}'] = f'{c["cost"]:.1f}'
+            v[f'jam_{rid}'] = f'{c["congestion"]:.1f}'
     return v
+
+
+def clip_segment(a, b, area) -> Optional[tuple]:
+    """선분 a→b 중 사각형 area [x_min, x_max, y_min, y_max] 안 구간 (t0, t1), 없으면 None (Liang-Barsky,
+    amr_fleet_core cost.segment_length_in_rect와 같은 식)."""
+    x0, x1, y0, y1 = area
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, a[0] - x0), (dx, x1 - a[0]), (-dy, a[1] - y0), (dy, y1 - a[1])):
+        if p == 0.0:
+            if q < 0.0:
+                return None
+            continue
+        t = q / p
+        if p < 0.0:
+            t0 = max(t0, t)
+        else:
+            t1 = min(t1, t)
+        if t0 > t1:
+            return None
+    return (t0, t1) if t1 > t0 else None
+
+
+def assign_cost(robot, station, zones, weight: float) -> dict:
+    """배정 비용 (fleet cost_fn): 직선 거리, 켬 = 직선 + weight × Σ(혼잡도 × 로봇 → 픽업 선분이 구역 안을 지나는 길이).
+    반환 {'dist', 'congestion', 'cost', 'spans': [(zone_id, value, t0, t1)]}."""
+    dist = math.dist(robot, station)
+    spans, extra = [], 0.0
+    for zone_id, area, value in zones:
+        c = clip_segment(robot, station, area)
+        if c and value > 0.0:
+            spans.append((zone_id, value, c[0], c[1]))
+            extra += value * (c[1] - c[0]) * dist
+    return {'dist': dist, 'congestion': weight * extra, 'cost': dist + weight * extra, 'spans': spans}
+
+
+def reason_costs(run: 'Run', candidates, station, weight: float) -> dict:
+    """요청 순간(0초) 후보마다 배정 비용. 끔은 거리만 비교한다."""
+    out = {}
+    zones = run.zones_at(run.t0)
+    for rid in candidates:
+        p = run.pose(rid, run.t0)
+        if p is not None and station is not None:
+            out[rid] = assign_cost(p, station, zones, weight)
+    return out
 
 
 def fill(text: str, values: dict) -> str:
@@ -364,7 +422,26 @@ def _badge(g: ImageDraw.ImageDraw, xy, text, color, font, box=VIDEO_SIZE, text_c
     x = min(max(xy[0], 4), box[0] - tw - 20)
     y = min(max(xy[1], 4), box[1] - h - 4)
     g.rounded_rectangle([x, y, x + tw + 16, y + h], 6, fill=color + (235,))
-    g.text((x + 8, y + 5), text, font=font, fill=text_color + (255,))
+    g.text((x + 8, y + h / 2), text, font=font, fill=text_color + (255,), anchor='lm')
+
+
+def _round_line(g: ImageDraw.ImageDraw, a, b, color, width):
+    """끝이 둥근 직선."""
+    g.line([*a, *b], fill=color, width=int(width))
+    h = width / 2
+    for x, y in (a, b):
+        g.ellipse([x - h, y - h, x + h, y + h], fill=color)
+
+
+def _merge_spans(spans):
+    """겹치거나 맞닿은 (t0, t1) 구간을 합친다 (구역 경계에서 선이 끊겨 보이지 않게)."""
+    out = []
+    for t0, t1 in sorted(spans):
+        if out and t0 <= out[-1][1] + 1e-3:
+            out[-1] = (out[-1][0], max(out[-1][1], t1))
+        else:
+            out.append((t0, t1))
+    return out
 
 
 def _ring(g: ImageDraw.ImageDraw, u, v, r, color, width=5):
@@ -402,21 +479,23 @@ class Painter:
 
         if 'zones' in layers:
             for zone_id, area, value in run.zones_at(t):
-                if value <= 0.05:
+                # 컷시트가 정한 구역은 값이 내려가도 계속 그린다 (0.6 밑으로 잠깐 내려가 박스가 깜박이지 않게).
+                # 정한 구역이 없으면 ZONE_MIN 이상만
+                if (zone_id not in self.sheet.zones) if self.sheet.zones else value < ZONE_MIN:
                     continue
                 x0, x1, y0, y1 = area
                 pts = [self._pt(cam, x, y, 0.0) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
                 if None in pts:
                     continue
-                a = int(20 + 50 * min(value, 1.0))
+                a = int(25 + 45 * min(value, 1.0))
                 poly = [(p[0], p[1]) for p in pts]
                 g.polygon(poly, fill=ZONE_COLOR + (a,))
                 g.line(poly + poly[:1], fill=ZONE_COLOR + (int(120 + 135 * min(value, 1.0)),), width=3)
                 lx, ly = min(p[0] for p in pts), max(p[1] for p in pts)
                 label = f'혼잡 {value:.1f}'
                 g.rounded_rectangle([lx + 4, ly - 26, lx + 14 + g.textlength(label, font=f(15)), ly - 4], 4,
-                                    fill=(120, 20, 20, 210))
-                g.text((lx + 9, ly - 25), label, font=f(15), fill=(255, 235, 235, 255))
+                                    fill=ZONE_CHIP + (225,))
+                g.text((lx + 9, ly - 15), label, font=f(15), fill=(230, 252, 255, 255), anchor='lm')
         if 'dim' in layers and hero_pt and assigned:
             mask = Image.new('L', VIDEO_SIZE, 140)
             u, v, r = hero_pt
@@ -442,8 +521,9 @@ class Painter:
                     rr = 14 + 34 * ((phase + k / 3) % 1.0) if rel < 3.6 else 14 + 12 * k
                     alpha = int(255 * (1 - (rr - 14) / 40)) if rel < 3.6 else 255 - 70 * k
                     g.ellipse([u - rr, v - rr, u + rr, v + rr], outline=REQUEST_COLOR + (max(alpha, 40),), width=4)
-                # 주문 자리가 화면 위 끝(탑뷰의 배식대)이면 고리 아래에 붙인다
-                _badge(g, (u + 30, v - 44 if v > 90 else v + 26), self.sheet.request_label, REQUEST_COLOR, f(18))
+        if 'reason' in layers and station:
+            ov = Image.alpha_composite(ov, self._reason(cam, run, station))
+            g = ImageDraw.Draw(ov)
         if 'assign' in layers and assigned and station and hero_pt:
             sp = self._pt(cam, *station, STATION_Z)
             if sp:
@@ -457,11 +537,11 @@ class Painter:
             _badge(g, (u + r + 4, v - 12), robot_label(run.assignee), color, f(18))
         if 'arrived' in layers and run.arrive_t is not None and t >= run.arrive_t and hero_pt:
             u, v, r = hero_pt
-            _badge(g, (u - 70, v + r + 6), f'도착 · 요청 후 {run.arrive_t - run.t0:.1f} s', color, f(17))
+            _badge(g, (u - 110, v + r + 8), f'도착 · 요청 후 {run.arrive_t - run.t0:.1f} s', color, f(26))
         if 'clock' in layers:
             txt = f'요청 후 {rel:.1f} s' if rel >= 0 else f'요청 {-rel:.1f} s 전'
             g.rounded_rectangle([8, 8, 20 + g.textlength(txt, font=f(18)), 40], 6, fill=(13, 17, 23, 200))
-            g.text((14, 11), txt, font=f(18), fill=TEXT + (255,))
+            g.text((14, 24), txt, font=f(18), fill=TEXT + (255,), anchor='lm')
         if 'card' in layers and rel >= 0:
             who = f'▶ {robot_label(run.assignee)}' if assigned else '배정 대기'
             lines = (f'요청 후 {rel:.1f} s · 새 작업', f'{self.sheet.request_label.split("·")[-1].strip()}  {who}')
@@ -470,29 +550,91 @@ class Painter:
             x, y = VIDEO_SIZE[0] - w - 10, VIDEO_SIZE[1] - 74
             g.rounded_rectangle([x, y, VIDEO_SIZE[0] - 10, y + 64], 8, fill=PANEL_BG + (235,),
                                 outline=PANEL_BORDER + (255,), width=2)
-            g.text((x + 14, y + 6), lines[0], font=f(15), fill=MUTED + (255,))
-            g.text((x + 14, y + 30), lines[1], font=f(19), fill=TEXT + (255,))
+            g.text((x + 14, y + 18), lines[0], font=f(15), fill=MUTED + (255,), anchor='lm')
+            g.text((x + 14, y + 44), lines[1], font=f(19), fill=TEXT + (255,), anchor='lm')
         return Image.alpha_composite(base, ov).convert('RGB')
+
+    def _reason(self, cam: Camera, run: Run, station) -> Image.Image:
+        """배정 이유 (투명 층): 후보 → 주문 자리 직선과 비용. 끔은 거리만 크게, 켬은 혼잡 구역 안 구간을 칠하고 비용.
+        선이 계단지지 않게 REASON_SS배로 그려 줄인다."""
+        S = REASON_SS
+        layer = Image.new('RGBA', (VIDEO_SIZE[0] * S, VIDEO_SIZE[1] * S), (0, 0, 0, 0))
+        g = ImageDraw.Draw(layer)
+        f = lambda size: self.fonts(size * S)  # noqa: E731
+        on = run.side == 'on'
+        costs = reason_costs(run, self.sheet.candidates, station, self.sheet.congestion_weight)
+        sp = self._pt(cam, *station, STATION_Z)
+        if not costs or not sp:
+            return layer.resize(VIDEO_SIZE, Image.LANCZOS)
+        key = 'cost' if on else 'dist'
+        best = min(costs, key=lambda rid: costs[rid][key])
+        b = (sp[0] * S, sp[1] * S)
+        labels = []
+        for rid, c in costs.items():
+            rp = self._pt(cam, *run.pose(rid, run.t0), ROBOT_Z)
+            if not rp:
+                continue
+            a = (rp[0] * S, rp[1] * S)
+            win = rid == best
+            line = SIDE_COLOR[run.side] if win else (210, 214, 220)
+            # 선 굵기는 한 가지로 (혼잡 구간만 색을 바꾼다). 굵기가 바뀌거나 구간 끝이 각지면 울퉁불퉁해 보인다
+            seg = lambda t0, t1, col, w: _round_line(g, (a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0),  # noqa: E731
+                                                     (a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1), col, w)
+            seg(0.0, 1.0, (13, 17, 23, 210), 11 * S)
+            # 켬: 밑선은 흰색, 혼잡 구역 안 구간만 청록 (어느 로봇을 골랐는지는 동그라미·비용 글자 색으로)
+            seg(0.0, 1.0, ((255, 255, 255) if on else line) + (255,), 6 * S)
+            if on:
+                for t0, t1 in _merge_spans([(t0, t1) for _, value, t0, t1 in c['spans'] if value >= 0.3]):
+                    seg(t0, t1, ZONE_COLOR + (255,), 6 * S)
+            r = rp[2] * S
+            for rr, col, w in ((r + 2 * S, (13, 17, 23, 220), (9 if win else 7) * S), (r, line + (255,), (5 if win else 3) * S)):
+                g.ellipse([a[0] - rr, a[1] - rr, a[0] + rr, a[1] + rr], outline=col, width=w)
+            mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+            labels.append((rid, c, win, line, mid, abs(b[0] - a[0]) > abs(b[1] - a[1])))
+        for rid, c, win, line, mid, flat in labels:
+            # 큰 줄: 끔은 거리, 켬은 비용. 켬 작은 줄: 거리 + 혼잡
+            big = f'{robot_label(rid)}  {c["dist"]:.1f} m' if not on else f'{robot_label(rid)}  비용 {c["cost"]:.1f}'
+            if win:
+                big += '  ← 선택'
+            small = f'거리 {c["dist"]:.1f} + 혼잡 {c["congestion"]:.1f}' if on else ''
+            fb, fs = f(30 if win else 26), f(18)
+            w = max(g.textlength(big, font=fb), g.textlength(small, font=fs) if small else 0) + 24 * S
+            h = (fb.size + 16 * S) + ((fs.size + 8 * S) if small else 0)
+            # 가로로 누운 선(매장 앞 통로)은 선 아래로, 세로 선(서쪽 통로)은 선 오른쪽에
+            x = mid[0] - w / 2 if flat else mid[0] + 18 * S
+            y = mid[1] + 24 * S if flat else mid[1] - h / 2
+            x = min(max(x, 4 * S), layer.width - w - 4 * S)
+            y = min(max(y, 4 * S), layer.height - h - 4 * S)
+            g.rounded_rectangle([x, y, x + w, y + h], 8 * S, fill=line + (240,))
+            row1 = fb.size + 16 * S
+            g.text((x + 12 * S, y + row1 / 2), big, font=fb, fill=BG + (255,), anchor='lm')
+            if small:
+                g.text((x + 12 * S, y + row1 + (fs.size + 8 * S) / 2 - 4 * S), small, font=fs, fill=(40, 46, 56, 255),
+                       anchor='lm')
+        return layer.resize(VIDEO_SIZE, Image.LANCZOS)
 
     # ---- 한 장 전체
     def frame(self, cut: Cut, index: int, count: int, progress: float, panels: dict[str, Image.Image],
               values: dict) -> Image.Image:
-        """compose 한 장: 머리글·제목·패널 둘·자막·진행선. panels = {'off': 752×424, 'on': 752×424}."""
+        """compose 한 장: 머리글·설명 한 줄·패널 둘·진행선. panels = {'off': 752×424, 'on': 752×424}."""
         img = Image.new('RGB', CANVAS, BG)
         g = ImageDraw.Draw(img)
         f = self.fonts
-        g.text((40, 22), self.sheet.scene, font=f(26), fill=SCENE_TEXT)
-        g.text((40, 83), fill(cut.title, values), font=f(41), fill=TEXT)
-        cam_name = self.sheet.camera_names.get(cut.camera, cut.camera)
+        g.text((40, 38), self.sheet.scene, font=f(26), fill=SCENE_TEXT, anchor='lm')
+        # 위 한 줄: 그 컷의 설명 (caption, 없으면 title). 길면 한 줄에 들어가게 글자를 줄인다
+        line = fill(cut.caption or cut.title, values)
+        size = 38
+        while size > 24 and g.textlength(line, font=f(size)) > CANVAS[0] - 80:
+            size -= 1
+        g.text((40, 112), line, font=f(size), fill=TEXT, anchor='lm')
         for side in SIDES:
             x, y = PANEL_XY[side]
             g.rounded_rectangle([x, y, x + PANEL_SIZE[0], y + PANEL_SIZE[1]], 9, fill=PANEL_BG, outline=PANEL_BORDER,
                                 width=2)
-            g.ellipse([x + 18, y + 14, x + 32, y + 28], fill=SIDE_COLOR[side])
-            g.text((x + 40, 194), f'{self.sheet.feature} {"끔" if side == "off" else "켬"}', font=f(23), fill=TEXT)
-            g.text((x + 570, 197), cam_name, font=f(20), fill=MUTED)
+            g.ellipse([x + 18, y + 20, x + 32, y + 34], fill=SIDE_COLOR[side])
+            g.text((x + 42, y + 27), f'{self.sheet.feature} {"끔" if side == "off" else "켬"}', font=f(23), fill=TEXT,
+                   anchor='lm')
             img.paste(panels[side], (x + VIDEO_OFFSET[0], y + VIDEO_OFFSET[1]))
-        g.text((40, 745), fill(cut.caption, values), font=f(28), fill=TEXT)
         _progress(g, f, index, count, progress)
         return img
 
@@ -506,41 +648,57 @@ def _progress(g, f, index, count, progress):
 
 def result_frame(sheet: CutSheet, runs: dict[str, Run], fonts: Fonts, index: int, count: int,
                  values: dict) -> Image.Image:
-    """마지막 결과 장표: 대표 문장, 끔·켬 핵심 수치, 요청 → 도착 막대 그래프, 시간 기준·지표 정의."""
+    """마지막 결과 장표: 대표 문장, 요청 → 도착 타임라인(먼저 도착한 차이), 시간 기준·지표 정의."""
     res = sheet.result
     img = Image.new('RGB', CANVAS, BG)
     g = ImageDraw.Draw(img)
     f = fonts
     g.text((50, 42), fill(res.get('title', ''), values), font=f(48), fill=TEXT)
     rows = {}
-    for side, x in (('off', 50), ('on', 838)):
+    for side in SIDES:
         r = runs[side]
         a = r.rel('arrive')
-        m = r.metrics
-        head = f'{sheet.feature} {"끔" if side == "off" else "켬"} · {robot_label(r.assignee)}'
-        g.ellipse([x, 155, x + 16, 171], fill=SIDE_COLOR[side])
-        g.text((x + 28, 145), head, font=f(30), fill=TEXT)
-        arrive = f'{a:.1f} s' if a is not None else f'도착 못 함 (녹화 끝 {r.end - r.t0:.0f} s)'
-        g.text((x + 28, 195), f'요청 → {sheet.station_label} 도착  {arrive}', font=f(26), fill=SIDE_COLOR[side])
-        if 'stops' in m:
-            g.text((x + 28, 236), f'가다 멈춤 {m["stops"]}회 · {m.get("stop_s", 0):.1f} s', font=f(24), fill=MUTED)
         rows[side] = a if a is not None else r.end - r.t0
-    # 막대: 요청 → 도착 (s)
-    g.text((50, 330), res.get('graph_title', f'요청 → {sheet.station_label} 도착 (s, 짧을수록 좋다)'), font=f(24),
-           fill=SCENE_TEXT)
-    top, h, gap, x0, span = 385, 70, 34, 210, 1250
-    vmax = max(rows.values()) or 1.0
+    # 도착 타임라인: 요청(0초)부터 시간축, 줄마다 도착 시각에 표시. 막대는 길수록 좋아 보여서 쓰지 않는다
+    g.text((50, 160), res.get('graph_title', f'요청 → {sheet.station_label} 도착 시간'), font=f(28), fill=SCENE_TEXT)
+    x0, x1, top, lane = 250, 1480, 280, 120
+    vmax = math.ceil((max(rows.values()) + 5) / 20.0) * 20
+    sx = lambda v: x0 + (x1 - x0) * v / vmax  # noqa: E731
+    axis_y = top + 2 * lane - 20
+    for v in range(0, int(vmax) + 1, 20):
+        g.line([sx(v), top - 30, sx(v), axis_y], fill=(40, 47, 57), width=1)
+        lab = f'{v} s'
+        g.text((sx(v) - g.textlength(lab, font=f(18)) / 2, axis_y + 8), lab, font=f(18), fill=MUTED)
     for i, side in enumerate(SIDES):
-        y = top + i * (h + gap)
-        g.text((50, y + 18), f'{"끔" if side == "off" else "켬"} · {robot_label(runs[side].assignee)}', font=f(26),
+        y = top + i * lane + 20
+        arrived = runs[side].rel('arrive') is not None
+        g.text((50, y - 18), f'{"끔" if side == "off" else "켬"} · {robot_label(runs[side].assignee)}', font=f(30),
                fill=TEXT)
-        g.rectangle([x0, y, x0 + span, y + h], fill=PANEL_BG)
-        w = span * rows[side] / vmax
-        g.rectangle([x0, y, x0 + w, y + h], fill=SIDE_COLOR[side])
-        label = f'{rows[side]:.1f} s' + ('' if runs[side].rel('arrive') is not None else ' (도착 못 함)')
-        lx = x0 + w + 12 if w < span - 220 else x0 + w - g.textlength(label, font=f(28)) - 14
-        g.text((lx, y + 17), label, font=f(28), fill=TEXT if w < span - 220 else BG)
-    y = top + 2 * (h + gap) + 30
+        g.line([x0, y, x1, y], fill=PANEL_BG, width=6)
+        xa = sx(rows[side])
+        g.line([x0, y, xa, y], fill=SIDE_COLOR[side], width=4)
+        g.ellipse([x0 - 7, y - 7, x0 + 7, y + 7], fill=MUTED)
+        r = 17
+        g.ellipse([xa - r, y - r, xa + r, y + r], fill=SIDE_COLOR[side], outline=BG, width=3)
+        label = f'{rows[side]:.1f} s 도착' if arrived else f'{rows[side]:.0f} s 까지 도착 못 함'
+        lw = g.textlength(label, font=f(28))
+        g.text((min(xa - lw / 2, x1 + 60 - lw), y - 58), label, font=f(28), fill=SIDE_COLOR[side])
+    # 먼저 도착한 쪽과의 차이
+    ta, tb = rows['on'], rows['off']
+    if runs['on'].rel('arrive') is not None and ta < tb:
+        ya, yb = top + 20, top + lane + 20
+        for t, y_from in ((ta, yb + 22), (tb, ya + 22)):          # 도착 점 밑에서 차이 괄호까지
+            for yy in range(int(y_from), axis_y + 40, 12):
+                g.line([sx(t), yy, sx(t), yy + 6], fill=SIDE_COLOR['on'], width=2)
+        yb2 = axis_y + 50
+        g.line([sx(ta), yb2, sx(tb), yb2], fill=SIDE_COLOR['on'], width=3)
+        for t in (ta, tb):
+            g.line([sx(t), yb2 - 10, sx(t), yb2 + 10], fill=SIDE_COLOR['on'], width=3)
+        msg = f'켬 {robot_label(runs["on"].assignee)}가 {tb - ta:.1f}초 먼저 도착'
+        mx = (sx(ta) + sx(tb)) / 2 - g.textlength(msg, font=f(30)) / 2
+        mx = min(mx, x1 - g.textlength(msg, font=f(30)))
+        g.text((mx, yb2 + 16), msg, font=f(30), fill=SIDE_COLOR['on'])
+    y = axis_y + 130
     for line in res.get('notes', []):
         g.text((50, y), fill(line, values), font=f(20), fill=MUTED)
         y += 32

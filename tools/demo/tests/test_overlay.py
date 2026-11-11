@@ -134,7 +134,7 @@ def test_s11_cut_sheet_uses_known_cameras_layers_and_events():
         assert ov.check_cut(cut, ev) is None, cut.title
     assert sheet.cuts[-1].result
     # 가이드: 컷 전환 바로 이어 붙이고 전체 약 40 s 안팎
-    assert 25 <= sum(c.total for c in sheet.cuts) <= 50
+    assert 25 <= sum(c.total for c in sheet.cuts) <= 60          # 글자 읽을 시간 (컷 6 s 이상)
 
 
 def test_resolve_and_check_report_missing_or_reversed_events():
