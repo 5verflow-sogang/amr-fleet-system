@@ -5,23 +5,32 @@
 #   끔 (회수 priority 100): 배달과 같은 우선순위라 대기열 맨 뒤, 배달 4건이 배정된 뒤에 배정
 # aging은 둘 다 끔 (fleet_params 비움 = aging_rate 0.0).
 #
-# 누가 어느 작업을 맡나: 로봇이 동쪽 벽(x 11.2)에 amr_01(남) ~ amr_05(북) 한 줄로 서 있고 픽업은 모두 북쪽(y 4.15)이라,
-# 최소거리(nearest) 배정이면 busy 작업을 낸 순서대로 amr_05, 04, 03, 02, 01이 맡는다 (0.5 s 간격으로 내 순서를 못 박는다).
+# 누가 어느 작업을 맡나: 로봇이 동쪽 벽(x 11.2)에 amr_01(남) ~ amr_05(북) 한 줄로 서 있다. 시작 작업을 0.5 s 간격으로 내면
+# 최소거리(nearest) 배정이 낸 순서대로 amr_05, 04, 03, 02, 01에 준다 (장면 검사가 서버와 같은 탐욕 배정으로 확인한다).
 # 2호가 먼저 일을 마치게 4번째 작업(2호)을 가장 짧게, 다음 로봇과 10 m 넘게 차이 나게 둔다.
-# path_m: 시작 자리 → 픽업 → 하역 A* 경로 길이 (amr_planning_core, 새 restaurant_gt(#341) + 식당 프로필 costmap, 11/8 계산.
-#   experiments/restaurant_demo/scene_plan). 2호 16.6 m, 나머지 27.6~27.9 m (차이 11.0 m). 픽업은 서로 달라 예약으로 기다리지
-#   않는다. 0초는 시작 뒤 약 8 s라 2호가 0.8 m/s(#338)로 달려도 16.6 / 0.8 + 4 = 25 s에 끝나 0초 뒤다
-# 정차 자리는 stations_restaurant.yaml. 시작 작업(busy·queue)은 핵심 요청 자리(t03, return_1)와 1 m 안을 쓰지 않는다
-# (서버 스테이션 예약 1 m - 겹치면 핵심 요청이 예약 때문에 밀려 우선순위 효과가 섞인다)
+# 0초: 대기 배달 4건이 대기 중이고 2호가 하역 1 m 앞에 왔을 때 (after.near). 실제 평균 속도가 약 0.2 m/s(11/8 1-2 녹화
+#   12.75 m / 62 s)라 시작 뒤 고정 시각으로 0초를 찍으면 2호가 한참 뒤에 비었다 - 위치로 맞춰 0초 직후 2호가 빈다
+# 자리 고르기 (11/9 녹화·로컬 재현 반영, experiments/restaurant_demo/scene_plan/search_routes.py act1):
+# - 서버 스테이션 예약(맡긴 작업의 픽업·하역을 끝날 때까지 잡아 둠, 1 m): 시작 작업 5건, 대기 배달 4건(9·15·4·2번 테이블,
+#   매장 stall_3·4·1·2 픽업, 그대로), 회수(t03 → return_1)의 자리가 모두 서로 다르다
+# - 부스 b01~b03은 쓰지 않는다 (11/9 녹화: 2호 b02·1호 b03 앞에서 멈춰 실패 → 재큐. 로컬 재현: 추적·안전을 켜면 부스 칸에서
+#   못 빠져나온다)
+# - 평상시 손님 경로 1 m 안 자리(t06·t07·t08·t11·t12·t13)는 쓰지 않는다 (11/9 녹화: 5호가 t06 손님 무리에 오래 머묾)
+# - 경로가 4인석-6인석 사이 1.0 m 세로 통로(x 4.0~5.6)와 부스 칸(x 9.3~)을 지나지 않는다 (11/9 2막 녹화·로컬 재현에서 막힘)
+# - 같은 속도로 동시에 출발할 때 두 로봇이 1 m 안에서 마주 오는 때가 없다 (11/9 2막 녹화: 세 대가 윗줄 통로에서 마주 와
+#   서로 막힘). 같은 통로를 다른 때 지나는 구간(정적 겹침)은 최대 3 m
+# path_m: 시작 자리 → 픽업 → 하역 A* 경로 길이 (amr_planning_core, 새 restaurant_gt(#341) + 식당 프로필 costmap).
+#   2호 8.9 m, 나머지 19.8~42.2 m (차이 10.8 m)
+# 정차 자리는 stations_restaurant.yaml.
 steps:
   - name: busy
     gap_s: 0.5
     tasks:
-      - {id: a_busy_t06, type: delivery, pickup: stall_3, dropoff: t06, path_m: 27.6}    # amr_05
-      - {id: a_busy_t08, type: delivery, pickup: stall_1, dropoff: t08, path_m: 27.6}    # amr_04
-      - {id: a_busy_t01, type: delivery, pickup: buffet_1, dropoff: t01, path_m: 27.9}   # amr_03
-      - {id: a_busy_L01, type: delivery, pickup: stall_4, dropoff: L01, path_m: 16.6}    # amr_02 (먼저 끝난다)
-      - {id: a_busy_t13, type: delivery, pickup: stall_2, dropoff: t13, path_m: 27.9}    # amr_01
+      - {id: a_busy_t01, type: delivery, pickup: L04, dropoff: t01, path_m: 24.1}       # amr_05
+      - {id: a_busy_t05, type: delivery, pickup: buffet_2, dropoff: t05, path_m: 36.0}  # amr_04
+      - {id: a_busy_L01, type: delivery, pickup: buffet_1, dropoff: L01, path_m: 42.2}  # amr_03
+      - {id: a_busy_c01, type: delivery, pickup: L03, dropoff: c01, path_m: 8.9}        # amr_02 (먼저 끝난다)
+      - {id: a_busy_t14, type: delivery, pickup: t10, dropoff: t14, path_m: 19.8}       # amr_01
   # 5대가 모두 할당받은 뒤 배달 4건 (빈 로봇이 없어 대기한다)
   - name: queue
     after: {assigned: 5, timeout_s: 60}
@@ -30,9 +39,13 @@ steps:
       - {id: a_wait_t15, type: delivery, pickup: stall_4, dropoff: t15}
       - {id: a_wait_t04, type: delivery, pickup: stall_1, dropoff: t04}
       - {id: a_wait_t02, type: delivery, pickup: stall_2, dropoff: t02}
-  # 4건이 대기 중인 것을 작업표로 확인하고 3 s 뒤 회수 호출 = 0초 (/demo/t0)
+  # 4건이 대기 중이고, 2호(a_busy_c01을 맡은 로봇)가 하역 자리 1 m 앞에 왔을 때 회수 호출 = 0초 (/demo/t0).
+  # (픽업 L03이 하역 c01에서 1.35 m라 2 m로 두면 픽업하는 동안 0초가 된다)
+  # 실제 속도(녹화 약 0.2 m/s)와 상관없이 0초 직후 2호가 일을 마친다
   - name: collect
-    after: {pending: 4, delay_s: 3, timeout_s: 30}
+    # 시간 제한 70 s (대기 배달 뒤): 2호가 막혀 near가 안 맞으면 그 시각을 0초로 한다 (2막 11/10 off_v3과 같은 대비).
+    # 2호 8.9 m는 0.2 m/s면 대기 배달 뒤 약 37 s에 하역 1 m 앞이다. scene.json t0_by가 near 또는 timeout
+    after: {pending: 4, delay_s: 3, near: {task: a_busy_c01, within_m: 1.0}, timeout_s: 70}
     t0: true
     tasks:
       - {id: a_collect_t03, type: collect, pickup: t03, dropoff: return_1, priority: "{collect_priority}"}
