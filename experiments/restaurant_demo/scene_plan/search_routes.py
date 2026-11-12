@@ -40,6 +40,17 @@ ACT2_AISLE = (3.8, 5.6, -1.2, 1.2)
 ACT2_NO_STATIONS = ['t10', 'L03', 'L04', 'c02']
 ACT2_C01_RADIUS = 3.0
 C01_PICKUPS = ['stall_1', 'stall_2', 'stall_3', 'stall_4', 'buffet_1']
+# 11/12 켬 녹화 on_v6b: 2막 시작 뒤 4호(stall_2 픽업)·5호(stall_3 하역)·3호(stall_4 하역)가 매장 앞에 몰려 약 90 s 서로
+# 막혀 2인석 배달이 영상 안에 안 끝났다. 매장(stall_1~4)에는 4호만 간다: 다른 시작 작업은 매장을 쓰지 않고 4호 일터(t03 하역,
+# stall_2 픽업) 2.5 m 안에 서지 않는다. 3호·5호 하역은 아래쪽·왼쪽 테이블. 남은 아래쪽·왼쪽 테이블이 t07·t13·t15뿐이고
+# t07·t13은 평상시 손님 경로 1 m 안이라, 2막만 이 둘과 buffet_2(1-2 핵심 자리, 2막은 안 쓴다)를 쓴다 - 안 그러면 자리가
+# 모자란다 (서로 다른 자리 8곳이 필요한데 남는 곳이 8곳, 그중 픽업이 되는 곳 5곳)
+STALLS = ['stall_1', 'stall_2', 'stall_3', 'stall_4']
+ACT2_LOW = ['t07', 't13', 't15']
+ACT2_GUEST_OK = ['t07', 't13']
+ACT2_KEY4, ACT2_KEY4_M = ['stall_2', 't03'], 2.5
+ACT2_MIN_M = 25.0
+ACT2_SPEEDS = (0.15, 0.2, 0.25)
 TIGHT = BOOTHS
 V_CHECK, DWELL, T0_ACT2 = 0.25, 2.0, 66.0
 CELL = 0.5
@@ -147,6 +158,113 @@ def meet(a, b, near_m=1.0):
     close = np.linalg.norm(a[:n] - b[:n], axis=1) <= near_m
     opposite = np.einsum('ij,ij->i', da, db) < 0
     return float(np.sum(close & opposite)) * 0.25
+
+
+def traj(legs, t0, v, dwell=DWELL):
+    """구간들을 속도 v로 차례로 가고 끝마다 dwell 쉰다 → 0.5 s 간격 (시각, 자리)."""
+    T, P = [], []
+    t = t0
+    for leg in legs:
+        for q in resample(leg, v * 0.5):
+            T.append(t)
+            P.append(q)
+            t += 0.5
+        for _ in range(int(dwell / 0.5)):
+            T.append(t)
+            P.append(leg[-1])
+            t += 0.5
+    return np.array(T), np.array(P)
+
+
+def block(a, b, near_m=1.5, after_s=60.0):
+    """a 궤적이 b 궤적과 같은 때 near_m 안에 있고 둘 중 하나가 서 있거나 같은 쪽으로 가지 않는 시간 (s).
+    같은 쪽으로 뒤따라가는 것은 세지 않는다. 처음 after_s는 뺀다 (동쪽 벽 출발 줄에서 나란히 나가는 것은 장면마다 같다)."""
+    (T, P), (T2, P2) = a, b
+    V, V2 = np.gradient(P, axis=0), np.gradient(P2, axis=0)
+    k = np.clip(np.searchsorted(T2, T), 0, len(T2) - 1)
+    d = np.linalg.norm(P - P2[k], axis=1)
+    na, nb = np.linalg.norm(V, axis=1), np.linalg.norm(V2[k], axis=1)
+    cos = np.einsum('ij,ij->i', V, V2[k]) / np.maximum(na * nb, 1e-9)
+    hit = (T > after_s) & (T <= T2[-1]) & (d <= near_m) & ((na < 1e-6) | (nb < 1e-6) | (cos < 0.5))
+    return float(np.sum(hit)) * 0.5
+
+
+def act2(R, normal, c01_pickup='stall_2'):
+    """2막 시작 작업: 4호 t09 → t03 고정(0초 직후 가장 먼저 빈다), 2인석 배달 stall_2 → c01. 나머지 4대는
+    - 매장 안 감, 4호 일터 2.5 m 안에 안 섬, 3호·5호 하역은 아래쪽·왼쪽 테이블, A* 25 m 이상
+    - 남동쪽 구석(ACT2_*), 좁은 칸, 부스, 핵심 자리를 안 씀, 자리가 모두 다름, 낸 순서대로 05, 04, 03, 02, 01에 배정
+    순위: (1) 픽업 → 하역 경로가 4호 일하는 길(t09 → t03 → stall_2 → c01)과 겹치는 길이 합,
+    (2) 4호와 막히는 시간 합(같은 때 1.5 m 안에서 서 있거나 마주침, 0.15·0.2·0.25 m/s 중 속도 차 0.05 이하 조합의 최대),
+    (3) 4호 말고 로봇끼리 막히는 시간, (4) 마주침"""
+    R.boxes = list(TIGHT_BOXES) + [ACT2_AISLE]
+    near_c01 = [n for n in R.st if math.dist(R.st[n], R.st['c01']) <= ACT2_C01_RADIUS]
+    forbid = set(['t11', 'c01', 't01', 't06', 't08', 't12', 't14', 'return_1', 'return_2', 't09', 't03', c01_pickup]
+                 + TIGHT + ACT2_NO_STATIONS + near_c01 + STALLS + [n for n in normal if n not in ACT2_GUEST_OK])
+    names = [n for n in R.st if n.startswith(('buffet_', 't', 'L')) and n not in forbid
+             and all(math.dist(R.st[n], R.st[f]) > 1.0 for f in forbid if f not in STALLS)
+             and min(math.dist(R.st[n], R.st[z]) for z in ACT2_KEY4) > ACT2_KEY4_M]
+    a4 = [R.leg('amr_04', 't09'), R.leg('t09', 't03'), R.leg('t03', c01_pickup), R.leg(c01_pickup, 'c01')]
+    work4 = cells(resample(np.vstack(a4[1:])))
+    t4 = {v: traj(a4, 0.5, v) for v in ACT2_SPEEDS}
+    start = {r: 0.5 * i for i, r in enumerate(ORDER)}
+    north = max(y for _, y in R.robots.values())
+    cand = {}
+    for r in ORDER:
+        if r == 'amr_04':
+            continue
+        out = []
+        for p in names:
+            if R.st[p][1] < north:
+                continue
+            for d in (ACT2_LOW if r in ('amr_05', 'amr_03') else names):
+                if d not in names or p == d or math.dist(R.st[p], R.st[d]) <= 1.0:
+                    continue
+                length, rs = R.trip(r, p, d)
+                if length is None or length < ACT2_MIN_M:
+                    continue
+                legs = [R.leg(r, p), R.leg(p, d)]
+                b4 = max(block(traj(legs, start[r], v), t4[v4]) for v in ACT2_SPEEDS for v4 in ACT2_SPEEDS
+                         if abs(v - v4) < 0.06)
+                out.append({'p': p, 'd': d, 'L': round(length, 1), 'rs': rs, 'legs': legs, 'b4': b4,
+                            'work4': overlap(cells(resample(legs[1])), work4)[0]})
+        cand[r] = out
+    others = [r for r in ORDER if r != 'amr_04']
+    best = None
+    for combo in itertools.product(*(cand[r] for r in others)):
+        ch = dict(zip(others, combo))
+        used = [n for c in combo for n in (c['p'], c['d'])]
+        if any(math.dist(R.st[a], R.st[b]) <= 1.0 for a, b in itertools.combinations(used, 2)):
+            continue
+        pk = {r: ch[r]['p'] for r in others}
+        pk['amr_04'] = 't09'
+        if greedy(R.robots, R.st, [pk[r] for r in ORDER]) != ORDER:
+            continue
+        rs = {r: ch[r]['rs'] for r in others}
+        rs['amr_04'] = resample(np.vstack(a4[:2]))
+        meets = max(meet(rs[a], rs[b]) for a, b in itertools.combinations(ORDER, 2))
+        bo = max(sum(block(traj(ch[a]['legs'], start[a], v), traj(ch[b]['legs'], start[b], v))
+                     for a, b in itertools.combinations(others, 2)) for v in ACT2_SPEEDS)
+        score = (sum(c['work4'] for c in combo), sum(c['b4'] for c in combo), bo, meets)
+        if best is None or score < best[0]:
+            best = (score, ch)
+    if best is None:
+        return {'names': names, 'best': None}
+    rows = []
+    for r in ORDER:
+        if r == 'amr_04':
+            p, d, length, real = 't09', 't03', round(path_len(np.vstack(a4[:2])), 1), np.vstack(a4[:2])
+        else:
+            c = best[1][r]
+            p, d, length, real = c['p'], c['d'], c['L'], np.vstack(c['legs'])
+        pen = np.vstack([R.penalized(r, p, ACT2_AISLE), R.penalized(p, d, ACT2_AISLE)])
+        rows.append({'robot': r, 'pickup': p, 'dropoff': d, 'astar_m': length,
+                     'work4_overlap_m': best[1][r]['work4'] if r != 'amr_04' else None,
+                     'block4_s': best[1][r]['b4'] if r != 'amr_04' else None,
+                     'real_passes_aisle': passes(real, [ACT2_AISLE]),
+                     'penalized_passes_aisle': passes(pen, [ACT2_AISLE]),
+                     'c01_m': round(math.dist(R.st[d], R.st['c01']), 2)})
+    keys = ['work4_overlap_m', 'block4_s_sum', 'block_others_s', 'meet_max_m']
+    return {'names': names, 'score': dict(zip(keys, best[0])), 'detail': rows}
 
 
 def guest_near(st, guest_file):
@@ -281,22 +399,8 @@ def main():
                         'penalized_m': round(path_len(pen), 1), 'penalized_passes': passes(pen, [ACT2_AISLE])})
         ok = [r for r in c01 if not r['real_passes']]
         pickup = min(ok, key=lambda r: r['real_m'])['pickup'] if ok else None
-        near_c01 = [n for n in R.st if math.dist(R.st[n], R.st['c01']) <= ACT2_C01_RADIUS]
-        forbid = (['buffet_2', 't11', 'c01', 't01', 't06', 't08', 't12', 't14', 'return_1', 'return_2']
-                  + ([pickup] if pickup else []) + TIGHT + ACT2_NO_STATIONS + near_c01 + sorted(normal))
-        key_min = (T0_ACT2 + 10 - 2 * DWELL) * V_CHECK
-        best = search(R, 'amr_04', forbid, key_min, key_min + 12, 10.0, a.iterations)
-        detail = None
-        if best:
-            detail = []
-            for r, (p, d, length) in best[1].items():
-                real = np.vstack([R.leg(r, p), R.leg(p, d)])
-                pen = np.vstack([R.penalized(r, p, ACT2_AISLE), R.penalized(p, d, ACT2_AISLE)])
-                detail.append({'robot': r, 'pickup': p, 'dropoff': d, 'astar_m': length,
-                               'real_passes_aisle': passes(real, [ACT2_AISLE]),
-                               'penalized_passes_aisle': passes(pen, [ACT2_AISLE])})
-        print(json.dumps({'c01_pickups': c01, 'c01_pickup': pickup, 'near_c01': sorted(near_c01),
-                          'best': best, 'detail': detail}, indent=1))
+        out = act2(R, normal, pickup)
+        print(json.dumps({'c01_pickups': c01, 'c01_pickup': pickup, **out}, indent=1))
         return
     print(json.dumps({'normal_guest_near': sorted(normal), 'best': best}, indent=1))
 

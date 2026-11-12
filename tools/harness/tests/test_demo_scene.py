@@ -221,9 +221,9 @@ def test_act2_robot_4_is_the_first_to_free_up_after_second_zero():
     # 자리: 시작 작업·2인석 배달 12곳이 모두 다르다 (서버 스테이션 예약)
     names = [n for step in steps[:2] for t in step['tasks'] for n in (t['pickup'], t['dropoff'])]
     assert len(names) == len(set(names)) == 12
-    # 1-2·2막 핵심 자리와 그 1 m 안은 시작 작업에 쓰지 않는다
+    # 핵심 자리와 그 1 m 안은 시작 작업에 쓰지 않는다 (buffet_2는 1-2 핵심 자리라 2막은 쓴다 - 매장 규칙 때문에 자리가 모자란다)
     st = stations()
-    core_names = ['buffet_2', 't11', 'c01', 't01', 't06', 't08', 't12', 't14', 'return_1', 'return_2']
+    core_names = ['t11', 'c01', 't01', 't06', 't08', 't12', 't14', 'return_1', 'return_2']
     start = [n for t in steps[0]['tasks'] for n in (t['pickup'], t['dropoff'])]
     assert not [(a, b) for a in start for b in core_names if ds.stations_near(st, a, b)]
 
@@ -387,16 +387,19 @@ def _guest_near(guest_file, radius=1.0):
 GUESTS = REPO / 'src' / 'simulation' / 'amr_gazebo' / 'config'
 
 
-@pytest.mark.parametrize('scene, guest_file', [
-    ('demo_s2a.yaml', 'dynamic_obstacles_restaurant.yaml'), ('demo_s2b.yaml', 'dynamic_obstacles_restaurant.yaml'),
-    ('demo_s12.yaml', 'dynamic_obstacles_restaurant_peak_scene12.yaml')])
-def test_start_tasks_avoid_booths_and_guest_paths(scene, guest_file):
+@pytest.mark.parametrize('scene, guest_file, allowed', [
+    ('demo_s2a.yaml', 'dynamic_obstacles_restaurant.yaml', set()),
+    # 2막: 3호·5호 하역을 아래쪽·왼쪽 테이블에 두려면 t07·t13을 써야 한다 (test_act2_only_robot_4_goes_to_the_stalls)
+    ('demo_s2b.yaml', 'dynamic_obstacles_restaurant.yaml', {'t07', 't13'}),
+    ('demo_s12.yaml', 'dynamic_obstacles_restaurant_peak_scene12.yaml', set())])
+def test_start_tasks_avoid_booths_and_guest_paths(scene, guest_file, allowed):
     # 부스 b01~b03: 11/9 녹화에서 도착 실패로 재큐(1막 b02), 로컬 재현(추적·안전 켬)에서 부스 칸에서 못 빠져나옴.
     # 손님 경로 1 m 안 자리: 11/9 녹화에서 5호가 t06 손님 무리에 오래 머묾. 장면이 쓰는 손님 파일 기준
     steps = yaml.safe_load((TASKS / scene).read_text(encoding='utf-8'))['steps']
     start = {n for t in steps[0]['tasks'] for n in (t['pickup'], t['dropoff'])}
     assert not start & {'b01', 'b02', 'b03'}
-    assert not start & _guest_near(GUESTS / guest_file), start & _guest_near(GUESTS / guest_file)
+    near = (start & _guest_near(GUESTS / guest_file)) - allowed
+    assert not near, near
 
 
 def test_act2_keeps_off_the_south_east_corner():
@@ -410,3 +413,26 @@ def test_act2_keeps_off_the_south_east_corner():
     delivery = steps[1]['tasks'][0]
     assert (delivery['pickup'], delivery['dropoff']) == ('stall_2', 'c01')
     assert delivery['pickup'] not in start
+
+
+def test_act2_only_robot_4_goes_to_the_stalls():
+    # 11/12 켬 녹화 on_v6b: 시작 뒤 4호(stall_2 픽업)·5호(stall_3 하역)·3호(stall_4 하역)가 매장 앞에 몰려 약 90 s 서로 막혔다.
+    # 매장에는 4호만 간다: 다른 시작 작업은 매장을 쓰지 않고 4호 일터(t03 하역, stall_2 픽업) 2.5 m 안에 서지 않는다.
+    # 3호·5호 하역은 아래쪽·왼쪽 테이블. 다른 4대는 A* 25 m 이상이다
+    st = stations()
+    steps = yaml.safe_load((TASKS / 'demo_s2b.yaml').read_text(encoding='utf-8'))['steps']
+    owners = _busy_owners('demo_s2b.yaml')
+    task = {t['id']: t for t in steps[0]['tasks']}
+    stalls = {'stall_1', 'stall_2', 'stall_3', 'stall_4'}
+    for robot, (tid, _, path_m) in owners.items():
+        t = task[tid]
+        if robot == 'amr_04':
+            assert (t['pickup'], t['dropoff']) == ('t09', 't03')
+            continue
+        assert not {t['pickup'], t['dropoff']} & stalls, (robot, t)
+        stops = (t['pickup'], t['dropoff'])
+        assert all(math.dist(st[n][:2], st[k][:2]) > 2.5 for n in stops for k in ('t03', 'stall_2'))
+        assert path_m >= 25.0, (robot, path_m)
+    for robot in ('amr_03', 'amr_05'):
+        assert task[owners[robot][0]]['dropoff'] in {'t07', 't13', 't15'}
+    assert steps[1]['tasks'][0]['pickup'] == 'stall_2'
