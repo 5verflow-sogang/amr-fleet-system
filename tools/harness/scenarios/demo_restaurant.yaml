@@ -14,8 +14,9 @@ packages: amr_bringup
 num_robots: 5
 use_sim_time: true
 seed_base: 1
-# 시뮬레이션 duration_s를 RTF 0.05까지 견딘다 (60 s면 1200 s + 기동)
-timeout_s: 3600
+# 장면 녹화 360 s를 RTF 0.06까지 견딘다 (6000 s + 기동 약 10분). 3600이면 카메라 3대(RTF 0.075) 360 s가 끝나기 전에
+# 끊겨 mp4 변환 없이 카메라 원본(38 GB)이 올라갔다 (11/7 demo_s11). GitHub job 한도 6시간 안
+timeout_s: 7200
 params:
   num_robots: 5
   # 로봇 스폰 간격(실제 시간 s). 추적·안전·혼잡도·직원까지 띄워 5 s 간격이면 Nav2 lifecycle_manager의
