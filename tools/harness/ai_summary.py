@@ -28,6 +28,8 @@ from harness.notify import ENV, send  # noqa: E402
 MODEL = 'claude-sonnet-5-5'   # Haiku는 화면 앞 사람의 가림과 로봇 생김새를 놓쳤다 (11/12 시험)
 FRAMES = 4
 MAX_LOG_LINES = 60
+# 실행 하나에서 부르는 API 호출 상한 (영상 + 실패). 약 0.01달러/호출이라 실행당 최대 약 0.2달러. 넘는 건 메시지에 개수만 적는다
+MAX_CALLS = 20
 DISCORD_LIMIT = 2000
 
 VIDEO_PROMPT = (
@@ -159,6 +161,9 @@ def main(argv=None) -> int:
 
     vids, fails = videos(a.root), failed_runs(a.root)
     print(f'영상 {len(vids)}개, 실패한 반복 {len(fails)}개')
+    # 실패 원인을 먼저 채우고 남는 만큼 영상을 본다 (실패는 반복마다 하나라 대개 적다)
+    fails, skipped = fails[:MAX_CALLS], max(0, len(fails) - MAX_CALLS)
+    vids, skipped = vids[:MAX_CALLS - len(fails)], skipped + max(0, len(vids) - (MAX_CALLS - len(fails)))
     if not vids and not fails:
         return 0
     if a.dry_run:
@@ -187,6 +192,8 @@ def main(argv=None) -> int:
         return 0
 
     message = build_message(a.title, a.url, a.model, video_results, failure_results)
+    if skipped:
+        message += f'\n(호출 상한 {MAX_CALLS}개라 {skipped}개는 안 봄)'
     print(message)
     webhook = os.environ.get(ENV, '').strip()
     if webhook:

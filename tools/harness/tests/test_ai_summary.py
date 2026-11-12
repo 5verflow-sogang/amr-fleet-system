@@ -68,3 +68,27 @@ def test_drive_log_kept_and_shutdown_noise_dropped(tmp_path):
     (run / 'logs' / 'drive.log').write_text('시계(/clock)가 오지 않음\n')
     assert ai_summary.error_lines(run / 'logs') == [
         'drive.log: 시계(/clock)가 오지 않음', 'stack.log: [ERROR] [amr_05.bt_navigator]: navigate_to_pose aborted']
+
+
+def test_call_cap(tmp_path, monkeypatch, capsys):
+    # 영상 + 실패가 상한을 넘으면 실패부터 보고 나머지는 개수만 적는다
+    for i in range(3):
+        make_run(tmp_path, f'v{i:02d}', video=True)
+    make_run(tmp_path, 'bad', outcome='error')
+    monkeypatch.setattr(ai_summary, 'MAX_CALLS', 2)
+    calls = []
+
+    class Client:
+        class messages:
+            @staticmethod
+            def create(**kw):
+                calls.append(kw)
+                block = type('B', (), {'type': 'text', 'text': '{"note": "ok"}'})
+                return type('R', (), {'content': [block]})
+
+    monkeypatch.setitem(sys.modules, 'anthropic', type('M', (), {'Anthropic': Client}))
+    monkeypatch.setattr(ai_summary, 'frames', lambda path: [b'jpg'])
+    monkeypatch.delenv(ai_summary.ENV, raising=False)
+    assert ai_summary.main([str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert len(calls) == 2 and '`bad` (error)' in out and '2개는 안 봄' in out
