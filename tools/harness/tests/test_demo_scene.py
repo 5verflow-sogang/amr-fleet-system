@@ -74,8 +74,8 @@ def test_act1_off_fills_collect_priority_100():
 def test_act2_delivery_then_collects_after_60s_and_when_robot_4_is_near():
     steps = ds.load_scene(TASKS / 'demo_s2b.yaml')
     # 시작 작업 0~2 s → 할당 확인(3 s) → 2인석 배달(3 s, 마지막 시작 작업 뒤 1 s) → 60 s 뒤(63 s)에도 4호가 멀어 기다림
-    # → 4호(b_busy_t02)가 하역 2 m 앞에 온 69.5 s(배달 뒤 66.5 s, 11/10 on_v3은 66.7 s)에 0초, 회수 5건 2 s 간격
-    scene, out = run_scene(steps, {3.0: assign_all}, at_station_after('t02', 69.5))
+    # → 4호(b_busy_t03)가 하역 2 m 앞에 온 69.5 s(배달 뒤 66.5 s, 11/10 on_v3은 66.7 s)에 0초, 회수 5건 2 s 간격
+    scene, out = run_scene(steps, {3.0: assign_all}, at_station_after('t03', 69.5))
     assert [o for o in out if o[2] == 'b_wait_c01'] == [(3.0, 'task', 'b_wait_c01')]
     collects = [o for o in out if o[1] == 'task' and o[2].startswith('b_collect')]
     assert [o[0] for o in collects] == [69.5, 71.5, 73.5, 75.5, 77.5]
@@ -85,7 +85,7 @@ def test_act2_delivery_then_collects_after_60s_and_when_robot_4_is_near():
     assert {'t': 69.5, 'ev': 't0', 'step': 'collects', 'by': 'near'} in scene.log
     assert {t.priority for s in steps for t in s.tasks if t.type == 'collect'} == {200}
     # 4호가 일찍 와도 배달이 60 s 기다리기 전에는 0초가 아니다
-    scene, out = run_scene(steps, {3.0: assign_all}, at_station_after('t02', 10.0))
+    scene, out = run_scene(steps, {3.0: assign_all}, at_station_after('t03', 10.0))
     assert scene.t0 == 63.0 and scene.t0_by == 'near'
 
 
@@ -93,7 +93,7 @@ def test_act2_second_zero_falls_back_to_70s_after_the_delivery_if_robot_4_is_stu
     # 11/10 off_v3: 4호가 가운데 통로 손님 사이에 갇혀 near가 끝까지 안 맞았고, 150 s에 5호가 배달을 가져갔다.
     # 배달 요청(3 s) 뒤 70 s(73 s)에 0초로 하고 회수를 낸다
     steps = ds.load_scene(TASKS / 'demo_s2b.yaml')
-    scene, out = run_scene(steps, {3.0: assign_all}, at_station_after('t02', 1e9))
+    scene, out = run_scene(steps, {3.0: assign_all}, at_station_after('t03', 1e9))
     collects = [o[0] for o in out if o[1] == 'task' and o[2].startswith('b_collect')]
     assert collects == [73.0, 75.0, 77.0, 79.0, 81.0]
     assert scene.t0 == 73.0 and scene.t0_by == 'timeout'
@@ -103,7 +103,7 @@ def test_act2_second_zero_falls_back_to_70s_after_the_delivery_if_robot_4_is_stu
 def test_act2_does_not_send_collects_if_the_delivery_got_assigned():
     # 배달이 0초 전에 할당되면(로봇이 일찍 빔) 기다리다 시간 제한(배달 뒤 70 s)에 보내고 scene.json에 timeout을 남긴다
     steps = ds.load_scene(TASKS / 'demo_s2b.yaml')
-    scene, out = run_scene(steps, {3.0: assign_all, 10.0: assign_all}, at_station_after('t02', 69.5))
+    scene, out = run_scene(steps, {3.0: assign_all, 10.0: assign_all}, at_station_after('t03', 69.5))
     first = next(o[0] for o in out if o[2] == 'b_collect_t01')
     assert first == 3.0 + 70.0
     assert {'t': 73.0, 'ev': 'step', 'step': 'collects', 'why': 'timeout'} in scene.log
@@ -213,11 +213,11 @@ def test_act2_robot_4_is_the_first_to_free_up_after_second_zero():
     assert sorted(v for r, v in path.items() if r != 'amr_04') == sorted(plan['others_m'])
     # 4호 작업은 관측 평균의 1.5배 속도로도 0초 하한(배달 60 s 대기) 뒤 10 s 넘게 남는다 - 먼저 끝나면 배달을 가져간다
     assert plan['first_m'] / plan['speed_check_mps'] + 2 * plan['dwell_s'] >= plan['t0_min_s'] + 10.0
-    scene, _ = run_scene(ds.load_scene(TASKS / 'demo_s2b.yaml'), {3.0: assign_all}, at_station_after('t02', 0.0))
+    scene, _ = run_scene(ds.load_scene(TASKS / 'demo_s2b.yaml'), {3.0: assign_all}, at_station_after('t03', 0.0))
     assert scene.t0 <= plan['t0_min_s']                                            # 0초 하한 계산이 맞다
     # 0초는 4호 작업 하역 2 m 앞 (실제 속도와 상관없이 0초 직후 4호가 빈다)
     core = steps[-1]
-    assert core['after']['near'] == {'task': 'b_busy_t02', 'within_m': 2.0} and core.get('t0')
+    assert core['after']['near'] == {'task': 'b_busy_t03', 'within_m': 2.0} and core.get('t0')
     # 자리: 시작 작업·2인석 배달 12곳이 모두 다르다 (서버 스테이션 예약)
     names = [n for step in steps[:2] for t in step['tasks'] for n in (t['pickup'], t['dropoff'])]
     assert len(names) == len(set(names)) == 12
@@ -397,3 +397,16 @@ def test_start_tasks_avoid_booths_and_guest_paths(scene, guest_file):
     start = {n for t in steps[0]['tasks'] for n in (t['pickup'], t['dropoff'])}
     assert not start & {'b01', 'b02', 'b03'}
     assert not start & _guest_near(GUESTS / guest_file), start & _guest_near(GUESTS / guest_file)
+
+
+def test_act2_keeps_off_the_south_east_corner():
+    # 11/11 켬 녹화 on_v3·v5a·v5b: 남동쪽 구석(c01·c02 옆, t10~L03 사이 1 m 통로)에서 셋 다 막혔다.
+    # 시작 작업과 2인석 배달은 t10·L03·L04·c02, c01 반경 3 m 안 자리를 쓰지 않고, 배달 픽업은 stall_2
+    st = stations()
+    steps = yaml.safe_load((TASKS / 'demo_s2b.yaml').read_text(encoding='utf-8'))['steps']
+    start = {n for t in steps[0]['tasks'] for n in (t['pickup'], t['dropoff'])}
+    assert not start & {'t10', 'L03', 'L04', 'c02'}
+    assert not [n for n in start if math.dist(st[n][:2], st['c01'][:2]) <= 3.0]
+    delivery = steps[1]['tasks'][0]
+    assert (delivery['pickup'], delivery['dropoff']) == ('stall_2', 'c01')
+    assert delivery['pickup'] not in start

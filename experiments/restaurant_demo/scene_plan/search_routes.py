@@ -11,7 +11,7 @@
   11/9 2막 녹화에서 세 대가 윗줄 통로에서 마주 와 서로 막혔다 (head_on 최대 10.8 m)
 - 0초: 0초 단계는 after.near로 "먼저 비는 로봇이 하역 2 m 앞"에 맞추므로 실제 속도와 상관없이 그 로봇이 0초 직후 빈다.
   다만 2막은 2인석 배달이 60 s 기다린 뒤라야 하므로 4호 작업이 그보다 먼저 끝나면 안 된다 - 관측 평균(약 0.2 m/s)의
-  1.5배인 V_CHECK 0.3 m/s로도 0초(약 66 s) 뒤 10 s 넘게 남는 길이를 요구한다
+  평균보다 조금 빠른 V_CHECK 0.25 m/s로도 0초(약 66 s) 뒤 10 s 넘게 남는 길이를 요구한다 (2막만 쓴다)
 """
 import argparse
 import itertools
@@ -34,8 +34,14 @@ BOOTHS = ['b01', 'b02', 'b03']
 # 멈춤 - 손님 없이도 가구를 '움직이는 장애물'로 추적해 DWA 회피 모드 + 안전 저속)에서 막혔다. 시작 작업 경로가 이 칸을
 # 지나지 않게 한다. 6인석 L01~L04는 같은 재현에서 도착했다(L03 57.7 s) - 자리로는 쓰되 세로 통로·부스 칸은 못 지난다
 TIGHT_BOXES = [(4.0, 5.6, -1.3, 4.0), (9.3, 12.0, -1.5, 4.6)]
+# 2막 켬 녹화 3번(11/11 on_v3·v5a·v5b)에서 남동쪽 구석이 막혔다: t10~L03 사이 1 m 통로(x 3.8~5.6, y -1.2~1.2)에 갇히고
+# c01·c02 둘레에 몰렸다. 2막 시작 작업과 2인석 배달 경로는 이 통로를 지나지 않고, 그 둘레 자리를 쓰지 않는다
+ACT2_AISLE = (3.8, 5.6, -1.2, 1.2)
+ACT2_NO_STATIONS = ['t10', 'L03', 'L04', 'c02']
+ACT2_C01_RADIUS = 3.0
+C01_PICKUPS = ['stall_1', 'stall_2', 'stall_3', 'stall_4', 'buffet_1']
 TIGHT = BOOTHS
-V_CHECK, DWELL, T0_ACT2 = 0.3, 2.0, 66.0
+V_CHECK, DWELL, T0_ACT2 = 0.25, 2.0, 66.0
 CELL = 0.5
 NEAR_GUEST_M = 1.0
 
@@ -52,6 +58,7 @@ class Routes:
         self.robots = {k: tuple(v[:2]) for k, v in yaml.safe_load(
             open(self.ws / 'bringup/amr_bringup/config/robots_restaurant.yaml'))['robots'].items()}
         self.cache = {}
+        self.boxes = list(TIGHT_BOXES)
 
     def xy(self, name):
         return self.robots.get(name) or self.st[name]
@@ -67,11 +74,31 @@ class Routes:
         if a is None or b is None:
             return None, None
         path = np.vstack([a, b])
-        for x0, x1, y0, y1 in TIGHT_BOXES:
-            if np.any((path[:, 0] >= x0) & (path[:, 0] <= x1) & (path[:, 1] >= y0) & (path[:, 1] <= y1)):
-                return None, None
+        if passes(path, self.boxes):
+            return None, None
         length = float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum())
         return length, resample(path)
+
+    def penalized(self, a, b, box, cost=250):
+        """box 칸을 크게 비싸게(통과 불가 253 바로 밑) 한 costmap으로 a → b A*. 그래도 box를 지나면 돌아갈 길이 없다."""
+        h, w = self.cost.shape
+        ys, xs = np.mgrid[0:h, 0:w]
+        cx, cy = self.origin[0] + (xs + 0.5) * self.res, self.origin[1] + (ys + 0.5) * self.res
+        x0, x1, y0, y1 = box
+        grid = self.cost.copy()
+        inside = (cx >= x0) & (cx <= x1) & (cy >= y0) & (cy <= y1)
+        grid[inside] = np.maximum(grid[inside], cost)
+        st, pts = plan(self.astar, grid, self.res, self.origin, self.xy(a), self.xy(b), '/tmp/sr_pen.bin')
+        return np.array(pts) if st == 0 else None
+
+
+def passes(path, boxes):
+    return any(np.any((path[:, 0] >= x0) & (path[:, 0] <= x1) & (path[:, 1] >= y0) & (path[:, 1] <= y1))
+               for x0, x1, y0, y1 in boxes)
+
+
+def path_len(path):
+    return float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum())
 
 
 def cells(path):
@@ -244,10 +271,33 @@ def main():
         forbid = ['t03', 'return_1'] + queue + TIGHT + sorted(normal)
         best = search(R, 'amr_02', forbid, 8.0, 22.0, 10.0, a.iterations)
     else:
-        forbid = ['buffet_2', 't11', 'c01', 't01', 't06', 't08', 't12', 't14', 'return_1', 'return_2', 'stall_3'] \
-            + TIGHT + sorted(normal)
+        # 2인석 배달(→ c01) 픽업: 경로가 남동쪽 1 m 통로를 안 지나는 매장·배식대 중 가장 가까운 곳
+        R.boxes = list(TIGHT_BOXES) + [ACT2_AISLE]
+        c01 = []
+        for p in C01_PICKUPS:
+            real = R.leg(p, 'c01')
+            pen = R.penalized(p, 'c01', ACT2_AISLE)
+            c01.append({'pickup': p, 'real_m': round(path_len(real), 1), 'real_passes': passes(real, [ACT2_AISLE]),
+                        'penalized_m': round(path_len(pen), 1), 'penalized_passes': passes(pen, [ACT2_AISLE])})
+        ok = [r for r in c01 if not r['real_passes']]
+        pickup = min(ok, key=lambda r: r['real_m'])['pickup'] if ok else None
+        near_c01 = [n for n in R.st if math.dist(R.st[n], R.st['c01']) <= ACT2_C01_RADIUS]
+        forbid = (['buffet_2', 't11', 'c01', 't01', 't06', 't08', 't12', 't14', 'return_1', 'return_2']
+                  + ([pickup] if pickup else []) + TIGHT + ACT2_NO_STATIONS + near_c01 + sorted(normal))
         key_min = (T0_ACT2 + 10 - 2 * DWELL) * V_CHECK
         best = search(R, 'amr_04', forbid, key_min, key_min + 12, 10.0, a.iterations)
+        detail = None
+        if best:
+            detail = []
+            for r, (p, d, length) in best[1].items():
+                real = np.vstack([R.leg(r, p), R.leg(p, d)])
+                pen = np.vstack([R.penalized(r, p, ACT2_AISLE), R.penalized(p, d, ACT2_AISLE)])
+                detail.append({'robot': r, 'pickup': p, 'dropoff': d, 'astar_m': length,
+                               'real_passes_aisle': passes(real, [ACT2_AISLE]),
+                               'penalized_passes_aisle': passes(pen, [ACT2_AISLE])})
+        print(json.dumps({'c01_pickups': c01, 'c01_pickup': pickup, 'near_c01': sorted(near_c01),
+                          'best': best, 'detail': detail}, indent=1))
+        return
     print(json.dumps({'normal_guest_near': sorted(normal), 'best': best}, indent=1))
 
 
