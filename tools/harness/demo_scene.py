@@ -29,6 +29,13 @@ map_origin_in_world로 map 좌표로 바꾼다 (작업 생성기와 같다).
 그래서 같이 잡혀 있을 수 있는 작업은 자리가 서로 1 m 넘게 떨어져야 한다 - station_conflicts()가 확인하고, 시작할 때
 걸리면 멈춘다. 0초(t0) 단계 작업끼리(2막 회수 5건이 퇴식구 둘을 나눠 씀)는 일부러 줄을 세우므로 뺀다.
 
+hold: [로봇, ...] (장면 파일 맨 위, 선택): 그 로봇들을 장면 내내 할당에서 뺀다. 장면 동안 /<로봇>/zone_client/state에
+"failed"를 0.5 s마다 낸다 - amr_bt는 그 상태에서 놀고 있으면 MODE_ERROR를 보고하고(작업도 거부) 서버는 MODE_IDLE에만
+맡긴다. 그 로봇들이 MODE_ERROR로 보인 뒤에 첫 단계를 시작한다. 로봇은 시작 자리에 그대로 선다. 식당 시연은 구역 클라이언트를
+띄우지 않으므로(system.launch zone_client 기본 false) 이 토픽을 내는 다른 노드가 없다. 배터리·충전으로는 뺄 수 없다:
+amr_bt battery.initial_percent는 시작할 때만 읽고 로봇마다 넘길 launch 인자가 없으며, 작업마다 머무는 시간(dwell_s)도 로봇
+파라미터 하나뿐이다 (2막 off_v7: 쉬는 4대가 돌아다니다 서로 막힘)
+
 scene.json에는 1 s(시뮬레이션)마다 이 장면 작업의 작업표 상태(assigned·pending·done·failed)를 남긴다 (ev: count).
 단계를 다 낸 뒤에도 하네스가 멈출 때까지(또는 --timeout-s) 계속 남긴다.
 
@@ -50,6 +57,9 @@ import yaml
 TASK_TYPES = {'delivery': 0, 'charge': 1, 'return': 2, 'collect': 3}   # amr_msgs/msg/Task.TYPE_*
 STATION_RESERVE_M = 1.0   # 서버 스테이션 예약 반경 (fleet_manager.yaml assignment.station_clearance_m)
 STATE_COMPLETED, STATE_FAILED = 2, 3   # amr_msgs/msg/TaskStatus.STATE_* (작업표 TaskRecord.state)
+MODE_ERROR = 3            # amr_msgs/msg/RobotState.MODE_ERROR (서버는 MODE_IDLE에만 할당한다)
+HOLD_STATE = 'failed'     # zone_client/state: amr_bt가 놀고 있으면 MODE_ERROR로 할당에서 빠진다
+HOLD_PERIOD_S = 0.5
 
 
 @dataclass(frozen=True)
@@ -102,6 +112,20 @@ def load_scene(path, params: Optional[dict] = None) -> list[Step]:
         if near is not None and near.get('task') not in ids:
             raise ValueError(f'{st.name}: after.near의 작업이 장면에 없다: {near}')
     return steps
+
+
+def load_hold(path) -> list[str]:
+    """장면 파일 맨 위 hold: 장면 내내 할당에서 뺄 로봇 목록 (없으면 [])."""
+    data = yaml.safe_load(Path(path).read_text(encoding='utf-8'))
+    hold = [str(r) for r in (data.get('hold') or [])]
+    if len(hold) != len(set(hold)):
+        raise ValueError(f'hold 로봇 중복: {hold}')
+    return hold
+
+
+def held(hold: list[str], modes: dict) -> bool:
+    """hold 로봇이 모두 MODE_ERROR로 보인다 (modes = {robot: RobotState.mode})."""
+    return all(modes.get(r) == MODE_ERROR for r in hold)
 
 
 def stations_near(stations: dict, a: str, b: str, radius: float = STATION_RESERVE_M) -> bool:
@@ -225,13 +249,13 @@ class Scene:
 
 
 # ---------------------------------------------------------------- ROS (하네스에서만)
-def _run(args, scene, stations, origin):
+def _run(args, scene, stations, origin, hold=()):
     import rclpy
     from amr_msgs.msg import FleetTaskTable, RobotState, Task
     from geometry_msgs.msg import Pose
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-    from std_msgs.msg import Header
+    from std_msgs.msg import Header, String
 
     ox, oy, oyaw = origin
     c, s = math.cos(-oyaw), math.sin(-oyaw)
@@ -251,7 +275,7 @@ def _run(args, scene, stations, origin):
     latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
     pub = node.create_publisher(Task, '/fleet/task_requests', reliable)
     t0_pub = node.create_publisher(Header, '/demo/t0', latched)
-    table, states, poses = {}, {}, {}
+    table, states, poses, modes = {}, {}, {}, {}
 
     def on_table(m):
         table.clear()
@@ -260,8 +284,20 @@ def _run(args, scene, stations, origin):
         states.update({r.task.task_id: r.state for r in m.records})
 
     node.create_subscription(FleetTaskTable, '/fleet/task_table', on_table, 10)
-    node.create_subscription(RobotState, '/fleet/robot_states',
-                             lambda m: poses.__setitem__(m.robot_id, (m.pose.position.x, m.pose.position.y)), 10)
+
+    def on_state(m):
+        poses[m.robot_id] = (m.pose.position.x, m.pose.position.y)
+        modes[m.robot_id] = m.mode
+
+    node.create_subscription(RobotState, '/fleet/robot_states', on_state, 10)
+    hold_pubs = [node.create_publisher(String, f'/{r}/zone_client/state', 10) for r in hold]
+
+    def publish_hold():
+        for p in hold_pubs:
+            p.publish(String(data=HOLD_STATE))
+
+    if hold_pubs:
+        node.create_timer(HOLD_PERIOD_S, publish_hold)
 
     def now():
         return node.get_clock().now().nanoseconds * 1e-9
@@ -277,6 +313,9 @@ def _run(args, scene, stations, origin):
     # 서버(작업 요청 구독)와 로봇 N대 상태, 시뮬레이션 시계가 보일 때까지 (실제 시간 기준 한도)
     spin_until(lambda: pub.get_subscription_count() > 0 and len(poses) >= args.num_robots and now() > 0,
                f'Fleet 서버·로봇 {args.num_robots}대·/clock', args.ready_timeout_s)
+    if hold:
+        spin_until(lambda: held(list(hold), modes), f'hold {list(hold)} MODE_ERROR', args.ready_timeout_s)
+        scene.log.append({'t': round(now(), 3), 'ev': 'hold', 'robots': list(hold)})
     start = now()
     spin_until(lambda: now() - start >= args.settle_s, 'settle', args.ready_timeout_s)
 
@@ -328,6 +367,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     params = dict(item.split('=', 1) for item in a.set)
     steps = load_scene(a.scene, params)
+    hold = load_hold(a.scene)
     stations = {k: tuple(float(x) for x in v) for k, v in
                 yaml.safe_load(Path(a.stations).read_text(encoding='utf-8'))['stations'].items()}
     unknown = sorted({n for s in steps for t in s.tasks for n in (t.pickup, t.dropoff)} - set(stations))
@@ -345,7 +385,7 @@ def main(argv=None):
     scene = Scene(steps, map_stations)
     status = 'interrupted'
     try:
-        status = _run(a, scene, stations, [float(v) for v in yaml.safe_load(a.map_origin)])
+        status = _run(a, scene, stations, [float(v) for v in yaml.safe_load(a.map_origin)], hold)
     except KeyboardInterrupt:
         # 하네스가 녹화 시간이 끝나 SIGINT로 멈췄다. 그때까지 낸 것을 남긴다 (단계를 다 냈으면 done)
         status = 'done' if scene.done else 'interrupted'
@@ -353,7 +393,7 @@ def main(argv=None):
         status = f'error: {e!r}'
     finally:
         record = {'scene': a.scene, 'params': params, 'status': status, 't0': scene.t0, 't0_by': scene.t0_by,
-                  'events': scene.log}
+                  'hold': hold, 'events': scene.log}
         print(json.dumps({k: record[k] for k in ('status', 't0', 't0_by')}), flush=True)
         if a.out:
             Path(a.out).write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding='utf-8')
