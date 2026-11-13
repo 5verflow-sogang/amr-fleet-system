@@ -24,7 +24,7 @@ params:
   collect_priority: "200"
   # 켬: fleet_manager_restaurant.yaml (aging 1.667, #303), 끔: 비움 (aging 0.0). 워크플로는 이 파일 params만 받는다
   fleet_params: ""
-  cameras: top,west,stalls
+  cameras: top
   robot_camera: "false"
   # 녹화: localization=ground_truth 가능 (#327)
   localization: amcl

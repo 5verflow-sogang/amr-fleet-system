@@ -19,7 +19,7 @@ params:
   scene_file: demo_s12.yaml
   cost_fn: euclidean
   congestion_filter: none
-  cameras: top,west,stalls
+  cameras: top
   robot_camera: "false"
   # 워크플로는 이 파일 params만 받는다 (extends의 값은 안 본다). 녹화: localization=ground_truth
   localization: "true"
