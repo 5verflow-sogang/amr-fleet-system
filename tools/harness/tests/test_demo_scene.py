@@ -226,3 +226,74 @@ def test_scene12_request_is_sent_with_t0_after_robots_2_to_5_are_busy():
     # 마지막 시작 작업(1.5 s) 뒤 3 s, 그 전에(3.0 s) 넷 다 할당됐다
     assert (4.5, 't0', 's12_buffet2_t11') in out and (4.5, 'task', 's12_buffet2_t11') in out
     assert [o[0] for o in out if o[2].startswith('s12_busy')] == [0.0, 0.5, 1.0, 1.5]
+
+
+# ---------------------------------------------------------------- 1-1 (demo_s11)
+S11_ROBOTS = REPO / 'src' / 'bringup' / 'amr_bringup' / 'config' / 'robots_restaurant_s11.yaml'
+ZONES = REPO / 'src' / 'fleet' / 'amr_fleet_manager' / 'config' / 'congestion_zones_restaurant.yaml'
+
+
+def _in_rect(a, b, area):
+    """선분 a→b 중 사각형 [x_min, x_max, y_min, y_max] 안 길이 (amr_fleet_core cost.segment_length_in_rect와 같은 식.
+    그 패키지는 scipy를 불러 하네스 CI에서 못 쓴다)."""
+    x0, x1, y0, y1 = area
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, a[0] - x0), (dx, x1 - a[0]), (-dy, a[1] - y0), (dy, y1 - a[1])):
+        if p == 0.0:
+            if q < 0.0:
+                return 0.0
+            continue
+        t = q / p
+        t0, t1 = (max(t0, t), t1) if p < 0.0 else (t0, min(t1, t))
+        if t0 > t1:
+            return 0.0
+    return (t1 - t0) * math.hypot(dx, dy)
+
+
+def _congestion_cost(values, weight=3.0):
+    """cost_fn congestion: 직선 + weight × Σ(구역 혼잡도 × 로봇 → 픽업 선분이 그 구역 안을 지나는 길이)."""
+    zones = {z['id']: z['area'] for z in yaml.safe_load(ZONES.read_text(encoding='utf-8'))['zones']}
+    return lambda r, st: math.dist(r, st) + weight * sum(v * _in_rect(r, st, zones[k]) for k, v in values.items())
+
+
+def test_scene11_start_tasks_go_to_robots_2_4_5_and_leave_1_and_3_idle():
+    owners = _busy_owners('demo_s11.yaml', S11_ROBOTS)
+    assert {r: v[0] for r, v in owners.items()} == {
+        'amr_05': 's11_busy_b03', 'amr_04': 's11_busy_c02', 'amr_02': 's11_busy_l04'}
+    steps = ds.load_scene(TASKS / 'demo_s11.yaml')
+    core = [s for s in steps if s.t0]
+    assert [(t.task_id, t.type, t.pickup, t.dropoff) for t in core[0].tasks] == [
+        ('s11_buffet1_t01', 'delivery', 'buffet_1', 't01')]
+    scene, out = run_scene(steps, {2.0: assign_all})
+    assert (4.0, 't0', 's11_buffet1_t01') in out                 # 마지막 시작 작업(1.0 s) 뒤 3 s
+    # 시작 작업 자리는 핵심 요청 자리와 스테이션 예약 1 m 안을 쓰지 않는다
+    st = stations()
+    start = {n for s in steps if not s.t0 for t in s.tasks for n in (t.pickup, t.dropoff)}
+    assert not [(a, b) for a in start for b in ('buffet_1', 't01') if ds.stations_near(st, a, b)]
+    # 시작 작업끼리도 자리가 겹치지 않는다: 겹치면 앞 작업이 끝날 때까지 배정이 밀려 0초가 타임아웃으로 나간다 (11/10 녹화)
+    busy = [t for s in steps if not s.t0 for t in s.tasks]
+    assert not [(a.task_id, b.task_id) for i, a in enumerate(busy) for b in busy[i + 1:]
+                if any(ds.stations_near(st, x, y) for x in (a.pickup, a.dropoff) for y in (b.pickup, b.dropoff))]
+
+
+def test_scene11_off_sends_robot_1_and_on_sends_robot_3():
+    st = stations()
+    robots = {k: tuple(v[:2]) for k, v in yaml.safe_load(S11_ROBOTS.read_text(encoding='utf-8'))['robots'].items()}
+    buffet = st['buffet_1'][:2]
+    one, three = robots['amr_01'], robots['amr_03']
+    # 끔(직선 거리): 1호가 가깝다. buffet_2였다면 3호가 가까워 끔·켬이 같아진다 (장면 파일 머리말)
+    assert math.dist(one, buffet) < math.dist(three, buffet)
+    assert math.dist(three, st['buffet_2'][:2]) < math.dist(one, st['buffet_2'][:2])
+    # 켬: 피크 몰림(서쪽 통로·배식대 앞 1.0, 매장 앞 customer_1 한 명 1/6)이면 3호
+    peak = _congestion_cost({'west_aisle': 1.0, 'buffet_line': 1.0, 'stall_front': 1 / 6})
+    assert peak(three, buffet) + 5.0 < peak(one, buffet)
+    # 서쪽 통로 손님이 3명 중 1명만 구역 안이면(1/3) 1호로 돌아간다 - 몰림이 실제로 배정을 바꾼다
+    thin = _congestion_cost({'west_aisle': 1 / 3, 'buffet_line': 1.0, 'stall_front': 1 / 6})
+    assert thin(one, buffet) < thin(three, buffet)
+    # 평상시(hall_west만 1.0)면 둘 다 그 구역을 안 지나 끔과 같다
+    calm = _congestion_cost({'hall_west': 1.0})
+    assert calm(one, buffet) < calm(three, buffet)
+    # 시작 작업도 켬에서 같다: cafe 혼잡 1.0이어도 L04는 2호가 3호보다 싸다
+    cafe = _congestion_cost({'cafe': 1.0})
+    assert cafe(robots['amr_02'], st['L04'][:2]) < cafe(three, st['L04'][:2])

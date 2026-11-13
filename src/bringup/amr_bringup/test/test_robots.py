@@ -63,11 +63,18 @@ def test_restaurant_scene_robots(scene):
     # 1-1은 입구 옆(-10.5, -5.6), 1-2는 우회 경로가 짧아지게 동쪽으로 0.5 m 옮긴 자리 (robots_restaurant_s12.yaml 머리말)
     assert (first.x, first.y) == {'s11': (-10.5, -5.6), 's12': (-10.0, -5.8)}[scene]
     assert first.x < -9.73   # 1-1 성립 조건: 1호가 x -9.73(서쪽 통로 구역 동쪽 끝)보다 서쪽
-    special = {'amr_01': None, 'amr_03': 'stall_3'} if scene == 's11' else {'amr_01': None}
+    special = {'amr_01', 'amr_03'} if scene == 's11' else {'amr_01'}
+    if scene == 's11':
+        # 1-1 3호: stall_3 앞에서 물러나 서쪽(배식대 쪽)을 본다. 정차 자세(카운터 앞면과 0.13 m)에서 시작하면 안전 노드가
+        # 카운터를 진행 경로 장애물로 봐 약 67 s 못 떠난다 (robots_restaurant_s11.yaml 머리말). 카운터 앞면 y 4.63
+        third, stall = robots['amr_03'], stations['stall_3']
+        assert third.x == stall[0] and third.y < stall[1]
+        assert third.yaw == pytest.approx(math.pi)
+        half_width = 0.537 / 2                                       # 서쪽을 보면 남북으로는 몸 폭의 반
+        assert 4.63 - (third.y + half_width) >= 0.35                 # 카운터와
+        assert (third.y - half_width) - 3.45 >= 0.25                 # customer_1 통로(y 3.45)와
     for name, robot in robots.items():
         if name in special:
-            if special[name]:
-                assert (robot.x, robot.y, robot.yaw) == tuple(stations[special[name]]), name
             continue
         assert (robot.x, robot.y, robot.yaw) in [tuple(v) for k, v in stations.items() if k.startswith('wait_')], name
     points = list(robots.values())

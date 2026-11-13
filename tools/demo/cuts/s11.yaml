@@ -1,0 +1,89 @@
+# 시나리오 1-1 혼잡도를 고려한 로봇 배정 컷시트 (tools/demo/compose.py, 하네스 demo_s11 끔·켬 실행 둘).
+#
+# start: 컷 원본 시작 = 요청(/demo/t0) 기준 s. 사건 이름 ± s:
+#   request(0초) · assign · arrive (둘 다 지난 늦은 쪽), assign_off · assign_on · arrive_off · arrive_on (그쪽 실행), end
+#   두 실행 모두 같은 상대 시각을 자른다 (가이드). 시각은 녹화마다 달라 사건으로 적는다
+# length: 완성본 길이(s), speed: 배속, hold: 끝 화면을 멈춰 두는 시간(s)
+# layers: zones · candidates · request · reason · assign · hero · dim · card · clock · arrived (overlay.py 머리말)
+# check: 이 컷 문구가 맞으려면 성립해야 하는 순서. 녹화가 다르면 plan·render가 경고한다 → 문구를 녹화에 맞춘다
+# 제목·자막의 {robot_off}·{robot_on}(1호·3호), {arrive_off}·{arrive_on}(요청 → 도착 s), {stops_off}·{stops_on},
+#   {dist_amr_01}·{dist_amr_03}(0초 직선 거리 m)는 녹화 기록으로 채운다
+# 카메라: demo_cameras_restaurant.yaml (top_west 홀 서쪽 위, west 서쪽 통로 눈높이)
+scene: '시나리오 1-1   /   혼잡도를 고려한 로봇 배정'
+feature: 혼잡도 배정
+candidates: [amr_01, amr_03]
+request_label: '주문 · 배식대 1 → 1번 테이블'
+station_label: 배식대
+# 칠할 혼잡 구역: 배정을 가른 두 곳만, 값이 바뀌어도 계속 그린다 (진하기만 바뀐다). 홀 가운데 hall_west·hall_east는
+# 손님이 지날 때 잠깐 0.6을 넘어 엉뚱한 데 박스가 떠서 뺀다
+zones: [west_aisle, buffet_line]
+# 켬 배정 비용의 혼잡 가중치 (scenarios/demo_s11.yaml congestion_weight)
+congestion_weight: 3.0
+camera_names:
+  top_west: 홀 위
+  top: 식당 전체
+  west: 서쪽 통로
+  stalls: 매장 앞
+fps: 20
+crf: 17
+cuts:
+  # 길이: 제목·자막을 읽을 시간 (한 컷 6 s 이상, 바뀌는 순간은 멈춤 2~3 s). 주문 표시(request)는 들어오는 컷에만
+  - title: 배식대 앞과 서쪽 통로에 손님이 몰려 있습니다
+    caption: '입구 옆 1호가 배식대에 더 가깝고({dist_amr_01} m), 3호는 3번 매장 앞에 있습니다({dist_amr_03} m)'
+    camera: top_west
+    start: request-5
+    length: 5
+    speed: 1
+    hold: 1.5
+    layers: [zones, candidates, clock]
+  # 배정 이유: 주문 순간에 멈춰 후보 → 배식대 직선과 비용을 보여 준다 (끔 거리만, 켬 거리 + 혼잡 구간)
+  - title: '주문이 들어오면, 누구를 보낼지 비용을 계산합니다'
+    caption: '오른쪽은 1호 길이 서쪽 통로(혼잡 1.0)를 지나 혼잡 비용 {jam_amr_01}이 붙어, 3호({cost_amr_03})가 더 쌉니다'
+    camera: top_west
+    start: request
+    length: 0.5
+    speed: 1
+    hold: 6.5
+    layers: [zones, request, reason, clock]
+  - title: '끔은 {robot_off}, 켬은 {robot_on}에게 맡깁니다'
+    caption: '왼쪽은 가장 가까운 {robot_off}, 오른쪽은 혼잡 구역을 피해 {robot_on}가 받습니다'
+    camera: top_west
+    start: request+0.5
+    length: 3
+    speed: 1
+    hold: 2.5
+    layers: [zones, request, assign, card, clock]
+    check: assign < request+3
+  - title: '왼쪽 {robot_off}가 손님 사이로 들어갑니다'
+    caption: '오른쪽 {robot_on}는 매장 앞 통로로 돌아가 서쪽 통로에 들어오지 않습니다'
+    camera: west
+    start: assign+1
+    length: 10
+    speed: 3
+    layers: [zones, hero, clock]
+  - title: '오른쪽 {robot_on}가 먼저 배식대에 도착합니다'
+    caption: '왼쪽 {robot_off}는 아직 서쪽 통로에서 멈췄다 가기를 반복합니다'
+    camera: top_west
+    start: arrive_on-12
+    length: 7
+    speed: 2
+    hold: 2.5
+    layers: [zones, hero, dim, arrived, clock]
+    check: arrive_on < arrive_off
+  - title: '왼쪽 {robot_off}도 배식대에 도착합니다'
+    caption: '요청부터 도착까지 왼쪽 {arrive_off}초, 오른쪽 {arrive_on}초 걸렸습니다'
+    camera: top_west
+    start: arrive_off-10
+    length: 6
+    speed: 2
+    hold: 2.5
+    layers: [zones, hero, dim, arrived, clock]
+  - result: true
+    length: 10
+result:
+  title: 가까운 로봇보다, 덜 막히는 로봇을 보냅니다
+  graph_title: 요청 → 배식대 도착 시간
+  notes:
+    - '시간: 시뮬레이션 기준, 배식대 주문(/demo/t0) = 0초. 도착: 배식대 1번 자리에서 싣기(loading)를 시작한 시각'
+    - '멈춤: 맡은 로봇이 0.05 m/s 밑으로 1 s 이상 머문 구간 (출발 전 대기, 도착 직전 정차 제외)'
+    - '배정 비용: 끔 = 로봇 → 픽업 직선 거리, 켬 = 직선 거리 + 3 × Σ(구역 혼잡도 × 그 구역 안 길이)'
