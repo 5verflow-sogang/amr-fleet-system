@@ -3,6 +3,7 @@
     ros2 launch amr_bt amr_bt.launch.py namespace:=amr_01
     ros2 launch amr_bt amr_bt.launch.py relayed:=true   # 장애 주입기 중계본(/<ns>/fleet/...) 구독
     ros2 launch amr_bt amr_bt.launch.py use_nav2:=true use_docking:=true   # 실제 이동·도킹 액션
+    ros2 launch amr_bt amr_bt.launch.py params_file:=amr_bt_battery_restaurant.yaml   # 배터리 실험 (빨리 닳음)
 
 서버 → 로봇: <prefix>/task_assignments, <prefix>/heartbeat (prefix: /fleet, relayed면 fleet)
 로봇 → 서버: /fleet/task_assignment_acks, /fleet/task_status, /fleet/robot_states
@@ -28,13 +29,17 @@ def _bt(context):
     }
     if relayed:
         overrides['server_topic_prefix'] = 'fleet'
+    # amr_bt.yaml 위에 얹을 설정 (배터리 실험 등). 상대 이름이면 amr_bt config/
+    extra = LaunchConfiguration('params_file').perform(context)
+    if extra and not os.path.isabs(extra):
+        extra = os.path.join(get_package_share_directory('amr_bt'), 'config', extra)
     return [
         Node(
             package='amr_bt',
             executable='amr_bt_node',
             name='amr_bt',
             namespace=ns,
-            parameters=[config, overrides],
+            parameters=[config, *([extra] if extra else []), overrides],
             output='screen',
         ),
     ]
@@ -53,5 +58,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_docking', default_value='false',
             description='true면 Dock이 docking/dock(Dock.action)을 호출한다. false면 자리채움'),
+        DeclareLaunchArgument(
+            'params_file', default_value='',
+            description='amr_bt.yaml 위에 얹을 파라미터 파일 (상대 이름이면 amr_bt config/). 배터리 실험: amr_bt_battery_restaurant.yaml'),
         OpaqueFunction(function=_bt),
     ])

@@ -1,0 +1,36 @@
+# 식당 시연 3 충전 스케줄링 (tools/harness/demo_scene.py 장면 파일, 하네스 demo_s3)
+# 켬/끔은 서버 충전 정책만 다르고 이 파일은 같다 (demo_s3.yaml 머리말).
+# 1. start: 5대에게 거의 한꺼번에 (3 s 간격, 같은 통로로 몰려 출발하지 않게). 다 같이 일을 시작해야 배터리가 같이 닳는다
+#    (8 s 간격으로 하나씩 주면 마지막 로봇이 30 s 넘게 늦게 출발해 낮은 세 대가 기준을 따로따로 넘었다, 11/8 가짜 로봇)
+# 2. flow: 7 s 간격으로 계속 (배달 6건 + 빈 그릇 회수 2건을 돌린다). 5대가 쉬지 않을 만큼이라 충전으로 홀 로봇이 줄면
+#    대기 작업이 쌓인다 (끔에서 더)
+# 0초는 배터리로 정한다: 로봇 하나라도 31 % 밑이 된 순간 (켬 충전 기준 30 % 바로 위).
+#   배터리는 움직일 때만 닳아(amr_bt_battery_demo_s3.yaml) 그때까지는 켬/끔이 같은 일을 한 같은 상태다
+# 자리: 매장 네 곳(stall_1~4)과 회수 테이블에서 홀 남동쪽 테이블·퇴식구로. 손님이 몰리는 서쪽 통로·배식대 앞
+#   (피크, x < -6)은 피한다. 픽업 자리를 돌려 써 같은 자리 예약으로 기다리는 일을 줄인다
+t0_when:
+  battery_below: 31
+steps:
+  # 픽업 자리 다섯 곳이 모두 다르다 (같은 자리면 서버 픽업 자리 예약으로 한 대가 늦게 출발한다, 11/8 가짜 로봇 v2)
+  - name: start
+    gap_s: 3
+    tasks:
+      - {id: s3_start_1, type: delivery, pickup: stall_4, dropoff: c02}
+      - {id: s3_start_2, type: delivery, pickup: stall_3, dropoff: L03}
+      - {id: s3_start_3, type: delivery, pickup: stall_2, dropoff: t15}
+      - {id: s3_start_4, type: delivery, pickup: stall_1, dropoff: t14}
+      - {id: s3_start_5, type: collect, pickup: t10, dropoff: return_2}
+  # 하역·퇴식은 남동쪽(충전소 가까이)에서 끝난다: 일을 마치고 충전하러 가는 길이 짧아 끔에서 세 대가 거의 같이 빠진다
+  - name: flow
+    after: {assigned: 5, timeout_s: 30}
+    gap_s: 10
+    repeat: 30
+    tasks:
+      - {id: s3_a, type: delivery, pickup: stall_4, dropoff: L04}
+      - {id: s3_b, type: delivery, pickup: stall_3, dropoff: c01}
+      - {id: s3_c, type: collect, pickup: t09, dropoff: return_2}
+      - {id: s3_d, type: delivery, pickup: stall_2, dropoff: t15}
+      - {id: s3_e, type: delivery, pickup: stall_1, dropoff: t14}
+      - {id: s3_f, type: delivery, pickup: stall_4, dropoff: c02}
+      - {id: s3_g, type: collect, pickup: t13, dropoff: return_1}
+      - {id: s3_h, type: delivery, pickup: stall_3, dropoff: L03}

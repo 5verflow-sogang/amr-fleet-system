@@ -1,0 +1,67 @@
+# 고정 요청 시각. 북쪽 서빙은 30초마다, 남쪽 회수는 75·105초. 두 조건 동일.
+steps:
+- name: at_000
+  after:
+    delay_s: 0
+  tasks:
+  - id: s3_north_000
+    type: delivery
+    pickup: stall_1
+    dropoff: t02
+  t0: true
+- name: at_030
+  after:
+    delay_s: 30
+  tasks:
+  - id: s3_north_030
+    type: delivery
+    pickup: stall_2
+    dropoff: t03
+- name: at_060
+  after:
+    delay_s: 30
+  tasks:
+  - id: s3_north_060
+    type: delivery
+    pickup: stall_1
+    dropoff: t02
+- name: at_075
+  after:
+    delay_s: 15
+  tasks:
+  - id: s3_collect_75
+    type: collect
+    pickup: c01
+    dropoff: return_s3_side
+- name: at_090
+  after:
+    delay_s: 15
+  tasks:
+  - id: s3_north_090
+    type: delivery
+    pickup: stall_2
+    dropoff: t03
+- name: at_105
+  after:
+    delay_s: 15
+  tasks:
+  - id: s3_collect_105
+    type: collect
+    pickup: c01
+    dropoff: return_s3_side
+- name: at_120
+  after:
+    delay_s: 15
+  tasks:
+  - id: s3_north_120
+    type: delivery
+    pickup: stall_1
+    dropoff: t02
+- name: at_150
+  after:
+    delay_s: 30
+  tasks:
+  - id: s3_north_150
+    type: delivery
+    pickup: stall_2
+    dropoff: t03

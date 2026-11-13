@@ -1,0 +1,19 @@
+# 실제 Gazebo 장면 3. 녹화 준비 뒤 배터리 부하를 함께 시작한다. 두 조건 동일.
+name: demo_s3_gazebo
+extends: demo_s3
+packages: amr_bringup
+timeout_s: 7200
+params:
+  spawn_interval_s: 25
+  robots: robots_restaurant_s3_gazebo.yaml
+  scene_file: demo_s3_gazebo.yaml
+  bt_params_file: amr_bt_battery_demo_s3_gazebo.yaml
+  policy: 'on'
+  duration_s: 180
+  localization: ground_truth
+  fleet_params: ''
+  cameras: top,south
+  stations_file: stations_restaurant_s3.yaml
+  tracking: 'false'
+  bt: 'false'
+  delayed_bt: 'true'

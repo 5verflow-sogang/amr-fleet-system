@@ -81,6 +81,27 @@ def test_restaurant_scene_robots(scene):
     assert all(free_on_map(pgm, r.x, r.y) for r in points)
 
 
+
+def test_restaurant_scene3_robots_start_in_open_floor_apart_and_off_guest_paths():
+    # 장면 3: 다섯 대가 흩어져 북쪽(홀)을 보고 선다. 대기 줄에서 한꺼번에 나가면 동쪽 통로에서 막혔고, 테이블·부스 정차
+    # 자리에서 스폰하면 돌아 나가지 못했다 (11/8 맥 스모크). 지도에서 1.2 m 사각형이 비고, 손님·직원 경로와 1.2 m,
+    # 정차 자리와 1 m, 서로 2.5 m 넘게 떨어진다
+    robots = list(load_robots(str(Path(ROBOTS).with_name('robots_restaurant_s3.yaml')), 5))
+    root = Path(__file__).resolve().parents[3]
+    stations = yaml.safe_load((root / 'fleet' / 'amr_fleet_manager' / 'config' / 'stations_restaurant.yaml')
+                              .read_text(encoding='utf-8'))['stations']
+    assert all(r.yaw == pytest.approx(math.pi / 2) for r in robots)
+    assert all(math.hypot(r.x - v[0], r.y - v[1]) >= 1.0 for r in robots for v in stations.values())
+    assert min(math.hypot(a.x - b.x, a.y - b.y) for i, a in enumerate(robots) for b in robots[i + 1:]) >= 2.5
+    config = root / 'simulation' / 'amr_gazebo' / 'config'
+    for name in ('dynamic_obstacles_restaurant.yaml', 'dynamic_obstacles_restaurant_peak.yaml',
+                 'dynamic_obstacles_restaurant_staff.yaml'):
+        obstacles = yaml.safe_load((config / name).read_text(encoding='utf-8'))['obstacles']
+        assert all(obstacle_clearance(r.x, r.y, o) >= 1.2 for r in robots for o in obstacles), name
+    pgm = root / 'localization' / 'amr_mapping' / 'maps' / 'restaurant_gt.pgm'
+    assert all(free_on_map(pgm, r.x, r.y, half=0.6) for r in robots)
+
+
 def test_load_robots_count():
     assert len(load_robots(ROBOTS, 3)) == 3
     with pytest.raises(ValueError):
@@ -166,3 +187,20 @@ def test_scene12_first_robot_faces_east_and_scene11_faces_north():
     assert (s12['amr_01'].x, s12['amr_01'].y, s12['amr_01'].yaw) == (-10.0, -5.8, 0.0)
     assert s11['amr_01'].yaw == pytest.approx(math.pi / 2)
 
+
+
+def test_scene3_gazebo_starts_clear_of_furniture_and_each_other():
+    robots = load_robots(str(Path(ROBOTS).with_name('robots_restaurant_s3_gazebo.yaml')), 5)
+    pgm = Path(__file__).resolve().parents[3] / 'localization/amr_mapping/maps/restaurant_gt.pgm'
+    assert all(free_on_map(pgm, r.x, r.y, half=0.4) for r in robots)
+    assert all(math.hypot(a.x - b.x, a.y - b.y) >= 1.5
+               for i, a in enumerate(robots) for b in robots[i + 1:])
+
+
+def test_scene3_gazebo_service_stops_allow_turning_on_the_map():
+    root = Path(__file__).resolve().parents[3]
+    stations = yaml.safe_load((root / 'fleet/amr_fleet_manager/config/stations_restaurant_s3.yaml').read_text())['stations']
+    pgm = root / 'localization/amr_mapping/maps/restaurant_gt.pgm'
+    used = ('c01', 'c02', 'stall_1', 'stall_2', 't02', 't03', 'return_1', 'return_2',
+            'charger_c1', 'charger_c2', 'charger_c3', 'return_s3_side')
+    assert all(free_on_map(pgm, *stations[name][:2], half=0.35) for name in used)

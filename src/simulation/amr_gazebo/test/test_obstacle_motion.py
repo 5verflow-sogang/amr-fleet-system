@@ -329,7 +329,7 @@ def test_customer_yields_to_serving_robot_size():
 
 @pytest.mark.parametrize('name', [
     'dynamic_obstacles_restaurant.yaml', 'dynamic_obstacles_restaurant_peak.yaml',
-    'dynamic_obstacles_restaurant_peak_scene12.yaml'])
+    'dynamic_obstacles_restaurant_peak_scene12.yaml', 'dynamic_obstacles_restaurant_s3.yaml'])
 def test_restaurant_guests_yield_except_curve(name):
     path = os.path.join(os.path.dirname(__file__), '..', 'config', name)
     with open(path, encoding='utf-8') as f:
@@ -455,6 +455,19 @@ def test_peak_scene12_changes_only_the_west_aisle_guests():
                 {k: v for k, v in peak[gid].items() if k not in ('spawn', 'waypoints', 'note')}, gid
         else:
             assert spec == peak[gid], gid
+
+
+def test_scene3_guests_are_the_west_peak_guests_only():
+    # 장면 3은 피크 파일에서 서쪽 손님(peak_1~6, customer_2)만 그대로 옮겼다 (머리말). 로봇이 다니는 동쪽·가운데에는 없다
+    config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
+    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak.yaml'), encoding='utf-8') as f:
+        peak = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
+    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_s3.yaml'), encoding='utf-8') as f:
+        scene3 = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
+    assert set(scene3) == {'customer_2'} | {f'peak_{i}' for i in range(1, 7)}
+    for guest_id, spec in scene3.items():
+        assert spec == peak[guest_id], guest_id
+        assert all(w['x'] <= -6.5 for w in spec['waypoints']) and spec['spawn']['x'] <= -6.5, guest_id
 
 
 # ---- keep_away_m: 로봇 근처면 손님이 선다 (움직이는 로봇 포함) ----

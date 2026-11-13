@@ -10,6 +10,9 @@ amr_bt가 완성되기 전에 Fleet 서버·장애 주입기·하네스 기록�
 - 가상 배터리 (robot_sim.Battery, amr_bt battery.hpp와 같은 모델·파라미터 이름). 기본은 닳지 않는다. 충전 작업은 충전기에
   도착한 뒤 battery.charge_target_percent까지 채우고 끝낸다(그동안 MODE_CHARGING). 0 %가 되면 그 자리에서 멈춘다(방전 정지).
   battery.reject_below_percent 밑이면 충전이 아닌 작업을 ASSIGN_BATTERY_LOW로 거부한다 (amr_bt와 같다)
+- route_map(map_server yaml)을 주면 직선 대신 그 지도의 통로를 따라간다 (grid_route, 벽·가구에서 route_clearance_m).
+  새 구간 경로는 plan(nav_msgs/Path, 네임스페이스 안 상대 이름 → /<robot_id>/plan)으로 내 대시보드가 그린다.
+  다른 로봇·사람은 피하지 않는다. 기본(빈 값)은 예전처럼 직선
 """
 
 from __future__ import annotations
@@ -19,12 +22,15 @@ import time
 import rclpy
 from amr_msgs.msg import ErrorInfo, FleetHeartbeat, RobotState, Task, TaskAssignment, TaskAssignmentAck, TaskStatus
 from builtin_interfaces.msg import Time
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Path
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 from amr_fleet_core.assignment import has_pickup
 from amr_fleet_core.claims import TaskClaims
+from .grid_route import GridRoute
 from .robot_sim import DUPLICATE, STALE, AssignmentFilter, Battery, BatteryConfig, LinkWatch, TaskRun
 
 
@@ -66,6 +72,10 @@ class FakeRobot(Node):
             raise ValueError(f'pause_mode는 stop 또는 leg: {self._pause_mode!r}')
 
         self._xy = (float(start[0]), float(start[1]))
+        # 지도 통로를 따라가기 (빈 값이면 직선). 시작할 때 한 번 읽는다 (식당 지도 약 1 s)
+        route_map = self.declare_parameter('route_map', '').value
+        clearance = self.declare_parameter('route_clearance_m', 0.3).value
+        self._route = GridRoute.from_map_yaml(route_map, clearance_m=clearance).route if route_map else None
         self._step_s = 1.0 / step_hz
         self._filter = AssignmentFilter()
         self._run: TaskRun | None = None
@@ -77,6 +87,7 @@ class FakeRobot(Node):
         self._ack_pub = self.create_publisher(TaskAssignmentAck, f'{uplink}/task_assignment_acks', qos)
         self._state_pub = self.create_publisher(RobotState, f'{uplink}/robot_states', qos)
         self._status_pub = self.create_publisher(TaskStatus, f'{uplink}/task_status', qos)
+        self._plan_pub = self.create_publisher(Path, 'plan', qos)
         self.create_subscription(TaskAssignment, f'{prefix}/task_assignments', self._on_assignment, qos)
         self.create_subscription(FleetHeartbeat, f'{prefix}/heartbeat', self._on_heartbeat, qos)
         # 다른 로봇의 보고 (로봇 → 서버 방향이라 장애 주입기를 거치지 않는다, D8)
@@ -157,7 +168,7 @@ class FakeRobot(Node):
             pickup = (task.pickup_pose.position.x, task.pickup_pose.position.y)
         dropoff = (task.dropoff_pose.position.x, task.dropoff_pose.position.y)
         self._task = task
-        self._run = TaskRun(self._xy, pickup, dropoff, self._speed, self._dwell_s)
+        self._run = TaskRun(self._xy, pickup, dropoff, self._speed, self._dwell_s, self._route)
         self._start_time = self.get_clock().now().to_msg()
         self._publish_status(TaskStatus.STATE_PENDING, '')
         self._publish_status(TaskStatus.STATE_IN_PROGRESS, self._run.phase)
@@ -191,6 +202,9 @@ class FakeRobot(Node):
         before = self._run.distance
         changed = self._run.step(self._step_s, hold_at_boundary=paused)
         self._xy = self._run.xy
+        if self._run.new_path is not None:
+            self._publish_plan(self._run.new_path)
+            self._run.new_path = None
         self._battery.update(self._step_s, self._run.distance - before, False)
         if self._battery.empty:
             self.get_logger().warn(f'배터리 0 %, {self._task.task_id} 중 멈춤 (방전 정지)')
@@ -224,6 +238,18 @@ class FakeRobot(Node):
         self._status_pub.publish(msg)
         # 내가 끝낸 작업을 다른 출처에서 또 받으면 거부한다
         self._claims.observe(msg.task_id, self._robot_id, state, stamp_to_sec(msg.start_time), time.monotonic())
+
+    def _publish_plan(self, points):
+        msg = Path()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
+        for x, y in points:
+            pose = PoseStamped()
+            pose.header = msg.header
+            pose.pose.position.x, pose.pose.position.y = float(x), float(y)
+            pose.pose.orientation.w = 1.0
+            msg.poses.append(pose)
+        self._plan_pub.publish(msg)
 
     def _publish_state(self):
         msg = RobotState()
