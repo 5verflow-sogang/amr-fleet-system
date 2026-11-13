@@ -308,13 +308,12 @@ ros2 launch amr_gazebo world.launch.py world:=restaurant.sdf
 ros2 launch amr_gazebo spawn_robot.launch.py body:=serving x:=11.2 y:=-7.0 yaw:=3.14159   # 서빙 로봇(BellaBot 크기), wait_1
 C=$(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/config
 ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant.yaml seed:=1        # 평상시 손님 7명 (피크: _peak.yaml, 13명)
-ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant_staff.yaml name:=staff_obstacles   # 직원 5명
+ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant_staff.yaml name:=staff_obstacles   # 직원 6명
 ```
 
 | 구역 | 내용 |
 | --- | --- |
-| 매장 (북쪽) | 한식·분식·양식·카페 4곳. 앞 카운터에서 픽업(`stall_1~4`), 한글 간판. 동쪽은 직원 통로(문 x 7.0–8.2, 양옆 화분) |
-| 배식대 (북서쪽) | 직원이 만든 음식을 올려 두는 배식 라인(`restaurant_buffet_station`, 3.73 x 1.14 m, 상판 0.89 m). 홀 쪽으로 열려 있고 로봇은 `buffet_1·2`에서 받는다. 뒤에 직원 조리대 |
+| 매장 (북쪽) | 중식·일식·한식·분식·양식·카페 6곳(서→동, 3 m 칸). 배식대 없이 각 매장 앞 카운터에서 픽업(`stall_6·5·1·2·3·4`, 11/12 배식대 자리에 5·6을 이었다), 한글 간판. 동쪽은 직원 통로(문 x 7.0–8.2, 양옆 화분) |
 | 홀 | 100석. 4인 타원 테이블 15개(`t01~t15`, 3행 x 5열), 6인 테이블 4개(`L01~L04`, 동서 등받이 벤치, 2 x 2로 붙여 사이에 1.0 m 십자 통로: 서빙 로봇 한 대만 지나가고 두 대는 엇갈리지 못한다), 동쪽 벽 부스 3개(`b01~b03`), 2인 테이블 2개(`c01·c02`), 서쪽 벽 셀프 코너. 구조 기둥 4개, 3행 남쪽 화분 칸막이(남쪽 통로와 좌석을 나눔). 테이블 `restaurant_foodcourt_table`(흰 상판 + 금속 U자 다리), 의자 `restaurant_wooden_chair`, 벤치 `restaurant_foodcourt_bench`. 치수는 아래 표 |
 | 남쪽 | 키오스크·자판기(나중에 계산 카운터로 바꿀 자리), 퇴식대(스테인리스 5단 선반 2개 `return_1·2` + 흰 카운터 + 불투명 유리창, 옆에 예비 회수 카트 `restaurant_dish_return`), 정수대(정수기 3대·개수대·WATER 간판, 퇴식대 동쪽), 충전소 3개, 동쪽 벽 대기 위치(`wait_1~5`) |
 
@@ -336,12 +335,12 @@ ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_
 | 서 있는 손님 | 9 | 정지 모델 OpenRobotics `FemaleVisitor`. 매장 카운터 옆(픽업 자리와 0.5 m 이상), 배식대 앞, 셀프 코너, 입구 |
 | 걷는 손님 | 7 (피크 13) | 동적 장애물 `customer` 타입(`models/dynamic_customer`), [`config/dynamic_obstacles_restaurant.yaml`](config/dynamic_obstacles_restaurant.yaml). 통로 가운데로 직선·곡선·무작위, 0.4–1.0 m/s. 피크 몰림 [`_peak.yaml`](config/dynamic_obstacles_restaurant_peak.yaml)은 서쪽 통로·배식대 앞에 6명을 더한다 (혼잡 구역 `amr_fleet_manager/config/congestion_zones_restaurant.yaml`의 `west_aisle` 3/3, `buffet_line` 3–4/4 확인). 손님 파일에는 손님만 넣는다 (혼잡도 노드가 전부 사람으로 센다) |
 | 걷는 손님 (시나리오 1-2) | 12 | 피크 파일에서 우회 통로(x −7.275)를 왕복하는 `customer_2`만 뺀 [`_peak_scene12.yaml`](config/dynamic_obstacles_restaurant_peak_scene12.yaml). 1-2는 서쪽 통로가 막혔을 때 로봇이 그 통로로 돌아가는지 보는데, `customer_2`와 통로 중간에서 마주쳐 막혔다 (11/6 이진 리허설). 혼잡도 노드는 `guests:=peak_scene12` |
-| 매장·배식대 직원 | 5 | 같은 동적 장애물로 칸막이 안 주방과 배식대 뒤를 왕복. 따로 [`_staff.yaml`](config/dynamic_obstacles_restaurant_staff.yaml), 같이 띄울 때 `name:=staff_obstacles` |
+| 매장 직원 | 6 | 같은 동적 장애물로 칸막이 안 매장 주방 6곳을 왕복. 따로 [`_staff.yaml`](config/dynamic_obstacles_restaurant_staff.yaml), 같이 띄울 때 `name:=staff_obstacles` |
 
 - 걷는 손님·직원의 충돌체는 무게중심에 놓은 구(반지름 0.25 m, 마찰 0)다. 원기둥이었을 때는 배식대 앞 줄(피크)에서 손님끼리·가구와 모서리로 부딪혀 기울었고, 중력을 꺼 둬서 누운 채 남았다 (피크 13명 + 직원 5명 4분: 원기둥 2명 누움, 구 0명). 구는 어디서 부딪혀도 힘이 무게중심을 지나 기울이는 회전력이 없다. LiDAR는 메시를 보므로 센서 모습은 같다
 
 - 저장소 모델: `restaurant_foodcourt_table`·`restaurant_wooden_chair`·`restaurant_foodcourt_bench`(Fuel OpenRobotics "FoodCourtTable1"·"WoodenChair"·"FoodCourtBenchLong", Wan Yi Seow, CC-BY 4.0, 충돌체는 상자), `restaurant_table`·`restaurant_chair`(Fuel "Cafe table" CC0·"Dining Chair" CC-BY 4.0, 지금 식당 월드에서는 안 씀), `restaurant_buffet_station`·`restaurant_dish_return`(민지 #295, Sketchfab CC-BY 4.0), `dynamic_customer`. Fuel 메시 URL을 바로 쓰면 메시 옆 텍스처를 못 찾아 테이블이 회색으로 나와서 테이블·의자는 저장소로 옮겼다
-- `restaurant_decor`: 홀 나무 마루·주방 타일 바닥 메시와 한글 간판 10개(매장 4, 배식대, 셀프 수저·반찬, 출입구, 퇴식대, 정수기, 로봇 충전·대기). 텍스처는 스크립트로 직접 만들었다(CC0, 간판 글꼴 맑은 고딕). 긴 테이블·부스·기둥·화분·퇴식대·정수대·테이블 위 쟁반·그릇·컵은 월드에 상자·원기둥으로 직접 넣었다(소품은 시각 전용)
+- `restaurant_decor`: 홀 나무 마루·주방 타일 바닥 메시와 한글 간판 11개(매장 6, 셀프 수저·반찬, 출입구, 퇴식대, 정수기, 로봇 충전·대기). 텍스처는 스크립트로 직접 만들었다(CC0, 간판 글꼴 맑은 고딕). 긴 테이블·부스·기둥·화분·퇴식대·정수대·테이블 위 쟁반·그릇·컵은 월드에 상자·원기둥으로 직접 넣었다(소품은 시각 전용)
 - 나머지(조리대·키오스크·자판기·쓰레기통·앉은·서 있는 사람)는 Gazebo Fuel(OpenRobotics, CC-BY 4.0)에서 처음 실행할 때 내려받는다(인터넷 필요, 이후 캐시)
 - **충돌체는 메시 대신 상자·원기둥**이다. Fuel 원본을 그대로 `<include>`하면 조리대·자판기 충돌체가 겉모습 메시(3천–9천 면)라 물리가 실시간의 0.1배로 느렸다 → 1.0배
 - **Gazebo actor(걷기 애니메이션)는 쓰지 않는다.** actor가 있으면 로봇 LiDAR·카메라를 CPU 렌더링(llvmpipe)할 때 시뮬레이션이 멈췄다(actor만 빼면 같은 월드가 1.0배). 그래서 걷는 사람은 다리가 움직이지 않고 미끄러지듯 이동한다
