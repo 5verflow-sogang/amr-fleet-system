@@ -77,8 +77,10 @@ class FleetManager(Node):
         chargers = pick_stations(stations, self.declare_parameter('charging.charger_pattern', 'charger_*').value)
         waits = pick_stations(stations, self.declare_parameter('charging.wait_pattern', 'wait_*').value)
         energy_check = self.declare_parameter('energy.enabled', False).value
-        if (charging or energy_check) and not chargers:
-            raise ValueError(f'charging.enabled·energy.enabled인데 충전기가 없다 (charging.stations_file={stations_file!r})')
+        interrupt = self.declare_parameter('interrupt.enabled', False).value
+        if (charging or energy_check or interrupt) and not chargers:
+            raise ValueError('charging.enabled·energy.enabled·interrupt.enabled인데 충전기가 없다 '
+                             f'(charging.stations_file={stations_file!r})')
         # Task 메시지에 넣을 자세 (map 좌표)
         self._station_poses = {**chargers, **waits}
         # 피크 시간대 [시작, 끝, 시작, 끝, ...] (서버 시작부터 노드 시계 s). 작업 생성기 profile과 같은 시각으로 맞춘다
@@ -124,6 +126,8 @@ class FleetManager(Node):
             ),
             battery_weight=self.declare_parameter('assignment.battery_weight', 0.0).value,
             aging_rate=self.declare_parameter('assignment.aging_rate', 0.0).value,
+            interrupt_enabled=interrupt,
+            interrupt_reserve_percent=self.declare_parameter('interrupt.reserve_percent', 2.0).value,
         ))
         self._charge_waiting: list[str] = []
         heartbeat_period_s = self.declare_parameter('heartbeat_period_s', 0.2).value
@@ -186,6 +190,11 @@ class FleetManager(Node):
                 f'+ 여유 {e.reserve_percent:g} %'
                 + (' + 충전 차례 대기 정지 소모' if charging else '')
                 + f', 배터리 가중치 {self._dispatcher.config.battery_weight:g}')
+        if interrupt:
+            d = self._dispatcher.config
+            self.get_logger().info(
+                f'배터리 부족 인터럽트: 단계 {list(d.interruptible_phases)}에서 남은 경로 + 충전기까지 '
+                f'(여유 {d.interrupt_reserve_percent:g} %) 모자라면 작업을 되돌리고 바로 충전')
 
     # ---- 구독 ----
 
@@ -222,8 +231,14 @@ class FleetManager(Node):
         before = task.assignee if task is not None else ''
         # 수락 시각. 비어 있으면 보고 시각으로 본다 (TaskStatus.msg)
         start = stamp_to_sec(msg.start_time) or stamp_to_sec(msg.header.stamp)
+        interrupting = msg.task_id in self._dispatcher.interrupting()
         if not self._dispatcher.on_status(msg.task_id, msg.robot_id, msg.state, msg.error.code,
-                                          start, self._now_sec()):
+                                          start, self._now_sec(), phase=msg.phase):
+            return
+        if interrupting and msg.state == TaskStatus.STATE_FAILED and msg.error.code == ErrorInfo.ASSIGN_CANCELED:
+            self.get_logger().warn(
+                f'{msg.robot_id}가 {msg.task_id} 인터럽트 취소 완료: 작업은 다시 할당, 로봇은 바로 충전')
+            self._assign()
             return
         handed_over = bool(task.assignee) and task.assignee != before
         if handed_over:
@@ -315,16 +330,27 @@ class FleetManager(Node):
                     f'충전 차례 기다림: {waiting} (충전 중 {sorted(self._dispatcher.charging_robots())})')
         for command in self._dispatcher.stop_charging(now):
             self._send_cancel(command)
+        for command in self._dispatcher.interrupt_low_battery(now):
+            self._send_cancel(command, interrupt=True)
 
-    def _send_cancel(self, command: Outgoing):
-        """피크 중 충전 목표에 닿은 충전 작업을 끝낸다 (TaskAssignment ACTION_CANCEL, 재전송은 같은 번호)."""
+    def _send_cancel(self, command: Outgoing, interrupt: bool = False):
+        """작업 취소 (TaskAssignment ACTION_CANCEL, 재전송은 같은 번호).
+
+        피크 중 충전 목표에 닿은 충전 작업, 또는 배터리 부족 인터럽트(3단계)로 놓게 할 픽업 전 배송 작업.
+        """
         msg = TaskAssignment()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.assignment_id = command.assignment_id
         msg.robot_id = command.robot_id
         msg.action = TaskAssignment.ACTION_CANCEL
         msg.task = self._dispatcher.tasks[command.task_id].payload
-        if command.first:
+        if command.first and interrupt:
+            robot = self._dispatcher.robots[command.robot_id]
+            need = self._dispatcher.interrupt_need(command.task_id)
+            self.get_logger().warn(
+                f'배터리 부족 인터럽트: {command.robot_id} {robot.info.battery_percent:.1f} % < 필요 '
+                f'{need:.1f} %, 픽업 전 {command.task_id} 취소')
+        elif command.first:
             self.get_logger().info(f'피크 중 짧은 충전: {command.robot_id} 충전 끝냄 ({command.task_id})')
         self._assignment_pub.publish(msg)
 

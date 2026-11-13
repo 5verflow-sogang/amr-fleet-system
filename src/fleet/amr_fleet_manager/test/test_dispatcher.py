@@ -852,3 +852,153 @@ def test_no_stop_without_peak_target():
     d.update_robot(robot('amr_01', (2.0, -10.0), battery=25.0), '', 0.0)
     _charging_robot(d, 99.0, now=0.0)
     assert d.stop_charging(0.0) == []
+
+
+# ---- 작업 중 배터리 부족 인터럽트 (3단계) ----
+
+# 이동 1 %/m (경로 1배, 정지 소모 0)라 필요 배터리 = 남은 직선 거리 [m] + 여유 2 %
+_MODEL = EnergyModel(move_per_m=1.0, idle_per_s=0.0, path_factor=1.0, reserve_percent=5.0)
+
+
+def _interrupt(**kwargs):
+    # 충전기 (0, -10), (2, -10). 자동 충전은 꺼 둬도 인터럽트한 로봇은 충전하러 보낸다
+    chargers = (Station('charger_c1', (0.0, -10.0)), Station('charger_c2', (2.0, -10.0)))
+    kwargs.setdefault('interrupt_enabled', True)
+    # 할당 하한은 꺼 둔다 (인터럽트만 본다)
+    kwargs.setdefault('min_battery_percent', 0.0)
+    return make(chargers=chargers, energy=_MODEL, **kwargs)
+
+
+def _delivery(task_id='t1'):
+    # 픽업 (0, 10) → 배달 (0, 20) → 가장 가까운 충전기 (0, -10)까지 30 m
+    return TaskInfo(task_id=task_id, task_type=0, pickup_xy=(0.0, 10.0), dropoff_xy=(0.0, 20.0), priority=0, created=0.0)
+
+
+def _running(d, battery, phase='move_to_pickup', now=0.0):
+    # 원점의 amr_01이 t1을 맡아 픽업으로 가는 중
+    d.update_robot(robot('amr_01', (0.0, 0.0), battery=battery), '', now)
+    d.add_task(_delivery())
+    commands, _ = d.assign(now)
+    assert [c.task_id for c in commands] == ['t1']
+    d.on_status('t1', 'amr_01', STATE_IN_PROGRESS, now=now, phase=phase)
+    return commands[0]
+
+
+def test_interrupt_off_by_default_sends_nothing():
+    d = _interrupt(interrupt_enabled=False)
+    _running(d, battery=10.0)
+    assert d.interrupt_low_battery(0.0) == []
+
+
+def test_interrupt_needs_chargers():
+    d = make(interrupt_enabled=True, energy=_MODEL, min_battery_percent=0.0)
+    _running(d, battery=10.0)
+    assert d.interrupt_low_battery(0.0) == []
+
+
+def test_enough_battery_not_interrupted():
+    # 남은 경로 10 + 10 + 30 = 50 m → 52 %가 필요하다
+    d = _interrupt()
+    _running(d, battery=52.5)
+    assert d.interrupt_low_battery(0.0) == []
+    assert d.interrupt_need('t1') == pytest.approx(52.0)
+
+
+def test_low_battery_before_pickup_cancels_requeues_and_charges():
+    d = _interrupt()
+    first = _running(d, battery=40.0)
+    cancels = d.interrupt_low_battery(0.0)
+    assert [(c.robot_id, c.task_id, c.first) for c in cancels] == [('amr_01', 't1', True)]
+    assert cancels[0].assignment_id != first.assignment_id
+    assert d.interrupting() == {'t1'}
+    # 취소 완료 전에는 같은 번호로만 다시 보낸다
+    assert d.interrupt_low_battery(0.5) == []
+    again = d.interrupt_low_battery(1.0)
+    assert [(c.assignment_id, c.first) for c in again] == [(cancels[0].assignment_id, False)]
+    # 취소 완료: 작업은 재시도로 세지 않고 큐로, 로봇은 바로 가장 가까운 충전기로 (자동 충전이 꺼져 있어도)
+    assert d.on_status('t1', 'amr_01', STATE_FAILED, ERROR_CANCELED, now=1.5)
+    t1 = d.tasks['t1']
+    assert (t1.state, t1.assignee, t1.failures, t1.interrupts, t1.phase) == (STATE_PENDING, '', 0, 1, '')
+    assert d.interrupting() == set()
+    orders = d.plan_charging(1.5)
+    assert [(o.robot_id, o.task_type, o.station) for o in orders] == [('amr_01', TYPE_CHARGE, 'charger_c1')]
+    commands, _ = d.assign(1.5)
+    # 그 로봇은 배송이 아니라 충전을 받는다. t1은 큐에 남아 다른 로봇을 기다린다
+    assert [(c.robot_id, c.task_id) for c in commands] == [('amr_01', orders[0].task_id)]
+    assert d.tasks['t1'].state == STATE_PENDING and not d.tasks['t1'].assignee
+    d.update_robot(robot('amr_02', (1.0, 1.0)), '', 2.0)
+    commands, _ = d.assign(2.0)
+    assert [(c.robot_id, c.task_id) for c in commands] == [('amr_02', 't1')]
+
+
+def test_interrupted_robot_charges_regardless_of_min_in_service():
+    # 최소 운영 5대(동시 충전 0대)여도 인터럽트한 로봇은 충전하러 간다
+    d = _interrupt(charging_enabled=True, charge=ChargeConfig(low_percent=30.0, min_in_service=5))
+    _running(d, battery=40.0)
+    d.interrupt_low_battery(0.0)
+    d.on_status('t1', 'amr_01', STATE_FAILED, ERROR_CANCELED, now=1.0)
+    assert [o.robot_id for o in d.plan_charging(1.0)] == ['amr_01']
+
+
+def test_interrupted_robot_waits_for_free_charger():
+    d = _interrupt()
+    _running(d, battery=40.0)
+    d.interrupt_low_battery(0.0)
+    d.on_status('t1', 'amr_01', STATE_FAILED, ERROR_CANCELED, now=1.0)
+    # 충전기 두 곳 모두 다른 로봇이 쓰는 중
+    for i, name in enumerate(('charger_c1', 'charger_c2'), start=2):
+        d.update_robot(robot(f'amr_0{i}', battery=10.0), '', 1.0)
+        d._add_directed(f'amr_0{i}', TYPE_CHARGE, Station(name, (0.0, -10.0)), 1.0)
+    assert d.plan_charging(1.0) == []
+    # 기다리는 동안 배송을 주지 않는다
+    d.add_task(_delivery('t2'))
+    commands, _ = d.assign(1.0)
+    assert all(c.robot_id != 'amr_01' for c in commands)
+    # 충전기 하나가 비면 간다
+    busy = [t for t in d.tasks.values() if t.for_robot == 'amr_02'][0]
+    d.on_status(busy.info.task_id, 'amr_02', STATE_COMPLETED, now=2.0)
+    d.update_robot(robot('amr_01', (0.0, 0.0), battery=39.0), '', 2.0)
+    assert [o.robot_id for o in d.plan_charging(2.0)] == ['amr_01']
+
+
+@pytest.mark.parametrize('phase', ['loading', 'move_to_dropoff', 'docking', 'unloading'])
+def test_loaded_task_not_interrupted(phase):
+    d = _interrupt()
+    _running(d, battery=5.0, phase=phase)
+    assert d.interrupt_low_battery(0.0) == []
+
+
+def test_interrupt_withdrawn_when_robot_loads_or_finishes():
+    d = _interrupt()
+    _running(d, battery=40.0)
+    assert d.interrupt_low_battery(0.0)
+    # 취소가 닿기 전에 짐을 실었다: 더 보내지 않고, 이후 보고는 평소대로
+    d.on_status('t1', 'amr_01', STATE_IN_PROGRESS, now=0.5, phase='loading')
+    assert d.interrupt_low_battery(2.0) == [] and d.interrupting() == set()
+    d.on_status('t1', 'amr_01', STATE_COMPLETED, now=3.0)
+    assert d.tasks['t1'].state == STATE_COMPLETED and d.tasks['t1'].interrupts == 0
+
+
+def test_robot_failure_during_interrupt_counts_as_normal_failure():
+    d = _interrupt()
+    _running(d, battery=40.0)
+    d.interrupt_low_battery(0.0)
+    # 취소가 아닌 다른 실패(Nav 등)는 원래 규칙: 재시도 1회
+    d.on_status('t1', 'amr_01', STATE_FAILED, 301, now=1.0)
+    t1 = d.tasks['t1']
+    assert (t1.state, t1.failures, t1.interrupts) == (STATE_PENDING, 1, 0)
+    assert d.interrupting() == set() and d.plan_charging(1.0) == []
+
+
+def test_server_charge_tasks_never_interrupted():
+    d = _interrupt(charging_enabled=True, charge=ChargeConfig(low_percent=30.0))
+    d.update_robot(robot('amr_01', battery=1.0), '', 0.0)
+    orders = d.plan_charging(0.0)
+    d.assign(0.0)
+    d.on_status(orders[0].task_id, 'amr_01', STATE_IN_PROGRESS, now=0.0, phase='')
+    assert d.interrupt_low_battery(0.0) == []
+
+
+def test_negative_interrupt_reserve_rejected():
+    with pytest.raises(ValueError):
+        make(interrupt_reserve_percent=-1.0)
