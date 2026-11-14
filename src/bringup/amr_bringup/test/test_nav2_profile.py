@@ -51,7 +51,7 @@ def test_none_filter_adds_nothing():
 
 def test_keepout_filter_appends_to_base_plugins_and_uses_congestion_node_topic():
     overrides = congestion_filter_overrides('keepout')
-    assert overrides['plugins'] == ['static_layer', 'obstacle_layer', 'inflation_layer', 'keepout_filter']
+    assert overrides['plugins'] == ['static_layer', 'obstacle_layer', 'fleet_peer_layer', 'inflation_layer', 'keepout_filter']
     assert overrides['keepout_filter']['plugin'] == 'nav2_costmap_2d::KeepoutFilter'
     # 절대 토픽 - 민지 혼잡도 노드(#296)가 내는 이름 그대로, 네임스페이스와 무관
     assert overrides['keepout_filter']['filter_info_topic'] == '/fleet/congestion_keepout_info'
@@ -59,7 +59,7 @@ def test_keepout_filter_appends_to_base_plugins_and_uses_congestion_node_topic()
 
 def test_speed_filter_appends_to_base_plugins_and_uses_congestion_node_topic():
     overrides = congestion_filter_overrides('speed')
-    assert overrides['plugins'] == ['static_layer', 'obstacle_layer', 'inflation_layer', 'speed_filter']
+    assert overrides['plugins'] == ['static_layer', 'obstacle_layer', 'fleet_peer_layer', 'inflation_layer', 'speed_filter']
     assert overrides['speed_filter']['plugin'] == 'nav2_costmap_2d::SpeedFilter'
     assert overrides['speed_filter']['filter_info_topic'] == '/fleet/congestion_speed_info'
     # 지정 안 하면 speed_limit_topic은 그대로 - SpeedFilter 기본값(costmap 네임스페이스 기준)을 쓴다
@@ -130,3 +130,23 @@ def test_build_overrides_speed_filter_threads_speed_limit_topic_through(nav2_par
         nav2_params, 'warehouse', 'speed', 'odometry/local', speed_limit_topic='/amr_01/speed_limit')
     gc = overrides['global_costmap']['global_costmap']['ros__parameters']
     assert gc['speed_filter']['speed_limit_topic'] == '/amr_01/speed_limit'
+
+
+def test_filter_base_plugins_match_nav2_params_global_costmap(nav2_params):
+    # 필터를 붙이면 plugins 목록 전체를 다시 주므로 기본 목록이 yaml과 어긋나면 레이어가 빠진다
+    base = nav2_params['global_costmap']['global_costmap']['ros__parameters']['plugins']
+    assert congestion_filter_overrides('keepout')['plugins'][:-1] == base
+
+
+def test_fleet_peer_layer_off_only_in_restaurant(nav2_params):
+    for costmap in ('global_costmap', 'local_costmap'):
+        params = nav2_params[costmap][costmap]['ros__parameters']
+        plugins = params['plugins']
+        # 팽창되도록 inflation_layer 앞
+        assert plugins.index('fleet_peer_layer') < plugins.index('inflation_layer')
+        assert params['fleet_peer_layer']['enabled'] is True
+    restaurant = build_overrides(nav2_params, 'restaurant', 'none', 'odometry/local')
+    warehouse = build_overrides(nav2_params, 'warehouse', 'none', 'odometry/local')
+    for costmap in ('global_costmap', 'local_costmap'):
+        assert restaurant[costmap][costmap]['ros__parameters']['fleet_peer_layer'] == {'enabled': False}
+        assert 'fleet_peer_layer' not in warehouse[costmap][costmap]['ros__parameters']

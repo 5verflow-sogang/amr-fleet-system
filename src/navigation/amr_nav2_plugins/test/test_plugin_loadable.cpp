@@ -2,6 +2,7 @@
 
 #include "nav2_core/controller.hpp"
 #include "nav2_core/global_planner.hpp"
+#include "nav2_costmap_2d/layer.hpp"
 #include "pluginlib/class_loader.hpp"
 
 // configure()는 호출하지 않는다(실제 LifecycleNode·Costmap2DROS가 필요해서 무겁다).
@@ -29,4 +30,16 @@ TEST(AStarGlobalPlannerPluginTest, LoadableAsNav2CoreGlobalPlanner)
   std::shared_ptr<nav2_core::GlobalPlanner> planner;
   ASSERT_NO_THROW(planner = loader.createSharedInstance("amr_nav2_plugins::AStarGlobalPlanner"));
   EXPECT_NE(planner, nullptr);
+}
+
+TEST(FleetPeerLayerPluginTest, LoadableAsCostmapLayer)
+{
+  pluginlib::ClassLoader<nav2_costmap_2d::Layer> loader(
+    "nav2_costmap_2d", "nav2_costmap_2d::Layer");
+
+  ASSERT_TRUE(loader.isClassAvailable("amr_nav2_plugins::FleetPeerLayer"));
+
+  std::shared_ptr<nav2_costmap_2d::Layer> layer;
+  ASSERT_NO_THROW(layer = loader.createSharedInstance("amr_nav2_plugins::FleetPeerLayer"));
+  EXPECT_NE(layer, nullptr);
 }

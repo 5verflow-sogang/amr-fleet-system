@@ -34,7 +34,7 @@ global_costmap:
       footprint: "[[0.3, 0.2], [0.3, -0.2], [-0.3, -0.2], [-0.3, 0.2]]"
       footprint_padding: 0.01
 
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "fleet_peer_layer", "inflation_layer"]
 
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -66,6 +66,21 @@ global_costmap:
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
           inf_is_valid: False
+
+      # 다른 로봇 (amr_nav2_plugins::FleetPeerLayer). LiDAR 스캔면(지면 0.38 m)이 다른 로봇 차체(0.03~0.33 m) 위를
+      # 지나가 obstacle_layer에는 다른 로봇이 LiDAR 원통 한 점으로만 찍힌다 - 로봇끼리 부딪혀 밀다 서는 교착이 났다
+      # (11/13 fleet_stack resp50). /fleet/robot_states 위치를 외삽해 차체를 그린다. inflation_layer 앞이라 팽창된다.
+      # 식당 서빙 로봇(1.16 m)은 LiDAR로 서로 보이므로 restaurant 프로필은 끈다 (amr_bringup nav2_profile.py)
+      fleet_peer_layer:
+        plugin: "amr_nav2_plugins::FleetPeerLayer"
+        enabled: True
+        states_topic: /fleet/robot_states
+        peer_half_length: 0.3
+        peer_half_width: 0.2
+        # 위치 지연 여유: 상태 2 Hz를 외삽으로 메우고 남는 오차(위치추정·가속)
+        padding: 0.1
+        timeout: 2.0
+        max_extrapolation: 1.0
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -100,7 +115,7 @@ local_costmap:
       footprint: "[[0.3, 0.2], [0.3, -0.2], [-0.3, -0.2], [-0.3, 0.2]]"
       footprint_padding: 0.01
 
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "fleet_peer_layer", "inflation_layer"]
 
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -126,6 +141,21 @@ local_costmap:
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
           inf_is_valid: False
+
+      # 다른 로봇 (amr_nav2_plugins::FleetPeerLayer). LiDAR 스캔면(지면 0.38 m)이 다른 로봇 차체(0.03~0.33 m) 위를
+      # 지나가 obstacle_layer에는 다른 로봇이 LiDAR 원통 한 점으로만 찍힌다 - 로봇끼리 부딪혀 밀다 서는 교착이 났다
+      # (11/13 fleet_stack resp50). /fleet/robot_states 위치를 외삽해 차체를 그린다. inflation_layer 앞이라 팽창된다.
+      # 식당 서빙 로봇(1.16 m)은 LiDAR로 서로 보이므로 restaurant 프로필은 끈다 (amr_bringup nav2_profile.py)
+      fleet_peer_layer:
+        plugin: "amr_nav2_plugins::FleetPeerLayer"
+        enabled: True
+        states_topic: /fleet/robot_states
+        peer_half_length: 0.3
+        peer_half_width: 0.2
+        # 위치 지연 여유: 상태 2 Hz를 외삽으로 메우고 남는 오차(위치추정·가속)
+        padding: 0.1
+        timeout: 2.0
+        max_extrapolation: 1.0
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
