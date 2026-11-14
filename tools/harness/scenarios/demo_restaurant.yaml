@@ -69,6 +69,10 @@ processes:
     ready_topic: /fleet/heartbeat
     ready_cmds:
       - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
+      # 지도 서버도 active인지 본다. lifecycle_manager_map의 configure 응답이 시간 초과되면 map_server가 활성화되지 않아
+      # /map이 안 나오고, costmap이 "no map received"로 경로를 못 짜 5대 모두 0 m로 끝난다. bt_navigator는 그래도 active라
+      # 위 확인만으로는 그대로 측정이 시작됐다 (11/14 demo_s11 meas_on seed 1). 여기서 걸리면 기동 실패로 다시 돈다
+      - timeout 20 ros2 lifecycle get /map_server | grep -q '^active'
     ready_timeout_s: 600
     settle_s: 5
   - name: cameras
