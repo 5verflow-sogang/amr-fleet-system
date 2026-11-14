@@ -1,6 +1,7 @@
 """중앙집중 Fleet 서버 (최소판): 작업 접수 → 할당 → Ack·재전송, heartbeat·작업표 방송.
 
 구역 허가(ZoneRequest/ZoneGrant)는 정원·lease·작업 우선순위 대기열, 교착이면 우선순위 낮은 로봇의 허가를 회수한다.
+구역 밖 대치(traffic.standoff): 작업 중인 로봇들이 서로 막고 멈춰 서면 한 대에게 비키라고 한다(ZoneGrant zone_id standoff:*).
 흐름은 architecture.md 5-1절.
 자동 충전(charging.enabled): 배터리 낮은 로봇에게 충전 작업을 직접 내고, 최소 운영 대수를 지키며 동시 충전을 묶는다.
 """
@@ -8,6 +9,7 @@
 from __future__ import annotations
 
 import fnmatch
+import math
 import uuid
 
 import rclpy
@@ -15,6 +17,7 @@ from builtin_interfaces.msg import Time
 from amr_fleet_core.assignment import RobotInfo, TaskInfo, has_pickup
 from amr_fleet_core.charging import ChargeConfig, Station
 from amr_fleet_core.energy import EnergyModel
+from amr_fleet_core.deadlock import BACK, StandoffConfig, StandoffDetector
 from amr_fleet_core.traffic import Decision, ZoneManager
 from amr_msgs.msg import (ErrorInfo, FleetHeartbeat, FleetTaskTable, RobotFleetMode, RobotState, Task,
                           TaskAssignment, TaskAssignmentAck, TaskRecord, TaskStatus, ZoneCongestionArray, ZoneGrant,
@@ -36,6 +39,15 @@ def stamp_to_sec(stamp) -> float:
 def sec_to_stamp(seconds: float) -> Time:
     sec, nanosec = divmod(int(round(seconds * 1e9)), 1_000_000_000)
     return Time(sec=sec, nanosec=nanosec)
+
+
+# 구역 밖 대치 양보 지시의 ZoneGrant.zone_id (ZoneGrant.msg). 구역 클라이언트가 이 이름으로 구역 회수와 구별한다
+STANDOFF_ZONE_BACK = 'standoff:back'
+STANDOFF_ZONE_FORWARD = 'standoff:forward'
+
+
+def yaw_of(q) -> float:
+    return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
 
 def task_info(msg: Task) -> TaskInfo:
@@ -126,6 +138,8 @@ class FleetManager(Node):
             aging_rate=self.declare_parameter('assignment.aging_rate', 0.0).value,
         ))
         self._charge_waiting: list[str] = []
+        # 로봇별 마지막 TaskStatus.phase (대치 판정: 도킹·적재 중인 로봇은 멈춰 있는 게 정상이라 뺀다)
+        self._phase: dict[str, str] = {}
         heartbeat_period_s = self.declare_parameter('heartbeat_period_s', 0.2).value
         task_table_period_s = self.declare_parameter('task_table_period_s', 1.0).value
         tick_s = self.declare_parameter('tick_s', 0.05).value
@@ -135,6 +149,14 @@ class FleetManager(Node):
             lease_s=self.declare_parameter('traffic.lease_s', 5.0).value,
             release_timeout_s=self.declare_parameter('traffic.release_timeout_s', 30.0).value,
             deadlock_strategy=self.declare_parameter('traffic.deadlock_strategy', 'revoke').value)
+        # 구역 밖 대치 (amr_fleet_core deadlock/standoff.py). 위치는 RobotState(2 Hz), 시계는 노드 시계
+        self._standoff = None
+        if self.declare_parameter('traffic.standoff.enabled', True).value:
+            self._standoff = StandoffDetector(StandoffConfig(
+                radius_m=self.declare_parameter('traffic.standoff.radius_m', 1.2).value,
+                still_s=self.declare_parameter('traffic.standoff.still_s', 10.0).value,
+                still_m=self.declare_parameter('traffic.standoff.still_m', 0.2).value,
+                cooldown_s=self.declare_parameter('traffic.standoff.cooldown_s', 20.0).value))
         csv_path = self.declare_parameter('assignments_csv', '').value
         self._log = AssignmentLog(csv_path) if csv_path else None
 
@@ -166,6 +188,9 @@ class FleetManager(Node):
         self.create_timer(task_table_period_s, self._publish_table, clock=steady)
         self.create_timer(tick_s, self._resend, clock=steady)
         self.create_timer(tick_s, self._expire_zones, clock=steady)
+        if self._standoff is not None:
+            # still_s(20 s)를 노드 시계로 재므로 타이머도 노드 시계 (use_sim_time이면 시뮬레이션 시간)
+            self.create_timer(1.0, self._check_standoffs)
         self.get_logger().info(
             f'Fleet 서버 시작: epoch={self._epoch}, algorithm={self._dispatcher.config.algorithm}, '
             f'resend={self._dispatcher.config.resend_interval_s}s x {self._dispatcher.config.max_resends}, '
@@ -206,6 +231,16 @@ class FleetManager(Node):
             mode=msg.mode,
         )
         self._dispatcher.update_robot(info, msg.current_task_id, self._now_sec())
+        if self._standoff is not None:
+            busy = msg.mode == RobotState.MODE_BUSY
+            # 묶음에 넣는 로봇: 대기 중이거나 이동 단계(move_*)인 로봇. 도킹·적재·충전 중, 오류·E-Stop, 구역 대기열에
+            # 선 로봇은 멈춰 있는 게 정상이다 (비킬 쪽 장애물로는 본다)
+            moving = not busy or self._phase.get(msg.robot_id, '').startswith('move_')
+            queued = any(msg.robot_id in self._zones.queue(z) for z in self._zones.zone_ids)
+            self._standoff.update(
+                msg.robot_id, self._now_sec(), msg.pose.position.x, msg.pose.position.y, yaw_of(msg.pose.orientation),
+                busy=busy,
+                active=msg.mode in (RobotState.MODE_IDLE, RobotState.MODE_BUSY) and moving and not queued)
         self._assign()
 
     def _on_ack(self, msg: TaskAssignmentAck):
@@ -218,6 +253,10 @@ class FleetManager(Node):
             self._assign()
 
     def _on_status(self, msg: TaskStatus):
+        if msg.state == TaskStatus.STATE_IN_PROGRESS:
+            self._phase[msg.robot_id] = msg.phase
+        else:
+            self._phase.pop(msg.robot_id, None)
         task = self._dispatcher.tasks.get(msg.task_id)
         before = task.assignee if task is not None else ''
         # 수락 시각. 비어 있으면 보고 시각으로 본다 (TaskStatus.msg)
@@ -276,6 +315,20 @@ class FleetManager(Node):
             self.get_logger().warn(
                 f'교착 해소: {d.robot_id}의 {d.zone_id} 허가 회수, {d.holder_robot_id}에게 양보')
         self._publish_grants(revoked)
+
+    def _check_standoffs(self):
+        for order in self._standoff.check(self._now_sec(), self._dispatcher.robot_priority):
+            msg = ZoneGrant()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.robot_id = order.robot_id
+            msg.zone_id = STANDOFF_ZONE_BACK if order.direction == BACK else STANDOFF_ZONE_FORWARD
+            msg.grant = ZoneGrant.GRANT_REVOKED
+            msg.reason = ZoneGrant.REASON_DEADLOCK_RESOLUTION
+            msg.holder_robot_id = order.yield_to
+            self._grant_pub.publish(msg)
+            self.get_logger().warn(
+                f'대치 해소: {list(order.group)}가 멈춰 있음 → {order.robot_id}가 '
+                f'{"뒤로" if order.direction == BACK else "앞으로"} 비켜 {order.yield_to}에게 양보')
 
     def _publish_grants(self, decisions: list[Decision]):
         for d in decisions:

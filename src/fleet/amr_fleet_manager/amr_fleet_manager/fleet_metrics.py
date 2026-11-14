@@ -97,6 +97,9 @@ TASK_OUTCOMES_HEADER = ['task_id', 'request_time', 'first_assign_time', 'robots'
                         'task_time_s', 'distance_m', 'error_code', 'runners', 'request_sim', 'end_sim']
 ZONE_WAITS_HEADER = ['robot', 'zone', 'request_id', 'request_time', 'grant_time', 'wait_s', 'outcome', 'release_time']
 STALLS_HEADER = ['robot', 'task_id', 'phase', 'start_time', 'end_time', 'duration_s', 'with']
+# 구역 밖 대치 양보 지시 (서버 traffic.standoff, ZoneGrant zone_id standoff:*) 1건마다 1행
+STANDOFFS_HEADER = ['time', 'robot', 'direction', 'yield_to']
+STANDOFF_ZONE_PREFIX = 'standoff:'
 FLEET_MODES_HEADER = ['robot', 'mode', 'start_time', 'end_time', 'duration_s']
 RECOVERY_HEADER = ['robot', 'kill_time', 'task_id', 'reassign_time', 'reassigned_robot', 'recovery_s', 'completed']
 # latency_ms: 서버 발행 → 첫 움직임 (원 명세 측정 표 "작업 명령 발행"). 통신 지연 포함
@@ -539,6 +542,16 @@ def stalls(records: Sequence[Record], min_s: float = STALL_S, disp_m: float = ST
     return rows
 
 
+def standoffs(records: Sequence[Record]) -> list[list]:
+    """standoffs.csv 행: 서버가 보낸 대치 양보 지시. KPI '교착 없음'의 근거 - 정체(stalls, 60 s)는 양보로 풀려
+    짧아지면 안 잡히므로, 대치가 몇 번 났고 누가 비켰는지는 이 표로 본다."""
+    rows = []
+    for r in sorted(records, key=lambda r: r.t):
+        if r.topic == ZONE_GRANTS_TOPIC and r.msg.zone_id.startswith(STANDOFF_ZONE_PREFIX):
+            rows.append([_fmt(r.t), r.msg.robot_id, r.msg.zone_id[len(STANDOFF_ZONE_PREFIX):], r.msg.holder_robot_id])
+    return rows
+
+
 def read_kill_events(path: Path) -> list[tuple[float, str]]:
     """fault_events.csv의 로봇 강제종료 [(시각, 로봇)]. 파일이 없으면 빈 목록."""
     if not path.exists():
@@ -653,6 +666,7 @@ def convert(records: Sequence[Record], out_dir: Path, delay_ms: float, grace_s: 
         write_csv(out_dir / 'zone_waits.csv', ZONE_WAITS_HEADER, zone_waits(records, cutoff.end, clock))
     if any(ODOM_TOPIC.match(r.topic) for r in records):
         write_csv(out_dir / 'stalls.csv', STALLS_HEADER, stalls(records, clock=clock))
+        write_csv(out_dir / 'standoffs.csv', STANDOFFS_HEADER, standoffs(records))
     write_csv(out_dir / 'robot_states.csv', ROBOT_STATES_HEADER, robot_states(records))
     # 하이브리드 실행만 (경매 노드가 fleet_mode:=hybrid로 떠야 모드를 알린다)
     if any(r.topic == MODES_TOPIC for r in records):

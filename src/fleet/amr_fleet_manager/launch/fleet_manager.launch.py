@@ -92,7 +92,11 @@ def _server(context):
             }, *([{
                 # 우선순위 aging 비교용 (설정 파일 값을 이 실행만 바꾼다). 비우면 설정 파일(extra_params_file 포함) 값
                 'assignment.aging_rate': float(arg('aging_rate')),
-            }] if arg('aging_rate') else [])],
+            }] if arg('aging_rate') else []), *([{
+                # 구역 밖 대치 양보 켬/끔. 비우면 설정 파일(extra_params_file 포함, 식당은 끔) 값. 연구 1 가짜 로봇 실험은
+                # false - 가짜 로봇은 지시를 못 따르고 조건도 바뀐다
+                'traffic.standoff.enabled': arg('standoff').lower() == 'true',
+            }] if arg('standoff') else [])],
             output='screen',
         )
 
@@ -194,6 +198,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'station_clearance_m', default_value='1.0',
             description='스테이션 예약 거리 (m). 맡겨진 작업의 스테이션 근처를 쓰는 작업은 끝날 때까지 미룬다. 0이면 끔 (config 기본 1.0)'),
+        DeclareLaunchArgument(
+            'standoff', default_value='',
+            description='구역 밖 대치 양보 켬/끔 (true/false). 비우면 설정 파일 값 (fleet_manager.yaml 켬, 식당 끔). 가짜 로봇 실험은 false'),
         DeclareLaunchArgument(
             'max_resends', default_value='5',
             description='Ack가 없을 때 할당 명령 재전송 한도. 넘으면 작업을 큐로 되돌려 다른 로봇에 맡긴다 (config 기본 5)'),
