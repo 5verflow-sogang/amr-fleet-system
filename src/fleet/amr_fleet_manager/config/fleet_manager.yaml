@@ -94,5 +94,18 @@ fleet_manager:
       # 교착 해소 전략. revoke: 순환이 생기면 우선순위 낮은 로봇의 허가 회수(후진) /
       # avoid: 순환을 닫게 될 대기 요청을 거부(REJECTED, 다른 경로로 재계획). amr_fleet_core README '교착 탐지'
       deadlock_strategy: revoke
+      # 구역 밖 대치: 작업 중인 로봇을 포함해 radius_m 안의 로봇들이 모두 still_s 동안 still_m 넘게 안 움직이면,
+      # 한 대(작업 없는 로봇 → 우선순위 낮은 로봇 → robot_id 뒤)에게 상대에게서 멀어지는 쪽으로 비키라고 한다
+      # (ZoneGrant zone_id standoff:back|forward, 구역 클라이언트가 yield_distance_m만 움직이고 yield_hold_s 서 있는다).
+      # 넓은 통로·스테이션 앞에서 서로를 보고 멈춘 두 로봇은 Nav2 복구를 똑같이 해서 풀리지 않았다
+      # (11/14 fleet_stack peer_resp, amr_fleet_core deadlock/standoff.py)
+      standoff:
+        enabled: true
+        radius_m: 1.2
+        # Nav2 progress_checker(10 s)와 같다. 11/14 기록 재생에서 5 s는 헛양보 12회, 10 s는 3회, 그 위는 2회로 평평
+        still_s: 10.0
+        still_m: 0.2
+        # 비키기(0.6 m / 0.15 m/s ≈ 5 s) + 서 있기(8 s) + 여유. 그 뒤 still_s를 다시 채워야 재지시된다
+        cooldown_s: 20.0
     # 재전송·구역 만료 확인 주기 (s)
     tick_s: 0.05

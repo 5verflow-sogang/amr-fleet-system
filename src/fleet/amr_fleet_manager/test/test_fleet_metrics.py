@@ -527,3 +527,17 @@ def test_stalls_window_and_duration_in_sim_time():
     # 시각 열은 수신 시각(실제), 길이는 시뮬레이션: 앞뒤 2 m(실제 2 s씩) 포함 99~261 s → 81 s
     assert (row['start_time'], row['end_time']) == ('99.000000', '261.000000')
     assert float(row['duration_s']) == pytest.approx(81.0, abs=0.01)
+
+
+def test_standoffs_rows_from_standoff_grants():
+    from types import SimpleNamespace
+    from amr_fleet_manager.fleet_metrics import STANDOFFS_HEADER, standoffs
+    grant = lambda zone, robot, to: SimpleNamespace(robot_id=robot, zone_id=zone, request_id=0, grant=3, holder_robot_id=to)
+    records = [
+        rec('/fleet/zone_grants', 12.0, grant('standoff:back', 'amr_02', 'amr_01')),
+        rec('/fleet/zone_grants', 13.0, grant('narrow_02', 'amr_03', '')),       # 구역 허가는 안 센다
+        rec('/fleet/zone_grants', 40.0, grant('standoff:forward', 'amr_04', 'amr_05')),
+    ]
+    rows = [dict(zip(STANDOFFS_HEADER, r)) for r in standoffs(records)]
+    assert [(r['robot'], r['direction'], r['yield_to']) for r in rows] == [
+        ('amr_02', 'back', 'amr_01'), ('amr_04', 'forward', 'amr_05')]

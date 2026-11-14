@@ -104,10 +104,12 @@ class _RecordingCore:
     """core.update에 넘어온 robot_xy를 그대로 기록한다 (구역 진입·이탈 판단 자체는 test_core.py에서
     본다 - 여기서는 위치 토픽 → _robot_xy() → core.update 연결만 확인한다)."""
 
+    yield_direction = None   # 대치 양보 중이 아니다 (core.ZoneClientCore.yield_direction)
+
     def __init__(self):
         self.seen_xy = []
 
-    def update(self, now, path_xy, robot_xy, safety_limit, current_speed):
+    def update(self, now, path_xy, robot_xy, safety_limit, current_speed, yield_blocked=False):
         self.seen_xy.append(robot_xy)
         return [], None, None, []
 
@@ -174,10 +176,12 @@ class _FakePublisher:
 class _FakeCore:
     """core.update가 정해 둔 상한만 돌려준다 (구역 상태 기계는 test_core.py에서 따로 본다)."""
 
+    yield_direction = None   # 대치 양보 중이 아니다 (core.ZoneClientCore.yield_direction)
+
     def __init__(self):
         self.cap = None
 
-    def update(self, now, path_xy, robot_xy, safety_limit, current_speed):
+    def update(self, now, path_xy, robot_xy, safety_limit, current_speed, yield_blocked=False):
         return [], self.cap, None, []
 
     def state_label(self, now):

@@ -171,6 +171,14 @@ failed > backing > blocked > waiting > inside > approaching > idle
 순환 탐지는 미구현, `amr_fleet_core/README.md`) — `GRANT_REVOKED`를 실제로 보내는 경로가 생기기 전까지는
 이 로직을 켤 상황 자체가 안 생긴다. 서버 쪽이 구현되면 이 클라이언트 처리는 바로 맞물린다.
 
+### 대치 양보 (`standoff:back`·`standoff:forward`)
+
+서버가 구역 밖 대치(서로 막고 멈춘 로봇들, `amr_fleet_core` README '해소 3')를 풀려고 `zone_id`가
+`standoff:back`·`standoff:forward`인 `GRANT_REVOKED`를 보내면, 구역과 상관없이 그 방향(진행 방향 기준 뒤·앞)으로
+`yield_distance_m`(0.6 m)만 `backing_speed_mps`로 움직이고 `yield_hold_s`(8 s) 서 있다가 끝낸다. 그동안 BACKING처럼
+`cmd_vel_nav`를 무시하고 직접 속도(서 있는 동안은 0)를 내며, 상태는 `backing`이다. `yield_timeout_s`(10 s) 안에 다 못
+가면 그 자리에서 서 있기로 넘어간다(FAILED로 가지 않는다). 구역 BACKING·FAILED 중이거나 이미 양보 중이면 무시한다.
+
 ## 파라미터
 
 `config/zone_client.yaml`. 값과 근거는 파일 안 주석에 있다.

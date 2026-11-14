@@ -280,6 +280,29 @@ would_deadlock(edges, waiter, holders) -> bool # waiter가 holders를 기다리�
 | 로봇 동작 | 점유 구역에서 물러나 반납 | 다음 구역에 들어가지 않고 경로 재계획 |
 | 비용 | 후진 거리, 이미 진행한 이동을 되돌림 | 우회 거리, 우선순위와 무관하게 늦게 요청한 쪽이 양보 |
 
+#### 해소 3: 구역 밖 대치 양보 (`deadlock/standoff.py`, `StandoffDetector`)
+
+넓은 통로·스테이션 앞에서 두 로봇이 서로를 보고 멈춰 선 경우는 쥐고 있는 구역이 없어 wait-for 그래프에 안 잡힌다.
+Nav2 복구(회전·잠깐 후진)는 두 로봇이 똑같이 해서 풀리지 않는다 (11/14 `fleet_stack` peer_resp: 0.6 m 간격으로
+400~500 s 정지, `Failed to make progress` 239회). 그래서 위치만 본다.
+
+1. 서버가 `RobotState`(2 Hz)마다 위치를 쌓는다. 충전·오류·E-Stop 로봇은 뺀다.
+2. 1초마다: `radius_m`(1.2 m) 안으로 이어진 로봇 묶음이 모두 `still_s`(10 s, Nav2 progress_checker와 같다) 동안 `still_m`(0.2 m) 넘게 안 움직였고
+   작업 중인 로봇이 하나 이상이면 대치다. 대기 로봇끼리 줄 서 있는 것은 대치가 아니다.
+3. 비킬 로봇: 작업 없는 로봇 → 없으면 `choose_victim`(우선순위 낮은 로봇, 같으면 robot_id 뒤). 가장 가까운 상대가
+   진행 방향 앞이면 뒤로, 뒤면 앞으로 비킨다. 그쪽 `clear_m`(1.3 m) 안, 옆 `corridor_m`(0.6 m) 안에 다른 로봇(묶음 밖 포함)이
+   있으면 반대쪽, 둘 다 막혔으면 다음 로봇. 모두 막혔으면 이번엔 지시하지 않는다. 로봇 LiDAR는 다른 로봇을 못 보므로
+   (스캔면이 차체 위) 로봇은 서버가, 랙·벽은 구역 클라이언트가 스캔으로 거른다.
+   서버는 도킹·적재·충전 중(`TaskStatus.phase`가 `move_*`가 아닌 작업 중 로봇), 오류·E-Stop, 구역 대기열에 선 로봇을
+   묶음에서 뺀다(`amr_fleet_manager`) - 멈춰 있는 게 정상이고, 비키면 도킹·적재가 깨진다.
+4. 서버가 `ZoneGrant`(`zone_id` `standoff:back`·`standoff:forward`, `GRANT_REVOKED`, `REASON_DEADLOCK_RESOLUTION`)를
+   보낸다. 구역 클라이언트가 0.6 m 비키고 8 s 서 있는 동안 BT는 Nav2 목표를 취소해 두고, 끝나면 다시 보낸다.
+5. 지시한 묶음은 `cooldown_s`(20 s) 동안 다시 보지 않는다. 그 뒤에도 그대로면 다시 지시한다.
+
+`still_s`는 11/14 `fleet_stack` peer_resp·peer_basic 기록(RobotState 2 Hz)을 탐지기에 다시 넣어 골랐다. 60 s 넘는 정체는
+5~20 s 어느 값이든 다 잡는다. 20 s 안에 저절로 풀릴 자리에 양보시키는 헛양보는 5 s 12회, 8 s 4회, 10 s 3회, 12~20 s 2회라
+10 s 위로는 거의 평평하고, 첫 양보까지 걸리는 시간만 `still_s`만큼 늘어난다.
+
 ## 파라미터
 
 ROS 비의존 라이브러리이므로 파라미터는 함수/생성자 인자로 받는다. YAML 로딩은 이 라이브러리를 쓰는 노드 패키지가 담당한다.

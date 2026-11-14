@@ -22,7 +22,9 @@ uint32 request_id
 # 받을 로봇 (예: "amr_04")
 string robot_id
 
-# 대상 구역 (예: "junction_03")
+# 대상 구역 (예: "junction_03").
+# "standoff:back"·"standoff:forward"는 구역이 아니라 구역 밖 대치 양보 지시다 (GRANT_REVOKED, REASON_DEADLOCK_RESOLUTION,
+# request_id 0): 로봇은 진행 방향 기준 뒤·앞으로 조금 비키고 잠깐 서 있는다. holder_robot_id는 양보받는 로봇
 string zone_id
 
 # 허가 결과 (GRANT_*)

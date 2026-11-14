@@ -61,6 +61,19 @@ REASON_DEADLOCK_RESOLUTION)하면 그 구역에서 후진해 나온다.
   그 뒤로는 반납·재시도 없이 그대로 멈춰 서서 수동 확인을 기다린다(계속 후진하다 더 큰 사고로
   이어지는 것보다 안전하다).
 
+대치 양보(STANDOFF, 11/14): 서버가 구역 밖 대치(서로 막고 멈춘 로봇들, amr_fleet_core deadlock/standoff.py)를
+풀려고 zone_id가 'standoff:back'·'standoff:forward'인 GRANT_REVOKED를 보내면, 구역과 상관없이 그 방향(로봇 진행
+방향 기준 뒤·앞)으로 yield_distance_m만 움직이고 yield_hold_s 동안 서 있다가 끝낸다. request_id는 보지 않는다.
+- BACKING처럼 cmd_vel_nav를 무시하고 직접 속도를 낸다(backing_speed_mps, decel_mps2 가감속, safety_cap 적용).
+- 서 있는 동안도 0을 직접 낸다 - 상대가 지나갈 때까지 Nav2가 다시 다가가지 않게. 상태 라벨은 'backing'이라
+  amr_bt MoveTo가 그동안 Nav2 목표를 취소해 두었다가 끝나면 같은 목표를 다시 보낸다(새로 경로를 짠다).
+  서 있기(8 s) + 움직이기(약 5 s)는 MoveTo pause_timeout_s(60 s)보다 짧다.
+- yield_timeout_s 안에 다 못 움직이면(뒤가 막힘 등) 그 자리에서 멈추고 서 있기로 넘어간다 - 구역 BACKING과 달리
+  FAILED로 가지 않는다(대치는 다시 탐지되면 서버가 또 지시한다).
+- 노드가 update(yield_blocked=True)를 주면(스캔에 비킬 쪽 랙·벽이 걸림) 바로 서 있기로 넘어간다. 다른 로봇은 스캔에
+  안 보이므로 서버가 비킬 쪽에 로봇이 없는 방향만 지시한다(amr_fleet_core deadlock/standoff.py clear_m).
+- 구역 BACKING·FAILED 중이면 지시를 무시한다(구역 교착 해소가 먼저다). 양보 중에 새 지시가 오면 무시한다.
+
 상태 토픽(zone_client/state, #137 지수 리뷰): idle / approaching / waiting / blocked / inside /
 backing / failed 7가지. waiting은 phase가 아니라 APPROACHING 중 "허가 없음 + 경계까지
 stop_margin_m + waiting_margin_m 이내"일 때만의 라벨이다(trigger_distance_m 요청 순간부터
@@ -91,6 +104,10 @@ GRANT_GRANTED = 0
 GRANT_QUEUED = 1
 GRANT_REJECTED = 2
 GRANT_REVOKED = 3
+
+# 대치 양보 지시의 zone_id (amr_fleet_manager STANDOFF_ZONE_*, ZoneGrant.msg)
+STANDOFF_ZONE_BACK = 'standoff:back'
+STANDOFF_ZONE_FORWARD = 'standoff:forward'
 
 
 class Phase(Enum):
@@ -142,6 +159,18 @@ class _ZoneState:
     backing_last_t: Optional[float] = None      # ramp_speed dt 계산용
 
 
+@dataclass
+class _Yield:
+    """대치 양보 진행 상태 (on_grant가 만들고 update가 진행한다)."""
+    direction: float                       # -1 뒤, +1 앞
+    yield_to: str
+    start_xy: Optional[Point] = None
+    since: Optional[float] = None
+    stopped_at: Optional[float] = None     # 다 움직였거나 시간 초과로 서기 시작한 시각
+    speed_effective: float = 0.0
+    last_t: Optional[float] = None
+
+
 # lookahead_m을 안 주면(None) trigger_distance_m + 이 여유만큼만 경로를 훑는다 (#66).
 # trigger_distance_m보다는 커야 트리거 자체가 걸린다.
 _DEFAULT_LOOKAHEAD_MARGIN_M = 2.0
@@ -188,6 +217,12 @@ class ZoneClientConfig:
     # 더는 서버 release_timeout_s(#124 fleet_manager.yaml 기본 30 s)보다 작아야 할 필요가 없다
     # (서버가 "반납이 안 온다"고 구역을 넘겨버릴 일이 없다).
     backing_timeout_s: float = 45.0
+    # 대치 양보(standoff:*): 이만큼 움직이고(backing_speed_mps) yield_hold_s 서 있는다. 차체 길이(0.6 m)만큼 비키면
+    # 상대가 다른 로봇 costmap 표시(FleetPeerLayer, 여유 0.1 m)를 피해 지나갈 틈이 생긴다
+    yield_distance_m: float = 0.6
+    yield_hold_s: float = 8.0
+    # 이 안에 yield_distance_m을 못 가면 그 자리에서 멈추고 서 있기로 넘어간다 (0.6 / 0.15 = 4 s + 가감속 여유)
+    yield_timeout_s: float = 10.0
 
 
 class ZoneClientCore:
@@ -212,6 +247,8 @@ class ZoneClientCore:
         # REVOKED를 받은 구역의 id (#137 하연 리뷰) - 복구가 끝나 그 구역이 다시 IDLE이 될 때까지,
         # 다른 구역의 대기 중 요청은 전부 반납하고 새 요청도 안 보낸다(state_label 참고).
         self._revoked_zone_id: Optional[str] = None
+        # 대치 양보 중이면 그 상태 (STANDOFF)
+        self._yield: Optional[_Yield] = None
 
     @property
     def zone_ids(self) -> List[str]:
@@ -247,16 +284,22 @@ class ZoneClientCore:
         return state.phase.value
 
     def state_label(self, now: float) -> str:
-        best = 'idle'
+        best = 'backing' if self._yield is not None else 'idle'
         for state in self._state.values():
             label = self._zone_label(state, now)
             if self._STATE_PRIORITY.index(label) < self._STATE_PRIORITY.index(best):
                 best = label
         return best
 
+    @property
+    def yield_direction(self) -> Optional[float]:
+        """대치 양보 중이면 비키는 방향(-1 뒤, +1 앞), 아니면 None. 노드가 스캔으로 그쪽을 확인하는 데 쓴다."""
+        return None if self._yield is None or self._yield.stopped_at is not None else self._yield.direction
+
     def update(
         self, now: float, path_xy: Sequence[Point], robot_xy: Point,
         safety_speed_limit_mps: Optional[float] = None, current_speed_mps: Optional[float] = None,
+        yield_blocked: bool = False,
     ):
         """한 틱 처리.
 
@@ -268,6 +311,8 @@ class ZoneClientCore:
         내보낸 cmd_vel.linear.x) - speed_limit이 낮아질 때 램프 시작점을 이 값과
         min()으로 낮춰서, 상한이 실제 속도보다 높아 아직 전혀 효과가 없는 동안에도
         감속이 곧바로 시작되게 한다(#93 연우 리뷰, geometry.ramp_cap_down 참고).
+
+        yield_blocked: 대치 양보 중 비키는 방향이 스캔에 막혀 있으면 True - 그 자리에서 서 있기로 넘어간다.
 
         반환: (보낼 ZoneRequest 목록, cmd_vel 선속도 상한 m/s (제한 없으면 None), BACKING 중이면
         직접 낼 선속도(음수, 후진) 아니면 None, 로그로 남길 ERROR 메시지 목록(보통 빈 목록)).
@@ -335,7 +380,37 @@ class ZoneClientCore:
         if revoked_zone is not None and self._state[revoked_zone].phase is Phase.IDLE:
             self._revoked_zone_id = None  # 복구가 끝났다 - 평소처럼 다른 구역도 다시 본다
 
+        if self._yield is not None:
+            if backing_linear_x is not None:
+                self._yield = None  # 구역 후진이 먼저다
+            else:
+                backing_linear_x = self._update_yield(now, robot_xy, safety_cap, yield_blocked)
+
         return outgoing, combine_caps(speed_cap, safety_cap), backing_linear_x, errors
+
+    def _update_yield(self, now: float, robot_xy: Point, safety_cap: Optional[float],
+                      blocked: bool) -> Optional[float]:
+        """대치 양보 한 틱. 낼 선속도(뒤면 음수), 끝났으면 None."""
+        y = self._yield
+        if y.start_xy is None:
+            y.start_xy, y.since, y.last_t = robot_xy, now, now
+        moved = distance(robot_xy, y.start_xy)
+        cfg = self._config
+        if y.stopped_at is None and (blocked or moved >= cfg.yield_distance_m or now - y.since > cfg.yield_timeout_s):
+            y.stopped_at = now
+        if y.stopped_at is None:
+            target = min(cfg.backing_speed_mps,
+                         speed_cap_for_stop(cfg.yield_distance_m - moved, 0.0, cfg.decel_mps2))
+        else:
+            target = 0.0
+        if safety_cap is not None:
+            target = min(target, safety_cap)
+        y.speed_effective = ramp_speed(y.speed_effective, target, max(0.0, now - y.last_t), cfg.decel_mps2)
+        y.last_t = now
+        if y.stopped_at is not None and y.speed_effective == 0.0 and now - y.stopped_at >= cfg.yield_hold_s:
+            self._yield = None
+            return None
+        return y.direction * y.speed_effective
 
     def _has_valid_grant(self, state: _ZoneState, now: float) -> bool:
         """GRANTED이고 lease_expiry가 아직 안 지났는지. INSIDE 전환·정지 상한 해제 둘 다 이 기준을 쓴다."""
@@ -497,6 +572,16 @@ class ZoneClientCore:
         state.backing_last_t = now
         return self._resend_access(zone_id, state, now), None, -state.backing_speed_effective, []
 
+    def _on_standoff(self, zone_id: str, grant: int, holder_robot_id: str) -> Optional[str]:
+        if grant != GRANT_REVOKED or self._yield is not None:
+            return None
+        if any(st.phase in (Phase.BACKING, Phase.FAILED) for st in self._state.values()):
+            return None
+        direction = -1.0 if zone_id == STANDOFF_ZONE_BACK else 1.0
+        self._yield = _Yield(direction=direction, yield_to=holder_robot_id)
+        return (f'대치 양보: {holder_robot_id or "-"}에게 {"뒤로" if direction < 0 else "앞으로"} '
+                f'{self._config.yield_distance_m} m 비키고 {self._config.yield_hold_s} s 대기')
+
     def on_grant(self, now: float, robot_id: str, zone_id: str, request_id: int, grant: int,
                  lease_expiry: Optional[float], reason: int, holder_robot_id: str) -> Optional[str]:
         """ZoneGrant 수신. 우리 로봇 것이 아니거나 지금 기다리는 request_id가 아니면 무시한다.
@@ -507,6 +592,8 @@ class ZoneClientCore:
         """
         if robot_id != self._config.robot_id:
             return None
+        if zone_id in (STANDOFF_ZONE_BACK, STANDOFF_ZONE_FORWARD):
+            return self._on_standoff(zone_id, grant, holder_robot_id)
         state = self._state.get(zone_id)
         if state is None or state.phase not in (Phase.APPROACHING, Phase.INSIDE):
             return None

@@ -2,6 +2,11 @@
 #   ros2 launch amr_fleet_manager fleet_manager.launch.py #     extra_params_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/fleet_manager_restaurant.yaml
 fleet_manager:
   ros__parameters:
+    traffic:
+      # 구역 밖 대치 양보(fleet_manager.yaml traffic.standoff)는 식당에서 끈다. 서빙 로봇은 LiDAR로 서로 보여 창고처럼
+      # 몸이 닿는 교착은 없고, 녹화 중인 시연 장면의 로봇 움직임을 바꾸지 않는다. 식당에서도 쓰려면 따로 재서 켠다
+      standoff:
+        enabled: false
     assignment:
       # 우선순위 aging (amr_fleet_core README '우선순위 aging'). 회수 호출(priority 200)이 일반 작업(100)보다 먼저 나가되,
       # 일반 작업이 60 s 기다리면 새 회수 호출과 같아지게 한다: 100 / 60 s ≈ 1.667 /s.
