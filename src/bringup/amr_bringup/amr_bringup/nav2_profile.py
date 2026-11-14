@@ -40,11 +40,15 @@ def profile_overrides(nav2_params: dict, profile: str) -> dict:
             'footprint': _RESTAURANT_FOOTPRINT,
             # 바닥에서 0.38 m 높이의 LiDAR 관측을 식당에서만 장애물로 반영한다.
             'obstacle_layer': {'scan': {'max_obstacle_height': 2.0}},
+            # 서빙 로봇(1.16 m)은 LiDAR로 서로 보여 위치 공유 레이어가 필요 없다
+            'fleet_peer_layer': {'enabled': False},
         },
         'local_costmap': {
             'footprint': _RESTAURANT_FOOTPRINT,
             # 바닥에서 0.38 m 높이의 LiDAR 관측을 식당에서만 장애물로 반영한다.
             'obstacle_layer': {'scan': {'max_obstacle_height': 2.0}},
+            # 서빙 로봇(1.16 m)은 LiDAR로 서로 보여 위치 공유 레이어가 필요 없다
+            'fleet_peer_layer': {'enabled': False},
         },
         'DWA': {
             'footprint_half_length': _RESTAURANT_HALF_LENGTH,
@@ -61,7 +65,8 @@ CONGESTION_FILTERS = ('none', 'keepout', 'speed')
 # filter_mask_topic 필드로 알려주므로 여기서 따로 설정할 게 없다.
 _KEEPOUT_INFO_TOPIC = '/fleet/congestion_keepout_info'
 _SPEED_INFO_TOPIC = '/fleet/congestion_speed_info'
-_BASE_GLOBAL_PLUGINS = ['static_layer', 'obstacle_layer', 'inflation_layer']
+# nav2_params.yaml global_costmap plugins와 같아야 한다 (필터를 붙이면 목록 전체를 다시 준다)
+_BASE_GLOBAL_PLUGINS = ['static_layer', 'obstacle_layer', 'fleet_peer_layer', 'inflation_layer']
 
 
 def congestion_filter_overrides(filter_choice: str, speed_limit_topic: str = '') -> dict:
