@@ -5,11 +5,13 @@
 #   - 5대 운용 시 CPU 80 % 이하: cpu.csv (cpu_monitor.py, 컨테이너 cgroup 기준)
 #   - 교착 없음: zone_waits.csv(구역 30 s 넘게 대기) · stalls.csv(60 s 넘게 정체) 0건
 # 추적·안전 노드(3단계)는 끈다: 랙 옆에서 DWA가 갇히는 문제가 남아 있다(#169). Fleet 지표와는 관계없다.
+# 추적 노드를 켠 CPU는 --set tracking=true로 따로 잰다.
 #
 #   tools/harness/docker_run.sh fleet_stack -n 1 --label smoke --set duration_s=300
 #   tools/harness/gcp_run.sh fleet_stack -n 3 --label d100     # 기본: 5대, 지연 100 ms
 #   tools/harness/gcp_run.sh fleet_stack -n 1 --set task_scenario=response_short --label resp   # 응답 시간 50회
 #   tools/harness/gcp_run.sh fleet_stack -n 3 --set nav2_composition=true --label compose      # CPU: Nav2 컴포지션 켬
+#   tools/harness/gcp_run.sh fleet_stack -n 1 --set tracking=true --label track_on            # CPU: 추적 노드 켬
 #
 # 응답 시간 50회: 작업 60건(10 s 간격)이 들어오지만 할당은 로봇이 비어야 생긴다. 한 실행에 다 못 모으면 -n으로 반복한다.
 name: fleet_stack
@@ -39,10 +41,12 @@ params:
   map_origin: "[0.0173, 1.4556, 0.00026]"
   # Nav2 서버 5개를 로봇마다 컨테이너 하나로 (#319). CPU KPI 켬/끔 비교: --set nav2_composition=true
   nav2_composition: "false"
+  # 추적 노드(로봇마다 하나). 기본 끔이라 다른 측정은 그대로다. 추적 켬 CPU: --set tracking=true
+  tracking: "false"
 processes:
   - name: stack
     cmd: >-
-      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true zone_client:=true
+      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true zone_client:=true tracking:={tracking}
       seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct} algorithm:={algorithm}
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch
       fault_events_file:={run_dir}/fault_events.csv
