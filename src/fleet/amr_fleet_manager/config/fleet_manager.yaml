@@ -29,6 +29,10 @@ fleet_manager:
       congestion_timeout_s: 3.0
       # 비용 + 이 값 × (필요 배터리 / 남은 배터리) [m] (energy.* 모델). 배터리가 많은 로봇이 먼 작업을 맡는다. 0이면 끈다
       battery_weight: 0.0
+      # 우선순위 aging (인터럽트 관제): 큐에서 기다린 1초마다 우선순위에 이만큼 더해 줄 세운다.
+      # 유효 우선순위 = priority + aging_rate × (지금 − Task.created_time), 노드 시계(시뮬레이션에서는 시뮬레이션 시간).
+      # 0이면 끈다 (기본, 지금 동작과 같음). 식당 시연 값은 fleet_manager_restaurant.yaml (amr_fleet_core README '우선순위 aging')
+      aging_rate: 0.0
     # 자동 충전 배정 (배터리 인지 운영 1단계). 끄면 지금처럼 min_battery_percent 밑 로봇을 빼기만 한다 (B0).
     # 충전기·대기 위치 파일(charging.stations_file)과 지도 원점은 launch 인자로 받는다 (작업 생성기와 같은 파일)
     charging:

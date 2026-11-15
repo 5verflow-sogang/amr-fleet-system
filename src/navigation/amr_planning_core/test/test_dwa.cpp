@@ -1860,3 +1860,70 @@ TEST(DwaPlannerTest, AvoidFallbackLeavesNormalModeUnchanged)
 }
 
 }  // namespace amr_planning_core
+
+namespace amr_planning_core
+{
+namespace
+{
+
+// 경로(y = 2.0)에서 0.65 m 옆으로 비켜선 채 0.5 m/s로 가는 로봇이 0.2 m 안으로 들어오기까지 간 거리.
+// 비켜 지나가기 추종 모드(setPassingTracking)를 켜고/끈 두 경우를 비교한다.
+struct ReturnRun
+{
+  double distance = -1.0;
+};
+
+ReturnRun returnToPath(bool passing)
+{
+  DwaConfig config;
+  config.max_v = 0.5;
+  config.v_samples = 10;
+  config.w_samples = 15;
+  config.lookahead_distance = 0.5;
+  config.adaptive_lookahead = true;
+  config.rotate_in_place_min_angle = 0.785;
+  config.rotate_in_place_exit_angle = 0.524;
+  TestGrid test_grid(200, 40, 0.1);
+  DwaPlanner planner(config);
+  planner.setPassingTracking(passing, 0.8, 0.2);
+  std::vector<Point2D> path;
+  for (double x = 0.0; x <= 15.0 + 1e-9; x += 0.05) {
+    path.push_back(Point2D{x, 2.0});
+  }
+  RobotState state;
+  state.x = 1.0;
+  state.y = 2.65;
+  state.v = 0.5;
+  ReturnRun run;
+  for (int step = 0; step < 400; ++step) {
+    if (std::abs(state.y - 2.0) <= 0.2) {
+      run.distance = state.x - 1.0;
+      break;
+    }
+    const DwaCommand command = planner.computeVelocityCommand(state, path, test_grid.grid());
+    if (command.status != DwaStatus::kOk) {
+      break;
+    }
+    state.v = command.v;
+    state.w = command.w;
+    state.x += state.v * std::cos(state.yaw) * config.dt;
+    state.y += state.v * std::sin(state.yaw) * config.dt;
+    state.yaw += state.w * config.dt;
+  }
+  return run;
+}
+
+}  // namespace
+
+TEST(DwaPlannerTest, PassingTrackingReturnsToPathInShorterDistanceAtSpeed)
+{
+  const ReturnRun normal = returnToPath(false);
+  const ReturnRun passing = returnToPath(true);
+  ASSERT_GT(normal.distance, 0.0);
+  ASSERT_GT(passing.distance, 0.0);
+  // 평소 기준점(1.5 m 앞)은 1.5 m 거리로 뭉개져 늦게 붙는다. 추종 모드는 그보다 짧게 붙는다
+  EXPECT_LT(passing.distance, 0.75 * normal.distance)
+    << "평소 " << normal.distance << " m, 추종 모드 " << passing.distance << " m";
+}
+
+}  // namespace amr_planning_core

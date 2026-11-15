@@ -70,7 +70,7 @@ processes:
     cmd: >-
       if [ "{record}" = true ];
       then exec ros2 bag record -o {run_dir}/rosbag
-      -e '^/(tf|tf_static|amr_01/(scan|ground_truth/odom|odom|plan|cmd_vel|cmd_vel_nav|dwa/avoid_mode|safety/status|perception/(obstacles|collision_risks))|dynamic_obstacles/.*/ground_truth/odom)$';
+      -e '^/(tf|tf_static|amr_01/(scan|ground_truth/odom|odom|plan|cmd_vel|cmd_vel_nav|dwa/avoid_mode|dwa/passing|safety/status|perception/(obstacles|collision_risks))|dynamic_obstacles/.*/ground_truth/odom)$';
       else exec sleep infinity; fi
     stop_first: true
   - name: obstacles

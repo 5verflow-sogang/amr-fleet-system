@@ -12,6 +12,7 @@
 #include "amr_msgs/msg/tracked_obstacle_array.hpp"
 #include "amr_nav2_plugins/avoid_mode.hpp"
 #include "amr_planning_core/dwa.hpp"
+#include "amr_planning_core/passing.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
@@ -91,6 +92,13 @@ private:
 
   rclcpp::Subscription<amr_msgs::msg::CollisionRiskArray>::SharedPtr risks_sub_;
   rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Bool>::SharedPtr avoid_mode_pub_;
+  // 정면 비켜 지나가기 (amr_planning_core/passing.hpp). 켜져 있는 동안 회피 모드(넓은 여유)는 끈다 -
+  // 옮긴 경로가 passing_clearance로 지나가게 정해져 있어 회피 모드 여유로는 그 경로를 따라가는 궤적이 없다
+  std::unique_ptr<amr_planning_core::PassingManeuver> passing_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Bool>::SharedPtr passing_pub_;
+  // 비켜 지나가는 동안 heading을 매기는 궤적 길이 [s]·기준점 여유 [m] (DwaPlanner::setPassingTracking)
+  double passing_heading_time_ = 0.8;
+  double passing_lookahead_ = 0.2;
   std::mutex avoid_mutex_;
   AvoidModeSwitch avoid_switch_;
   // 이번 회피 모드에 들어갈 때의 DwaPlanner::avoidFallbackCount() - 끌 때 이번 회피 동안 대체 탐색 주기 수를 남긴다

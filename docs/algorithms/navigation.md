@@ -257,6 +257,7 @@ python3 experiments/planner_compare/compare.py --out /tmp/planner_compare   # pa
 | `avoid_mode_enabled` | false (창고 스택 yaml true) | 4-10절. TTC 회피 모드 전체. 연구 2는 false 고정 |
 | `avoid_margin_add` / `avoid_weight_scale` / `avoid_rollout_time` | 0.4 m / 2.0 / 3.0 s | 4-10절. 회피 모드에서 안전 여유 더하기, 동적 가중치 곱, 궤적 시뮬레이션 길이 |
 | `avoid_ttc_enter_s` / `avoid_exit_hold_s` / `avoid_risk_timeout_s` (플러그인) | 3.0 / 0.5 / 0.3 s | 4-10절. 켜기 TTC, 끄기 전 유지 시간, collision_risks 끊김 판정 |
+| `passing_*` (플러그인, `PassingConfig`) | 꺼짐 (창고 스택 yaml 켬) | 4-11절. 정면 비켜 지나가기. 스택 값: 여유 0.4 m, 옆 이탈 상한 0.9 m, 나가기·들어오기 0.6 m, 추종 기준 0.8 s·0.2 m |
 
 **샘플 수 (10/27, 창고 스택 `nav2_params.yaml` 10 x 15):** `computeVelocityCommand` 한 번 계산 시간을 재고
 (x86 8코어, 다른 부하 없음, 3 x 3 m local costmap + 통로 벽·inflation, 90° 꺾이는 경로, max_v 0.5, 300회 중앙값),
@@ -520,7 +521,46 @@ costmap, max_v 0.5, 300회씩. 최악은 회전 모드에서 회전이 거부돼
 **I17 본 측정** (시드 2001~2030, 커밋 `23e461c`, GCP `c2d-standard-8`): 30/30 충돌 0, 최대 이탈 0.082 m, 1.0 m/s 작업자
 10/10. 장면·판정 기준과 자세한 표는 amr_safety README "본 측정 결과".
 - 시드 1~30은 시험(장면이 돌아가는지 확인), 1001~은 튜닝용이라 본 측정은 둘과 겹치지 않는 2001~2030으로 했다.
-- 30회 모두 감속·정지로 피했고, 옆으로 비켜 재계획한 사례는 없었다. 옆으로 비키는 회피는 정면 접근 장면으로 따로 확인한다.
+- 30회 모두 감속·정지로 피했고, 옆으로 비켜 재계획한 사례는 없었다. 옆으로 비키는 회피는 작업자가 마주 오는 정면 접근 장면에서 4-11절(정면 비켜 지나가기)로 잰다.
+
+### 4-11. 정면 비켜 지나가기 (`passing_enabled`)
+
+원 명세 7장 "1.0 m/s 장애물 재계획 회피"·"복귀 5초"용이다. 4-10 회피 모드는 가로지르는 작업자 앞에서 늦추거나 서서
+기다리게 한다(I17 30회 모두 이탈 0.1 m 안). 작업자가 경로 위에서 마주 오면 기다려도 길이 열리지 않으니 옆으로 비켜야 한다.
+
+**전역 경로는 처음 것을 쓴다.** 사람을 전역 costmap에 찍어 1초마다 경로를 다시 짜면, 비킨 자리에서 목표까지 대각선
+경로가 돼 처음 경로로 16~26 s 만에 돌아왔다(로컬 시험 11/3). 그래서 bt_navigator 기본 트리를 Nav2가 제공하는
+`navigate_w_recovery_and_replanning_only_if_path_becomes_invalid.xml`(경로가 막혔을 때만 다시 짬, `nav2.launch.py`)로
+바꾸고, 비키기는 제어기가 맡는다.
+
+**옆 이탈 계획** (`amr_planning_core/passing.hpp` `PassingManeuver`. Werling 외, "Optimal Trajectory Generation for
+Dynamic Street Scenarios in a Frenet Frame", ICRA 2010의 옆 이탈 계획을 규칙 하나로 줄인 것)
+- 경로 좌표(Frenet: 경로 길이 s, 옆 거리 d, 왼쪽 +)에서 옆 이탈 d(s)를 나가기 S자(`passing_ramp_out` 0.6 m) → 유지 →
+  들어오기 S자(`passing_ramp_in` 0.6 m)로 정하고, 그만큼 옮긴 경로를 DWA에 넘긴다. 전역 경로는 바꾸지 않는다
+- 켜기: 동적 장애물 속도와 그 자리 경로 방향의 cos ≤ `passing_max_heading_cos`(-0.7, 135° 넘게 반대), 속력 ≥
+  `passing_min_obstacle_speed`(0.2 m/s), 경로를 막는다(옆 거리 < 반경 + 차체 반폭 + 여유). 가로지르기·같은 방향에는
+  켜지지 않는다(그 경우는 4-10 그대로)
+- 옆 이탈 = 장애물 옆 거리 + (반경 + 차체 반폭 + `passing_clearance` 0.4 m), 장애물에서 먼 쪽(가운데면
+  `passing_preferred_side` 오른쪽 - 로봇끼리 마주쳐도 같은 쪽으로 비켜 엇갈린다). `passing_max_offset` 0.9 m(원 명세 이탈
+  1 m)를 넘으면 안 비킨다. 옮긴 경로가 지역 costmap의 정적 장애물에 막히면 반대쪽, 둘 다 막히면 안 비킨다
+- 시작: 다 비켜선 뒤 만나기까지 `passing_start_margin` 0.8 s가 남게(만날 때까지 ≤ ramp_out / v + 0.8 s). 그 전이라도
+  비킬 예정이면 4-10 회피 모드를 끈다 - 넓은 여유로 먼저 늦추면 나가기 시점이 어긋난다
+- 들어오기: 장애물이 차체 뒤 끝을 `passing_pass_margin` 0.15 m 지나간 뒤, `passing_clear_cycles` 4주기 연속 안 보일 때.
+  지나가는 중에 머리를 틀면 TTC가 다시 짧아져 안전 노드가 세운다
+- 추적 끊김: 사람 다리 군집이 갈라져 트랙이 1~1.8 s 끊겼다. 마지막 위치·속도로 `passing_threat_memory` 2.5 s까지 등속
+  예측해 이어 본다(시작·들어오기 판단 모두)
+- 새 전역 경로를 받으면 처음부터 다시 본다(롤링 costmap이라 모든 점이 같은 양 옮겨진 경로는 같은 경로로 본다). 경로
+  시작점보다 뒤에 있는 점은 첫 구간을 뒤로 늘려 투영한다(s < 0). 시작점에 붙였더니, 로봇 자리에서 시작하는 새 경로를 받은
+  직후 이미 뒤로 지나간 작업자가 바로 앞 위협으로 잡혀 한 번 더 비켰다(정면 접근 시험 11/4,
+  `NewPathFromRobotIgnoresObstacleAlreadyBehind`)
+
+**DWA 추종 모드** (`DwaPlanner::setPassingTracking`): 비키는 동안 heading을 매기는 궤적 길이를 `passing_heading_time`
+(0.8 s)로, 기준점의 궤적 끝 앞 여유를 `passing_lookahead`(0.2 m)로 줄인다. 평소 기준점(궤적 끝 |v|·`sim_time` +
+`lookahead_distance` 앞, 0.5 m/s면 1.5 m, 4-8절)으로 따라가면 0.6 m S자가 1.5 m로 뭉개져 처음 경로로 늦게 돌아왔다
+(`PassingTrackingReturnsToPathInShorterDistanceAtSpeed`). 이 동안 제자리 회전 모드(4-9절)는 쓰지 않는다. 충돌 검사(궤적
+길이·여유)는 그대로다. 상태는 `dwa/passing`(`std_msgs/Bool`, transient local)으로 바뀔 때 발행하고 INFO 로그를 남긴다.
+
+**연구 2**(C API `DwaParams`)는 `PassingManeuver`를 부르지 않는다. 플러그인에서만 쓰고, `passing_enabled` 기본은 false다.
 
 ## 5. Pure Pursuit · Stanley · PID
 

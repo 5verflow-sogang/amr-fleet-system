@@ -328,6 +328,30 @@ controller_server:
       avoid_margin_add: 0.4
       avoid_weight_scale: 2.0
       avoid_rollout_time: 3.0
+      # 정면 비켜 지나가기 (amr_planning_core/passing.hpp, 원 명세 7장 "1.0 m/s 장애물 재계획 회피"·"복귀 5초"):
+      # 마주 오는(진행 방향과 135° 넘게 반대) 동적 장애물이 경로를 막으면, 전역 경로는 그대로 두고 경로 좌표에서
+      # 옆 이탈을 나가기 S자(passing_ramp_out m) → 유지 → 들어오기 S자(passing_ramp_in m)로 옮긴 경로를 따라간다.
+      # 장애물이 차체 뒤로 passing_pass_margin m 지나간 뒤(passing_clear_cycles 주기 연속)에만 들어온다.
+      # 옆 이탈 = 장애물 옆 거리 + (장애물 반경 + 차체 반폭 + passing_clearance), 장애물에서 먼 쪽 (가운데면
+      # passing_preferred_side: -1 오른쪽 - 로봇끼리도 같은 쪽으로 비켜 엇갈린다), passing_max_offset 넘으면 안 비킨다.
+      # 지역 costmap에서 옮긴 경로가 막혀 있으면 반대쪽, 둘 다 막히면 안 비킨다(기존 회피 모드·안전 노드 그대로).
+      # 비켜 지나가는 동안은 회피 모드를 끈다(passing_clearance > dynamic_obstacle_safety_margin이라 평소 여유로 따라간다).
+      # 가로지르는 장애물에는 켜지지 않는다 - I17 가로지르기 동작은 그대로다
+      passing_enabled: True
+      passing_clearance: 0.4
+      passing_max_offset: 0.9
+      passing_ramp_out: 0.6
+      passing_ramp_in: 0.6
+      passing_start_margin: 0.8
+      passing_max_lookahead: 10.0
+      passing_pass_margin: 0.15
+      passing_clear_cycles: 4
+      passing_preferred_side: -1
+      passing_max_heading_cos: -0.7
+      passing_min_obstacle_speed: 0.2
+      passing_threat_memory: 2.5
+      passing_heading_time: 0.8
+      passing_lookahead: 0.2
 
 # --- TEB (DWA 비교 대상, #110 underlay·(10) 작업) ---
 # 원 명세 "DWA 직접구현 vs TEB" 비교. teb_local_planner는 apt에 없어 /opt/teb_ws에 소스로

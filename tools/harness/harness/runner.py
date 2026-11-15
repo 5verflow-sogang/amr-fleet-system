@@ -25,6 +25,10 @@ HARNESS_DIR = Path(__file__).resolve().parents[1]
 REPO_DIR = HARNESS_DIR.parents[1]
 
 
+# drive.py NO_CLOCK: /clock이 안 와 주행을 시작하지 못함 → 기동 실패와 같이 다시 시도
+DRIVE_NO_CLOCK = 4
+
+
 class RunError(Exception):
     """실행 실패. outcome은 meta.json에 남긴다 (error, timeout).
 
@@ -436,7 +440,8 @@ def run_once(scenario: dict, params: dict, run_dir: Path, overrides: Optional[Co
         with (log_dir / 'drive.log').open('w', encoding='utf-8') as f:
             res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=f, text=True, timeout=timeout_s)
         if res.returncode != 0:
-            raise RunError('error', f'주행 실패 (로그: {log_dir / "drive.log"})')
+            # /clock이 안 오면 스택은 떴지만 늦게 붙은 노드가 DDS 탐색에 실패한 것이라 다시 띄우면 된다 (11/7 demo_s11, 101개에서도 간헐적)
+            raise RunError('error', f'주행 실패 (로그: {log_dir / "drive.log"})', startup=res.returncode == DRIVE_NO_CLOCK)
         drive = json.loads(res.stdout.strip().splitlines()[-1])
         meta['real_time_factor'] = drive.get('rtf')
         meta['drive'] = drive

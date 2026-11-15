@@ -112,7 +112,9 @@ def test_response_time_with_ack_resend_and_odom():
         # 장애 주입기 중계본이 없으면 수신 기준은 비운다
         'recv_time': '', 'latency_recv_ms': '',
         # 명령 직전 odom(9.0 s)이 움직이는 중이었다
-        'moving_at_cmd': '1'}
+        'moving_at_cmd': '1',
+        # RobotState가 없으면 첫 목표에 있었는지 모른다
+        'at_goal_at_cmd': ''}
 
 
 def test_response_time_marks_robot_moving_at_command():
@@ -120,8 +122,34 @@ def test_response_time_marks_robot_moving_at_command():
     stopped = [rec('/amr_01/odom', 19.9, odom(0.0, 19)), rec('/fleet/task_assignments', 20.0, a),
                rec('/amr_01/odom', 20.2, odom(0.3, 20))]
     no_odom_before = [rec('/fleet/task_assignments', 20.0, a), rec('/amr_01/odom', 20.2, odom(0.3, 20))]
-    assert response_time(stopped, CUTOFF)[0][-1] == '0'
-    assert response_time(no_odom_before, CUTOFF)[0][-1] == ''   # 판단할 odom이 없으면 비운다
+    col = RESPONSE_TIME_HEADER.index('moving_at_cmd')
+    assert response_time(stopped, CUTOFF)[0][col] == '0'
+    assert response_time(no_odom_before, CUTOFF)[0][col] == ''   # 판단할 odom이 없으면 비운다
+
+
+def test_response_time_marks_robot_already_at_first_goal():
+    # 픽업 지점에 서 있던 로봇은 Nav2가 바로 도착 처리해 첫 움직임이 싣기 대기 뒤에 온다 (11/2 station_resv 7 s)
+    def pose(x, y):
+        return NS(position=NS(x=x, y=y))
+
+    def state(x, y):
+        return NS(robot_id='amr_01', pose=pose(x, y))
+
+    def task(task_type):
+        return NS(task_id='t1', task_type=task_type, pickup_pose=pose(5.0, 0.0), dropoff_pose=pose(0.0, 0.0))
+
+    def flag(task_type, x):
+        a = assignment(1, 'amr_01', 20)
+        a.task = task(task_type)
+        records = [rec('/fleet/robot_states', 19.5, state(x, 0.0)), rec('/fleet/task_assignments', 20.0, a)]
+        return response_time(records, CUTOFF)[0][RESPONSE_TIME_HEADER.index('at_goal_at_cmd')]
+
+    assert flag(0, 4.9) == '1'     # 배송: 픽업 0.1 m 앞
+    assert flag(0, 4.0) == '0'     # 픽업 1 m 앞이면 움직인다
+    assert flag(1, 0.1) == '1'     # 충전·복귀처럼 픽업이 없으면 배달지 기준
+    assert flag(0, 0.1) == '0'
+    a = assignment(1, 'amr_01', 20)
+    assert response_time([rec('/fleet/task_assignments', 20.0, a)], CUTOFF)[0][-1] == ''   # RobotState 없음
 
 
 def test_response_time_separates_epochs_and_skips():

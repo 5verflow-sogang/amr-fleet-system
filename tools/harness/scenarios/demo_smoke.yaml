@@ -11,3 +11,5 @@ params:
   duration_s: 60
   tracking: "true"
   safety: "true"
+  # 워크플로는 이 파일 params만 받는다 (extends의 값은 안 본다). 녹화: localization=ground_truth
+  localization: "true"

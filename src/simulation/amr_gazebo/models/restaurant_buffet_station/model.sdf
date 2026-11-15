@@ -5,7 +5,8 @@
   <model name="restaurant_buffet_station">
     <static>true</static>
     <link name="link">
-      <!-- 충돌체는 바닥까지 꽉 찬 박스 (D2). 라이다가 다리 사이를 빈 곳으로 보지 않게 한다 -->
+      <!-- 충돌체는 바닥까지 꽉 찬 박스: 로봇이 몸으로 밑에 들어가지 않게 한다. 경로 계획은 정답 지도(이 박스를 칠함)가
+           막고, 라이다(gpu_lidar)는 충돌체가 아니라 visual 메시를 본다 -->
       <collision name="collision">
         <pose>0 0 0.45 0 0 0</pose>
         <geometry><box><size>3.73 1.14 0.9</size></box></geometry>

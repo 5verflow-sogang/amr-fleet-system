@@ -51,6 +51,8 @@
   <xacro:if value="${body == 'serving'}">
     <xacro:include filename="$(find amr_description)/urdf/serving.xacro"/>
   </xacro:if>
+  <!-- 로봇 번호판 (위에서 보이는 숫자, 시각 전용) -->
+  <xacro:include filename="$(find amr_description)/urdf/number_label.xacro"/>
   <xacro:include filename="$(find amr_description)/urdf/gazebo.xacro"/>
 
 </robot>

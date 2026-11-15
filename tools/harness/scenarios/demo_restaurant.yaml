@@ -14,8 +14,9 @@ packages: amr_bringup
 num_robots: 5
 use_sim_time: true
 seed_base: 1
-# 시뮬레이션 duration_s를 RTF 0.05까지 견딘다 (60 s면 1200 s + 기동)
-timeout_s: 3600
+# 장면 녹화 360 s를 RTF 0.06까지 견딘다 (6000 s + 기동 약 10분). 3600이면 카메라 3대(RTF 0.075) 360 s가 끝나기 전에
+# 끊겨 mp4 변환 없이 카메라 원본(38 GB)이 올라갔다 (11/7 demo_s11). GitHub job 한도 6시간 안
+timeout_s: 7200
 params:
   num_robots: 5
   # 로봇 스폰 간격(실제 시간 s). 추적·안전·혼잡도·직원까지 띄워 5 s 간격이면 Nav2 lifecycle_manager의
@@ -28,7 +29,7 @@ params:
   robots: robots_restaurant.yaml                 # amr_bringup config/ 시작 위치
   # 손님(amr_gazebo config/). 혼잡도 노드도 같은 파일을 센다. 피크: peak_1~3 서쪽 통로(1-2), peak_4~6 배식대 앞(1-1)
   guests: dynamic_obstacles_restaurant_peak.yaml
-  staff: dynamic_obstacles_restaurant_staff.yaml # 직원: 따로 띄워 혼잡도에 안 센다
+  staff: none                                   # 직원: 띄우지 않음 (11/8 매장 안 직원 빼기, 홀 손님만). 쓰려면 dynamic_obstacles_restaurant_staff.yaml
   cost_fn: euclidean                             # 1-1 켬: congestion
   congestion_weight: "3.0"
   congestion_filter: none                        # 1-2 켬: keepout
@@ -43,6 +44,16 @@ params:
   localization: "true"
   # 작업 일정 (amr_fleet_manager 작업 생성기 형식). 연우 장면 스크립트가 생기면 그쪽으로 바꾼다
   task_schedule: /repo/tools/harness/tasks/restaurant_smoke.yaml
+  task_generator: "true"                         # 장면 스크립트(scene_script)를 쓰는 장면은 "false"
+  # 장면 스크립트: 작업을 정해진 차례로 넣고 핵심 요청 시각에 /demo/t0을 찍는 명령. 비우면 안 띄운다.
+  # 받는 인자: <장면 파일> --stations <yaml> --map-origin <[x, y, yaw]> --num-robots N --set collect_priority=P --out <json>
+  # (tools/harness/demo_scene.py가 이 꼴이다. 다른 스크립트로 바꿀 때 같은 인자를 받으면 이 값만 바꾸면 된다)
+  scene_script: ""
+  scene_file: ""                                 # tools/harness/tasks/ 아래 장면 파일
+  collect_priority: "200"
+  # Fleet 서버 설정 덮어쓰기 (system.launch fleet_params_file, #333). 비우면 fleet_manager.yaml 그대로 (aging 0.0).
+  # 장면 2 2막 켬: fleet_manager_restaurant.yaml (aging 1.667)
+  fleet_params: ""
 processes:
   - name: stack
     cmd: >-
@@ -52,7 +63,8 @@ processes:
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
       dynamic_obstacles:=true dynamic_obstacles_file:={guests} staff_file:={staff} congestion:=restaurant
       cost_fn:={cost_fn} congestion_weight:={congestion_weight} congestion_filter:={congestion_filter} nav2_composition:=true
-      enable_camera:={robot_camera}
+      $(test -n "{fleet_params}" && echo fleet_params_file:={fleet_params})
+      enable_camera:={robot_camera} guest_keep_away_m:=1.2
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:={spawn_interval_s}
     ready_topic: /fleet/heartbeat
     ready_cmds:
@@ -77,11 +89,21 @@ processes:
     settle_s: 3
   # 지도 원점은 실수로 준다 ('[0, 0, 0]'이면 작업 생성기가 시작하자마자 죽는다, 11/6 스모크)
   - name: task_generator
+    enabled: "{task_generator}"
     cmd: >-
       ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json use_sim_time:=true
       map_origin_in_world:="[0.0, 0.0, 0.0]"
       stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
       scenario_file:={task_schedule}
+  # 장면 스크립트 (scene_script가 있을 때만). 장면 기록은 run_dir/scene.json
+  - name: scene
+    enabled: "{scene_script}"
+    cmd: >-
+      {scene_script} /repo/tools/harness/tasks/{scene_file}
+      --stations $(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
+      --map-origin "[0.0, 0.0, 0.0]" --num-robots {num_robots} --set collect_priority={collect_priority}
+      --out {run_dir}/scene.json
+    settle_s: 1
 driver:
   mode: wait
   use_sim_time: true

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 from .common import assign_greedy
 from .cost import euclidean_cost
-from .types import AssignmentResult, CostFn, FeasibleFn, RobotInfo, TaskInfo
+from .types import Aging, AssignmentResult, CostFn, FeasibleFn, RobotInfo, TaskInfo
 
 
 def assign_load_balance(
@@ -14,10 +14,12 @@ def assign_load_balance(
     robots: Sequence[RobotInfo],
     cost_fn: CostFn = euclidean_cost,
     feasible: FeasibleFn = None,
+    aging: Optional[Aging] = None,
 ) -> AssignmentResult:
     """우선순위 순으로 작업을 꺼내, 남은 로봇 중 load가 가장 작은 로봇에 맡긴다.
 
     load가 같으면 비용이 작은 쪽, 그것도 같으면 robot_id 사전순. O(T·R).
     RobotInfo.load는 바꾸지 않는다. 할당 후 증가는 호출 측(amr_fleet_manager)이 한다.
     """
-    return assign_greedy(tasks, robots, cost_fn, rank=lambda r, cost: (r.load, cost, r.robot_id), feasible=feasible)
+    return assign_greedy(tasks, robots, cost_fn, rank=lambda r, cost: (r.load, cost, r.robot_id),
+                         feasible=feasible, aging=aging)

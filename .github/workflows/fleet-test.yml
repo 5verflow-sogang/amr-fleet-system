@@ -170,6 +170,8 @@ jobs:
     needs: start-runner
     runs-on: [self-hosted, linux, "${{ needs.start-runner.outputs.name }}"]
     timeout-minutes: 240
+    outputs:
+      dest: ${{ steps.upload.outputs.dest }}
     env:
       RUN_DIR: ${{ github.workspace }}/results/${{ needs.start-runner.outputs.name }}
     steps:
@@ -296,6 +298,7 @@ jobs:
       # 결과: gs://<버킷>/runs/<시나리오>-<라벨>/<날짜>_<실행 번호>/ (조건이 경로에 보이게)
       # 실행 목록: gs://<버킷>/index.csv 에 한 줄 (tools/harness/index_run.py)
       - name: Upload results
+        id: upload
         if: always() && env.RESULTS_PREFIX != ''
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -305,6 +308,7 @@ jobs:
           cat "$RUN_DIR"/summary_*.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
           dest="gs://${RESULTS_BUCKET}/${RESULTS_PREFIX}/$(date -u +%Y%m%d)_${GITHUB_RUN_ID}/"
           gcloud storage cp -r "$RUN_DIR"/* "$dest"
+          echo "dest=$dest" >> "$GITHUB_OUTPUT"   # ai-summary가 받는다
           # 결과 폴더만 받아도 어느 기계에서 돌았는지 알게 남긴다 (index.csv machine_type과 같은 값).
           # RUN_DIR은 하네스 컨테이너가 root로 만들어 러너 사용자가 쓸 수 없으므로 버킷에 바로 올린다
           echo "$MACHINE" | gcloud storage cp - "${dest}machine_type.txt"
@@ -323,6 +327,52 @@ jobs:
             if gcloud storage cp "$local_index" "$index" --if-generation-match="$gen"; then break; fi
             echo "index.csv가 그사이 바뀜, 다시 시도 ($attempt/3)"
           done
+
+  # 녹화 영상·실패한 반복을 Claude로 짧게 점검해 실험 결과 채널에 한 메시지로 더 보낸다 (tools/harness/ai_summary.py).
+  # API 키 없이 GitHub OIDC 토큰으로 인증한다 (Claude Console 워크로드 ID 연동, tools/infra/gcp/README "AI 점검").
+  # 저장소 변수 ANTHROPIC_FEDERATION_RULE_ID가 없으면 건너뛴다. 실패해도 실험 결과·기존 알림에 영향 없음
+  ai-summary:
+    needs: fleet-test
+    if: always() && needs.fleet-test.outputs.dest != '' && vars.ANTHROPIC_FEDERATION_RULE_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+      ANTHROPIC_IDENTITY_TOKEN_FILE: /tmp/gha-jwt
+      DEST: ${{ needs.fleet-test.outputs.dest }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_GHA_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      # rosbag(.db3)은 수백 MB라 빼고 받는다. 영상(mp4)·meta.json·로그만 쓴다
+      - name: Download results
+        run: gcloud storage rsync -r -x '.*\.db3$' "$DEST" "$RUNNER_TEMP/results"
+
+      - name: Install
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q anthropic opencv-python-headless
+
+      # GitHub OIDC 토큰은 약 5분 유효하고 한 번만 바꿀 수 있다. 영상 몇 개면 그 안에 끝나므로 호출 직전에 한 번 받는다
+      - name: AI summary
+        env:
+          HARNESS_DISCORD_WEBHOOK: ${{ secrets.HARNESS_DISCORD_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" | jq -r .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+          "$RUNNER_TEMP/venv/bin/python" tools/harness/ai_summary.py "$RUNNER_TEMP/results" \
+            --title "${DEST#gs://*/}" --url "$RUN_URL"
 
   # 성공·실패·취소와 상관없이 러너 VM과 러너 등록을 지운다
   stop-runner:

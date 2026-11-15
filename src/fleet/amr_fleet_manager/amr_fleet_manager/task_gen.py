@@ -19,7 +19,9 @@ import yaml
 Pose2D = tuple[float, float, float]
 
 # amr_msgs/msg/Task.TYPE_*, ITEM_* 와 같은 값
-TASK_TYPES = {'delivery': 0, 'charge': 1, 'return': 2}
+TASK_TYPES = {'delivery': 0, 'charge': 1, 'return': 2, 'collect': 3}
+# 픽업 → 목적지 흐름인 종류 (collect: 빈 그릇 회수, 테이블 → 반납 카트). 나머지는 목적지만 있다
+PICKUP_KINDS = ('delivery', 'collect')
 ITEMS = {'none': 0, 'small': 1, 'medium': 2, 'large': 3}
 
 
@@ -30,11 +32,11 @@ class TaskSpec:
     # 시작 후 이 시각에 발행한다 (노드 시계, s)
     at_s: float
     task_id: str
-    # delivery / charge / return
+    # delivery / charge / return / collect
     type: str
     # 물품. delivery가 아니면 none
     item: str
-    # 스테이션 이름. delivery가 아니면 빈 문자열
+    # 스테이션 이름. delivery·collect가 아니면 빈 문자열
     pickup: str
     dropoff: str
     priority: int = 0
@@ -46,8 +48,8 @@ class TaskSpec:
             raise ValueError(f'{self.task_id}: 알 수 없는 type {self.type!r} (가능: {sorted(TASK_TYPES)})')
         if self.item not in ITEMS:
             raise ValueError(f'{self.task_id}: 알 수 없는 item {self.item!r} (가능: {sorted(ITEMS)})')
-        if (self.type == 'delivery') != bool(self.pickup):
-            raise ValueError(f'{self.task_id}: delivery만 pickup이 있다')
+        if (self.type in PICKUP_KINDS) != bool(self.pickup):
+            raise ValueError(f'{self.task_id}: delivery·collect만 pickup이 있다')
         if not 0 <= self.priority <= 255:
             raise ValueError(f'{self.task_id}: priority는 0~255: {self.priority}')
 
@@ -94,11 +96,37 @@ def load_profile(scenario: dict) -> list[tuple[float, float]]:
     return segments
 
 
+def select_load(scenario: dict, load: str = '') -> dict:
+    """시나리오의 부하 조건 하나를 고른다. loads: {이름: 덮어쓸 키}를 시나리오 위에 얹고 loads는 뺀다.
+
+    load가 비면 시나리오 그대로(loads만 뺀다). 모르는 이름이면 ValueError.
+    """
+    base = {k: v for k, v in scenario.items() if k != 'loads'}
+    if not load:
+        return base
+    loads = scenario.get('loads') or {}
+    if load not in loads:
+        raise ValueError(f'부하 조건 {load!r}가 없다 (가능: {sorted(loads)})')
+    return {**base, **(loads[load] or {})}
+
+
+def _flow(flow: dict, names: Sequence[str]) -> tuple:
+    kind = flow.get('type', 'delivery')
+    pickups = expand(flow['pickup'], names) if kind in PICKUP_KINDS else ['']
+    return (kind, pickups, expand(flow['dropoff'], names), float(flow.get('weight', 1.0)), flow.get('priority'))
+
+
 def generate(scenario: dict, stations: dict[str, Pose2D], seed: int, id_prefix: str = 'task') -> list[TaskSpec]:
     """시나리오와 seed로 작업 일정을 만든다.
 
     profile이 있으면 시간대별 간격으로 마지막 until_s까지 만든다 (count는 상한, 없으면 제한 없음). 없으면 count건을
     interval_s 간격으로 만든다.
+    흐름(flows)마다 priority [min, max]를 주면 그 흐름은 시나리오 priority 대신 그 범위를 쓴다(회수 호출만 급하게 등).
+    난수를 꺼내는 순서는 같아서, 흐름별 priority가 없는 시나리오는 전과 같은 일정이 나온다.
+
+    bursts: [{start_s, duration_s, interval_s, flow}]면 본 일정을 다 만든 뒤 [start_s, start_s + duration_s) 동안 그 흐름만
+    poisson(평균 interval_s)으로 더 넣는다(ID는 <prefix>_s<seed>_b001부터). 본 일정의 난수는 먼저 다 꺼내므로 bursts를 더해도
+    본 일정은 그대로다. 결과는 시각 순.
     """
     rng = random.Random(seed)
     names = sorted(stations)
@@ -117,15 +145,22 @@ def generate(scenario: dict, stations: dict[str, Pose2D], seed: int, id_prefix: 
                 return value
         return interval
 
-    flows = []
-    for flow in scenario['flows']:
-        kind = flow.get('type', 'delivery')
-        pickups = expand(flow['pickup'], names) if kind == 'delivery' else ['']
-        flows.append((kind, pickups, expand(flow['dropoff'], names), float(flow.get('weight', 1.0))))
+    flows = [_flow(flow, names) for flow in scenario['flows']]
     item_names = list(scenario.get('items', {'small': 1.0}))
     item_weights = [float(scenario['items'][k]) for k in item_names] if 'items' in scenario else [1.0]
     low, high = scenario.get('priority', [0, 0])
     deadline_s = float(scenario.get('deadline_s', 0.0))
+
+    def make(at_s, task_id, flow):
+        kind, pickups, dropoffs, _, flow_priority = flow
+        pickup = rng.choice(pickups)
+        # 픽업과 같은 곳으로는 보내지 않는다
+        dropoff = rng.choice([d for d in dropoffs if d != pickup] or dropoffs)
+        item = rng.choices(item_names, weights=item_weights)[0] if kind == 'delivery' else 'none'
+        p_low, p_high = flow_priority if flow_priority is not None else (low, high)
+        return TaskSpec(
+            at_s=round(at_s, 6), task_id=task_id, type=kind, item=item,
+            pickup=pickup, dropoff=dropoff, priority=rng.randint(int(p_low), int(p_high)), deadline_s=deadline_s)
 
     tasks = []
     t = float(scenario.get('start_delay_s', 0.0))
@@ -136,16 +171,23 @@ def generate(scenario: dict, stations: dict[str, Pose2D], seed: int, id_prefix: 
             t += gap if arrival == 'fixed' else rng.expovariate(1.0 / gap)
         if profile and t >= profile[-1][0]:
             break
-        kind, pickups, dropoffs, _ = rng.choices(flows, weights=[f[3] for f in flows])[0]
-        pickup = rng.choice(pickups)
-        # 픽업과 같은 곳으로는 보내지 않는다
-        dropoff = rng.choice([d for d in dropoffs if d != pickup] or dropoffs)
-        item = rng.choices(item_names, weights=item_weights)[0] if kind == 'delivery' else 'none'
-        tasks.append(TaskSpec(
-            at_s=round(t, 6), task_id=f'{id_prefix}_s{seed}_{i + 1:04d}', type=kind, item=item,
-            pickup=pickup, dropoff=dropoff, priority=rng.randint(int(low), int(high)), deadline_s=deadline_s))
+        flow = rng.choices(flows, weights=[f[3] for f in flows])[0]
+        tasks.append(make(t, f'{id_prefix}_s{seed}_{i + 1:04d}', flow))
         i += 1
-    return tasks
+
+    n = 0
+    for burst in scenario.get('bursts') or []:
+        start, end = float(burst['start_s']), float(burst['start_s']) + float(burst['duration_s'])
+        b_interval = float(burst['interval_s'])
+        if b_interval <= 0 or end <= start:
+            raise ValueError(f'burst는 interval_s > 0, duration_s > 0: {burst}')
+        flow = _flow(burst['flow'], names)
+        t = start + rng.expovariate(1.0 / b_interval)
+        while t < end:
+            n += 1
+            tasks.append(make(t, f'{id_prefix}_s{seed}_b{n:03d}', flow))
+            t += rng.expovariate(1.0 / b_interval)
+    return sorted(tasks, key=lambda task: task.at_s)
 
 
 def load_tasks_json(path: str) -> list[TaskSpec]:

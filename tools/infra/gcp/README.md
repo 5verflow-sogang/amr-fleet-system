@@ -228,6 +228,17 @@ FROM `amr-fleet.fleet_ops.runs` ORDER BY finished_at DESC LIMIT 20
 - 바로 보기: Actions → GCP Cost Report → Run workflow. 로컬: `python3 tools/infra/gcp/cost_report.py --dry-run`
 - 결제 데이터는 몇 시간 늦게 들어와 어제 비용이 덜 잡힐 수 있다 (다음 날 누적에는 들어간다)
 
+### AI 점검 (디스코드)
+
+`fleet-test.yml`의 `ai-summary`가 실험이 끝난 뒤 녹화 영상(`video/*.mp4`)과 실패한 반복을 Claude(`claude-sonnet-5-5`)로 점검해 실험 결과 채널에 한 메시지를 더 보낸다(`tools/harness/ai_summary.py`). 영상마다 빈 화면·로봇 안 보임·가림·끼임·안 움직임을, 실패한 반복마다 원인 한 줄을 적는다. 볼 게 없으면(영상 없음, 실패 없음) API를 부르지 않는다. 판정은 AI 추정이다.
+
+- 비용: 영상 하나 약 0.01달러(프레임 4장, 11/12 실측 3개 0.03달러). 시연 녹화 1회 약 0.03달러. 실행당 호출 20개 상한(`MAX_CALLS`, 최대 약 0.2달러), 넘는 건 개수만 적는다. 크레딧은 Claude Console 5verflow 조직
+- 인증: API 키 없이 GitHub OIDC 토큰으로 한다. Claude Console → Workload identity → Connect workload → **GitHub Actions**에서
+  - 규칙: `subject_prefix` `repo:5verflow-sogang/amr-fleet-system:ref:refs/heads/dev`, `audience` `https://api.anthropic.com`, claims `repository_owner: 5verflow-sogang` (수동 실행은 dev의 워크플로 파일로 돈다)
+  - 만든 값을 저장소 variable로: `ANTHROPIC_FEDERATION_RULE_ID`(`fdrl_…`), `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`(`svac_…`), `ANTHROPIC_WORKSPACE_ID`(`wrkspc_…`). 비밀값이 아니라 secret이 아니어도 된다
+  - `ANTHROPIC_FEDERATION_RULE_ID`가 없으면 이 단계를 건너뛴다
+- 로컬: `ANTHROPIC_API_KEY`를 셸에만 두고 `python3 tools/harness/ai_summary.py <받은 결과 폴더>` (`--dry-run`이면 API 없이 무엇을 볼지만 출력)
+
 ## 상태 파일 (GCS)
 
 상태(`terraform.tfstate`)는 `state.tf`의 버킷 `amr-fleet-tfstate`(버전 보관)에 둔다. 처음 한 번 로컬 상태를 옮긴다:

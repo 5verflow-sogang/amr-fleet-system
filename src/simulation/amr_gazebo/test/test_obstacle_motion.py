@@ -398,3 +398,128 @@ def test_rejects_bad_patience():
     for extra in ({'yield_patience_s': 0.0}, {'yield_progress_m': -0.1}):
         with pytest.raises(ValueError):
             ObstacleMotion({**WORKER, **extra}, random.Random(0))
+
+
+def _seg_dist(p, a, b):
+    ax, ay = a
+    dx, dy = b[0] - ax, b[1] - ay
+    t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy)))
+    return math.hypot(p[0] - (ax + t * dx), p[1] - (ay + t * dy))
+
+
+def _path_dist(spec, p):
+    """손님 활동 범위(직선: 경유점 꺾은선, 무작위: 경유점 상자, 스폰)까지 p의 가장 가까운 거리."""
+    pts = [(w['x'], w['y']) for w in spec['waypoints']]
+    d = [math.hypot(p[0] - spec['spawn']['x'], p[1] - spec['spawn']['y'])]
+    if spec['pattern'] == 'random':
+        xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+        d.append(math.hypot(max(min(xs) - p[0], 0, p[0] - max(xs)), max(min(ys) - p[1], 0, p[1] - max(ys))))
+    else:
+        d += [_seg_dist(p, a, b) for a, b in zip(pts, pts[1:])]
+    return min(d)
+
+
+# 1-2 1호 출발 자리: dev robots_restaurant_s12.yaml (-10.5, -5.6)과 feat/demo-s12-script가 옮기는 (-10.0, -5.8)
+S12_STARTS = [(-10.5, -5.6), (-10.0, -5.8)]
+
+
+def test_peak_scene12_west_aisle_guests_crowd_the_middle_to_north():
+    # 1-2: 서쪽 통로 손님(peak_1~3)은 1호 출발 자리 둘레가 아니라 서쪽 통로 중간~북쪽(y -1.0 ~ 2.6)에 몰린다.
+    # 세 명 모두 혼잡도 구역 west_aisle 안이라(capacity 3) 혼잡도 1.0은 그대로다
+    config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
+    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak_scene12.yaml'), encoding='utf-8') as f:
+        scene12 = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
+    zones = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'fleet', 'amr_fleet_manager', 'config',
+                         'congestion_zones_restaurant.yaml')
+    with open(zones, encoding='utf-8') as f:
+        x0, x1, y0, y1 = next(z['area'] for z in yaml.safe_load(f)['zones'] if z['id'] == 'west_aisle')
+    for gid in ('peak_1', 'peak_2', 'peak_3'):
+        s = scene12[gid]
+        points = [(s['spawn']['x'], s['spawn']['y'])] + [(w['x'], w['y']) for w in s['waypoints']]
+        assert all(x0 <= x <= x1 and y0 <= y <= y1 for x, y in points), gid
+        assert min(y for _, y in points) >= -1.0, gid
+        for start in S12_STARTS:
+            assert _path_dist(s, start) > 1.0, (gid, start)
+
+
+def test_peak_scene12_changes_only_the_west_aisle_guests():
+    # peak_1~3 자리만 1-2 전용이고, 나머지 손님(customer_2 뺌)은 피크 파일과 같다
+    config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
+    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak.yaml'), encoding='utf-8') as f:
+        peak = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
+    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak_scene12.yaml'), encoding='utf-8') as f:
+        scene12 = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
+    for gid, spec in scene12.items():
+        if gid in ('peak_1', 'peak_2', 'peak_3'):
+            assert {k: v for k, v in spec.items() if k not in ('spawn', 'waypoints', 'note')} == \
+                {k: v for k, v in peak[gid].items() if k not in ('spawn', 'waypoints', 'note')}, gid
+        else:
+            assert spec == peak[gid], gid
+
+
+# ---- keep_away_m: 로봇 근처면 손님이 선다 (움직이는 로봇 포함) ----
+
+def _line(x0=0.0, x1=10.0, pattern='straight'):
+    pts = [{'x': x0, 'y': 0.0}, {'x': x1, 'y': 0.0}]
+    if pattern == 'curve':
+        pts.insert(1, {'x': 0.5 * (x0 + x1), 'y': 0.5})
+    return {'id': 'g', 'type': 'customer', 'pattern': pattern, 'speed_range_mps': [0.5, 0.5],
+            'spawn': {'x': x0, 'y': 0.0}, 'waypoints': pts}
+
+
+def test_keep_away_off_by_default_walks_into_robot():
+    m = ObstacleMotion(_line(), random.Random(0))
+    assert m.step((2.0, 0.0), {'amr_01': (2.5, 0.0, 0.0, 0.5)}, 0.0) != (0.0, 0.0)
+
+
+@pytest.mark.parametrize('pattern', ['straight', 'curve'])
+def test_keep_away_stops_before_robot_ahead_even_if_moving(pattern):
+    # 출발점(0, 0)에서 +x로 걷는다. 마주 오는 로봇이 1.0 m 앞
+    m = ObstacleMotion(_line(pattern=pattern), random.Random(0), keep_away_m=1.2)
+    assert m.step((0.0, 0.0), {'amr_01': (1.0, 0.0, math.pi, 0.5)}, 0.0) == (0.0, 0.0) and m.keeping_away
+    # 로봇이 반경 밖(2.0 m)이면 걷는다
+    assert m.step((0.0, 0.0), {'amr_01': (2.0, 0.0, math.pi, 0.5)}, 0.1) != (0.0, 0.0) and not m.keeping_away
+
+
+def test_keep_away_walks_when_robot_is_behind():
+    # 로봇이 등 뒤(걷는 방향 반대쪽)에 있으면 멀어지는 중이라 계속 걷는다
+    m = ObstacleMotion(_line(), random.Random(0), keep_away_m=1.2)
+    vx, _ = m.step((2.0, 0.0), {'amr_01': (1.5, 0.0, 0.0, 0.5)}, 0.0)
+    assert vx > 0 and not m.keeping_away
+
+
+def test_keep_away_resumes_when_robot_leaves():
+    m = ObstacleMotion(_line(), random.Random(0), keep_away_m=1.2)
+    assert m.step((2.0, 0.0), {'amr_01': (2.8, 0.0, 0.0, 0.0)}, 0.0) == (0.0, 0.0)
+    assert m.step((2.0, 0.0), {'amr_01': (2.8, 3.0, 0.0, 0.5)}, 1.0) != (0.0, 0.0)
+    assert m.turn_backs == 0
+
+
+def test_keep_away_turns_back_after_patience():
+    from amr_gazebo.obstacle_motion import KEEP_AWAY_PATIENCE_S
+    m = ObstacleMotion(_line(), random.Random(0), keep_away_m=1.2)
+    parked = {'amr_01': (2.8, 0.0, 0.0, 0.0)}
+    assert m.step((2.0, 0.0), parked, 0.0) == (0.0, 0.0)
+    assert m.step((2.0, 0.0), parked, KEEP_AWAY_PATIENCE_S - 0.1) == (0.0, 0.0)
+    vx, _ = m.step((2.0, 0.0), parked, KEEP_AWAY_PATIENCE_S + 0.1)
+    assert m.turn_backs == 1 and vx < 0          # 온 쪽(로봇 반대쪽)으로 걷는다
+    vx, _ = m.step((1.98, 0.0), parked, KEEP_AWAY_PATIENCE_S + 0.2)
+    assert vx < 0 and not m.keeping_away
+
+
+def test_keep_away_simulated_guest_never_enters_radius_of_parked_robot():
+    # 길 한가운데 멈춘 로봇: 손님은 1.2 m 안으로 들어가지 않고 돌아서 왕복한다
+    m = ObstacleMotion(_line(), random.Random(0), keep_away_m=1.2)
+    robot = {'amr_01': (6.0, 0.0, 0.0, 0.0)}
+    xy, t, closest = (0.0, 0.0), 0.0, 99.0
+    for _ in range(int(60 / DT)):
+        vx, vy = m.step(xy, robot, t)
+        xy = (xy[0] + vx * DT, xy[1] + vy * DT)
+        t += DT
+        closest = min(closest, math.dist(xy, (6.0, 0.0)))
+    assert closest >= 1.2 - 0.5 * DT and m.turn_backs >= 2
+
+
+def test_negative_keep_away_rejected():
+    with pytest.raises(ValueError):
+        ObstacleMotion(_line(), random.Random(0), keep_away_m=-1.0)

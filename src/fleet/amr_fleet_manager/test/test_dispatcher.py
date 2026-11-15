@@ -76,6 +76,52 @@ def test_stale_congestion_falls_back_to_distance():
         make(cost_fn='congestion', congestion_timeout_s=0.0)
 
 
+def _one_robot_picks(aging_rate, aging_now):
+    # 로봇 1대, 일반 작업(100, 0 s 접수)과 회수 호출(200, 70 s 접수). 할당 시각 now(실제 시간)와 aging_now(작업 시계)는 따로다
+    d = make(aging_rate=aging_rate)
+    d.update_robot(robot('amr_01'), '', 0.0)
+    d.add_task(task('normal', (1.0, 0.0), priority=100, created=0.0))
+    d.add_task(task('collect', (2.0, 0.0), priority=200, created=70.0))
+    commands, _ = d.assign(0.0, aging_now=aging_now)
+    return commands[0].task_id
+
+
+def test_aging_lets_long_waiting_task_go_before_new_urgent_one():
+    assert _one_robot_picks(0.0, 75.0) == 'collect'          # 끔: 우선순위 그대로
+    assert _one_robot_picks(100.0 / 60.0, 75.0) == 'normal'  # 75 s 기다린 일반 작업(225) > 5 s 된 회수 호출(208)
+    assert _one_robot_picks(100.0 / 60.0, None) == 'collect'  # 작업 시계를 안 주면 aging 없음
+
+
+def test_negative_aging_rate_rejected():
+    with pytest.raises(ValueError):
+        make(aging_rate=-1.0)
+
+
+def test_add_task_ages_by_received_at_not_wall_clock_created_time():
+    # 대시보드가 created_time에 실제 시각(~1.7e9)을 넣어도, aging은 add_task가 받은 시각(received_at, 서버 시계)으로
+    # 잰다. created_time 그대로 쟀으면 now(시뮬레이션 시간, 600)보다 항상 뒤라 대기가 0으로 고정돼, 75 s나 기다린
+    # 회수 호출(200)이 막 들어온 더 급한 작업(250)에 영영 밀렸을 것이다
+    d = make(aging_rate=100.0 / 60.0)
+    d.update_robot(robot('amr_01'), '', 600.0)
+    d.add_task(task('collect', (2.0, 0.0), priority=200, created=1_730_000_000.0), received_at=525.0)
+    d.add_task(task('urgent_new', (1.0, 0.0), priority=250, created=600.0), received_at=600.0)
+    commands, _ = d.assign(600.0, aging_now=600.0)
+    # 75 s 기다린 회수 호출(200 + 75 × 100/60 = 325)이 막 들어온 250보다 앞선다
+    assert commands[0].task_id == 'collect'
+
+
+def test_add_task_ages_by_received_at_not_zero_created_time():
+    # created_time을 비워(0)도, aging은 받은 시각(received_at)으로 잰다. created=0 그대로 쟀으면 대기가 수백 초로
+    # 잡혀, 막 들어온 낮은 우선순위 작업(normal)이 역시 막 들어온 급한 회수 호출(collect)보다 무조건 앞섰을 것이다
+    d = make(aging_rate=100.0 / 60.0)
+    d.update_robot(robot('amr_01'), '', 600.0)
+    d.add_task(task('normal', (1.0, 0.0), priority=100, created=0.0), received_at=600.0)
+    d.add_task(task('collect', (2.0, 0.0), priority=200, created=600.0), received_at=600.0)
+    commands, _ = d.assign(600.0, aging_now=600.0)
+    # 둘 다 막 들어와 대기 0: 우선순위 그대로 회수 호출이 먼저
+    assert commands[0].task_id == 'collect'
+
+
 def test_no_call_without_tasks_or_robots():
     d = make()
     assert d.assign(0.0) == ([], [])

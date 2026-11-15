@@ -21,7 +21,9 @@ from amr_safety.avoidance_eval import (
 )
 from amr_safety.avoidance_eval.cli import report_main
 from amr_safety.avoidance_eval.metrics import clopper_pearson
-from amr_safety.avoidance_eval.obstacles import CORRIDOR_Y, CROSS_X, SPEC_SPEED, SPEED_RANGE, make_obstacles
+from amr_safety.avoidance_eval.obstacles import (
+    CORRIDOR_Y, CROSS_X, HEADON_OFFSET, HEADON_PATH_Y, HEADON_SPAWN_X, HEADON_END_X, SPEC_SPEED, SPEED_RANGE,
+    make_obstacles)
 
 L, W = 0.6, 0.4
 WORKER = Shape('circle', radius=0.25)
@@ -117,6 +119,56 @@ def test_detour_around_obstacle_passes():
     assert s['avoidance']['max_return_s'] == pytest.approx(3.5, abs=0.03)
     assert s['reached_goal'] and s['encounter']
     assert s['kpi']['pass']
+
+
+def test_return_after_pass_counts_from_obstacle_behind_rear():
+    # 원 명세 "회피 후 원래 경로로 복귀하는 시간": 작업자(3, 0)가 차체 뒤 끝(x - 0.3) 너머 반경 0.25만큼 지나간 뒤부터
+    res = evaluate_run(drive(), {'worker_1': static(3.0, 0.0)}, {'worker_1': WORKER}, REF)
+    ep = res.episodes[0]
+    assert ep.pass_t == pytest.approx((3.0 + 0.3 + 0.25) / 0.5, abs=0.02)        # x 3.55 → t 7.1 s
+    assert ep.return_after_pass_s == pytest.approx(7.667 - 7.1, abs=0.03)
+    s = res.summary
+    assert s['avoidance']['max_return_after_pass_s'] == pytest.approx(0.567, abs=0.03)
+    # 판정은 return_from으로 고른다: 회피 시작부터 3.5 s, 회피 후 0.57 s → 기준 3 s면 start만 불합격
+    strict = AvoidanceParams(kpi_return_s=3.0)
+    assert not evaluate_run(drive(), {'worker_1': static(3.0, 0.0)}, {'worker_1': WORKER}, REF, strict).summary['kpi']['return_ok']
+    after = AvoidanceParams(kpi_return_s=3.0, return_from='pass')
+    assert evaluate_run(drive(), {'worker_1': static(3.0, 0.0)}, {'worker_1': WORKER}, REF, after).summary['kpi']['return_ok']
+    with pytest.raises(ValueError):
+        AvoidanceParams(return_from='end')
+
+
+def test_aggregate_rejudges_return_from_pass():
+    ok = _run_summary()                                     # 회피 시작부터 3.5 s, 회피 후 0.57 s
+    runs = [(f'r{i}', ok) for i in range(30)]
+    strict = aggregate(runs, AvoidanceParams(kpi_return_s=3.0))
+    assert strict['verdict'] == 'FAIL'
+    after = aggregate(runs, AvoidanceParams(kpi_return_s=3.0, return_from='pass'))
+    assert after['verdict'] == 'PASS'
+    assert after['max_return_after_pass_s'] == pytest.approx(0.567, abs=0.03)
+    md = aggregate_markdown(after)
+    assert '회피 후(장애물 통과 뒤)' in md and '회피 시작부터 [s] (참고)' in md
+    # 실행별 표도 판정에 쓴 회피 후 값을 보여 준다 (회피 시작부터 3.5 s는 참고 열)
+    assert '| 회피 후 복귀 | 회피 시작부터 복귀 (참고) |' in md
+    assert f"| {ok['avoidance']['max_return_after_pass_s']:.3f} | {ok['avoidance']['max_return_s']:.3f} |" in md
+    assert '| 최대 복귀 |' in aggregate_markdown(strict)
+
+
+def test_rejudge_return_from_pass_fails_old_summary_without_after_pass_value():
+    # 회피 후 복귀 값이 생기기 전에 기록한 요약(키 없음)을 --return-from pass로 다시 보면, 회피 구간이 있는데 값이 없으니
+    # 합격이 아니다 (#293 리뷰: 전에는 값 없이 PASS가 나왔다)
+    old = _run_summary()
+    del old['avoidance']['max_return_after_pass_s']
+    old['avoidance']['max_return_s'] = 16.0
+    a = aggregate([('old_run', old)], AvoidanceParams(kpi_runs=1, return_from='pass'))
+    assert a['verdict'] == 'FAIL'
+    assert not a['per_run'][0]['pass']
+    assert '회피 후 복귀 값 없음' in a['per_run'][0]['reasons']
+    # 회피 구간이 없으면 잴 복귀가 없으니 그대로 합격
+    calm = _run_summary()
+    del calm['avoidance']['max_return_after_pass_s']
+    calm['avoidance']['episodes'] = 0
+    assert aggregate([('calm', calm)], AvoidanceParams(kpi_runs=1, return_from='pass'))['verdict'] == 'PASS'
 
 
 def test_collision_counted_once_per_contact():
@@ -226,6 +278,19 @@ def test_aggregate_verdicts():
     assert a['verdict'] == 'INSUFFICIENT' and a['insufficient_reasons'] == ['요약 없음 1회']
 
 
+def test_aggregate_require_avoidance_fails_runs_that_did_not_step_aside():
+    ok = _run_summary()                                     # 0.6 m 비켜 지나감 (회피 구간 1)
+    waited = json.loads(json.dumps(ok))
+    waited['avoidance']['episodes'] = 0                     # 서서 기다리거나 장애물이 물러남
+    runs = [(f'r{i}', ok) for i in range(29)] + [('waited', waited)]
+    assert aggregate(runs)['verdict'] == 'PASS'             # 가로지르기 I17: 기다려도 된다
+    a = aggregate(runs, require_avoidance=True)
+    assert a['verdict'] == 'FAIL' and a['failing_runs'] == ['waited']
+    assert a['runs_without_avoidance'] == 1
+    assert '회피 구간 없음' in ' '.join(next(r for r in a['per_run'] if r['run'] == 'waited')['reasons'])
+    assert '회피 구간 없는 실행' in aggregate_markdown(a)
+
+
 def _collided(summary, valid):
     s = json.loads(json.dumps(summary))
     s['collision']['count'] = 1
@@ -330,6 +395,28 @@ def test_obstacles_from_seed_vary_and_repeat():
         assert o['spawn']['yaw'] == pytest.approx(-math.pi / 2 if south else math.pi / 2, abs=1e-3)
         southward.append(south)
     assert 0 < sum(southward) < 30                          # 두 방향 모두 나온다
+
+
+def test_headon_obstacles_block_the_path():
+    assert make_obstacles(5, 'headon', 0.3) == make_obstacles(5, 'headon', 0.3)
+    specs = [make_obstacles(seed, 'headon')['obstacles'][0] for seed in range(1, 31)]
+    assert len({(o['spawn']['x'], o['spawn']['y']) for o in specs}) == 30
+    for o in specs:
+        (a, b) = o['waypoints']
+        assert o['id'] == 'worker_headon' and o['pattern'] == 'straight' and o['type'] == 'worker'
+        assert o['speed_range_mps'] == [SPEC_SPEED, SPEC_SPEED]  # 속도를 안 주면 원 명세 1.0 m/s
+        assert o['yield_to_robots'] == ['amr_01']
+        assert HEADON_SPAWN_X[0] <= o['spawn']['x'] <= HEADON_SPAWN_X[1]
+        # 늘 로봇 길을 막는다: 경로(y 1.5)에서 작업자 반경 0.25 + 로봇 반폭 0.2 안
+        assert abs(o['spawn']['y'] - HEADON_PATH_Y) <= HEADON_OFFSET < 0.45
+        # 처음에 서쪽(로봇 쪽)으로 걸어온다
+        assert a == {'x': o['spawn']['x'], 'y': o['spawn']['y']} and b == {'x': HEADON_END_X, 'y': o['spawn']['y']}
+        assert o['spawn']['yaw'] == pytest.approx(math.pi, abs=1e-3)
+    assert make_obstacles(1, 'headon', 0.3)['obstacles'][0]['speed_range_mps'] == [0.3, 0.3]
+    with pytest.raises(ValueError):
+        make_obstacles(1, 'headon', 2.0)                    # 명세 속도 범위 밖
+    with pytest.raises(ValueError):
+        make_obstacles(1, 'cross', 1.0)                     # 가로지르기는 시드가 속도를 정한다
 
 
 # --- 기록·재계산 ---

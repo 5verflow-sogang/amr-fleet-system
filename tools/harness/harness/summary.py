@@ -165,17 +165,23 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
         out['fleet.ack_rate'] = len(acked) / len(resp_rows)
         _put_dist(out, 'fleet.ack_rtt_ms', acked, 'mean', 'p95', 'max')
         out['fleet.resends.mean'] = sum(_floats(resp_rows, 'resends')) / len(resp_rows)
-        resp = sorted(_floats(resp_rows, 'latency_ms'))
+        # 명령 순간 이미 첫 목표에 서 있던 명령은 응답 시간에서 뺀다: Nav2가 움직이지 않고 도착 처리해 첫 움직임이
+        # 싣기 대기 뒤라 수 초로 잡힌다 (11/2 station_resv 7 s 2건이 평균을 430 → 1270 ms로 올렸다). 수는 따로 센다
+        at_goal = [r for r in resp_rows if r.get('at_goal_at_cmd') == '1']
+        if at_goal:
+            out['fleet.response_at_goal'] = len(at_goal)
+        timed = [r for r in resp_rows if r.get('at_goal_at_cmd') != '1']
+        resp = sorted(_floats(timed, 'latency_ms'))
         _put_dist(out, 'fleet.response_ms', resp, 'mean', 'max', 'n')
         # 수신 기준 (로봇이 받은 시각 → 첫 움직임). 원 명세 성능 요구사항 "명령 수신 ~ 로봇 반응"
-        _put_dist(out, 'fleet.response_recv_ms', sorted(_floats(resp_rows, 'latency_recv_ms')), 'mean', 'max', 'n')
-        # 시뮬레이션 시간 기준 (발행 → 움직임). RTF < 1이면 실제 시간 값이 부푼다. KPI 시계는 회의에서 정한다 (#171 리뷰 2)
-        _put_dist(out, 'fleet.response_sim_ms', sorted(_floats(resp_rows, 'latency_sim_ms')), 'mean', 'max')
+        _put_dist(out, 'fleet.response_recv_ms', sorted(_floats(timed, 'latency_recv_ms')), 'mean', 'max', 'n')
+        # 시뮬레이션 시간 기준 (발행 → 움직임). RTF < 1이면 실제 시간 값이 부푼다. 시간 KPI는 이 시계 (11/3 결정)
+        _put_dist(out, 'fleet.response_sim_ms', sorted(_floats(timed, 'latency_sim_ms')), 'mean', 'max')
         if resp:
             # 움직임을 찾은 명령의 비율. 못 찾은 명령은 평균에서 조용히 빠지므로 같이 본다 (#171 리뷰 3)
-            out['fleet.response_coverage'] = len(resp) / len(resp_rows)
+            out['fleet.response_coverage'] = len(resp) / len(timed)
             # 명령 순간 이미 움직이던 경우 (지연이 0에 가깝게 나온다, #171 리뷰 4)
-            out['fleet.response_moving_at_cmd'] = sum(r.get('moving_at_cmd') == '1' for r in resp_rows
+            out['fleet.response_moving_at_cmd'] = sum(r.get('moving_at_cmd') == '1' for r in timed
                                                       if r.get('latency_ms'))
     # 작업 결과. 끝 무렵에 요청된 작업은 실행 안에 못 끝나므로, 완료율은 같은 seed(같은 작업 일정)끼리 비교한다
     tasks = _read_csv(run_dir / 'task_outcomes.csv')

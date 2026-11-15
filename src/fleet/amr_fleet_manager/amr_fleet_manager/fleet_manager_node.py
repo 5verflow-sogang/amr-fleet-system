@@ -49,6 +49,8 @@ def task_info(msg: Task) -> TaskInfo:
         task_type=msg.task_type,
         dropoff_xy=(msg.dropoff_pose.position.x, msg.dropoff_pose.position.y),
         priority=msg.priority,
+        # 기록용. aging은 이 값이 아니라 dispatcher.add_task의 received_at(서버 시계)으로 잰다 - 보낸 쪽
+        # (대시보드 등) 시계가 서버와 다르면 msg.created_time만으로는 대기 시간을 믿을 수 없다
         created=stamp_to_sec(msg.created_time),
         pickup_xy=pickup,
         deadline=deadline if deadline > 0 else None,
@@ -121,6 +123,7 @@ class FleetManager(Node):
                 charge_target_percent=self.declare_parameter('energy.charge_target_percent', 100.0).value,
             ),
             battery_weight=self.declare_parameter('assignment.battery_weight', 0.0).value,
+            aging_rate=self.declare_parameter('assignment.aging_rate', 0.0).value,
         ))
         self._charge_waiting: list[str] = []
         heartbeat_period_s = self.declare_parameter('heartbeat_period_s', 0.2).value
@@ -166,7 +169,7 @@ class FleetManager(Node):
         self.get_logger().info(
             f'Fleet 서버 시작: epoch={self._epoch}, algorithm={self._dispatcher.config.algorithm}, '
             f'resend={self._dispatcher.config.resend_interval_s}s x {self._dispatcher.config.max_resends}, '
-            f'zones={self._zones.zone_ids}')
+            f'aging_rate={self._dispatcher.config.aging_rate}/s, zones={self._zones.zone_ids}')
         if charging:
             c = self._dispatcher.config.charge
             self.get_logger().info(
@@ -189,7 +192,8 @@ class FleetManager(Node):
     def _on_task(self, msg: Task):
         if not msg.task_id:
             msg.task_id = f'task_{uuid.uuid4().hex[:12]}'
-        if not self._dispatcher.add_task(task_info(msg), msg):
+        # aging은 받은 시각(서버 시계, _now_sec)으로 잰다 - msg.created_time은 보낸 쪽(대시보드 등) 시계라 다를 수 있다
+        if not self._dispatcher.add_task(task_info(msg), msg, received_at=self._now_sec()):
             self.get_logger().warn(f'이미 받은 작업이라 무시: {msg.task_id}')
             return
         self._assign()
@@ -339,7 +343,9 @@ class FleetManager(Node):
 
     def _assign(self):
         self._plan_charging()
-        commands, rows = self._dispatcher.assign(self._now_sec())
+        # aging의 대기 시간도 같은 노드 시계로 잰다 (#322 리뷰, _now_sec 주석)
+        now = self._now_sec()
+        commands, rows = self._dispatcher.assign(now, aging_now=now)
         if rows and self._log is not None:
             self._log.write(stamp_to_sec(self.get_clock().now().to_msg()), rows)
         self._send(commands)

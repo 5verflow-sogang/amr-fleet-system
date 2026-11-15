@@ -13,6 +13,10 @@ yield_to_robots(선택, 로봇 네임스페이스 목록)를 주면 그 로봇�
 한번 서면 로봇이 다시 움직여도 이번 구간(다음 경유점까지) 길에서 비킬 때까지 기다린다
 (막 출발한 로봇에 걸어 들어가지 않게). 로봇이 YIELD_PATIENCE_S 동안 계속 멈춰 있으면 온 쪽으로 돌아선다.
 straight·random 패턴만 쓸 수 있다 (curve는 구간이 표본 간격 0.5 m로 짧아 앞을 충분히 못 본다).
+
+keep_away_m(생성자 인자, 0이면 끔)을 주면 패턴·로봇 이름과 상관없이, 로봇 중심이 keep_away_m 안에 있고 그쪽으로
+걷는 중이면(로봇 쪽 성분이 양수) 그 자리에 선다. 움직이는 로봇에도 선다 (식당 시연: 손님이 로봇에 부딪히지 않게).
+로봇이 멀어지거나 걷는 방향이 로봇에서 멀어지면 다시 걷는다. KEEP_AWAY_PATIENCE_S 넘게 서 있으면 온 쪽으로 돌아선다.
 yield_robot_size(선택, [길이, 폭] m)는 비킬 때 보는 로봇 차체 크기다. 없으면 물류 AMR(ROBOT_LENGTH × ROBOT_WIDTH).
 식당 서빙 로봇(body:=serving)은 0.565 × 0.537 m를 준다.
 yield_patience_s·yield_progress_m(선택)은 언제 돌아설지 정한다. 기본(없음)은 막은 로봇의 속력이 STOPPED_SPEED 아래로
@@ -48,6 +52,8 @@ YIELD_SIDE_MARGIN = 0.05
 # 서 있는 동안 막은 로봇이 이만큼 [s] 계속 멈춰 있으면 돌아선다. 로봇이 작업자가 이미 가까이 있을 때 서면
 # 작업자는 긴급정지 띠 안이고 로봇은 후진하지 않아(min_vel_x 0) 둘 다 기다리기만 한다 (로컬 시험에서 50 s)
 YIELD_PATIENCE_S = 5.0
+# keep_away_m: 로봇 때문에 이만큼 [s] 넘게 서 있으면 온 쪽으로 돌아선다 (로봇이 손님 앞에 멈춰 둘 다 기다리지 않게)
+KEEP_AWAY_PATIENCE_S = 5.0
 # 로봇 차체 [m] (amr_description, avoidance_eval robot_length·width). yield_robot_size가 없을 때 쓴다
 ROBOT_LENGTH = 0.6
 ROBOT_WIDTH = 0.4
@@ -80,7 +86,7 @@ def catmull_rom(points: Sequence[Point], spacing: float = CURVE_SPACING) -> List
 class ObstacleMotion:
     """장애물 1개의 이동 상태. step()에 현재 위치를 주면 낼 속도 (vx, vy) [m/s, 월드 기준]를 돌려준다."""
 
-    def __init__(self, spec: dict, rng: random.Random):
+    def __init__(self, spec: dict, rng: random.Random, keep_away_m: float = 0.0):
         self.id = spec['id']
         self.pattern = spec['pattern']
         if self.pattern not in PATTERNS:
@@ -110,6 +116,11 @@ class ObstacleMotion:
         self._anchor: Optional[List[Point]] = None   # yield_progress_m: 기다리기 시작한 때 막은 로봇들 위치
         self.waiting = False     # 멈춘 로봇 앞에서 서 있는 중
         self.turn_backs = 0      # 오래 멈춘 로봇 앞에서 돌아선 횟수
+        if not keep_away_m >= 0:
+            raise ValueError(f'{spec["id"]}: keep_away_m은 0 이상이어야 한다: {keep_away_m}')
+        self.keep_away_m = float(keep_away_m)
+        self.keeping_away = False                     # 가까운 로봇 때문에 서 있는 중
+        self._keep_since: Optional[float] = None      # 그렇게 서기 시작한 시각 [s]
         self._stuck_since: Optional[float] = None   # 막은 로봇이 계속 멈춰 있기 시작한 시각 [s]
         waypoints = [(float(w['x']), float(w['y'])) for w in spec['waypoints']]
         if len(waypoints) < 2:
@@ -142,11 +153,34 @@ class ObstacleMotion:
         """
         while math.dist(xy, self._goal) < REACH_TOLERANCE:
             self._advance()
+        if self.keep_away_m > 0 and self._keep_away(xy, robots or {}, t):
+            return 0.0, 0.0
         if self.yield_to and self._must_wait(xy, robots or {}, t):
             return 0.0, 0.0
         dx, dy = self._goal[0] - xy[0], self._goal[1] - xy[1]
         d = math.hypot(dx, dy)
         return self.speed * dx / d, self.speed * dy / d
+
+    def _keep_away(self, xy: Point, robots: Mapping[str, RobotState], t: Optional[float]) -> bool:
+        """keep_away_m 안의 로봇 쪽으로 걷는 중이면 True (self.keeping_away도 같은 값). 오래 서 있으면 돌아서고 False."""
+        ux, uy = self._goal[0] - xy[0], self._goal[1] - xy[1]
+        blocked = any(math.hypot(rx - xy[0], ry - xy[1]) < self.keep_away_m
+                      and (rx - xy[0]) * ux + (ry - xy[1]) * uy > 0.0
+                      for rx, ry, *_ in robots.values())
+        if not blocked:
+            self.keeping_away = False
+            self._keep_since = None
+            return False
+        if not self.keeping_away:
+            self.keeping_away = True
+            self._keep_since = t
+        elif t is not None and self._keep_since is not None and t - self._keep_since >= KEEP_AWAY_PATIENCE_S:
+            # 온 쪽으로 돌아서면 로봇에서 멀어지는 방향이라 다음 걸음부터 걷는다
+            self._turn_back()
+            self.keeping_away = False
+            self._keep_since = None
+            return False
+        return True
 
     def _must_wait(self, xy: Point, robots: Mapping[str, RobotState], t: Optional[float]) -> bool:
         """길을 막은 로봇 때문에 서야 하면 True (self.waiting도 같은 값).
