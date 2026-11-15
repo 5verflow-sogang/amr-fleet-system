@@ -61,6 +61,7 @@ class StandoffDetector:
         self._config = config
         self._robots: dict[str, _Robot] = {}
         self._cooldown_until: dict[str, float] = {}
+        self._last_victim: dict[tuple[str, ...], str] = {}
 
     def update(self, robot_id: str, t: float, x: float, y: float, yaw: float, busy: bool, active: bool = True):
         """로봇 상태 하나. active=False(충전·오류·E-Stop, 도킹·적재 중, 구역 대기열)면 대치 묶음에 넣지 않는다
@@ -117,18 +118,25 @@ class StandoffDetector:
         return orders
 
     def _order(self, group, still, pos, all_pos, priority) -> Optional[YieldOrder]:
-        """작업 없는 로봇 → 우선순위 낮은 로봇 순으로, 비킬 자리가 있는 첫 로봇. 없으면 None."""
+        """비킬 자리가 있는 첫 로봇. 차례: 이 묶음에 직전 지시를 받은 로봇은 맨 뒤(비켰는데도 안 풀렸으니 다른
+        로봇 차례) → 작업 없는 로봇 → 상대를 마주 보는 로봇(물러날 길은 방금 온 길이다. 상대를 등진 로봇의
+        앞은 대개 가려던 선반·스테이션이라 앞으로 못 비킨다) → 우선순위 낮은 로봇(choose_victim). 없으면 None."""
+        key = tuple(group)
+        nearest = {r: min((o for o in group if o != r), key=lambda o: (math.dist(pos[r], pos[o]), o)) for r in group}
+        away = {r: self.direction(r, nearest[r], pos) for r in group}
+
+        def rank(r):
+            return (r == self._last_victim.get(key), still[r].busy, away[r] != BACK)
+
         remaining = list(group)
         while remaining:
-            idle = [r for r in remaining if not still[r].busy]
-            victim = choose_victim(idle or remaining, priority)
+            best = min(rank(r) for r in remaining)
+            victim = choose_victim([r for r in remaining if rank(r) == best], priority)
             remaining.remove(victim)
-            others = [r for r in group if r != victim]
-            yield_to = min(others, key=lambda o: (math.dist(pos[victim], pos[o]), o))
-            away = self.direction(victim, yield_to, pos)
-            for direction in (away, -away):
+            for direction in (away[victim], -away[victim]):
                 if self._clear(victim, direction, all_pos):
-                    return YieldOrder(victim, yield_to, direction, tuple(group))
+                    self._last_victim[key] = victim
+                    return YieldOrder(victim, nearest[victim], direction, key)
         return None
 
     def _clear(self, victim: str, direction: int, all_pos: dict) -> bool:

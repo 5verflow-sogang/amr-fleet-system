@@ -30,13 +30,28 @@ def test_two_busy_robots_face_to_face_lower_priority_backs_off():
     assert o.direction == BACK   # 상대가 앞에 있다
 
 
-def test_same_priority_later_id_yields_and_moves_forward_when_other_is_behind():
+def test_robot_facing_the_other_backs_off_even_with_earlier_id():
     det = StandoffDetector(CFG)
-    feed(det, 'amr_01', 0.0, 0.0, yaw=0.0)
-    feed(det, 'amr_03', 0.7, 0.0, yaw=0.0)   # amr_01이 amr_03 뒤에 있다
+    feed(det, 'amr_01', 0.0, 0.0, yaw=0.0)   # amr_03의 뒤에 서서 amr_03을 본다
+    feed(det, 'amr_03', 0.7, 0.0, yaw=0.0)   # 등진 쪽(amr_01 반대, 앞)은 대개 가려던 선반이다
     [o] = det.check(30.0, no_priority)
-    assert o.robot_id == 'amr_03'
-    assert o.direction == FORWARD
+    # 11/14 standoff_resp: '앞으로' 지시 55건 중 1건만 움직였고 '뒤로'는 15건 중 14건 움직였다
+    assert (o.robot_id, o.direction) == ('amr_01', BACK)
+
+
+def test_same_group_again_rotates_to_the_other_robot():
+    det = StandoffDetector(CFG)
+    feed(det, 'amr_01', 0.0, 0.0, yaw=0.0, busy=False)
+    feed(det, 'amr_02', 0.6, 0.0, yaw=math.pi)
+    [o] = det.check(30.0, no_priority)
+    assert o.robot_id == 'amr_01'                     # 작업 없는 로봇 먼저
+    feed(det, 'amr_01', 0.0, 0.0, yaw=0.0, busy=False, t0=30.5, t1=61.0)
+    feed(det, 'amr_02', 0.6, 0.0, yaw=math.pi, t0=30.5, t1=61.0)
+    [o] = det.check(61.0, no_priority)
+    assert o.robot_id == 'amr_02'                     # 비켰는데도 안 풀렸으면 다른 로봇 차례
+    feed(det, 'amr_01', 0.0, 0.0, yaw=0.0, busy=False, t0=61.5, t1=92.0)
+    feed(det, 'amr_02', 0.6, 0.0, yaw=math.pi, t0=61.5, t1=92.0)
+    assert det.check(92.0, no_priority)[0].robot_id == 'amr_01'
 
 
 def test_not_yet_still_long_enough():
@@ -90,7 +105,7 @@ def test_chain_of_three_is_one_group_and_cooldown_blocks_repeat():
     feed(det, 'amr_03', 2.0, 0.0)     # amr_01과는 2 m지만 amr_02를 거쳐 이어진다
     [o] = det.check(30.0, no_priority)
     assert o.group == ('amr_01', 'amr_02', 'amr_03')
-    assert o.robot_id == 'amr_03' and o.yield_to == 'amr_02'
+    assert (o.robot_id, o.yield_to, o.direction) == ('amr_01', 'amr_02', BACK)   # amr_02를 마주 보는 로봇
     feed(det, 'amr_01', 0.0, 0.0, t0=30.5, t1=49.0)
     feed(det, 'amr_02', 1.0, 0.0, t0=30.5, t1=49.0)
     feed(det, 'amr_03', 2.0, 0.0, t0=30.5, t1=49.0)
