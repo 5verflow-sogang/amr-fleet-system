@@ -35,7 +35,25 @@ Point = Tuple[float, float]
 # 로봇 상태: world x, y [m], yaw [rad], 속력 [m/s]
 RobotState = Tuple[float, float, float, float]
 
-PATTERNS = ('straight', 'curve', 'random')
+PATTERNS = ('straight', 'curve', 'random', 'stand')
+
+# stand 패턴 (식당 시연: 서 있는 손님). 제자리(spawn)에서 waypoints 두 점 사이를 조금씩 왕복하다가, 로봇이 오면
+# evade_dirs 중 로봇 진행선에서 가장 먼 쪽으로 비켜 서고, 로봇이 멀어지면 제자리로 돌아온다.
+# 로봇 중심이 이 거리 [m] 안이고 손님이 로봇 진행선 옆 EVADE_LANE_M 안(로봇 뒤쪽 제외)이면 비킨다
+EVADE_TRIGGER_M = 1.5
+# 로봇이 멈춰 있거나 진행선 밖이어도 이만큼 [m] 안이면 비킨다
+EVADE_CLOSE_M = 0.7
+EVADE_LANE_M = 0.9
+# 비킬 때 가는 거리 [m]와 속력 [m/s]
+EVADE_M = 0.8
+EVADE_SPEED = 0.6
+# 비킨 자리가 로봇 진행선에서 이만큼 [m] 떨어지면 길을 튼 것으로 본다 (로봇 반폭 0.27 + 손님 0.25 + 여유)
+EVADE_CLEAR_M = 0.6
+# 모든 로봇이 이만큼 [m] 밖이면 제자리로 돌아간다
+EVADE_RELEASE_M = 2.0
+# 옆으로 틀 데가 없는 좁은 통로: 로봇(0.8 m/s)보다 빨리 이만큼 [m] 앞으로 가서 가로 통로(행 사이 1.8 m)로 빠진다
+EVADE_FLEE_M = 2.0
+EVADE_FLEE_SPEED = 1.0
 # 목표점에 이만큼 가까워지면 다음 점으로 넘어간다 [m]
 REACH_TOLERANCE = 0.15
 # 곡선 표본 간격 [m]
@@ -127,13 +145,28 @@ class ObstacleMotion:
             raise ValueError(f'{self.id}: waypoints가 2개 이상 필요하다')
         self._rng = rng
 
+        self._home: Point = (float(spec['spawn']['x']), float(spec['spawn']['y'])) if 'spawn' in spec \
+            else waypoints[0]
+        self.evade_dirs: List[Point] = []
+        for d in spec.get('evade_dirs') or []:
+            n = math.hypot(float(d[0]), float(d[1]))
+            if n <= 0:
+                raise ValueError(f'{self.id}: evade_dirs에 0 벡터가 있다')
+            self.evade_dirs.append((float(d[0]) / n, float(d[1]) / n))
+        self.evade_m = float(spec.get('evade_m', EVADE_M))
+        self.evading = False                      # stand: 로봇을 피해 비켜 서는 중 (또는 비킨 자리에 서 있는 중)
+        self.returning = False                    # stand: 제자리로 돌아가는 중
+        self._evade_goal: Optional[Point] = None
+        self._evade_speed = EVADE_SPEED
+        self.evades = 0                           # 비킨 횟수
+
         if self.pattern == 'random':
             xs, ys = zip(*waypoints)
             self.area = (min(xs), max(xs), min(ys), max(ys))
             self.path: List[Point] = []
             self._goal = self._random_goal()
         else:
-            self.path = waypoints[:1] + waypoints[-1:] if self.pattern == 'straight' \
+            self.path = waypoints[:1] + waypoints[-1:] if self.pattern in ('straight', 'stand') \
                 else catmull_rom(waypoints)
             self._index = 1      # 지금 향하는 path 점
             self._dir = 1        # 1: 정방향, -1: 되돌아오는 중
@@ -151,6 +184,8 @@ class ObstacleMotion:
         robots: 로봇 네임스페이스 → RobotState (world 기준). yield_to_robots의 로봇이 앞길을 막으면 (0, 0).
         t: 지금 시각 [s]. 없으면 돌아서지 않고 로봇이 비킬 때까지 기다린다.
         """
+        if self.pattern == 'stand':
+            return self._stand_step(xy, robots or {})
         while math.dist(xy, self._goal) < REACH_TOLERANCE:
             self._advance()
         if self.keep_away_m > 0 and self._keep_away(xy, robots or {}, t):
@@ -233,6 +268,59 @@ class ObstacleMotion:
             self.waiting, self._anchor = False, None
         return self.waiting
 
+    # ---------------------------------------------------------------- stand: 서 있다가 로봇이 오면 비킨다
+    def _stand_step(self, xy: Point, robots: Mapping[str, RobotState]) -> Tuple[float, float]:
+        threat = self._threat(xy, robots)
+        if threat is not None:
+            # 아직 안 비켰거나, 비킨 자리가 로봇 진행선 안이라 로봇이 다시 가까이 오면 지금 자리에서 한 번 더 비킨다
+            if self._evade_goal is None or (math.dist(xy, threat[:2]) < EVADE_CLOSE_M + 0.2
+                                            and _lateral(threat, xy) < EVADE_CLEAR_M):
+                self._evade_goal = self._pick_evade(xy, threat)
+                self.evading, self.returning = True, False
+                self.evades += 1
+        elif self.evading and all(math.dist(xy, r[:2]) > EVADE_RELEASE_M for r in robots.values()):
+            self.evading, self.returning, self._evade_goal = False, True, None
+        if self.evading:
+            return _toward(xy, self._evade_goal, self._evade_speed)
+        if self.returning:
+            if math.dist(xy, self._home) > 0.03:
+                return _toward(xy, self._home, EVADE_SPEED)
+            self.returning = False
+        # 제자리 왕복 (straight와 같은 두 점)
+        while math.dist(xy, self._goal) < REACH_TOLERANCE:
+            self._advance()
+        return _toward(xy, self._goal, self.speed)
+
+    def _threat(self, xy: Point, robots: Mapping[str, RobotState]) -> Optional[RobotState]:
+        """비켜야 할 가장 가까운 로봇 (없으면 None)."""
+        best = None
+        for state in robots.values():
+            d = math.dist(xy, state[:2])
+            c, s = math.cos(state[2]), math.sin(state[2])
+            ahead = c * (xy[0] - state[0]) + s * (xy[1] - state[1])
+            on_lane = d < EVADE_TRIGGER_M and ahead > -0.3 and _lateral(state, xy) < EVADE_LANE_M
+            if (on_lane or d < EVADE_CLOSE_M) and (best is None or d < math.dist(xy, best[:2])):
+                best = state
+        return best
+
+    def _pick_evade(self, xy: Point, robot: RobotState) -> Point:
+        """evade_dirs(없으면 로봇 진행 방향의 양옆) 중 비킨 자리가 로봇 진행선에서 가장 먼 쪽.
+        어느 쪽도 EVADE_CLEAR_M을 못 넘으면(좁은 통로) 로봇에서 멀어지는 쪽으로 간다."""
+        c, s = math.cos(robot[2]), math.sin(robot[2])
+        perps = [(-s, c), (s, -c)]
+        # 다시 비킬 때(좁은 통로에서 앞으로 밀려난 뒤)는 제자리 기준 evade_dirs에 더해 로봇 양옆도 본다 (통로 교차점)
+        dirs = (self.evade_dirs or perps) + (perps if self.evading else [])
+        base = self._home if not self.evading else xy
+        self._evade_speed = EVADE_SPEED
+        cands = [(base[0] + self.evade_m * dx, base[1] + self.evade_m * dy) for dx, dy in dirs]
+        lateral = max(cands, key=lambda p: (_lateral(robot, p), math.dist(p, robot[:2])))
+        if _lateral(robot, lateral) >= EVADE_CLEAR_M:
+            return lateral
+        # 옆으로 틀 데가 없다 (좁은 통로): 로봇보다 빨리 EVADE_FLEE_M 앞으로 가서 통로를 빠져나간다
+        self._evade_speed = EVADE_FLEE_SPEED
+        far = [(base[0] + EVADE_FLEE_M * dx, base[1] + EVADE_FLEE_M * dy) for dx, dy in dirs]
+        return max(far, key=lambda p: math.dist(p, robot[:2]))
+
     def _turn_back(self, xy: Optional[Point] = None, robots: Optional[Mapping[str, RobotState]] = None) -> None:
         """온 쪽으로 돌아선다 (random은 새 목표점, yield_progress_m이면 로봇이 막지 않는 쪽으로)."""
         self.turn_backs += 1
@@ -277,6 +365,21 @@ class ObstacleMotion:
 
     def _new_speed(self) -> float:
         return self._rng.uniform(*self.speed_range)
+
+
+def _lateral(robot: RobotState, p: Point) -> float:
+    """점 p가 로봇 진행선(로봇 중심을 지나 yaw 방향 직선)에서 떨어진 거리 [m]."""
+    c, s = math.cos(robot[2]), math.sin(robot[2])
+    return abs(-s * (p[0] - robot[0]) + c * (p[1] - robot[1]))
+
+
+def _toward(xy: Point, goal: Point, speed: float) -> Tuple[float, float]:
+    dx, dy = goal[0] - xy[0], goal[1] - xy[1]
+    d = math.hypot(dx, dy)
+    if d < 1e-6:
+        return 0.0, 0.0
+    v = min(speed, d / 0.1)        # 마지막 한 걸음에서 넘치지 않게 (노드 주기 0.1 s 기준)
+    return v * dx / d, v * dy / d
 
 
 def blocks_path(xy: Point, u: Point, reach: float, robot: RobotState, clearance: float,
