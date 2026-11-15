@@ -26,4 +26,4 @@ steps:
     after: {assigned: 3, delay_s: 3, timeout_s: 60}
     t0: true
     tasks:
-      - {id: s11_buffet1_t01, type: delivery, pickup: buffet_1, dropoff: t01}
+      - {id: s11_buffet1_t01, type: delivery, pickup: stall_6, dropoff: t01}

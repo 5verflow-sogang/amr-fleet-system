@@ -16,7 +16,8 @@ extends: demo_restaurant
 packages: amr_bringup
 params:
   robots: robots_restaurant_s11.yaml
-  guests: dynamic_obstacles_restaurant_peak.yaml
+  guests: dynamic_obstacles_restaurant_peak_stand.yaml   # 1-1: 손님 10명이 서 있다가 로봇이 오면 비킨다 (pattern stand)
+  staff: dynamic_obstacles_restaurant_standing.yaml   # v3 홀에 서 있는 손님 10명: 테이블 사이 통로 4 + 정수대 2 + 키오스크 줄 4 (staff 자리라 혼잡도에 안 센다)
   task_generator: "false"
   # 작업 넣기 (임시: tools/harness/demo_scene.py + 장면 파일). 연우 장면 스크립트가 오면 이 한 줄만 바꾼다
   scene_script: python3 /repo/tools/harness/demo_scene.py
