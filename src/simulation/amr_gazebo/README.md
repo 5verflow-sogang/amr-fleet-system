@@ -188,6 +188,12 @@ noVNC로 확인해보니 광원 바로 아래만 동그랗게 밝고 사이가 �
   - `straight`: 첫 점 ↔ 끝 점 직선 왕복
   - `curve`: 경유점을 모두 지나는 Catmull-Rom 곡선을 따라 왕복
   - `random`: 경유점이 이루는 사각 영역 안 무작위 목표점으로 직선 이동 (random waypoint)
+  - `stand`: 제자리에서 조금씩 흔들리며 서 있다가 로봇이 1.5 m 안으로 오면 `evade_dirs` 쪽으로 비켜 선다
+  - `routine`: 정해진 일과 (키오스크 결제 → 자리 → 정수대 → 자리처럼 "가서 `wait_s` 동안 머물기"를 차례로, `loop_from`부터 되풀이).
+    경로는 정답 지도에서 미리 뽑는다: 일과 설정 `config/guest_routines_restaurant.yaml` →
+    `scripts/gen_guest_routines.py` → `config/dynamic_obstacles_restaurant_routine.yaml` (생성 파일, 설정을 고치고 다시 만든다).
+    머무는 동안 로봇이 오면 비켰다가 돌아오고, 걷는 동안 다른 손님에 막히면 물러섰다가 두 번째에는 지나간다
+  - 손님끼리 보기 (`guest_avoid_peers:=true`, 식당 하네스): 앞에 다른 손님이 있으면 서고, 다른 손님 자리로 비키지 않는다
   - 속도는 구간(왕복 한 번, 무작위 목표점 하나)마다 `speed_range_mps` 안에서 무작위. `obstacle_seed`로 재현한다 (0이면 실행마다 무작위)
   - 몸체는 진행 방향을 보도록 돈다 (최대 1.5 rad/s). 이동 자체는 방향과 상관없이 경로를 따른다
   - `yield_to_robots` (선택, 로봇 네임스페이스 목록): 그 로봇이 멈춘 채(GT 속력 0.05 m/s 미만) 앞길을 막으면,

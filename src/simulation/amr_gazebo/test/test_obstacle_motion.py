@@ -614,3 +614,125 @@ def test_stand_returning_home_waits_for_guest_in_the_way():
     assert m.step(away, far, 1.1, peers=[mid]) == (0.0, 0.0)
     # 오래 막히면 (둘 다 제자리로 가는 길) 그냥 간다
     assert m.step(away, far, 10.0, peers=[mid]) != (0.0, 0.0)
+
+
+# ---- routine: 정해진 일과 (가서 머물기를 차례로, loop_from부터 되풀이) ----
+
+def _routine(**kw):
+    spec = {'id': 'r', 'type': 'customer', 'pattern': 'routine', 'speed_range_mps': [0.5, 0.5],
+            'spawn': {'x': 0.0, 'y': 0.0},
+            'steps': [{'name': 'seat', 'path': [[0.0, 0.0]], 'wait_s': [2.0, 2.0]},
+                      {'name': 'water', 'path': [[2.0, 0.0], [2.0, 2.0]], 'wait_s': [1.0, 1.0],
+                       'evade_dirs': [[1, 0], [-1, 0]]},
+                      {'name': 'seat', 'path': [[2.0, 0.0], [0.0, 0.0]], 'wait_s': [3.0, 3.0]}],
+            'loop_from': 1}
+    spec.update(kw)
+    return spec
+
+
+def _run_routine(m, seconds, robots=None, xy=(0.0, 0.0)):
+    t, names = 0.0, []
+    for _ in range(int(seconds / DT)):
+        vx, vy = m.step(xy, robots or {}, t)
+        xy = (xy[0] + vx * DT, xy[1] + vy * DT)
+        t += DT
+        if not names or names[-1] != (m.step_name, m.dwelling):
+            names.append((m.step_name, m.dwelling))
+    return xy, names
+
+
+def test_routine_walks_steps_in_order_and_loops():
+    m = ObstacleMotion(_routine(), random.Random(0))
+    _, names = _run_routine(m, 40.0)
+    dwelt = [n for n, d in names if d]
+    # seat(2 s) → water → seat → (loop_from 1) water → seat ...
+    assert dwelt[:5] == ['seat', 'water', 'seat', 'water', 'seat']
+
+
+def test_routine_stays_for_wait_s():
+    m = ObstacleMotion(_routine(), random.Random(0))
+    xy = (0.0, 0.0)
+    assert m.step(xy, {}, 0.0) == (0.0, 0.0) and m.dwelling      # 첫 자리에 이미 있다
+    assert m.step(xy, {}, 1.9) == (0.0, 0.0)
+    vx, _ = m.step(xy, {}, 2.1)
+    assert vx > 0 and not m.dwelling and m.step_name == 'water'
+
+
+def test_routine_follows_path_points():
+    m = ObstacleMotion(_routine(), random.Random(0))
+    xy, _ = _run_routine(m, 2.1 + 2.0 / 0.5 + 0.5)               # 2 s 머문 뒤 (2, 0)까지 4 s 걷는다
+    # 첫 경유점 (2, 0)을 꺾어 (2, 2) 쪽으로 걷는 중 (대각선으로 질러가지 않는다)
+    assert abs(xy[0] - 2.0) < 0.15 and 0.0 < xy[1] < 1.0 and m.goal == (2.0, 2.0)
+
+
+def test_routine_dwell_evades_robot_and_comes_back():
+    m = ObstacleMotion(_routine(steps=[{'name': 'seat', 'path': [[0.0, 0.0]], 'wait_s': [100.0, 100.0],
+                                        'evade_dirs': [[0, 1], [0, -1]]}], loop_from=0), random.Random(0))
+    xy = (0.0, 0.0)
+    assert m.step(xy, {}, 0.0) == (0.0, 0.0)
+    coming = {'amr_01': (-1.0, 0.0, 0.0, 0.5)}
+    vx, vy = m.step(xy, coming, 0.1)
+    assert m.evading and abs(vy) > 0 and abs(vx) < 1e-9
+    away = m.claimed
+    far = {'amr_01': (-9.0, 0.0, 0.0, 0.5)}
+    m.step(away, far, 0.2)
+    assert m.returning and m.dwelling
+    vx, vy = m.step(away, far, 0.3)
+    assert math.hypot(vx, vy) > 0
+
+
+def test_routine_stops_for_robot_and_peer_while_walking():
+    # 다 머물고 water로 걷기 시작한 뒤 (로봇이 1.5 m 안에 있으면 걷기 전에 먼저 비킨다)
+    m = ObstacleMotion(_routine(), random.Random(0), keep_away_m=1.2)
+    m.step((0.0, 0.0), {}, 0.0)
+    assert m.step((0.0, 0.0), {}, 2.1) != (0.0, 0.0)
+    assert m.step((0.1, 0.0), {'amr_01': (1.2, 0.0, math.pi, 0.0)}, 2.2) == (0.0, 0.0) and m.keeping_away
+    m = ObstacleMotion(_routine(), random.Random(0))
+    m.step((0.0, 0.0), {}, 0.0)
+    assert m.step((0.0, 0.0), {}, 2.1) != (0.0, 0.0)
+    assert m.step((0.1, 0.0), {}, 2.2, peers=[(0.6, 0.0)]) == (0.0, 0.0) and m.peer_waiting
+
+
+def test_routine_turn_back_steps_to_previous_point():
+    from amr_gazebo.obstacle_motion import PEER_PATIENCE_S
+    m = ObstacleMotion(_routine(), random.Random(0))
+    m.step((0.0, 0.0), {}, 0.0)
+    m.step((0.0, 0.0), {}, 2.1)                                 # water 단계로 걷기 시작
+    xy = (2.0, 0.05)                                            # 첫 경유점 (2, 0)에 닿았다
+    m.step(xy, {}, 3.0)
+    assert m.goal == (2.0, 2.0)
+    still = [(2.0, 0.6)]
+    assert m.step(xy, {}, 3.1, peers=still) == (0.0, 0.0)
+    m.step(xy, {}, 3.1 + 1.5 * PEER_PATIENCE_S + 0.1, peers=still)
+    assert m.peer_turn_backs == 1 and m.goal == (2.0, 0.0)
+
+
+def test_rejects_bad_routine():
+    for bad in ({'steps': []}, {'loop_from': 3},
+                {'steps': [{'name': 'a', 'path': [], 'wait_s': [1, 2]}]},
+                {'steps': [{'name': 'a', 'path': [[0, 0]], 'wait_s': [3, 1]}]}):
+        with pytest.raises(ValueError):
+            ObstacleMotion(_routine(**bad), random.Random(0))
+
+
+def test_restaurant_routine_file_is_up_to_date_and_valid():
+    # 생성 파일이 설정·지도와 맞는지 (설정을 고치고 다시 안 만든 것을 잡는다), 경유점 사이가 몸 여유를 지키는지
+    from amr_gazebo.guest_routes import GridMap, build_obstacles, stand_spots
+    here = os.path.dirname(__file__)
+    with open(os.path.join(here, '..', 'config', 'guest_routines_restaurant.yaml'), encoding='utf-8') as f:
+        spec = yaml.safe_load(f)
+    grid = GridMap.load(os.path.join(here, '..', '..', '..', 'localization', 'amr_mapping', 'maps',
+                                     'restaurant_gt.yaml'))
+    with open(os.path.join(here, '..', 'config', 'dynamic_obstacles_restaurant_routine.yaml'),
+              encoding='utf-8') as f:
+        generated = yaml.safe_load(f)['obstacles']
+    want = build_obstacles(spec, grid, stand_spots(spec, os.path.join(here, '..', 'config')))
+    assert [o['id'] for o in generated] == [o['id'] for o in want]
+    for g, w in zip(generated, want):
+        assert g['steps'] == w['steps'] and g['spawn'] == w['spawn'], g['id']
+        assert ObstacleMotion(g, random.Random(0)).pattern == 'routine'
+        prev = (g['spawn']['x'], g['spawn']['y'])
+        for st in g['steps']:
+            for p in st['path']:
+                assert grid.segment_clear(prev, tuple(p), 0.3), (g['id'], st['name'], prev, p)
+                prev = tuple(p)

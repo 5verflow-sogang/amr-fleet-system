@@ -5,6 +5,13 @@ config/dynamic_obstacles.yaml의 장애물 1개를 받아, 현재 위치에서 �
 - straight: waypoints 첫 점과 끝 점 사이 직선 왕복
 - curve: waypoints를 지나는 Catmull-Rom 곡선을 따라 왕복
 - random: waypoints가 이루는 사각 영역 안에서 무작위 목표점으로 직선 이동 (random waypoint 모델)
+- stand: 제자리에서 조금씩 흔들리며 서 있다가 로봇이 오면 비켜 선다 (아래 stand 상수)
+- routine: steps를 차례로 한다. 단계마다 path(경유점)를 따라 걸어 마지막 점에서 wait_s 동안 머문다 (키오스크 결제 → 자리에
+  앉기 → 정수대 → 자리처럼). 마지막 단계 뒤에는 loop_from 단계부터 되풀이한다. 경로는 지도에서 미리 뽑아 둔다
+  (scripts/gen_guest_routines.py). 걷는 동안은 straight와 같은 규칙(keep_away·yield·peers)으로 서고, 오래 막히면 직전
+  경유점(첫 경유점이면 떠나온 자리)으로 물러났다 다시 간다. 같은 경유점으로 가다 다른 손님에 두 번째 막히면 그 손님이 비킬 때까지
+  기다리지 않고 지나간다 (좁은 통로에서 마주친 두 손님이 번갈아 물러서기만 하지 않게. 몸 충돌체는 마찰 0 구라 미끄러져 지나간다).
+  머무는 동안 로봇이 오면 stand처럼 그 단계의 evade_dirs 쪽으로 비켰다가 돌아온다.
 
 속도는 구간(왕복 한 번, 무작위 목표점 하나)마다 speed_range_mps 안에서 무작위로 정한다.
 
@@ -41,7 +48,7 @@ Point = Tuple[float, float]
 # 로봇 상태: world x, y [m], yaw [rad], 속력 [m/s]
 RobotState = Tuple[float, float, float, float]
 
-PATTERNS = ('straight', 'curve', 'random', 'stand')
+PATTERNS = ('straight', 'curve', 'random', 'stand', 'routine')
 
 # stand 패턴 (식당 시연: 서 있는 손님). 제자리(spawn)에서 waypoints 두 점 사이를 조금씩 왕복하다가, 로봇이 오면
 # evade_dirs 중 로봇 진행선에서 가장 먼 쪽으로 비켜 서고, 로봇이 멀어지면 제자리로 돌아온다.
@@ -152,7 +159,17 @@ class ObstacleMotion:
         self.keeping_away = False                     # 가까운 로봇 때문에 서 있는 중
         self._keep_since: Optional[float] = None      # 그렇게 서기 시작한 시각 [s]
         self._stuck_since: Optional[float] = None   # 막은 로봇이 계속 멈춰 있기 시작한 시각 [s]
-        waypoints = [(float(w['x']), float(w['y'])) for w in spec['waypoints']]
+        self._steps: List[dict] = []
+        if self.pattern == 'routine':
+            self._steps = _parse_steps(spec)
+            self._loop_from = int(spec.get('loop_from', 0))
+            if not 0 <= self._loop_from < len(self._steps):
+                raise ValueError(f'{self.id}: loop_from은 0 ~ {len(self._steps) - 1}: {self._loop_from}')
+            waypoints = [p for st in self._steps for p in st['path']]
+            if len(waypoints) < 2:
+                waypoints = waypoints * 2
+        else:
+            waypoints = [(float(w['x']), float(w['y'])) for w in spec['waypoints']]
         if len(waypoints) < 2:
             raise ValueError(f'{self.id}: waypoints가 2개 이상 필요하다')
         self._rng = rng
@@ -177,11 +194,22 @@ class ObstacleMotion:
         self._peer_patience = PEER_PATIENCE_S
         self._peer_pass = False                   # stand: 오래 막혀 그냥 지나가는 중
 
+        # routine: 지금 단계·경유점, 머무는 중이면 끝나는 시각
+        self.step_index = 0
+        self._pi = 0
+        self.dwelling = False
+        self._dwell_until: Optional[float] = None
+        self._leg_start: Optional[Point] = None    # 이번 단계를 떠나온 자리
+        self._detour: Optional[Point] = None       # 물러서는 점 (닿으면 원래 경유점으로)
+        self._peer_blocks = 0                      # 이번 경유점으로 가다 다른 손님에 막혀 물러선 횟수
         if self.pattern == 'random':
             xs, ys = zip(*waypoints)
             self.area = (min(xs), max(xs), min(ys), max(ys))
             self.path: List[Point] = []
             self._goal = self._random_goal()
+        elif self.pattern == 'routine':
+            self.path = []
+            self._goal = self._steps[0]['path'][0]
         else:
             self.path = waypoints[:1] + waypoints[-1:] if self.pattern in ('straight', 'stand') \
                 else catmull_rom(waypoints)
@@ -210,6 +238,8 @@ class ObstacleMotion:
         peers = peers or ()
         if self.pattern == 'stand':
             return self._stand_step(xy, robots or {}, peers, t)
+        if self.pattern == 'routine':
+            return self._routine_step(xy, robots or {}, peers, t)
         while math.dist(xy, self._goal) < REACH_TOLERANCE:
             self._advance()
         if self.keep_away_m > 0 and self._keep_away(xy, robots or {}, t):
@@ -311,10 +341,85 @@ class ObstacleMotion:
         self.peer_waiting, self._peer_since = False, None
         if self.pattern == 'stand':
             self._peer_pass = True
+        elif self.pattern == 'routine' and (self._peer_blocks >= 1 or self.dwelling):
+            # 두 번째로 막혔다 (또는 머물던 자리로 돌아가는 중): 물러서지 않고 지나간다
+            self._peer_pass = True
+        elif self.pattern == 'routine':
+            self._peer_blocks += 1
+            self.peer_turn_backs += 1
+            self._turn_back()
         else:
             self.peer_turn_backs += 1
             self._turn_back()
         return False
+
+    # ---------------------------------------------------------------- routine: 정해진 일과
+    @property
+    def step_name(self) -> str:
+        return self._steps[self.step_index]['name'] if self._steps else ''
+
+    def _routine_step(self, xy: Point, robots: Mapping[str, RobotState], peers: Sequence[Point],
+                      t: Optional[float]) -> Tuple[float, float]:
+        if self.dwelling:
+            v = self._dwell(xy, robots, peers, t)
+            if v is not None:
+                return v
+        st = self._steps[self.step_index]
+        path = st['path']
+        if self._leg_start is None:
+            self._leg_start = xy
+        if self._detour is not None and math.dist(xy, self._detour) < REACH_TOLERANCE:
+            self._detour = None
+        while self._detour is None and math.dist(xy, path[self._pi]) < REACH_TOLERANCE:
+            self._peer_blocks = 0
+            if self._pi + 1 < len(path):
+                self._pi += 1
+                continue
+            # 이번 단계 자리에 왔다: 머문다
+            self.dwelling = True
+            self._home = path[-1]
+            self.evade_dirs = st['evade_dirs']
+            self._dwell_until = None if t is None else t + self._rng.uniform(*st['wait_s'])
+            self.speed = self._new_speed()
+            return 0.0, 0.0
+        self._goal = self._detour if self._detour is not None else path[self._pi]
+        if self.keep_away_m > 0 and self._keep_away(xy, robots, t):
+            return 0.0, 0.0
+        if self.yield_to and self._must_wait(xy, robots, t):
+            return 0.0, 0.0
+        if self._peer_wait(xy, self._goal, peers, t):
+            return 0.0, 0.0
+        return _toward(xy, self._goal, self.speed)
+
+    def _dwell(self, xy: Point, robots: Mapping[str, RobotState], peers: Sequence[Point],
+               t: Optional[float]) -> Optional[Tuple[float, float]]:
+        """머무는 중의 속도. 다 머물렀으면 다음 단계로 넘기고 None (그 단계 첫 경유점으로 걷기 시작)."""
+        threat = self._threat(xy, robots)
+        if threat is not None:
+            if self._evade_goal is None or (math.dist(xy, threat[:2]) < EVADE_CLOSE_M + 0.2
+                                            and _lateral(threat, xy) < EVADE_CLEAR_M):
+                self._evade_goal = self._pick_evade(xy, threat, peers)
+                self.evading, self.returning = True, False
+                self.evades += 1
+        elif self.evading and all(math.dist(xy, r[:2]) > EVADE_RELEASE_M for r in robots.values()):
+            self.evading, self.returning, self._evade_goal = False, True, None
+        if self.evading:
+            return _toward(xy, self._evade_goal, self._evade_speed)
+        if self.returning:
+            if math.dist(xy, self._home) > REACH_TOLERANCE:
+                if self._peer_wait(xy, self._home, peers, t):
+                    return 0.0, 0.0
+                return _toward(xy, self._home, EVADE_SPEED)
+            self.returning = False
+        if t is not None and self._dwell_until is not None and t < self._dwell_until:
+            return 0.0, 0.0
+        # 다음 단계
+        self.dwelling, self._dwell_until = False, None
+        self.peer_waiting, self._peer_since, self._peer_pass = False, None, False
+        nxt = self.step_index + 1
+        self.step_index = nxt if nxt < len(self._steps) else self._loop_from
+        self._pi, self._leg_start, self._detour, self._peer_blocks = 0, None, None, 0
+        return None
 
     # ---------------------------------------------------------------- stand: 서 있다가 로봇이 오면 비킨다
     def _stand_step(self, xy: Point, robots: Mapping[str, RobotState], peers: Sequence[Point],
@@ -379,6 +484,13 @@ class ObstacleMotion:
         """온 쪽으로 돌아선다 (random은 새 목표점, yield_progress_m이면 로봇이 막지 않는 쪽으로)."""
         self.turn_backs += 1
         self._stuck_since = None
+        if self.pattern == 'routine':
+            # 직전 경유점(첫 경유점이면 떠나온 자리)으로 물러난다. 거기 닿으면 다시 원래 경유점으로 간다
+            back = self._steps[self.step_index]['path'][self._pi - 1] if self._pi > 0 else self._leg_start
+            if back is not None:
+                self._detour = back
+                self._goal = back
+            return
         if self.pattern == 'random':
             self._goal = self._random_goal()
             if self.progress_m is not None and xy is not None and robots:
@@ -419,6 +531,27 @@ class ObstacleMotion:
 
     def _new_speed(self) -> float:
         return self._rng.uniform(*self.speed_range)
+
+
+def _parse_steps(spec: dict) -> List[dict]:
+    steps = spec.get('steps') or []
+    if not steps:
+        raise ValueError(f'{spec["id"]}: routine은 steps가 1개 이상 필요하다')
+    out = []
+    for i, st in enumerate(steps):
+        path = [(float(p[0]), float(p[1])) for p in st.get('path') or []]
+        lo, hi = st.get('wait_s', [0.0, 0.0])
+        if not path or not 0 <= float(lo) <= float(hi):
+            raise ValueError(f'{spec["id"]}: steps[{i}]에 path가 없거나 wait_s가 잘못됐다: {st!r}')
+        dirs = []
+        for d in st.get('evade_dirs') or []:
+            n = math.hypot(float(d[0]), float(d[1]))
+            if n <= 0:
+                raise ValueError(f'{spec["id"]}: steps[{i}] evade_dirs에 0 벡터가 있다')
+            dirs.append((float(d[0]) / n, float(d[1]) / n))
+        out.append({'name': str(st.get('name', i)), 'path': path, 'wait_s': (float(lo), float(hi)),
+                    'evade_dirs': dirs})
+    return out
 
 
 def peer_ahead(xy: Point, goal: Point, peers: Sequence[Point]) -> bool:
