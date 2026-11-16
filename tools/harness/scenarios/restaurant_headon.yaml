@@ -1,0 +1,77 @@
+# 식당 좁은 통로 정면 대치 (experiments/restaurant_headon). 서빙 로봇 2대를 중앙 통로(폭 1.0 m) 양 끝에 두고
+# 서로 반대쪽으로 배달을 동시에 맡긴다. 식당 시연은 대치 양보·구역 클라이언트를 모두 끈 채 녹화했다 - 그대로 두면 풀리는지 본다.
+# 조건 셋 (같은 seed, 슬롯 셋에서 동시에):
+#   label=off       params="slot=b1"                                                      지금 식당 설정
+#   label=standoff  params="zone_client=true fleet_params= slot=b2"                       대치 양보만 (#352)
+#   label=zone      params="zone_client=true fleet_params= zones=zones_aisle.yaml slot=b3" 통로 구역(한 대씩) + 대치 양보
+# 판정: 요약의 fleet.tasks_completed(2면 둘 다 도착), fleet.stalls(60 s 넘게 못 움직임), fleet.standoff_yields, fleet.zone_requests
+name: restaurant_headon
+packages: amr_bringup
+num_robots: 2
+use_sim_time: true
+seed_base: 1
+timeout_s: 5400
+params:
+  num_robots: 2
+  spawn_interval_s: 25
+  delay_ms: 100
+  loss_pct: 0
+  # 두 배달은 막히지 않으면 시뮬레이션 1~2분. 대치가 풀리는지 볼 여유를 둔다
+  duration_s: 300
+  zone_client: "false"
+  zones: zones_none.yaml
+  # 식당 서버 설정: 대치 양보 끔 (fleet_manager_restaurant.yaml). 비우면 fleet_manager.yaml 기본(양보 켬)
+  fleet_params: fleet_manager_restaurant.yaml
+  localization: ground_truth
+  cameras: top
+processes:
+  - name: stack
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true localization:={localization}
+      tracking:=true safety:=true zone_client:={zone_client}
+      world:=restaurant.sdf body:=serving seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct}
+      robots_file:=/repo/experiments/restaurant_headon/robots.yaml
+      zones_file:=/repo/experiments/restaurant_headon/{zones}
+      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
+      dynamic_obstacles:=false nav2_composition:=true
+      $(test -n "{fleet_params}" && echo fleet_params_file:={fleet_params})
+      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:={spawn_interval_s}
+    ready_topic: /fleet/heartbeat
+    ready_cmds:
+      - for i in 01 02; do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
+    ready_timeout_s: 600
+    settle_s: 5
+  - name: cameras
+    cmd: ros2 launch amr_gazebo demo_cameras.launch.py cameras:={cameras}
+    ready_cmds:
+      - timeout 20 ros2 topic list | grep -q '^/demo_cam/'
+    ready_timeout_s: 60
+    settle_s: 5
+  - name: cpu_monitor
+    cmd: python3 /repo/tools/harness/cpu_monitor.py --out {run_dir}/cpu.csv --interval 1.0
+    settle_s: 1
+  - name: camera_bag
+    cmd: ros2 bag record -o {run_dir}/camera_bag -e '/demo_cam/.*'
+    settle_s: 1
+  - name: rosbag
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/demo/t0|/clock'
+    settle_s: 3
+  - name: scene
+    cmd: >-
+      python3 /repo/tools/harness/demo_scene.py /repo/experiments/restaurant_headon/scene.yaml
+      --stations $(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
+      --map-origin "[0.0, 0.0, 0.0]" --num-robots {num_robots} --out {run_dir}/scene.json
+    settle_s: 1
+driver:
+  mode: wait
+  use_sim_time: true
+  duration_s: "{duration_s}"
+postprocess:
+  - name: fleet_metrics
+    cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots {num_robots}
+  - name: video
+    cmd: bash -c 'ros2 run amr_gazebo bag_to_mp4.py {run_dir}/camera_bag --out {run_dir}/video && rm -rf {run_dir}/camera_bag && du -sh {run_dir}/video'
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
+  - pkill -9 -f "[c]pu_monitor.py" || true

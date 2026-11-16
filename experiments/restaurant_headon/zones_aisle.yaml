@@ -1,0 +1,6 @@
+# 식당 중앙 통로를 한 대만 들어가는 구역으로 (restaurant_gt 지도에서 잰 자유 공간 x 6.95~7.95, y -1.45~4.35)
+zones:
+  - id: aisle_center
+    capacity: 1
+    area_world: [6.95, 7.95, -1.45, 4.35]
+    description: 식당 중앙 통로, 폭 1.0 m 길이 5.8 m (가운데 y 1.1에서 가로 통로와 만난다)

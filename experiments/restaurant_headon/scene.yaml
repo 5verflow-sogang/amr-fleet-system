@@ -1,0 +1,10 @@
+# 두 배달을 동시에 낸다 (tools/harness/demo_scene.py 장면 파일). 최소거리(nearest) 배정이면
+#   L01 → L04 는 북쪽 끝의 1호, L03 → L02 는 남쪽 끝의 2호가 맡는다.
+# 둘 다 중앙 통로가 가장 짧은 길이라(동쪽 통로보다 약 3 m 짧다) 통로 안에서 정면으로 만난다.
+# 네 자리는 서로 1 m(서버 스테이션 예약 반경) 넘게 떨어져 있어 두 작업이 같이 나간다.
+steps:
+  - name: headon
+    t0: true
+    tasks:
+      - {id: h_north_to_south, type: delivery, pickup: L01, dropoff: L04}
+      - {id: h_south_to_north, type: delivery, pickup: L03, dropoff: L02}
