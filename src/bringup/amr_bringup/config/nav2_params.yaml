@@ -70,7 +70,7 @@ global_costmap:
       # 다른 로봇 (amr_nav2_plugins::FleetPeerLayer). LiDAR 스캔면(지면 0.38 m)이 다른 로봇 차체(0.03~0.33 m) 위를
       # 지나가 obstacle_layer에는 다른 로봇이 LiDAR 원통 한 점으로만 찍힌다 - 로봇끼리 부딪혀 밀다 서는 교착이 났다
       # (11/13 fleet_stack resp50). /fleet/robot_states 위치를 외삽해 차체를 그린다. inflation_layer 앞이라 팽창된다.
-      # 식당 서빙 로봇(1.16 m)은 LiDAR로 서로 보이므로 restaurant 프로필은 끈다 (amr_bringup nav2_profile.py)
+      # 식당 서빙 로봇도 몸체(0.03~0.33 m)와 트레이 기둥(0.405 m~) 사이가 스캔면이라 서로 안 보인다 - restaurant 프로필은 크기만 바꾼다
       fleet_peer_layer:
         plugin: "amr_nav2_plugins::FleetPeerLayer"
         enabled: True
@@ -145,7 +145,7 @@ local_costmap:
       # 다른 로봇 (amr_nav2_plugins::FleetPeerLayer). LiDAR 스캔면(지면 0.38 m)이 다른 로봇 차체(0.03~0.33 m) 위를
       # 지나가 obstacle_layer에는 다른 로봇이 LiDAR 원통 한 점으로만 찍힌다 - 로봇끼리 부딪혀 밀다 서는 교착이 났다
       # (11/13 fleet_stack resp50). /fleet/robot_states 위치를 외삽해 차체를 그린다. inflation_layer 앞이라 팽창된다.
-      # 식당 서빙 로봇(1.16 m)은 LiDAR로 서로 보이므로 restaurant 프로필은 끈다 (amr_bringup nav2_profile.py)
+      # 식당 서빙 로봇도 몸체(0.03~0.33 m)와 트레이 기둥(0.405 m~) 사이가 스캔면이라 서로 안 보인다 - restaurant 프로필은 크기만 바꾼다
       fleet_peer_layer:
         plugin: "amr_nav2_plugins::FleetPeerLayer"
         enabled: True

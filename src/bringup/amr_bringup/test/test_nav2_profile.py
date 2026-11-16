@@ -138,7 +138,7 @@ def test_filter_base_plugins_match_nav2_params_global_costmap(nav2_params):
     assert congestion_filter_overrides('keepout')['plugins'][:-1] == base
 
 
-def test_fleet_peer_layer_off_only_in_restaurant(nav2_params):
+def test_fleet_peer_layer_serving_size_in_restaurant(nav2_params):
     for costmap in ('global_costmap', 'local_costmap'):
         params = nav2_params[costmap][costmap]['ros__parameters']
         plugins = params['plugins']
@@ -148,5 +148,7 @@ def test_fleet_peer_layer_off_only_in_restaurant(nav2_params):
     restaurant = build_overrides(nav2_params, 'restaurant', 'none', 'odometry/local')
     warehouse = build_overrides(nav2_params, 'warehouse', 'none', 'odometry/local')
     for costmap in ('global_costmap', 'local_costmap'):
-        assert restaurant[costmap][costmap]['ros__parameters']['fleet_peer_layer'] == {'enabled': False}
+        # 서빙 로봇도 LiDAR로 서로 안 보여 켠 채 크기만 바꾼다
+        assert restaurant[costmap][costmap]['ros__parameters']['fleet_peer_layer'] == {
+            'peer_half_length': 0.565 / 2, 'peer_half_width': 0.537 / 2}
         assert 'fleet_peer_layer' not in warehouse[costmap][costmap]['ros__parameters']
