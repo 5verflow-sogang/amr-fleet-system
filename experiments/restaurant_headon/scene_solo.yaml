@@ -1,0 +1,6 @@
+# 한 대 통과 시험: 상대 로봇 없이 중앙 통로(폭 1.0 m)를 지나가는지
+steps:
+  - name: solo
+    t0: true
+    tasks:
+      - {id: s_south_to_north, type: delivery, pickup: L03, dropoff: L02}
