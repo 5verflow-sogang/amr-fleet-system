@@ -46,15 +46,17 @@ def profile_overrides(nav2_params: dict, profile: str) -> dict:
             'footprint': _RESTAURANT_FOOTPRINT,
             # 바닥에서 0.38 m 높이의 LiDAR 관측을 식당에서만 장애물로 반영한다.
             'obstacle_layer': {'scan': {'max_obstacle_height': 2.0}},
-            'fleet_peer_layer': _RESTAURANT_PEER,
-            'inflation_layer': _RESTAURANT_INFLATION,
+            # 복사본: 같은 dict를 두 번 넣으면 yaml.dump가 앵커(&id001)로 써서 ROS 파라미터 파서가 거부한다
+            'fleet_peer_layer': dict(_RESTAURANT_PEER),
+            'inflation_layer': dict(_RESTAURANT_INFLATION),
         },
         'local_costmap': {
             'footprint': _RESTAURANT_FOOTPRINT,
             # 바닥에서 0.38 m 높이의 LiDAR 관측을 식당에서만 장애물로 반영한다.
             'obstacle_layer': {'scan': {'max_obstacle_height': 2.0}},
-            'fleet_peer_layer': _RESTAURANT_PEER,
-            'inflation_layer': _RESTAURANT_INFLATION,
+            # 복사본: 같은 dict를 두 번 넣으면 yaml.dump가 앵커(&id001)로 써서 ROS 파라미터 파서가 거부한다
+            'fleet_peer_layer': dict(_RESTAURANT_PEER),
+            'inflation_layer': dict(_RESTAURANT_INFLATION),
         },
         'DWA': {
             'footprint_half_length': _RESTAURANT_HALF_LENGTH,

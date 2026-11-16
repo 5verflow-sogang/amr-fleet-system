@@ -152,3 +152,9 @@ def test_fleet_peer_layer_serving_size_in_restaurant(nav2_params):
         assert restaurant[costmap][costmap]['ros__parameters']['fleet_peer_layer'] == {
             'peer_half_length': 0.565 / 2, 'peer_half_width': 0.537 / 2}
         assert 'fleet_peer_layer' not in warehouse[costmap][costmap]['ros__parameters']
+
+
+def test_restaurant_overrides_dump_without_yaml_aliases(nav2_params):
+    # rcl 파라미터 파서는 YAML 앵커·별칭을 거부한다 ("Will not support aliasing") - Nav2가 아예 안 뜬다
+    dumped = yaml.dump({'amr_01': build_overrides(nav2_params, 'restaurant', 'speed', 'odometry/local')})
+    assert '&id' not in dumped and '*id' not in dumped
