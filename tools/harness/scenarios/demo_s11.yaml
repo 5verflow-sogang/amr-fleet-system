@@ -14,6 +14,8 @@ name: demo_s11
 extends: demo_restaurant
 # docker_run.sh는 이 파일의 packages: 줄만 읽는다 (extends를 따라가지 않는다)
 packages: amr_bringup
+# 300 s를 RTF 0.087로 돌리면 실제 약 3450 s + 기동이라 demo_restaurant의 3600 s에 걸린다 (#355 켬 timeout 3802 s)
+timeout_s: 5400
 params:
   robots: robots_restaurant_s11.yaml
   guests: dynamic_obstacles_restaurant_peak_stand.yaml   # 1-1: 손님 10명이 서 있다가 로봇이 오면 비킨다 (pattern stand)
