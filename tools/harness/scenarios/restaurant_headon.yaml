@@ -2,8 +2,8 @@
 # 서로 반대쪽으로 배달을 동시에 맡긴다. 식당 시연은 대치 양보·구역 클라이언트를 모두 끈 채 녹화했다 - 그대로 두면 풀리는지 본다.
 # 조건 셋 (같은 seed, 슬롯 셋에서 동시에):
 #   label=off       params="slot=b1"                                                      지금 식당 설정
-#   label=standoff  params="zone_client=true fleet_params= slot=b2"                       대치 양보만 (#352)
-#   label=zone      params="zone_client=true fleet_params= zones=zones_aisle.yaml slot=b3" 통로 구역(한 대씩) + 대치 양보
+#   label=standoff  params="zone_client=true fleet_params=fleet_manager.yaml slot=b2"                       대치 양보만 (#352)
+#   label=zone      params="zone_client=true fleet_params=fleet_manager.yaml zones=zones_aisle.yaml slot=b3" 통로 구역(한 대씩) + 대치 양보
 # 판정: 요약의 fleet.tasks_completed(2면 둘 다 도착), fleet.stalls(60 s 넘게 못 움직임), fleet.standoff_yields, fleet.zone_requests
 name: restaurant_headon
 packages: amr_bringup
@@ -20,7 +20,7 @@ params:
   duration_s: 300
   zone_client: "false"
   zones: zones_none.yaml
-  # 식당 서버 설정: 대치 양보 끔 (fleet_manager_restaurant.yaml). 비우면 fleet_manager.yaml 기본(양보 켬)
+  # 식당 서버 설정: 대치 양보 끔 (fleet_manager_restaurant.yaml). fleet_manager.yaml이면 기본(양보 켬). 워크플로는 빈 값을 못 받는다
   fleet_params: fleet_manager_restaurant.yaml
   localization: ground_truth
   cameras: top
