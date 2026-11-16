@@ -53,7 +53,7 @@ def test_top_west_frames_both_candidates_the_buffet_and_the_west_aisle():
     cam = ov.load_cameras()['top_west']
     st = ov.load_stations()
     points = [(*ROBOTS_S11['amr_01'], ov.ROBOT_Z), (*ROBOTS_S11['amr_03'], ov.ROBOT_Z),
-              (*st['buffet_1'], ov.STATION_Z), (*st['t01'], 0.8), (-11.9, -5.0, 0.0), (-9.73, 2.99, 0.0)]
+              (*st['stall_6'], ov.STATION_Z), (*st['t01'], 0.8), (-11.9, -5.0, 0.0), (-9.73, 2.99, 0.0)]
     for p in points:
         u, v, _ = cam.project(*p)
         assert cam.inside(u, v, margin=20), p
@@ -64,14 +64,14 @@ def test_top_west_frames_both_candidates_the_buffet_and_the_west_aisle():
 
 # ---------------------------------------------------------------- 녹화 기록 → timeline
 def fake_records(side='off'):
-    """1-1 가짜 녹화: 10 s에 /demo/t0, 끔은 1호(느리게, 중간에 멈춤), 켬은 3호(빠르게)가 buffet_1로 간다."""
+    """1-1 가짜 녹화: 10 s에 /demo/t0, 끔은 1호(느리게, 중간에 멈춤), 켬은 3호(빠르게)가 매장 6(stall_6)으로 간다."""
     hero = 'amr_01' if side == 'off' else 'amr_03'
     t0, assign, arrive = 10.0, 10.4, (40.0 if side == 'off' else 25.0)
-    rows = lambda who: [{'task_id': 's11_buffet1_t01', 'task_type': 0, 'priority': 100, 'pickup': 'buffet_1',  # noqa
+    rows = lambda who: [{'task_id': 's11_buffet1_t01', 'task_type': 0, 'priority': 100, 'pickup': 'stall_6',  # noqa
                          'dropoff': 't01', 'created': t0, 'assignee': who, 'state': 1}]
     table = [(t0 + 0.1, rows('')), (assign, rows(hero))]
     statuses = [{'t': arrive, 'task_id': 's11_buffet1_t01', 'state': 1, 'phase': 'loading'}]
-    start, goal = ROBOTS_S11[hero], (-9.9, 4.15)
+    start, goal = ROBOTS_S11[hero], (-10.5, 4.15)
     poses = {r: [(t, *xy) for t in (0.0, 60.0)] for r, xy in ROBOTS_S11.items() if r != hero}
     track = []
     for k in range(0, 121):
@@ -96,7 +96,7 @@ def fake_run(side):
 
 def test_build_timeline_finds_request_assignment_arrival_and_stops():
     tl = ov.build_timeline(*fake_records('off'))
-    assert (tl['key_task'], tl['pickup'], tl['assignee'], tl['t0']) == ('s11_buffet1_t01', 'buffet_1', 'amr_01', 10.0)
+    assert (tl['key_task'], tl['pickup'], tl['assignee'], tl['t0']) == ('s11_buffet1_t01', 'stall_6', 'amr_01', 10.0)
     assert (tl['assign_t'], tl['arrive_t']) == (10.4, 40.0)
     m = tl['metrics']
     assert (m['assign_s'], m['arrive_s'], m['stops']) == (0.4, 30.0, 1)
@@ -161,7 +161,7 @@ def test_text_values_fill_robot_names_times_and_distances():
     runs = {s: fake_run(s) for s in ov.SIDES}
     v = ov.text_values(runs, ov.load_stations(), ['amr_01', 'amr_03'])
     assert (v['robot_off'], v['robot_on'], v['arrive_off'], v['arrive_on']) == ('1호', '3호', '30', '15')
-    assert (v['dist_amr_01'], v['dist_amr_03']) == ('9.8', '11.4')
+    assert (v['dist_amr_01'], v['dist_amr_03']) == ('9.8', '12.0')
     assert ov.fill('{robot_on}가 {unknown}', v) == '3호가 {unknown}'
 
 
@@ -211,7 +211,7 @@ def test_request_ring_appears_at_the_buffet_from_t0():
     painter = ov.Painter(sheet, cams, ov.load_stations(), fonts())
     cam, run = cams['top_west'], fake_run('on')
     s = ov.VIDEO_SIZE[0] / cam.width
-    u, v, _ = cam.project(*ov.load_stations()['buffet_1'], ov.STATION_Z)
+    u, v, _ = cam.project(*ov.load_stations()['stall_6'], ov.STATION_Z)
     before = painter.video(_gray_frame(cam), 'top_west', run, run.t0 - 0.5, ['request'])
     after = painter.video(_gray_frame(cam), 'top_west', run, run.t0 + 4.0, ['request'])
     assert not _near(before, (u * s, v * s), ov.REQUEST_COLOR) and _near(after, (u * s, v * s), ov.REQUEST_COLOR)
@@ -240,5 +240,5 @@ def test_full_frames_follow_the_guide_canvas(tmp_path):
 
 def test_s11_scene_distances_match_the_scene_file_header():
     st = ov.load_stations()
-    assert math.dist(ROBOTS_S11['amr_01'], st['buffet_1']) == pytest.approx(9.77, abs=0.01)
-    assert math.dist(ROBOTS_S11['amr_03'], st['buffet_1']) == pytest.approx(11.4, abs=0.01)
+    assert math.dist(ROBOTS_S11['amr_01'], st['stall_6']) == pytest.approx(9.75, abs=0.01)
+    assert math.dist(ROBOTS_S11['amr_03'], st['stall_6']) == pytest.approx(12.0, abs=0.01)
