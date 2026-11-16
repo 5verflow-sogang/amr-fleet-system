@@ -18,6 +18,12 @@ _RESTAURANT_FOOTPRINT = (
     f'[-{_RESTAURANT_HALF_LENGTH}, -{_RESTAURANT_HALF_WIDTH}], '
     f'[-{_RESTAURANT_HALF_LENGTH}, {_RESTAURANT_HALF_WIDTH}]]'
 )
+# 다른 서빙 로봇도 LiDAR 스캔면(지면 0.38 m)이 몸체(~0.33 m)와 트레이 기둥(0.405 m~) 사이라 안 보인다 (serving.xacro).
+# 위치 공유 레이어(nav2_params.yaml fleet_peer_layer)가 그릴 차체를 서빙 로봇 크기로
+_RESTAURANT_PEER = {'peer_half_length': _RESTAURANT_HALF_LENGTH, 'peer_half_width': _RESTAURANT_HALF_WIDTH}
+# 팽창 비용 감쇠. 3이면 폭 1.0 m 중앙 통로 가운데 비용이 126이라 NavFn이 3 m 더 먼 동쪽 통로로 돌았다
+# (11/16 restaurant_headon solo). 8이면 40으로 중앙 통로를 탄다 (반경 0.55 m·치명 거리는 그대로)
+_RESTAURANT_INFLATION = {'cost_scaling_factor': 8.0}
 # 식당 순항 속도 [m/s]. 물류센터 DWA max_v(0.5)는 Nav KPI 기준 속도라 그대로 두고 식당만 올린다.
 # 사람이 가까우면 안전 노드가 따로 묶는다(amr_safety config/safety.yaml warning_speed_limit)
 _RESTAURANT_MAX_V = 0.8
@@ -40,15 +46,15 @@ def profile_overrides(nav2_params: dict, profile: str) -> dict:
             'footprint': _RESTAURANT_FOOTPRINT,
             # 바닥에서 0.38 m 높이의 LiDAR 관측을 식당에서만 장애물로 반영한다.
             'obstacle_layer': {'scan': {'max_obstacle_height': 2.0}},
-            # 서빙 로봇(1.16 m)은 LiDAR로 서로 보여 위치 공유 레이어가 필요 없다
-            'fleet_peer_layer': {'enabled': False},
+            'fleet_peer_layer': _RESTAURANT_PEER,
+            'inflation_layer': _RESTAURANT_INFLATION,
         },
         'local_costmap': {
             'footprint': _RESTAURANT_FOOTPRINT,
             # 바닥에서 0.38 m 높이의 LiDAR 관측을 식당에서만 장애물로 반영한다.
             'obstacle_layer': {'scan': {'max_obstacle_height': 2.0}},
-            # 서빙 로봇(1.16 m)은 LiDAR로 서로 보여 위치 공유 레이어가 필요 없다
-            'fleet_peer_layer': {'enabled': False},
+            'fleet_peer_layer': _RESTAURANT_PEER,
+            'inflation_layer': _RESTAURANT_INFLATION,
         },
         'DWA': {
             'footprint_half_length': _RESTAURANT_HALF_LENGTH,
