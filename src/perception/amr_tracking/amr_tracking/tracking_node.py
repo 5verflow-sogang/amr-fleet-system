@@ -15,6 +15,12 @@ R2 정적 지도 대조 (use_static_map): 군집화 전에 지도의 막힌 칸(
 (amr_perception_core static_map.py). 스캔 촬영 시각의 TF(map → lidar_link)가 필요하다. 지도나 TF가 없으면
 빼지 않고 그대로 추적한다 (기둥·랙 끝이 정적 트랙으로 나가는 R1만의 동작).
 
+스캔 TF 기다리기: 스캔이 그 촬영 시각의 TF(위치추정 EKF, 50 Hz)보다 먼저 오면 스캔을 미뤄 두었다가 TF가 들어오는
+순간 처리한다 (tf2 Buffer.wait_for_transform_async). 다음 스캔이 올 때까지 TF가 오지 않으면 앞 스캔은 버린다.
+콜백 안에서 TF를 기다리지 않으므로 단일 스레드 executor로 돈다. 전에는 콜백 안에서 TF를 기다리느라 TF를 받는
+스레드를 따로 둔 다중 스레드 executor였는데, rclpy에서 메시지마다 드는 관리 비용이 커서 5대 TF·스캔 재현
+(11/14)에서 그것만으로 노드 CPU가 약 0.6코어 더 들었다.
+
 충돌 위험(TTC): 트랙마다 이 로봇의 차체(사각형)에 닿기까지 남은 시간 (collision.footprint_time_to_collision).
 로봇 위치는 측정 시각의 TF(fixed_frame → base_frame), 로봇 속도는 odom 토픽의 선속도다.
 로봇 위치를 모르면 collision_risks를 내지 않는다 (amr_safety가 끊김으로 보고 감속한다).
@@ -36,8 +42,7 @@ from geometry_msgs.msg import PoseArray
 from nav_msgs.msg import OccupancyGrid, Odometry
 import numpy as np
 import rclpy
-from rclpy.duration import Duration
-from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data, ReliabilityPolicy
 from rclpy.time import Time
@@ -173,7 +178,8 @@ class TrackingNode(Node):
         # 비우면 노드 네임스페이스로 만든다: /amr_01 → amr_01/odom (TF 프레임 이름에 접두어가 붙는다)
         ns = self.get_namespace().strip('/')
         self.fixed_frame = fixed_frame or (f'{ns}/odom' if ns else 'odom')
-        self.tf_timeout = Duration(seconds=p('tf_timeout', 0.1).value)
+        # 촬영 시각의 TF가 아직 없어 미뤄 둔 스캔: (스캔, 도착 시각 monotonic, TF 기다림 Future). 하나만 둔다
+        self._pending_scan = None
         self.publish_markers = p('publish_markers', True).value
         self.stats_period = p('stats_period', 5.0).value
         # 충돌 위험(TTC). 비우면 <ns>/base_footprint. 차체는 명세 0.6 × 0.4 m
@@ -331,12 +337,46 @@ class TrackingNode(Node):
         self.last_odom = (self.get_clock().now().nanoseconds * 1e-9, v.x, v.y)
 
     def on_scan(self, scan: LaserScan):
-        start = time.monotonic()
+        """촬영 시각의 TF가 있으면 바로 처리하고, 없으면 TF가 들어올 때까지 미뤄 둔다 (모듈 설명 "스캔 TF 기다리기")."""
+        arrival = time.monotonic()
+        if self._pending_scan is not None:
+            # 앞 스캔의 TF가 이 스캔이 올 때까지 오지 않았다. 앞 스캔은 버린다
+            pending_future = self._pending_scan[2]
+            self._pending_scan = None
+            # 버퍼의 대기 목록에서 빠진다. 취소도 완료 콜백(_on_scan_tf)을 부르지만, 취소를 보고 아무것도 하지 않는다
+            pending_future.cancel()
+            self.stats['tf_drop'] += 1
+            self.get_logger().warn('촬영 시각 TF가 다음 스캔이 올 때까지 오지 않아 스캔을 버림',
+                                   throttle_duration_sec=5.0)
+        future = self.tf_buffer.wait_for_transform_async(
+            self.fixed_frame, scan.header.frame_id, Time.from_msg(scan.header.stamp))
+        if future.done():
+            self.process_scan(scan, arrival)
+            return
+        self.stats['deferred'] += 1
+        self._pending_scan = (scan, arrival, future)
+        future.add_done_callback(self._on_scan_tf)
+
+    def _on_scan_tf(self, future):
+        """미뤄 둔 스캔의 촬영 시각 TF가 들어왔다. TF 수신 콜백(Buffer.set_transform) 안에서 불린다."""
+        if future.cancelled() or self._pending_scan is None or self._pending_scan[2] is not future:
+            return
+        scan, arrival, _ = self._pending_scan
+        self._pending_scan = None
+        if future.exception() is not None:
+            self.stats['tf_fail'] += 1
+            self.get_logger().warn(f'TF 확인 실패, 스캔 건너뜀: {future.exception()}',
+                                   throttle_duration_sec=5.0)
+            return
+        self.process_scan(scan, arrival)
+
+    def process_scan(self, scan: LaserScan, arrival: float):
+        """촬영 시각의 TF로 스캔을 옮겨 군집화·추적·발행한다. arrival: 스캔이 도착한 시각 (TF 기다림 기록용)."""
         try:
             tf = self.tf_buffer.lookup_transform(
-                self.fixed_frame, scan.header.frame_id, Time.from_msg(scan.header.stamp),
-                timeout=self.tf_timeout)
+                self.fixed_frame, scan.header.frame_id, Time.from_msg(scan.header.stamp))
         except TransformException as e:
+            # 방금 TF가 있다고 확인했으므로 드물다
             self.stats['tf_fail'] += 1
             self.get_logger().warn(f'TF 없음, 스캔 건너뜀: {e}', throttle_duration_sec=5.0)
             return
@@ -373,9 +413,10 @@ class TrackingNode(Node):
         self.stats['candidates'] += len(clusters)
         self.track_and_publish(header, points, [c.radius for c in clusters], evidence)
         end = time.monotonic()
-        self.stats['proc_s'] += end - start
-        # 단계별 [s]: TF 기다림(계산 아님), 지도 대조, 군집화, 빈 공간, 추적·발행(TTC 포함)
-        for key, value in (('tf_s', t_tf - start), ('map_s', t_map - t_tf),
+        self.stats['proc_s'] += end - arrival
+        # 단계별 [s]: TF 기다림(도착 → TF 찾음, 미룬 시간 포함, 계산 아님), 지도 대조, 군집화, 빈 공간,
+        # 추적·발행(TTC 포함)
+        for key, value in (('tf_s', t_tf - arrival), ('map_s', t_map - t_tf),
                            ('cluster_s', t_cluster - t_map), ('free_s', t_free - t_cluster),
                            ('track_s', end - t_free)):
             self.stats[key] += value
@@ -464,8 +505,8 @@ class TrackingNode(Node):
     # ------------------------------------------------------------------ 기록
     def _reset_stats(self):
         self.stats = {'frames': 0, 'candidates': 0, 'tracks': 0, 'dynamic': 0, 'tf_fail': 0,
-                      'risk_skip': 0, 'map_tf_fail': 0, 'beams': 0, 'static_beams': 0,
-                      'align_shift': 0.0, 'evidence': 0, 'detections': 0, 'assoc': 0,
+                      'deferred': 0, 'tf_drop': 0, 'risk_skip': 0, 'map_tf_fail': 0, 'beams': 0,
+                      'static_beams': 0, 'align_shift': 0.0, 'evidence': 0, 'detections': 0, 'assoc': 0,
                       'assoc_tf_fail': 0, 'proc_s': 0.0, 'tf_s': 0.0,
                       'map_s': 0.0, 'cluster_s': 0.0, 'free_s': 0.0, 'track_s': 0.0}
         self.stats_start = time.monotonic()
@@ -483,7 +524,7 @@ class TrackingNode(Node):
             f'처리 {1000 * s["proc_s"] / n:.1f} ms (TF 대기 {1000 * s["tf_s"] / n:.0f}·'
             f'지도 {1000 * s["map_s"] / n:.0f}·군집 {1000 * s["cluster_s"] / n:.0f}·'
             f'빈칸 {1000 * s["free_s"] / n:.0f}·추적 {1000 * s["track_s"] / n:.0f}), '
-            f'TF 실패 {s["tf_fail"]}, '
+            f'TF 미룸 {s["deferred"]}·버림 {s["tf_drop"]}·실패 {s["tf_fail"]}, '
             f'TTC 건너뜀 {s["risk_skip"]}, '
             f'지도 위 빔 {100 * s["static_beams"] / max(s["beams"], 1):.0f}% '
             f'(보정 평균 {s["align_shift"] / n:.2f} m, map TF 실패 {s["map_tf_fail"]}), '
@@ -491,30 +532,14 @@ class TrackingNode(Node):
         self._reset_stats()
 
 
-def make_executor(node: Node) -> MultiThreadedExecutor:
-    """TF를 콜백과 다른 스레드에서 받는 executor.
-
-    단일 스레드(rclpy.spin)면 /tf 수신이 콜백과 같은 줄에 서서, 콜백이 무겁거나 lookup_transform(timeout=)으로
-    기다리는 동안 TF가 쌓여 버퍼가 뒤처진다 (Mac Docker에서 0.35~0.6 s, "TF 없음" 반복).
-    TransformListener는 /tf 구독을 Reentrant 그룹에 두므로 두 번째 스레드가 받는다. 이 노드의 콜백은 기본
-    그룹(MutuallyExclusive)이라 지금처럼 하나씩 실행되어 공유 상태에 락이 필요 없다.
-    TransformListener(spin_thread=True)는 같은 노드를 다른 executor에 붙였다가 rclpy.spin이 도로 가져가서
-    (노드 하나 = executor 하나) Humble에서 효과가 없다.
-    """
-    executor = MultiThreadedExecutor(num_threads=2)
-    executor.add_node(node)
-    return executor
-
-
 def main(args=None):
     rclpy.init(args=args)
     node = TrackingNode()
-    executor = make_executor(node)
     try:
-        executor.spin()
+        # 단일 스레드: 콜백 안에서 TF를 기다리지 않는다 (모듈 설명 "스캔 TF 기다리기")
+        rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        executor.shutdown()
         node.destroy_node()

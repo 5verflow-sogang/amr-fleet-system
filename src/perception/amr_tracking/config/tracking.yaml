@@ -5,7 +5,8 @@
     measurement_source: scan
     # 추적 좌표계. 비우면 <네임스페이스>/odom (예: amr_01/odom). DWA 입력이라 odom (api.md 4-3절)
     fixed_frame: ""
-    tf_timeout: 0.1          # s. 스캔 촬영 시각의 lidar_link → odom TF를 기다리는 시간
+    # 스캔 촬영 시각의 lidar_link → odom TF가 아직 없으면 기다리지 않고 스캔을 미뤄 두었다가 TF가 오면 처리한다.
+    # 다음 스캔이 먼저 오면 앞 스캔은 버린다 (기다리는 시간 파라미터 tf_timeout은 없앴다, tracking_node 모듈 설명)
 
     # 군집화 (amr_perception_core clustering, 근거는 docs/algorithms/perception.md 1-1절)
     breakpoint_lambda_deg: 10.0
