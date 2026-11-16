@@ -523,3 +523,94 @@ def test_keep_away_simulated_guest_never_enters_radius_of_parked_robot():
 def test_negative_keep_away_rejected():
     with pytest.raises(ValueError):
         ObstacleMotion(_line(), random.Random(0), keep_away_m=-1.0)
+
+
+# ---- peers: 손님끼리 본다 (식당 시연, 손님이 한 점에 뭉치지 않게) ----
+
+def _stand(gid, x, y, dirs=((0, 1), (0, -1), (1, 0), (-1, 0))):
+    return {'id': gid, 'type': 'customer', 'pattern': 'stand', 'speed_range_mps': [0.02, 0.05],
+            'spawn': {'x': x, 'y': y}, 'waypoints': [{'x': x - 0.2, 'y': y}, {'x': x + 0.2, 'y': y}],
+            'evade_dirs': [list(d) for d in dirs]}
+
+
+def test_peers_off_by_default_walks_into_guest():
+    m = ObstacleMotion(_line(), random.Random(0))
+    assert m.step((2.0, 0.0), {}, 0.0) != (0.0, 0.0)
+    assert m.step((2.0, 0.0), {}, 0.0, peers=[]) != (0.0, 0.0)
+
+
+def test_stops_for_guest_ahead_but_not_beside_or_behind():
+    m = ObstacleMotion(_line(), random.Random(0))
+    assert m.step((2.0, 0.0), {}, 0.0, peers=[(2.5, 0.1)]) == (0.0, 0.0) and m.peer_waiting
+    m = ObstacleMotion(_line(), random.Random(0))
+    assert m.step((2.0, 0.0), {}, 0.0, peers=[(2.5, 0.8)]) != (0.0, 0.0)     # 옆으로 0.8 m: 지나간다
+    assert m.step((2.0, 0.0), {}, 0.0, peers=[(1.6, 0.0)]) != (0.0, 0.0)     # 등 뒤
+    assert m.step((2.0, 0.0), {}, 0.0, peers=[(3.0, 0.0)]) != (0.0, 0.0)     # 1 m 앞: 아직 멀다
+
+
+def test_walks_again_when_guest_ahead_leaves():
+    m = ObstacleMotion(_line(), random.Random(0))
+    assert m.step((2.0, 0.0), {}, 0.0, peers=[(2.5, 0.0)]) == (0.0, 0.0)
+    vx, _ = m.step((2.0, 0.0), {}, 0.5, peers=[(2.5, 1.0)])
+    assert vx > 0 and not m.peer_waiting and m.peer_turn_backs == 0
+
+
+def test_turns_back_when_guest_ahead_stays():
+    from amr_gazebo.obstacle_motion import PEER_PATIENCE_S
+    m = ObstacleMotion(_line(), random.Random(0))
+    still = [(2.5, 0.0)]
+    assert m.step((2.0, 0.0), {}, 0.0, peers=still) == (0.0, 0.0)
+    assert m.step((2.0, 0.0), {}, 0.5 * PEER_PATIENCE_S - 0.01, peers=still) == (0.0, 0.0)
+    vx, _ = m.step((2.0, 0.0), {}, 1.5 * PEER_PATIENCE_S + 0.01, peers=still)
+    assert m.peer_turn_backs == 1 and vx < 0
+
+
+@pytest.mark.parametrize('seed', range(5))
+def test_two_guests_walking_head_on_never_overlap(seed):
+    # 같은 직선을 마주 보고 왕복하는 두 손님: 서로 보고 서거나 돌아서, 몸(반지름 0.25)이 겹치지 않는다
+    rng = random.Random(seed)
+    a = ObstacleMotion(_line(0.0, 6.0), random.Random(rng.random()))
+    b = ObstacleMotion({**_line(6.0, 0.0), 'id': 'h'}, random.Random(rng.random()))
+    pa, pb, t, closest = (0.0, 0.0), (6.0, 0.0), 0.0, 99.0
+    for _ in range(int(60 / DT)):
+        va = a.step(pa, {}, t, peers=[pb])
+        vb = b.step(pb, {}, t, peers=[pa])
+        pa = (pa[0] + va[0] * DT, pa[1] + va[1] * DT)
+        pb = (pb[0] + vb[0] * DT, pb[1] + vb[1] * DT)
+        t += DT
+        closest = min(closest, math.dist(pa, pb))
+    assert closest > 0.5 and a.peer_turn_backs + b.peer_turn_backs >= 2
+
+
+def test_stand_evade_skips_spot_taken_by_another_guest():
+    # 로봇이 +x로 다가온다. 위(+y)와 아래(-y)가 똑같이 진행선에서 멀다
+    robot = {'amr_01': (-1.0, 0.0, 0.0, 0.5)}
+    m = ObstacleMotion(_stand('g', 0.0, 0.0, dirs=((0, 1), (0, -1))), random.Random(0))
+    vx, vy = m.step((0.0, 0.0), robot, 0.0, peers=[(0.0, 0.8)])     # 위 자리에 손님이 서 있다
+    assert m.evading and m.claimed[1] < 0 and vy < 0
+    m = ObstacleMotion(_stand('g', 0.0, 0.0, dirs=((0, 1), (0, -1))), random.Random(0))
+    m.step((0.0, 0.0), robot, 0.0, peers=[(0.0, -0.8)])
+    assert m.claimed[1] > 0
+
+
+def test_stand_kiosk_queue_guests_evade_to_different_spots():
+    # 키오스크 줄처럼 0.55 m 간격으로 앞뒤로 선 두 손님. 둘 다 같은 쪽이 가장 좋아도 겹치지 않게 비킨다
+    robot = {'amr_01': (-1.2, -0.3, 0.0, 0.5)}
+    a = ObstacleMotion(_stand('a', 0.0, 0.0), random.Random(0))
+    b = ObstacleMotion(_stand('b', 0.0, -0.55), random.Random(1))
+    a.step((0.0, 0.0), robot, 0.0, peers=[(0.0, -0.55)])
+    b.step((0.0, -0.55), robot, 0.0, peers=[(0.0, 0.0), a.claimed])
+    assert a.claimed and b.claimed and math.dist(a.claimed, b.claimed) >= 0.6
+
+
+def test_stand_returning_home_waits_for_guest_in_the_way():
+    m = ObstacleMotion(_stand('g', 0.0, 0.0), random.Random(0))
+    m.step((0.0, 0.0), {'amr_01': (-1.0, 0.0, 0.0, 0.5)}, 0.0)
+    assert m.evading
+    far = {'amr_01': (-9.0, 0.0, 0.0, 0.5)}
+    away = m.claimed
+    assert m.step(away, far, 1.0) != (0.0, 0.0) and m.returning
+    mid = (0.5 * away[0], 0.5 * away[1])
+    assert m.step(away, far, 1.1, peers=[mid]) == (0.0, 0.0)
+    # 오래 막히면 (둘 다 제자리로 가는 길) 그냥 간다
+    assert m.step(away, far, 10.0, peers=[mid]) != (0.0, 0.0)

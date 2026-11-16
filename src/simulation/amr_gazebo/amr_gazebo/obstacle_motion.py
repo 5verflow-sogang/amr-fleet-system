@@ -23,6 +23,12 @@ yield_patience_s·yield_progress_m(선택)은 언제 돌아설지 정한다. 기
 YIELD_PATIENCE_S 동안 이어질 때다. yield_progress_m을 주면 속력 대신 위치를 본다: 막은 로봇이 그만큼도 못 움직인 채
 yield_patience_s가 지나면 돌아선다. 제자리에서 돌거나 조금씩 들썩이는 로봇(속력이 기준을 넘나든다) 앞에서 손님이 한없이
 서 있지 않게 한다 (식당 리허설: 손님과 로봇이 서로 기다림). random 패턴은 돌아설 때 로봇이 막지 않는 목표점을 고른다.
+
+peers(step 인자, 다른 손님 위치 목록)를 주면 손님끼리도 본다 (식당 시연: 손님이 서로 겹쳐 한 점에 뭉치지 않게).
+걷는 손님은 진행 방향 PEER_AHEAD_M 앞, 진행선 옆 PEER_GAP_M 안에 다른 손님이 있으면 서고, PEER_PATIENCE_S
+(0.5 ~ 1.5배 무작위: 마주 선 두 손님이 같이 돌아서지 않게) 넘게 막히면 돌아선다. stand 손님은 다른 손님(또는 그 손님이
+비켜 가는 자리) PEER_GAP_M 안인 자리로는 비키지 않고, 제자리로 돌아갈 때 앞에 손님이 있으면 기다린다.
+peers를 안 주면 예전과 같다.
 """
 
 from __future__ import annotations
@@ -54,6 +60,12 @@ EVADE_RELEASE_M = 2.0
 # 옆으로 틀 데가 없는 좁은 통로: 로봇(0.8 m/s)보다 빨리 이만큼 [m] 앞으로 가서 가로 통로(행 사이 1.8 m)로 빠진다
 EVADE_FLEE_M = 2.0
 EVADE_FLEE_SPEED = 1.0
+# peers: 손님 둘 중심 사이를 이만큼 [m] 띄운다 (몸 반지름 0.25 × 2 + 여유 0.1)
+PEER_GAP_M = 0.6
+# 진행 방향 이만큼 [m] 앞까지 다른 손님이 있는지 본다
+PEER_AHEAD_M = 0.7
+# 다른 손님에 막혀 이만큼 [s] (0.5 ~ 1.5배 무작위) 서 있으면 돌아선다 (stand가 제자리로 갈 때는 그냥 간다)
+PEER_PATIENCE_S = 2.0
 # 목표점에 이만큼 가까워지면 다음 점으로 넘어간다 [m]
 REACH_TOLERANCE = 0.15
 # 곡선 표본 간격 [m]
@@ -159,6 +171,11 @@ class ObstacleMotion:
         self._evade_goal: Optional[Point] = None
         self._evade_speed = EVADE_SPEED
         self.evades = 0                           # 비킨 횟수
+        self.peer_waiting = False                 # 다른 손님에 막혀 서 있는 중
+        self.peer_turn_backs = 0                  # 다른 손님에 막혀 돌아선 횟수
+        self._peer_since: Optional[float] = None
+        self._peer_patience = PEER_PATIENCE_S
+        self._peer_pass = False                   # stand: 오래 막혀 그냥 지나가는 중
 
         if self.pattern == 'random':
             xs, ys = zip(*waypoints)
@@ -177,20 +194,29 @@ class ObstacleMotion:
     def goal(self) -> Point:
         return self._goal
 
+    @property
+    def claimed(self) -> Optional[Point]:
+        """stand: 비켜 가는 자리 (다른 손님이 같은 자리로 비키지 않게 알린다). 비키는 중이 아니면 None."""
+        return self._evade_goal if self.evading else None
+
     def step(self, xy: Point, robots: Optional[Mapping[str, RobotState]] = None,
-             t: Optional[float] = None) -> Tuple[float, float]:
+             t: Optional[float] = None, peers: Optional[Sequence[Point]] = None) -> Tuple[float, float]:
         """현재 위치 xy에서 낼 월드 기준 속도. 목표점에 닿으면 다음 목표점으로 넘긴다.
 
         robots: 로봇 네임스페이스 → RobotState (world 기준). yield_to_robots의 로봇이 앞길을 막으면 (0, 0).
         t: 지금 시각 [s]. 없으면 돌아서지 않고 로봇이 비킬 때까지 기다린다.
+        peers: 다른 손님 위치 (자기는 빼고). 앞길에 있으면 선다. 없으면 손님끼리 보지 않는다.
         """
+        peers = peers or ()
         if self.pattern == 'stand':
-            return self._stand_step(xy, robots or {})
+            return self._stand_step(xy, robots or {}, peers, t)
         while math.dist(xy, self._goal) < REACH_TOLERANCE:
             self._advance()
         if self.keep_away_m > 0 and self._keep_away(xy, robots or {}, t):
             return 0.0, 0.0
         if self.yield_to and self._must_wait(xy, robots or {}, t):
+            return 0.0, 0.0
+        if self._peer_wait(xy, self._goal, peers, t):
             return 0.0, 0.0
         dx, dy = self._goal[0] - xy[0], self._goal[1] - xy[1]
         d = math.hypot(dx, dy)
@@ -268,14 +294,37 @@ class ObstacleMotion:
             self.waiting, self._anchor = False, None
         return self.waiting
 
+    def _peer_wait(self, xy: Point, goal: Point, peers: Sequence[Point], t: Optional[float]) -> bool:
+        """goal 쪽 앞길에 다른 손님이 있으면 True (self.peer_waiting도 같은 값).
+        _peer_patience 넘게 막히면 돌아서고 False (stand는 돌아서지 않고 막힌 동안 그냥 지나간다)."""
+        if not peer_ahead(xy, goal, peers):
+            self.peer_waiting, self._peer_since, self._peer_pass = False, None, False
+            return False
+        if self._peer_pass:
+            return False
+        if not self.peer_waiting:
+            self.peer_waiting, self._peer_since = True, t
+            self._peer_patience = PEER_PATIENCE_S * self._rng.uniform(0.5, 1.5)
+            return True
+        if t is None or self._peer_since is None or t - self._peer_since < self._peer_patience:
+            return True
+        self.peer_waiting, self._peer_since = False, None
+        if self.pattern == 'stand':
+            self._peer_pass = True
+        else:
+            self.peer_turn_backs += 1
+            self._turn_back()
+        return False
+
     # ---------------------------------------------------------------- stand: 서 있다가 로봇이 오면 비킨다
-    def _stand_step(self, xy: Point, robots: Mapping[str, RobotState]) -> Tuple[float, float]:
+    def _stand_step(self, xy: Point, robots: Mapping[str, RobotState], peers: Sequence[Point],
+                    t: Optional[float]) -> Tuple[float, float]:
         threat = self._threat(xy, robots)
         if threat is not None:
             # 아직 안 비켰거나, 비킨 자리가 로봇 진행선 안이라 로봇이 다시 가까이 오면 지금 자리에서 한 번 더 비킨다
             if self._evade_goal is None or (math.dist(xy, threat[:2]) < EVADE_CLOSE_M + 0.2
                                             and _lateral(threat, xy) < EVADE_CLEAR_M):
-                self._evade_goal = self._pick_evade(xy, threat)
+                self._evade_goal = self._pick_evade(xy, threat, peers)
                 self.evading, self.returning = True, False
                 self.evades += 1
         elif self.evading and all(math.dist(xy, r[:2]) > EVADE_RELEASE_M for r in robots.values()):
@@ -284,8 +333,12 @@ class ObstacleMotion:
             return _toward(xy, self._evade_goal, self._evade_speed)
         if self.returning:
             if math.dist(xy, self._home) > 0.03:
+                # 로봇을 피하는 중이 아니니 앞에 손님이 있으면 기다린다
+                if self._peer_wait(xy, self._home, peers, t):
+                    return 0.0, 0.0
                 return _toward(xy, self._home, EVADE_SPEED)
             self.returning = False
+            self.peer_waiting, self._peer_since, self._peer_pass = False, None, False
         # 제자리 왕복 (straight와 같은 두 점)
         while math.dist(xy, self._goal) < REACH_TOLERANCE:
             self._advance()
@@ -303,9 +356,10 @@ class ObstacleMotion:
                 best = state
         return best
 
-    def _pick_evade(self, xy: Point, robot: RobotState) -> Point:
+    def _pick_evade(self, xy: Point, robot: RobotState, peers: Sequence[Point] = ()) -> Point:
         """evade_dirs(없으면 로봇 진행 방향의 양옆) 중 비킨 자리가 로봇 진행선에서 가장 먼 쪽.
-        어느 쪽도 EVADE_CLEAR_M을 못 넘으면(좁은 통로) 로봇에서 멀어지는 쪽으로 간다."""
+        어느 쪽도 EVADE_CLEAR_M을 못 넘으면(좁은 통로) 로봇에서 멀어지는 쪽으로 간다.
+        다른 손님 PEER_GAP_M 안인 자리는 빈 자리가 하나라도 있으면 고르지 않는다."""
         c, s = math.cos(robot[2]), math.sin(robot[2])
         perps = [(-s, c), (s, -c)]
         # 다시 비킬 때(좁은 통로에서 앞으로 밀려난 뒤)는 제자리 기준 evade_dirs에 더해 로봇 양옆도 본다 (통로 교차점)
@@ -313,12 +367,12 @@ class ObstacleMotion:
         base = self._home if not self.evading else xy
         self._evade_speed = EVADE_SPEED
         cands = [(base[0] + self.evade_m * dx, base[1] + self.evade_m * dy) for dx, dy in dirs]
-        lateral = max(cands, key=lambda p: (_lateral(robot, p), math.dist(p, robot[:2])))
+        lateral = max(_free_of(cands, peers), key=lambda p: (_lateral(robot, p), math.dist(p, robot[:2])))
         if _lateral(robot, lateral) >= EVADE_CLEAR_M:
             return lateral
         # 옆으로 틀 데가 없다 (좁은 통로): 로봇보다 빨리 EVADE_FLEE_M 앞으로 가서 통로를 빠져나간다
         self._evade_speed = EVADE_FLEE_SPEED
-        far = [(base[0] + EVADE_FLEE_M * dx, base[1] + EVADE_FLEE_M * dy) for dx, dy in dirs]
+        far = _free_of([(base[0] + EVADE_FLEE_M * dx, base[1] + EVADE_FLEE_M * dy) for dx, dy in dirs], peers)
         return max(far, key=lambda p: math.dist(p, robot[:2]))
 
     def _turn_back(self, xy: Optional[Point] = None, robots: Optional[Mapping[str, RobotState]] = None) -> None:
@@ -365,6 +419,28 @@ class ObstacleMotion:
 
     def _new_speed(self) -> float:
         return self._rng.uniform(*self.speed_range)
+
+
+def peer_ahead(xy: Point, goal: Point, peers: Sequence[Point]) -> bool:
+    """xy에서 goal 쪽으로 걸을 때 PEER_AHEAD_M 앞, 진행선 옆 PEER_GAP_M 안에 다른 손님이 있는지.
+    그 손님이 goal보다 PEER_GAP_M 넘게 뒤면(그 앞에서 멈출 거면) 막히지 않은 것으로 본다."""
+    dx, dy = goal[0] - xy[0], goal[1] - xy[1]
+    d = math.hypot(dx, dy)
+    if d < 1e-6:
+        return False
+    ux, uy = dx / d, dy / d
+    for px, py in peers:
+        rx, ry = px - xy[0], py - xy[1]
+        ahead = rx * ux + ry * uy
+        if 0.0 < ahead < min(PEER_AHEAD_M, d + PEER_GAP_M) and abs(rx * uy - ry * ux) < PEER_GAP_M:
+            return True
+    return False
+
+
+def _free_of(cands: List[Point], peers: Sequence[Point]) -> List[Point]:
+    """다른 손님 PEER_GAP_M 안인 후보를 뺀다. 다 빠지면 그대로 돌려준다."""
+    free = [p for p in cands if all(math.dist(p, q) >= PEER_GAP_M for q in peers)]
+    return free or cands
 
 
 def _lateral(robot: RobotState, p: Point) -> float:

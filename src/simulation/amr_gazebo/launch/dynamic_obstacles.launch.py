@@ -82,6 +82,7 @@ def _obstacles(context):
                 'keep_away_robots': [r.strip() for r in LaunchConfiguration('keep_away_robots').perform(context).split(',')
                                      if r.strip()] or [''],
                 'only': only or [''],
+                'avoid_peers': LaunchConfiguration('avoid_peers').perform(context).lower() == 'true',
                 'use_sim_time': use_sim_time,
             }],
             output='screen',
@@ -107,6 +108,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'keep_away_robots', default_value='',
             description='keep_away_m에서 볼 로봇 네임스페이스 (쉼표로 구분, 예: amr_01,amr_02). 비우면 끔'),
+        DeclareLaunchArgument(
+            'avoid_peers', default_value='false',
+            description='손님끼리 본다: 앞에 다른 장애물이 있으면 서고, 비킬 때 다른 장애물 자리를 피한다 (다른 이동 노드 것 포함)'),
         DeclareLaunchArgument(
             'name', default_value='dynamic_obstacles',
             description='이동 노드 이름 (브리지는 <name>_bridge). 파일 두 개(손님·직원)를 같이 띄울 때 하나를 바꾼다'),
