@@ -1,0 +1,8 @@
+# YOLO FPS KPI 시나리오(tools/harness/scenarios/yolo_fps.yaml)의 로봇 1대 (system.launch.py robots_file).
+# A–B 통로(world y 0.4~4.4)에서 동남동(-15°)을 본다. 평면도로 계산한 시야(화각 87°, 카메라 높이 0.43 m):
+#   표지판 sign_aisle_a_2 (12.485, 4.7)  약 5.6 m, 왼쪽 33°   (rack_a6 서쪽 끝면, 로봇 쪽을 본다)
+#   표지판 sign_aisle_b_2 (12.485, -2.3) 약 7.5 m, 오른쪽 30° (rack_b6 서쪽 끝면)
+#   화물 cargo_04 (12.9, 4.18)           약 5.8 m, 왼쪽 27°   (amr_gazebo cargo_boxes.yaml, 시나리오가 스폰)
+#   사람 worker_2 (dynamic_obstacles.yaml 곡선 경로)          경로의 약 20 %가 시야 10 m 안. 경로에서 약 2 m 떨어져 있다
+robots:
+  amr_01: [7.0, 3.0, -0.2618]
