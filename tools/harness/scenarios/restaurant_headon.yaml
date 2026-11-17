@@ -30,11 +30,13 @@ params:
   tracking: "true"
   safety: "true"
   cameras: top
+  # 로봇 카메라(1인칭) 녹화: false / 켤 로봇 이름 (예: amr_01 - 중앙 통로를 타는 쪽). 켜면 RTF가 더 떨어진다
+  robot_camera: "false"
 processes:
   - name: stack
     cmd: >-
       ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true localization:={localization}
-      tracking:={tracking} safety:={safety} zone_client:={zone_client}
+      tracking:={tracking} safety:={safety} zone_client:={zone_client} enable_camera:={robot_camera}
       world:=restaurant.sdf body:=serving seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct}
       robots_file:=/repo/experiments/restaurant_headon/{robots}
       zones_file:=/repo/experiments/restaurant_headon/{zones}
@@ -57,7 +59,7 @@ processes:
     cmd: python3 /repo/tools/harness/cpu_monitor.py --out {run_dir}/cpu.csv --interval 1.0
     settle_s: 1
   - name: camera_bag
-    cmd: ros2 bag record -o {run_dir}/camera_bag -e '/demo_cam/.*'
+    cmd: ros2 bag record -o {run_dir}/camera_bag -e '/demo_cam/.*|/amr_[0-9][0-9]/camera/color/image_raw'
     settle_s: 1
   - name: rosbag
     cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/demo/t0|/clock'
