@@ -62,3 +62,32 @@ loads:
           pickup: [rack_c*]
           dropoff: [dock_b]
           priority: [200, 200]
+  # 회수 몰림 + 회수 우선 끔: collect_burst와 같은 일정인데 회수 호출 우선순위를 일반 작업과 같은 100으로 둔다
+  # (들어온 순서대로 할당). "회수 우선도 aging도 없는" 기준선이다. 우선순위 난수는 [100, 100]도 [200, 200]처럼 한 번 꺼내므로
+  # 같은 seed면 collect_burst와 시각·위치가 같고 우선순위만 다르다 (test_task_gen이 확인)
+  collect_burst_flat:
+    count: 20
+    interval_s: 12.5
+    flows:
+      - type: delivery
+        pickup: [dock_1, dock_2]
+        dropoff: [rack_*]
+        weight: 0.4
+      - type: delivery
+        pickup: [rack_*]
+        dropoff: [dock_a]
+        weight: 0.4
+      - type: collect
+        pickup: [rack_c*]
+        dropoff: [dock_b]
+        weight: 0.2
+        priority: [100, 100]
+    bursts:
+      - start_s: 60.0
+        duration_s: 120.0
+        interval_s: 6.0
+        flow:
+          type: collect
+          pickup: [rack_c*]
+          dropoff: [dock_b]
+          priority: [100, 100]

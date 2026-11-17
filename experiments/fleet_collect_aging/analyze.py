@@ -31,6 +31,7 @@ from amr_fleet_manager.task_gen import select_load  # noqa: E402
 
 CONFIG = REPO / 'src' / 'fleet' / 'amr_fleet_manager' / 'config'
 LOADS = [('overload', '과부하 (처리량의 약 1.4배)'), ('normal', '시연 부하 (약 0.7배)'),
+         ('collect_burst_flat', '회수 몰림, 회수 우선 끔 (회수도 priority 100)'),
          ('collect_burst', '회수 몰림 (0.7배 + 120 s 회수 몰림)')]
 # dataviz 기본 범주 색 1·2·3 (검사 통과, 3번은 대비 경고라 범례·표로 보완), 선 모양도 다르게 해 색만으로 구분하지 않는다
 RATE_STYLE = [('#2a78d6', '-'), ('#eb6834', '--'), ('#1baf7a', ':')]

@@ -4,6 +4,7 @@
 - 종류: tasks.json의 type이 collect면 회수 호출, 아니면 일반 작업
 - 할당 대기: first_assign_time − request_time (s). 관측 마감(meta.json observation_cutoff.cutoff)까지 할당이 없으면 미할당
 - 처리량: 마감까지 COMPLETED 수 / (마감 − 첫 요청) × 60 (건/분)
+- 공평도: 할당받은 작업 전체 대기의 Jain 지수 (fairness)
 시각은 fleet_metrics가 쓴 값 그대로다. 가짜 로봇은 odom이 없어 실제 시간이다(#285: odom이 없으면 실제 시간 그대로).
 """
 
@@ -64,11 +65,26 @@ def summarize(rows: Sequence[TaskRow], cutoff: float) -> dict:
         out[f'{kind}_wait_max'] = max(waits) if waits else float('nan')
         out[f'{kind}_unassigned'] = sum(r.assign is None for r in mine)
     out['unassigned'] = out['collect_unassigned'] + out['normal_unassigned']
+    waits = [r.wait for r in rows if r.wait is not None]
+    out['wait_mean'] = st.mean(waits) if waits else float('nan')
+    out['wait_max'] = max(waits) if waits else float('nan')
+    out['fairness'] = fairness(waits)
     start = min((r.request for r in rows), default=cutoff)
     done = sum(r.completed for r in rows)
     out['completed'] = done
     out['throughput_per_min'] = done / (cutoff - start) * 60.0 if cutoff > start else float('nan')
     return out
+
+
+def fairness(waits: Sequence[float]) -> float:
+    """공평도 지수 (Jain's fairness index): (Σw)² / (n × Σw²). 모든 작업이 똑같이 기다리면 1, 한 작업만 기다리면 1/n.
+
+    대기가 얼마나 고르게 나뉘었는지 본다 (회수 우선이 기울인 균형을 aging이 얼마나 되돌리는지). 대기가 전부 0이면 1.
+    """
+    if not waits:
+        return float('nan')
+    square = sum(w * w for w in waits)
+    return 1.0 if square == 0 else sum(waits) ** 2 / (len(waits) * square)
 
 
 def starvation(rows: Sequence[TaskRow], window: tuple[float, float], cutoff: float) -> float:

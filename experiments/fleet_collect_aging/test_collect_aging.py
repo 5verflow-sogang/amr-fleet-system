@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from collect_aging import (TaskRow, load_run, run_condition, schedule_offset, starvation, summarize,  # noqa: E402
+from collect_aging import (TaskRow, fairness, load_run, run_condition, schedule_offset, starvation, summarize,  # noqa: E402
                            task_rows)
 
 SCHEDULE = [
@@ -100,3 +100,18 @@ def test_run_condition_from_meta_params():
     assert run_condition({'aging': 'on', 'aging_rate': ''}, 1.667) == ('overload', 1.667)
     # aging_rate를 직접 주면 그 값
     assert run_condition({'aging': 'off', 'aging_rate': '0.833', 'load': 'collect_burst'}, 1.667) ==         ('collect_burst', 0.833)
+
+
+def test_fairness_index():
+    # 모두 똑같이 기다리면 1, 한 작업만 기다리면 1/n, 그 사이는 고를수록 크다
+    assert fairness([10.0, 10.0, 10.0]) == pytest.approx(1.0)
+    assert fairness([30.0, 0.0, 0.0]) == pytest.approx(1 / 3)
+    assert fairness([0.0, 0.0]) == 1.0
+    assert math.isnan(fairness([]))
+    assert fairness([5.0, 10.0, 15.0]) > fairness([0.0, 5.0, 25.0])
+
+
+def test_summarize_has_overall_wait_and_fairness():
+    s = summarize(task_rows(OUTCOMES, SCHEDULE, cutoff=200.0), cutoff=200.0)
+    assert s['wait_max'] == pytest.approx(60.0) and s['wait_mean'] == pytest.approx((0.5 + 60.0 + 5.0) / 3)
+    assert s['fairness'] == pytest.approx(65.5 ** 2 / (3 * (0.25 + 3600.0 + 25.0)))
