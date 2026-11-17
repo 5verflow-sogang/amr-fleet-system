@@ -33,7 +33,9 @@ params:
   cost_fn: euclidean                             # 1-1 켬: congestion
   congestion_weight: "3.0"
   congestion_filter: none                        # 1-2 켬: keepout
-  cameras: top,west,stalls                       # amr_gazebo config/demo_cameras_restaurant.yaml 이름
+  # 탑뷰만 (11/12): west·stalls는 카메라 앞 손님·기둥이 화면 1/3을 가려 못 썼고, 카메라 하나가 RTF를 0.13 → 0.08로 떨어뜨린다.
+  # 다른 뷰가 필요하면 눈높이(1.6 m) 대신 2.8 m 천장 각도로 (amr_gazebo config/demo_cameras_restaurant.yaml 이름)
+  cameras: top
   robot_camera: "false"                          # 로봇 시점: amr_01 등 (카메라 하나마다 RTF가 더 떨어진다)
   # 추적·안전 노드 (로봇마다 추적·안전·E-Stop 버튼 3개). 노드가 130개를 넘으면 마지막 로봇의 Nav2가
   # 서로를 못 찾는 것으로 보여(11/6, 늘 amr_05만) 끄고 확인 중이다
