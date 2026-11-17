@@ -2,6 +2,7 @@
 
 import csv
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -590,33 +591,49 @@ def test_response_skips_commands_at_first_goal(tmp_path):
 
 
 def test_detection_fps_metrics_and_verdict(tmp_path):
-    def run(name, fps_mean):
+    def run(name, infer_fps_min, fps_mean=12.0, outcome='completed'):
         d = tmp_path / name / 'detection'
         d.mkdir(parents=True)
         (tmp_path / name / 'meta.json').write_text(json.dumps({'scenario': 'yolo_fps', 'label': 'smoke',
-                                                               'outcome': 'completed'}))
+                                                               'outcome': outcome}))
         (d / 'fps.json').write_text(json.dumps({
-            'windows': 23, 'frames': 1400, 'duration_s': 116.0, 'fps_mean': fps_mean, 'fps_min': fps_mean - 1.5,
-            'fps_max': fps_mean + 1.0, 'infer_ms_mean': 61.2, 'latency_ms_mean': 98.4, 'objects_per_frame': 1.8,
-            'no_depth': 40, 'tf_fail': 0, 'robots': ['amr_01']}))
+            'windows': 23, 'frames': 1400, 'duration_s': 116.0, 'infer_fps_min': infer_fps_min, 'infer_fps_mean': 16.3,
+            'empty_windows': 0, 'fps_mean': fps_mean, 'fps_min': fps_mean - 1.5, 'fps_max': fps_mean + 1.0,
+            'infer_ms_mean': 61.2, 'latency_ms_mean': 98.4, 'objects_per_frame': 1.8, 'no_depth': 40, 'tf_fail': 0,
+            'deferred': 120, 'tf_drop': 1, 'robots': ['amr_01']}))
         (tmp_path / name / 'cpu.csv').write_text('time,cores,allowed_cores,cpu_pct\n0,7.5,8,93.8\n1,7.5,8,93.8\n')
         return tmp_path / name
 
-    m = detection_metrics(run('one', 12.1))
+    m = detection_metrics(run('one', 11.2, 12.1))
+    assert m['detect.infer_fps.min'] == 11.2 and m['detect.infer_fps.mean'] == 16.3
     assert m['detect.fps.mean'] == 12.1 and m['detect.fps.min'] == pytest.approx(10.6)
     assert m['detect.infer_ms.mean'] == 61.2 and m['detect.frames'] == 1400.0 and m['detect.tf_fail'] == 0.0
-    # 측정 구간이 없던 실행(fps_mean None)은 FPS를 내지 않는다
-    (tmp_path / 'one' / 'detection' / 'fps.json').write_text(json.dumps({'windows': 0, 'fps_mean': None}))
+    assert (m['detect.empty_windows'], m['detect.deferred'], m['detect.tf_drop']) == (0.0, 120.0, 1.0)
+    # 측정 구간이 없던 실행(값 None)은 추론 속도·FPS를 내지 않는다
+    (tmp_path / 'one' / 'detection' / 'fps.json').write_text(json.dumps({'windows': 0, 'infer_fps_min': None,
+                                                                         'fps_mean': None}))
     assert detection_metrics(tmp_path / 'one') == {'detect.windows': 0.0}
     assert detection_metrics(tmp_path / 'none') == {}
-    # CPU 10 FPS: 클수록 좋아 CI 하한으로 판정. 참고 지표는 판정하지 않는다
-    assert kpi_verdict('detect.fps.mean', 12.0, 13.0, 11.0) == 'PASS'
-    assert kpi_verdict('detect.fps.mean', 10.5, 12.0, 9.5) == 'MARGINAL'
-    assert kpi_verdict('detect.fps.mean', 8.0, 9.0, 7.0) == 'FAIL'
-    assert kpi_verdict('detect.fps.min', 8.0, 9.0, 7.0) is None
+    # 처리 FPS는 참고 지표다 (#357 첫 측정의 판정 지표였다). 평균·CI 판정을 하지 않는다
+    assert kpi_verdict('detect.fps.mean', 8.0, 9.0, 7.0) is None
+    assert kpi_verdict('detect.infer_fps.min', 8.0, 9.0, 7.0) is None     # 최악값 판정만 한다 (아래)
     # yolo_fps는 CPU 80 % KPI를 판정하지 않는다 (다른 시나리오는 그대로)
     assert kpi_verdict('sys.cpu_pct.mean', 93.8, 93.8, 93.8, 'yolo_fps') is None
     assert kpi_verdict('sys.cpu_pct.mean', 93.8, 93.8, 93.8, 'task_cycle') == 'FAIL'
-    g = summarize([run(f'r{i}', 12.0 + 0.2 * i) for i in range(3)])['yolo_fps/smoke']['metrics']
-    assert g['detect.fps.mean']['kpi'] == 'PASS' and 'kpi' not in g['detect.fps.min']
-    assert 'kpi' not in g['sys.cpu_pct.mean']
+
+    def verdict(*values, failed=0):
+        for path in tmp_path.iterdir():
+            shutil.rmtree(path)
+        runs = [run(f'r{i}', v) for i, v in enumerate(values)]
+        runs += [run(f'f{i}', 15.0, outcome='timeout') for i in range(failed)]
+        g = summarize(runs)['yolo_fps/smoke']['metrics']
+        assert 'kpi' not in g['detect.fps.mean'] and 'kpi' not in g['sys.cpu_pct.mean']
+        return g['detect.infer_fps.min'].get('kpi') or g['detect.infer_fps.min'].get('kpi_note')
+
+    # "추론 속도 10 FPS 이상 유지": 3회 모두 가장 느린 구간이 10 이상이어야 PASS (10.0은 통과)
+    assert verdict(12.0, 10.0, 11.5) == 'PASS'
+    # 평균이 10을 넘어도 한 실행의 한 구간이라도 10 밑이면 FAIL (CI 하한 판정이었다면 MARGINAL)
+    assert verdict(14.0, 13.0, 9.9) == 'FAIL'
+    # 실행이 모자라거나 하네스 실패가 있으면 보류
+    assert verdict(12.0, 11.0) == '보류 (n=2<3)'
+    assert verdict(12.0, 11.0, 11.5, failed=1) == '보류 (하네스 실패 1회)'

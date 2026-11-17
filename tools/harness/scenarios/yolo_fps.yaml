@@ -1,4 +1,5 @@
-# YOLO 인식 FPS KPI (원 명세 6장 "CPU 10 FPS 또는 GPU 30 FPS", 연우). **초안: 아직 한 번도 돌려 보지 않았다.**
+# YOLO 인식 추론 속도 KPI (원 명세 6장 "추론 속도는 CPU 기준 10 FPS 이상(GPU 가속 시 30 FPS 이상) 유지", 연우).
+# 11/17 첫 본 측정(#357, 처리 FPS 평균으로 판정) FAIL 9.07 FPS → 인식 노드 고침(#359) 뒤 명세 문구대로 판정을 바꿨다.
 # 로봇 1대 + 위치 추정 + 카메라 + YOLO 인식(system.launch.py detection:=true) + 동적 장애물 5개 + 화물 상자 24개.
 # Nav2·Fleet·BT는 끈다. 로봇은 움직이지 않는다.
 #
@@ -10,8 +11,8 @@
 # 측정: 주행 명령이 데움(warmup_s) 뒤 duration_s 동안의 시작·끝 시각(실제 시간)을 detection/window_start·window_end에 적고,
 # 후처리(detection_fps.py)가 detection_node의 5 s 통계 줄(logs/system.log) 중 이 구간 안에 다 든 것만 모아 detection/fps.json을 쓴다.
 # 노드의 FPS가 실제 시간 기준(time.monotonic)이라 측정 시간도 실제 시간으로 잡는다. RTF는 meta.json에 남는다.
-# 요약: detect.fps.mean(KPI ≥ 10, CI 하한으로 판정)과 참고 지표 (README "인식 지표"). cpu.csv로 Gazebo(카메라 렌더링)와
-# 인식 노드가 쓴 코어 수(sys.cpu_cores.sim·perception)를 같이 남긴다.
+# 요약: detect.infer_fps.min(가장 느린 5 s 구간의 추론 속도, 모든 실행 ≥ 10이면 PASS)과 참고 지표 (README "인식 지표").
+# cpu.csv로 Gazebo(카메라 렌더링)와 인식 노드가 쓴 코어 수(sys.cpu_cores.sim·perception)를 같이 남긴다.
 name: yolo_fps
 # docker_run.sh가 빌드할 패키지 (amr_bringup이 amr_detection·amr_gazebo를 함께 끌어온다)
 packages: amr_bringup
@@ -56,7 +57,7 @@ driver:
   cmd: >-
     mkdir -p {run_dir}/detection && sleep {warmup_s} && date +%s.%N > {run_dir}/detection/window_start
     && sleep {duration_s} && date +%s.%N > {run_dir}/detection/window_end
-# detection/fps.json (FPS·추론·지연, 구간 목록). 쓸 통계 구간이 없으면 후처리 실패로 남는다
+# detection/fps.json (추론 속도·FPS·지연, 구간 목록). 쓸 통계 구간이 없으면 후처리 실패로 남는다
 postprocess:
   - name: detection_fps
     cmd: python3 /repo/tools/harness/detection_fps.py {run_dir}

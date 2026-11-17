@@ -42,9 +42,6 @@ FAILURE_CAUSES = {'assign': {'101', '102'}, 'canceled': {'103', '104'}, 'localiz
 NAV_KPI = {'navkpi.plan_success_rate': (0.98, 'min'), 'navkpi.replan_p95_ms': (500.0, 'max'),
            'navkpi.pred_err_mean': (0.15, 'max'), 'navkpi.cte_straight_mean_m': (0.05, 'max'),
            'navkpi.cte_curve_mean_m': (0.10, 'max')}
-# 원 명세 AI 인지(6장) KPI "CPU 10 FPS" (yolo_fps, detection_fps.py): 클수록 좋아 CI 하한으로 판정한다 (NAV_KPI와 같은 형식).
-# "GPU 30 FPS"는 하네스 이미지·러너에 GPU가 없어 두지 않는다
-DETECT_KPI = {'detect.fps.mean': (10.0, 'min')}
 # 추적 정확도 KPI (docs/algorithms/perception.md 1-7): (기준, 방향). gt = 기준보다 커야 함 (CI 하한으로 판정).
 # P1은 0과 같아도 불합격이다 (추정 속도가 0이면 예측과 정지 가정이 같아진다). 장면 A·B·D·E에서만 판정한다
 # P2는 센서 범위(12 m) 안 짝의 속도 RMSE다 (3막 재측정부터. 1차 결과 후·재측정 전 등록, perception.md 1-7 P2 보완).
@@ -54,9 +51,14 @@ TRACK_KPI_SCENARIOS = {'tracking_kpi_a', 'tracking_kpi_b', 'tracking_kpi_d', 'tr
 # 평균·CI로 판정하는 KPI의 최소 실행 수. 모자라면 보류다 (P1·P2는 장면마다 10회로 미리 정했다, perception.md 1-7)
 # TRACK_KPI에서 만든다: P2 지표 이름이 바뀌어도(전체 → 센서 범위 안) 보류 규칙이 같이 따라가게
 KPI_MIN_RUNS = {metric: 10 for metric in TRACK_KPI}
-# 최악값으로 판정하는 KPI: 지표 → (기준 하한, 최소 실행 수, 판정할 시나리오). 안전 기준이라 평균·CI가 아니라
-# 모든 실행이 기준 이상이어야 한다 (D1, perception.md 1-7)
-WORST_KPI = {'track.d1_ttc_s': (3.0, 10, {'tracking_kpi_c10', 'tracking_kpi_c15'})}
+# 최악값으로 판정하는 KPI: 지표 → (기준 하한, 최소 실행 수, 판정할 시나리오). 평균·CI가 아니라
+# 모든 실행이 기준 이상이어야 한다.
+#   D1 (perception.md 1-7): 안전 기준이라
+#   원 명세 AI 인지(6장) "추론 속도는 CPU 기준 10 FPS 이상 유지" (yolo_fps, detection_fps.py): 실행마다 가장 느린 5 s
+#   구간의 추론 속도(1000 ÷ 추론 ms)라, 모든 실행이 10 이상 = 모든 구간이 10 이상 (11/17 #357 등록, 3회).
+#   "GPU 30 FPS"는 하네스 이미지·러너에 GPU가 없어 두지 않는다
+WORST_KPI = {'track.d1_ttc_s': (3.0, 10, {'tracking_kpi_c10', 'tracking_kpi_c15'}),
+             'detect.infer_fps.min': (10.0, 3, {'yolo_fps'})}
 # tracking_eval 판정 지연 속력 구간 → 지표 이름
 TRACK_SPEED_BINS = {'<0.6': 'lt0_6', '0.6-1.0': '0_6to1_0', '>=1.0': 'ge1_0'}
 # I12 (docs/test-plan.md, fleet_i12만): 측정 손실률·지연 중앙값이 주입값과 맞고, 할당 명령이 모두 Ack된다.
@@ -493,18 +495,25 @@ def i12_metrics(meta: dict, fleet: dict[str, float]) -> dict[str, float]:
 def detection_metrics(run_dir: Path) -> dict[str, float]:
     """detection/fps.json(tools/harness/detection_fps.py, yolo_fps) → detect.* 지표.
 
-    detect.fps.mean  측정 구간의 처리 FPS (발행 프레임 수 합 ÷ 실제 시간 합). KPI ≥ 10 (DETECT_KPI)
-    나머지는 참고 지표다: fps.min(가장 느린 5 s 구간), infer_ms.mean(추론), latency_ms.mean(촬영→발행, 시뮬레이션 시계),
-    frames·windows(표본 수), objects_per_frame, no_depth(깊이 없어 뺀 검출), tf_fail(TF 없어 버린 프레임). 값이 없으면 뺀다.
+    detect.infer_fps.min  측정 구간 중 가장 느린 5 s 구간의 추론 속도 (1000 ÷ 추론 ms, 발행 0인 구간은 0).
+                          KPI: 모든 실행이 10 이상 (WORST_KPI, 원 명세 "추론 속도 10 FPS 이상 유지")
+    나머지는 참고 지표다: infer_fps.mean(1000 ÷ 추론 평균), infer_ms.mean(추론), empty_windows(발행 0인 구간),
+    fps.mean(처리 FPS = 발행 프레임 수 합 ÷ 실제 시간 합, #357 첫 측정의 판정 지표), fps.min(가장 느린 구간의 처리 FPS),
+    latency_ms.mean(촬영→발행, 시뮬레이션 시계), frames·windows(표본 수), objects_per_frame,
+    no_depth(깊이 없어 뺀 검출), tf_fail(TF 없어 버린 프레임), deferred·tf_drop(TF 미뤄 발행·기다리다 버린 결과).
+    값이 없으면 뺀다.
     """
     path = run_dir / 'detection' / 'fps.json'
     if not path.exists():
         return {}
     d = json.loads(path.read_text(encoding='utf-8'))
     out = {}
-    for key, name in (('fps_mean', 'fps.mean'), ('fps_min', 'fps.min'), ('infer_ms_mean', 'infer_ms.mean'),
+    for key, name in (('infer_fps_min', 'infer_fps.min'), ('infer_fps_mean', 'infer_fps.mean'),
+                      ('infer_ms_mean', 'infer_ms.mean'), ('empty_windows', 'empty_windows'),
+                      ('fps_mean', 'fps.mean'), ('fps_min', 'fps.min'),
                       ('latency_ms_mean', 'latency_ms.mean'), ('frames', 'frames'), ('windows', 'windows'),
-                      ('objects_per_frame', 'objects_per_frame'), ('no_depth', 'no_depth'), ('tf_fail', 'tf_fail')):
+                      ('objects_per_frame', 'objects_per_frame'), ('no_depth', 'no_depth'), ('tf_fail', 'tf_fail'),
+                      ('deferred', 'deferred'), ('tf_drop', 'tf_drop')):
         if isinstance(d.get(key), (int, float)):
             out[f'detect.{name}'] = float(d[key])
     return out
@@ -564,8 +573,6 @@ def kpi_rule(metric: str, scenario: str = '') -> Optional[tuple[float, str]]:
         return CPU_KPI_PCT, 'max'
     if metric in NAV_KPI or metric in I12_KPI:
         return NAV_KPI.get(metric) or I12_KPI[metric]
-    if metric in DETECT_KPI:
-        return DETECT_KPI[metric]
     if metric in TRACK_KPI and scenario in TRACK_KPI_SCENARIOS:
         return TRACK_KPI[metric]
     return None

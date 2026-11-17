@@ -13,10 +13,12 @@ import detection_fps  # noqa: E402
 T0 = 1730512300.0
 
 
-def stats_line(t, fps, infer=80, latency=120, objects=0, no_depth=0, tf_fail=0, robot='amr_01'):
-    # launch 출력 그대로: [프로세스] [수준] [로그 시각] [로거]: 메시지 (detection_node._log_stats 형식)
+def stats_line(t, fps, infer=80, latency=120, objects=0, no_depth=0, tf_fail=0, robot='amr_01', defer=None):
+    # launch 출력 그대로: [프로세스] [수준] [로그 시각] [로거]: 메시지 (detection_node._log_stats 형식).
+    # defer=(미룸, 버림)이면 #359 뒤 형식 (끝에 TF 미룸·버림), 없으면 그 전 형식
+    tail = f', TF 미룸 {defer[0]}·버림 {defer[1]}' if defer else ''
     return (f'[detection_node-14] [INFO] [{T0 + t:.9f}] [{robot}.detection]: {fps:.1f} FPS, 추론 {infer} ms, '
-            f'촬영→발행 {latency} ms, 객체 {objects}개, 깊이 없어 뺀 검출 {no_depth}개, TF 실패 {tf_fail}프레임')
+            f'촬영→발행 {latency} ms, 객체 {objects}개, 깊이 없어 뺀 검출 {no_depth}개, TF 실패 {tf_fail}프레임{tail}')
 
 
 LOG = [
@@ -39,11 +41,14 @@ def test_parse_lines_reads_only_stats_lines():
     assert len(stats) == 7
     s = stats[3]
     assert s == {'t': pytest.approx(T0 + 25), 'logger': 'amr_01.detection', 'fps': 10.0, 'infer_ms': 80.0,
-                 'latency_ms': 120.0, 'objects': 100, 'no_depth': 2, 'tf_fail': 0}
+                 'latency_ms': 120.0, 'objects': 100, 'no_depth': 2, 'tf_fail': 0, 'deferred': 0, 'tf_drop': 0}
     # 로그 형식에 시각이 없으면 t는 None
     plain = detection_fps.parse_lines(['[INFO] [amr_01.detection]: 9.5 FPS, 추론 95 ms, 촬영→발행 140 ms, '
                                        '객체 2개, 깊이 없어 뺀 검출 0개, TF 실패 0프레임'])
     assert plain[0]['t'] is None and plain[0]['fps'] == 9.5
+    # #359 뒤 형식: 끝의 TF 미룸·버림도 읽는다
+    new = detection_fps.parse_lines([stats_line(5, 15.4, infer=43, defer=(25, 1))])
+    assert (new[0]['fps'], new[0]['infer_ms'], new[0]['deferred'], new[0]['tf_drop']) == (15.4, 43.0, 25, 1)
 
 
 def test_window_markers_keep_only_windows_fully_inside():
@@ -60,6 +65,24 @@ def test_window_markers_keep_only_windows_fully_inside():
     assert s['latency_ms_mean'] == pytest.approx((120 * 50 + 100 * 72 + 130 * 45) / 167, abs=0.05)
     assert s['objects_per_frame'] == pytest.approx(289 / 167)
     assert (s['no_depth'], s['tf_fail'], s['robots']) == (5, 1, ['amr_01'])
+    # KPI: 구간마다 추론 속도 = 1000 ÷ 추론 ms (12.5, 14.3, 11.1). 판정은 가장 느린 구간
+    assert [round(w['infer_fps'], 2) for w in windows] == [12.5, 14.29, 11.11]
+    assert s['infer_fps_min'] == pytest.approx(1000 / 90)
+    assert s['infer_fps_mean'] == pytest.approx(1000 / s['infer_ms_mean'])
+    assert (s['empty_windows'], s['deferred'], s['tf_drop']) == (0, 0, 0)
+
+
+def test_infer_fps_is_per_window_and_empty_window_counts_as_zero():
+    """평균이 10을 넘어도 한 구간이 100 ms를 넘으면 그 구간이 최소다. 발행 0인 구간은 추론 속도 0이다."""
+    log = [stats_line(5, 12.0, infer=60, defer=(20, 0)), stats_line(10, 12.0, infer=60, defer=(18, 0)),
+           stats_line(15, 9.0, infer=104, defer=(30, 2)), stats_line(20, 12.0, infer=60, defer=(19, 0))]
+    s = detection_fps.summarize(detection_fps.select_windows(detection_fps.parse_lines(log), skip=1))
+    assert s['infer_fps_mean'] > 10 and s['infer_fps_min'] == pytest.approx(1000 / 104)
+    assert (s['deferred'], s['tf_drop']) == (67, 2)
+    # 노드는 발행 0인 구간을 추론 0 ms로 남긴다 (프레임 수가 0이라 나눌 수 없다)
+    log.append(stats_line(25, 0.0, infer=0, latency=0, defer=(0, 0)))
+    s = detection_fps.summarize(detection_fps.select_windows(detection_fps.parse_lines(log), skip=1))
+    assert (s['infer_fps_min'], s['empty_windows']) == (0.0, 1)
 
 
 def test_without_markers_skips_first_lines_per_node():
@@ -88,10 +111,12 @@ def test_main_writes_json_and_fails_without_windows(tmp_path):
     assert detection_fps.main([str(run)]) == 0
     out = json.loads((run / 'detection' / 'fps.json').read_text(encoding='utf-8'))
     assert out['windows'] == 3 and out['stats_lines'] == 7 and out['fps_mean'] == pytest.approx(167 / 16)
+    assert out['infer_fps_min'] == pytest.approx(1000 / 90)
     assert len(out['window_list']) == 3 and out['window_start'] == pytest.approx(T0 + 18)
+    assert out['window_list'][2]['infer_fps'] == pytest.approx(1000 / 90)
     # 측정 구간 안에 통계 줄이 없으면 1 (하네스 후처리 실패). json은 남긴다
     (run / 'detection' / 'window_start').write_text(f'{T0 + 100:.9f}\n')
     (run / 'detection' / 'window_end').write_text(f'{T0 + 200:.9f}\n')
     assert detection_fps.main([str(run)]) == 1
     out = json.loads((run / 'detection' / 'fps.json').read_text(encoding='utf-8'))
-    assert out['windows'] == 0 and out['fps_mean'] is None
+    assert out['windows'] == 0 and out['fps_mean'] is None and out['infer_fps_min'] is None
