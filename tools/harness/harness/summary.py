@@ -29,8 +29,9 @@ CPU_KPI_PCT = 80.0
 # 장기 대기 기준은 amr_fleet_manager fleet_metrics.ZONE_LONG_WAIT_S와 같다 (서버 release_timeout_s)
 ZONE_LONG_WAIT_S = 30.0
 COUNT_ZERO_KPI = ('fleet.zone_long_waits', 'fleet.stalls')
-# 시나리오가 일부러 만드는 상황이라 판정하면 오해되는 지표 (fleet_deadlock은 교착을 유도한다)
-NO_VERDICT = {'fleet_deadlock': set(COUNT_ZERO_KPI)}
+# 시나리오가 일부러 만드는 상황이라 판정하면 오해되는 지표 (fleet_deadlock은 교착을 유도한다.
+# yolo_fps는 로봇 1대의 카메라를 CPU로 렌더링하는 FPS 측정이라 CPU 80 % KPI의 조건이 아니다)
+NO_VERDICT = {'fleet_deadlock': set(COUNT_ZERO_KPI), 'yolo_fps': {'sys.cpu_pct.mean'}}
 # 작업 실패 원인 묶음 (amr_msgs ErrorInfo.code, docs/api.md). 위치(203)를 주행(201·202)과 나눠 센다 (#148 지수 합의).
 # assign = 배터리 부족 거부(101, BT CheckBattery #253)·이미 수행 중(102), canceled = 서버 취소(103)·다른 로봇이 먼저
 # 수락(104). 어느 묶음에도 없는 코드(새 코드, 0 등)는 tasks_failed_other로 세어 실패가 조용히 빠지지 않게 한다
@@ -50,9 +51,14 @@ TRACK_KPI_SCENARIOS = {'tracking_kpi_a', 'tracking_kpi_b', 'tracking_kpi_d', 'tr
 # 평균·CI로 판정하는 KPI의 최소 실행 수. 모자라면 보류다 (P1·P2는 장면마다 10회로 미리 정했다, perception.md 1-7)
 # TRACK_KPI에서 만든다: P2 지표 이름이 바뀌어도(전체 → 센서 범위 안) 보류 규칙이 같이 따라가게
 KPI_MIN_RUNS = {metric: 10 for metric in TRACK_KPI}
-# 최악값으로 판정하는 KPI: 지표 → (기준 하한, 최소 실행 수, 판정할 시나리오). 안전 기준이라 평균·CI가 아니라
-# 모든 실행이 기준 이상이어야 한다 (D1, perception.md 1-7)
-WORST_KPI = {'track.d1_ttc_s': (3.0, 10, {'tracking_kpi_c10', 'tracking_kpi_c15'})}
+# 최악값으로 판정하는 KPI: 지표 → (기준 하한, 최소 실행 수, 판정할 시나리오). 평균·CI가 아니라
+# 모든 실행이 기준 이상이어야 한다.
+#   D1 (perception.md 1-7): 안전 기준이라
+#   원 명세 AI 인지(6장) "추론 속도는 CPU 기준 10 FPS 이상 유지" (yolo_fps, detection_fps.py): 실행마다 가장 느린 5 s
+#   구간의 추론 속도(1000 ÷ 추론 ms)라, 모든 실행이 10 이상 = 모든 구간이 10 이상 (11/17 #357 등록, 3회).
+#   "GPU 30 FPS"는 하네스 이미지·러너에 GPU가 없어 두지 않는다
+WORST_KPI = {'track.d1_ttc_s': (3.0, 10, {'tracking_kpi_c10', 'tracking_kpi_c15'}),
+             'detect.infer_fps.min': (10.0, 3, {'yolo_fps'})}
 # tracking_eval 판정 지연 속력 구간 → 지표 이름
 TRACK_SPEED_BINS = {'<0.6': 'lt0_6', '0.6-1.0': '0_6to1_0', '>=1.0': 'ge1_0'}
 # I12 (docs/test-plan.md, fleet_i12만): 측정 손실률·지연 중앙값이 주입값과 맞고, 할당 명령이 모두 Ack된다.
@@ -489,12 +495,39 @@ def i12_metrics(meta: dict, fleet: dict[str, float]) -> dict[str, float]:
     return out
 
 
+def detection_metrics(run_dir: Path) -> dict[str, float]:
+    """detection/fps.json(tools/harness/detection_fps.py, yolo_fps) → detect.* 지표.
+
+    detect.infer_fps.min  측정 구간 중 가장 느린 5 s 구간의 추론 속도 (1000 ÷ 추론 ms, 발행 0인 구간은 0).
+                          KPI: 모든 실행이 10 이상 (WORST_KPI, 원 명세 "추론 속도 10 FPS 이상 유지")
+    나머지는 참고 지표다: infer_fps.mean(1000 ÷ 추론 평균), infer_ms.mean(추론), empty_windows(발행 0인 구간),
+    fps.mean(처리 FPS = 발행 프레임 수 합 ÷ 실제 시간 합, #357 첫 측정의 판정 지표), fps.min(가장 느린 구간의 처리 FPS),
+    latency_ms.mean(촬영→발행, 시뮬레이션 시계), frames·windows(표본 수), objects_per_frame,
+    no_depth(깊이 없어 뺀 검출), tf_fail(TF 없어 버린 프레임), deferred·tf_drop(TF 미뤄 발행·기다리다 버린 결과).
+    값이 없으면 뺀다.
+    """
+    path = run_dir / 'detection' / 'fps.json'
+    if not path.exists():
+        return {}
+    d = json.loads(path.read_text(encoding='utf-8'))
+    out = {}
+    for key, name in (('infer_fps_min', 'infer_fps.min'), ('infer_fps_mean', 'infer_fps.mean'),
+                      ('infer_ms_mean', 'infer_ms.mean'), ('empty_windows', 'empty_windows'),
+                      ('fps_mean', 'fps.mean'), ('fps_min', 'fps.min'),
+                      ('latency_ms_mean', 'latency_ms.mean'), ('frames', 'frames'), ('windows', 'windows'),
+                      ('objects_per_frame', 'objects_per_frame'), ('no_depth', 'no_depth'), ('tf_fail', 'tf_fail'),
+                      ('deferred', 'deferred'), ('tf_drop', 'tf_drop')):
+        if isinstance(d.get(key), (int, float)):
+            out[f'detect.{name}'] = float(d[key])
+    return out
+
+
 def run_metrics(run_dir: Path) -> dict[str, float]:
     meta = load_meta(run_dir)
     fleet = fleet_metrics(run_dir)
     out = {**localization_metrics(run_dir), **fleet, **nav_metrics(run_dir),
            **kidnap_metrics(run_dir), **nav_kpi_metrics(run_dir), **cpu_metrics(run_dir),
-           **avoidance_metrics(run_dir), **tracking_metrics(run_dir),
+           **avoidance_metrics(run_dir), **tracking_metrics(run_dir), **detection_metrics(run_dir),
            **i12_metrics(meta, fleet)}
     rtf = meta.get('real_time_factor')
     if isinstance(rtf, (int, float)):

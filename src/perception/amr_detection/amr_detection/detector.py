@@ -56,9 +56,6 @@ class YoloDetector:
         import torch
         from ultralytics import YOLO
 
-        if num_threads > 0:
-            # 컨테이너에서 torch 기본 스레드가 1개로 잡혀 CPU 추론이 느렸다 (8코어에서 640 입력 141 ms)
-            torch.set_num_threads(num_threads)
         self.model = YOLO(model_path)
         self.names: Dict[int, str] = dict(self.model.names)
         unknown = set(class_map) - set(self.names.values())
@@ -71,6 +68,11 @@ class YoloDetector:
         # 첫 추론은 모델 준비로 십수 초 걸린다 (Docker CPU 실측 약 13 s). 시작할 때 미리 한 번 돌려
         # 첫 카메라 프레임이 그만큼 늦게 처리되지 않게 한다
         self.model.predict(np.zeros((480, 640, 3), dtype=np.uint8), **self.kwargs)
+        # torch CPU 스레드 수는 첫 추론 뒤에 정한다. ultralytics가 첫 추론 때 장치를 고르며(select_device)
+        # torch 스레드를 min(8, 코어 수 − 1)로 덮기 때문이다 (8.4.164, 11/17: 4로 정해도 8로 돌았다)
+        if num_threads > 0:
+            torch.set_num_threads(num_threads)
+        self.num_threads = torch.get_num_threads()
 
     def detect(self, bgr) -> List[Detection]:
         boxes = self.model.predict(bgr, **self.kwargs)[0].boxes
