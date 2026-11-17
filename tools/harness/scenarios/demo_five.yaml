@@ -1,0 +1,22 @@
+# 식당 5대 동시 배달 녹화 (CCTV 시점). 1~5호가 동쪽 대기 줄에서 출발해 각자 픽업 → 테이블 배달을 끝까지 하는 장면.
+#   Actions Fleet Regression Test: scenario=demo_five, repeats=1, label=cctv
+# 작업: tasks/demo_five.yaml (매장 네 곳 + 배식대 → 홀 테이블 다섯 곳). 손님은 평상시 파일, 위치는 정답값(시연 녹화와 같다)
+# 카메라: cctv(서쪽 입구 위 구석) + top(탑뷰, 예비)
+name: demo_five
+extends: demo_restaurant
+# docker_run.sh는 이 파일의 packages: 줄만 읽는다 (extends를 따라가지 않는다)
+packages: amr_bringup
+params:
+  robots: robots_restaurant.yaml
+  guests: dynamic_obstacles_restaurant.yaml
+  task_generator: "false"
+  scene_script: python3 /repo/tools/harness/demo_scene.py
+  scene_file: demo_five.yaml
+  cost_fn: euclidean
+  congestion_filter: none
+  cameras: cctv,top
+  robot_camera: "false"
+  # 워크플로는 이 파일 params만 받는다 (extends의 값은 안 본다)
+  localization: ground_truth
+  # 가장 먼 배달(대기 줄 → 배식대 → 11번 테이블 약 30 m)도 손님 사이로 끝나게
+  duration_s: 180

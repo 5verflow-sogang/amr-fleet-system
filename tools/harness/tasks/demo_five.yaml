@@ -1,0 +1,13 @@
+# 식당 5대 동시 배달 (하네스 demo_five, tools/harness/demo_scene.py 장면 파일). "5대가 각자 일을 끝까지 한다" 녹화용.
+# 1~5호는 동쪽 벽 대기 줄(robots_restaurant.yaml)에서 출발한다. 픽업을 매장 네 곳 + 배식대로 나눠 한 자리에 몰리지 않게 하고,
+# 하역은 홀 서쪽·가운데·동쪽 테이블로 흩는다. 누가 어느 작업을 맡을지는 관제(nearest)가 정한다
+steps:
+  - name: five
+    gap_s: 1.0
+    t0: true
+    tasks:
+      - {id: f_stall4_t05, type: delivery, pickup: stall_4, dropoff: t05}
+      - {id: f_stall3_t09, type: delivery, pickup: stall_3, dropoff: t09}
+      - {id: f_stall2_t13, type: delivery, pickup: stall_2, dropoff: t13}
+      - {id: f_stall1_t07, type: delivery, pickup: stall_1, dropoff: t07}
+      - {id: f_buffet2_t11, type: delivery, pickup: buffet_2, dropoff: t11}
