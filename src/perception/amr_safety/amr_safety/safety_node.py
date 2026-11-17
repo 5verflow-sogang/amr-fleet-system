@@ -106,6 +106,7 @@ class SafetyNode(Node):
             ttc_critical=p('ttc_critical', 1.0).value,
             ttc_warning=p('ttc_warning', 2.0).value,
             dynamic_warning_distance=p('dynamic_warning_distance', 1.5).value,
+            moving_min_speed=p('moving_min_speed', 0.0).value,
             warning_speed_limit=p('warning_speed_limit', 0.6).value,
             dynamic_slow_distance=p('dynamic_slow_distance', 0.5).value,
             dynamic_slow_speed_limit=p('dynamic_slow_speed_limit', 0.15).value,
