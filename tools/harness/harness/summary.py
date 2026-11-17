@@ -255,6 +255,9 @@ def fleet_metrics(run_dir: Path) -> dict[str, float]:
         out['fleet.stalls_paired'] = sum(1 for r in stalled if r.get('with'))
         if stalled:
             out['fleet.stall_s.max'] = max(_floats(stalled, 'duration_s'))
+    if (run_dir / 'standoffs.csv').exists():
+        # 서버가 대치를 풀려고 보낸 양보 지시 수 (standoffs.csv). 정체(60 s)보다 먼저 풀린 대치는 여기만 남는다
+        out['fleet.standoff_yields'] = len(_read_csv(run_dir / 'standoffs.csv'))
     # 로봇 장애 회수 (fault_events.csv에 robot_kill이 있을 때만 파일이 있다)
     reclaimed = [r for r in _read_csv(run_dir / 'recovery.csv') if r.get('task_id')]
     if (run_dir / 'recovery.csv').exists():

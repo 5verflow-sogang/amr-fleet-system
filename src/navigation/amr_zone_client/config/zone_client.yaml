@@ -73,3 +73,10 @@
     # 중에도 resend_period_s마다 ACCESS를 보내 서버 last_seen을 갱신하므로, 더는 서버
     # release_timeout_s(amr_fleet_manager.yaml 기본 30 s)보다 작아야 할 필요가 없다
     backing_timeout_s: 45.0
+    # 대치 양보 (서버 traffic.standoff, ZoneGrant zone_id standoff:back|forward): 그 방향으로 yield_distance_m 움직이고
+    # yield_hold_s 서 있다가 끝낸다. 속도는 backing_speed_mps. yield_timeout_s 안에 다 못 가면 그 자리에서 서 있기로 넘어간다
+    yield_distance_m: 0.6
+    yield_hold_s: 8.0
+    yield_timeout_s: 10.0
+    # 비킬 쪽 확인용 LiDAR (상대 토픽). 차체 끝에서 yield_distance_m + 0.1 m 안에 점이 있으면 움직이지 않고 서 있기만 한다
+    scan_topic: scan
