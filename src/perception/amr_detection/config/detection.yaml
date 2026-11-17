@@ -10,7 +10,8 @@
     # Mac Docker에서 Gazebo가 카메라를 CPU로 렌더링하면 120~150 ms로 늘어난다 (렌더링이 CPU를 3코어 넘게 쓴다).
     # Gazebo와 함께 10 FPS가 안 나오면 낮춘다. 작게 하면 먼 물체 검출 거리가 줄어든다
     image_size: 640
-    # torch CPU 스레드 수. 0이면 torch 기본값(컨테이너에서 1개로 잡혀 640 입력 141 ms였다)
+    # torch CPU 스레드 수. 0이면 ultralytics가 정하는 값(min(8, 코어 수 − 1)).
+    # 전에는 ultralytics가 첫 추론 때 이 값을 덮어 4를 적어도 8로 돌았다 (11/17, detector.py에서 첫 추론 뒤에 정하게 고침)
     num_threads: 4
     confidence_threshold: 0.5
     iou_threshold: 0.45        # NMS
@@ -31,7 +32,9 @@
 
     # 출력 좌표계. 원 명세: map frame. 위치 추정(map → odom) 없이 시험할 때는 odom
     target_frame: map
-    tf_timeout: 0.1            # s. 촬영 시각의 TF를 기다리는 시간
+    # s, 실제 시간. 추론이 끝났을 때 촬영 시각의 TF가 없으면 결과를 미뤄 두고 이만큼까지 기다린다.
+    # 그동안 다음 추론을 쉬어 /tf를 먼저 받는다. 넘으면 그 결과를 버린다 (detection_node 모듈 설명)
+    tf_timeout: 0.5
 
     max_rate: 30.0             # Hz. 새 프레임 확인 주기 (카메라 주기). 실제 FPS는 추론 속도가 정한다
     marker_size: 0.4           # m. RViz 상자 마커 한 변
