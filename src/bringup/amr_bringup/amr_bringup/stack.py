@@ -9,8 +9,8 @@ from typing import List, NamedTuple, Optional
 
 from amr_bringup.robots import cmd_vel_chain, encoder_seed
 
-# 몸체(spawn_robot body) → Nav2 프로필(nav2.launch.py nav2_profile)·안전 프로필(safety.launch.py profile).
-# serving이면 footprint가 서빙 로봇 크기, 순항 속도·안전 노드 근접 저속이 식당 값이 된다
+# 몸체(spawn_robot body) → Nav2 프로필(nav2.launch.py nav2_profile)·안전·인식 프로필(safety·detection.launch.py profile).
+# serving이면 footprint가 서빙 로봇 크기, 순항 속도·안전 노드 근접 저속이 식당 값, 인식 모델이 COCO 원본(사람만)이 된다
 NAV2_PROFILE = {'amr': 'warehouse', 'serving': 'restaurant'}
 
 # off: DiffDrive odom TF를 그대로 씀 (지도 매핑 등 위치추정 자체가 필요 없을 때)
@@ -152,7 +152,8 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
     if opt.tracking:
         stack.append(Include('amr_tracking', 'tracking.launch.py', dict(namespace=name, use_sim_time='true')))
     if opt.detection and opt.has_camera(name):
-        stack.append(Include('amr_detection', 'detection.launch.py', dict(namespace=name, use_sim_time='true')))
+        stack.append(Include('amr_detection', 'detection.launch.py', dict(
+            namespace=name, profile=NAV2_PROFILE[opt.body], use_sim_time='true')))
     if opt.safety:
         stack.append(Include('amr_safety', 'safety.launch.py', dict(
             namespace=name, cmd_vel_in_topic=chain['safety_in'], profile=NAV2_PROFILE[opt.body],
