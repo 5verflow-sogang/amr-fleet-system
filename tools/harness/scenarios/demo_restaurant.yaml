@@ -2,7 +2,8 @@
 # 식당 월드 + 서빙 로봇 5대 + Nav2·추적·안전 + 손님·직원 + 혼잡도 노드 + 고정 카메라(+ 로봇 시점 카메라) + 작업.
 # 결과:
 #   video/<카메라>.mp4 + video.json  카메라마다 영상(시뮬레이션 시각 15 fps)과 첫 프레임 시각. /demo/t0에 맞춰 자른다
-#   rosbag/                          측정 토픽(task_status·robot_states·task_table·/demo/t0)만
+#   rosbag/                          측정 토픽(task_status·robot_states·task_table·congestion·/demo/t0)과 로봇별 Nav2 계획 경로
+#                                    (/amr_NN/plan, 편집 영상의 관제 경로 표시)만
 #   assignments.csv, bag_info.txt, 요약의 run.real_time_factor
 # 카메라 원본(camera_bag/)은 mp4로 바꾼 뒤 지워 버킷에 올리지 않는다 (카메라 3대 60 s 약 8 GB → mp4 수십 MB).
 # 바꾸기에 실패하면 원본이 남아 그대로 올라간다.
@@ -89,7 +90,7 @@ processes:
     cmd: ros2 bag record -o {run_dir}/camera_bag -e '/demo_cam/.*|/amr_[0-9][0-9]/camera/color/image_raw'
     settle_s: 1
   - name: rosbag
-    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/task_status|/fleet/robot_states|/fleet/task_table|/fleet/congestion|/demo/t0|/clock'
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/task_status|/fleet/robot_states|/fleet/task_table|/fleet/congestion|/demo/t0|/clock|/amr_[0-9][0-9]/plan'
     settle_s: 3
   # 지도 원점은 실수로 준다 ('[0, 0, 0]'이면 작업 생성기가 시작하자마자 죽는다, 11/6 스모크)
   - name: task_generator
