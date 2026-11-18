@@ -1,7 +1,11 @@
-# 장면 3 Gazebo 고정 요청 시각 (두 조건 동일). 4호는 북서쪽(매장 1·2 → t02·t03)에서 일하고, 남쪽 회수는 75·105 s.
+# 장면 3 Gazebo 고정 요청 시각 (두 조건 동일). 4호는 북쪽 가운데(매장 2·3 → t03·t04, 서쪽 손님에서 4 m 넘게 떨어짐)에서
+# 일하고, 남쪽 회수는 75·105 s.
 # 1·2·5호는 남동쪽 홀(충전소 옆), 3호는 남서쪽 대기 자리(-3.5, -6.3)에서 쉰다. 105 s 회수는 OFF에서 가까운 1·2·5호가 모두
 # 충전 중(남동쪽 홀이 빔)이라 3호가 넓은 남쪽 통로로 약 10.5 m를, ON에서는 미리 충전을 마친 2호가 대기 자리에서 약 5 m를 온다.
-# 3호의 길은 4호가 일하는 북쪽 통로도, 테이블 사이 좁은 틈도 지나지 않는다 (11/8 v7: 서쪽 t02에서 출발한 3호가 막혔다).
+# 4호 요청은 45~50 s 간격이라 요청 때마다 4호가 비어 있다 (11/18 A2: 30 s 간격이면 60 s 배달 때 4호가 아직 바빠 남서쪽 3호가
+# 홀을 가로질러 가져가고, 105 s 회수를 4호가 맡았다). 95 s 요청으로 4호는 105 s에 바쁘다 → OFF 105 s 회수 후보는 3호뿐.
+# 회수는 하역 자리를 나눈다: 75 s(5호) → 퇴식대 2 앞 return_2, 105 s(주인공) → 옆면 return_s3_side. 5호가 하역 뒤 충전소로
+# 나가지 못해도 주인공이 그 자리로 들어갈 일이 없다 (A2 ON: 같은 자리에서 5호·2호가 마주 막혔다).
 # 같은 매장·테이블을 시간차(delay_s)로 다시 쓴다. 앞 작업이 안 끝났으면 서버 큐에서 기다리는 것이 의도라
 # 시작할 때의 자리 겹침 확인(demo_scene.py station_conflicts)을 끈다
 station_check: false
@@ -10,64 +14,48 @@ steps:
   after:
     delay_s: 0
   tasks:
-  - id: s3_west_000
+  - id: s3_north_000
     type: delivery
     pickup: stall_2
     dropoff: t03
   t0: true
-- name: at_030
+- name: at_045
   after:
-    delay_s: 30
+    delay_s: 45
   tasks:
-  - id: s3_west_030
+  - id: s3_north_045
     type: delivery
-    pickup: stall_1
-    dropoff: t02
-- name: at_060
-  after:
-    delay_s: 30
-  tasks:
-  - id: s3_west_060
-    type: delivery
-    pickup: stall_2
-    dropoff: t03
+    pickup: stall_3
+    dropoff: t04
 - name: at_075
   after:
-    delay_s: 15
+    delay_s: 30
   tasks:
   - id: s3_collect_75
     type: collect
     pickup: c01
-    dropoff: return_s3_side
-- name: at_090
+    dropoff: return_2
+- name: at_095
   after:
-    delay_s: 15
+    delay_s: 20
   tasks:
-  - id: s3_west_090
+  - id: s3_north_095
     type: delivery
-    pickup: stall_1
-    dropoff: t02
+    pickup: stall_2
+    dropoff: t03
 - name: at_105
   after:
-    delay_s: 15
+    delay_s: 10
   tasks:
   - id: s3_collect_105
     type: collect
     pickup: c01
     dropoff: return_s3_side
-- name: at_120
+- name: at_140
   after:
-    delay_s: 15
+    delay_s: 35
   tasks:
-  - id: s3_west_120
+  - id: s3_north_140
     type: delivery
-    pickup: stall_2
-    dropoff: t03
-- name: at_150
-  after:
-    delay_s: 30
-  tasks:
-  - id: s3_west_150
-    type: delivery
-    pickup: stall_1
-    dropoff: t02
+    pickup: stall_3
+    dropoff: t04

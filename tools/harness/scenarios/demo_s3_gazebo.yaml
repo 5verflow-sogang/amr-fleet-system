@@ -2,8 +2,7 @@
 # 2안 화면(왼쪽 관제 + 오른쪽 주인공 1인칭) 녹화: 추적·YOLO 인식을 켜고, 105 s 회수를 맡는 주인공 로봇의 카메라를 켠다
 # (OFF 3호 / ON 2호, 카메라 하나마다 RTF가 떨어져 고정 카메라는 위 하나만). 측정 bag에는 모든 로봇의 경로·속도 명령·스캔·
 # 안전 상태와 인식 결과를 더 남긴다 (매끄러움 판정 stalls.py, 1인칭 인식 지도, 반납대 앞 멈칫 원인 보기).
-# 식당 costmap 팽창 반경 0.8 m(기본 0.55·0.5): 전역 경로가 의자·서 있는 로봇에 붙어 안전 노드 정지 구역에 들어가던 것(11/8 v7)을
-# 장면 3에서만 시험한다
+# costmap 팽창 반경은 기본값이다 (11/18 A2에서 0.8 m를 시험했더니 반납대 옆 좁은 통로에서 전역 경로를 못 만들어 5호가 72 s 섰다)
 name: demo_s3_gazebo
 extends: demo_s3
 packages: amr_bringup
@@ -28,7 +27,3 @@ param_sets:
   policy:
     "on": {charging: "true", charge_low_percent: "30.0", min_in_service: "3", robot_camera: amr_02}
     "off": {charging: "true", charge_low_percent: "20.0", min_in_service: "0", robot_camera: amr_03}
-config_patch:
-  amr_bringup/config/nav2_params.yaml:
-    global_costmap.global_costmap.ros__parameters.inflation_layer.inflation_radius: 0.8
-    local_costmap.local_costmap.ros__parameters.inflation_layer.inflation_radius: 0.8

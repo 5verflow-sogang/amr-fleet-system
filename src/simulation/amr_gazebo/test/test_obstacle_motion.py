@@ -457,24 +457,36 @@ def test_peak_scene12_changes_only_the_west_aisle_guests():
             assert spec == peak[gid], gid
 
 
-def test_scene3_guests_are_the_west_peak_guests_plus_one_bench_guest():
+def test_scene3_guests_are_the_west_peak_guests_plus_one_table_guest():
     # 장면 3은 피크 파일에서 서쪽 손님(peak_1~6, customer_2)만 그대로 옮겼다 (머리말). 로봇이 다니는 동쪽·가운데에는 없다.
-    # 예외 bench_guest: 회수 하역 길을 가로질러 주인공 1인칭에 '갑자기 나오는 손님' 장면을 만든다 (남쪽 통로 1 m 안쪽 왕복)
+    # 예외 table_guest: 회수 하역 길을 가로질러 주인공 1인칭에 '갑자기 나오는 손님' 장면을 만든다. 남동쪽 홀의 넓은 곳에서만
+    # 오가고, 반납대→충전소 길·충전소·c01·로봇 시작 자리에서 손님 멈춤 거리(1.2 m)보다 멀다 (11/18 A2: 남쪽 좁은 통로 x 3.7의
+    # bench_guest가 반납대에서 충전소로 나가는 5호를 막았다)
     config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
     with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak.yaml'), encoding='utf-8') as f:
         peak = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
     with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_s3.yaml'), encoding='utf-8') as f:
         scene3 = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
-    assert set(scene3) == {'customer_2', 'bench_guest'} | {f'peak_{i}' for i in range(1, 7)}
-    bench = scene3.pop('bench_guest')
-    xs = {w['x'] for w in bench['waypoints']}
-    ys = [w['y'] for w in bench['waypoints']]
-    assert bench['pattern'] == 'straight' and len(xs) == 1 and 3.0 <= xs.pop() <= 4.4
-    assert -6.6 <= min(ys) and max(ys) <= -5.4 and max(ys) - min(ys) <= 1.0
-    assert set(bench['yield_to_robots']) == {f'amr_0{i}' for i in range(1, 6)}
+    assert set(scene3) == {'customer_2', 'table_guest'} | {f'peak_{i}' for i in range(1, 7)}
+    guest = scene3.pop('table_guest')
+    xs = {w['x'] for w in guest['waypoints']}
+    ys = [w['y'] for w in guest['waypoints']]
+    assert guest['pattern'] == 'straight' and len(xs) == 1 and 4.8 <= xs.pop() <= 5.6
+    assert -5.8 <= min(ys) and max(ys) <= -4.9 and max(ys) - min(ys) <= 1.0
+    assert set(guest['yield_to_robots']) == {f'amr_0{i}' for i in range(1, 6)}
+    a, b = [(w['x'], w['y']) for w in guest['waypoints']]
+    for name, p in {'charger_c1': (5.0, -7.0), 'c01': (6.6, -5.3), 'amr_02 start': (6.5, -5.5)}.items():
+        assert _seg_dist(p, a, b) > 1.2, name
     for guest_id, spec in scene3.items():
         assert spec == peak[guest_id], guest_id
         assert all(w['x'] <= -6.5 for w in spec['waypoints']) and spec['spawn']['x'] <= -6.5, guest_id
+
+
+def _seg_dist(p, a, b):
+    (px, py), (ax, ay), (bx, by) = p, a, b
+    dx, dy = bx - ax, by - ay
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+    return math.hypot(ax + t * dx - px, ay + t * dy - py)
 
 
 # ---- keep_away_m: 로봇 근처면 손님이 선다 (움직이는 로봇 포함) ----

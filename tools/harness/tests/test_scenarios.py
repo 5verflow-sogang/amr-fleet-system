@@ -314,9 +314,8 @@ def test_scene3_gazebo_records_what_the_robot_view_and_stall_check_need():
     bag = procs['rosbag']['cmd']
     for topic in ('plan', 'cmd_vel', 'scan', 'safety/status', 'perception/obstacles', 'perception/objects'):
         assert topic in bag, topic
-    assert run.load_scenario('demo_s3_gazebo')['config_patch']['amr_bringup/config/nav2_params.yaml'] == {
-        'global_costmap.global_costmap.ros__parameters.inflation_layer.inflation_radius': 0.8,
-        'local_costmap.local_costmap.ros__parameters.inflation_layer.inflation_radius': 0.8}
+    # costmap 팽창 반경은 기본값 (11/18 A2: 0.8 m 시험에서 반납대 옆 좁은 통로 전역 경로가 끊겼다)
+    assert 'nav2_params.yaml' not in str(run.load_scenario('demo_s3_gazebo').get('config_patch', {}))
 
 
 def test_restaurant_record_extra_is_empty_by_default():
@@ -346,7 +345,8 @@ def test_scene3_battery_clock_starts_after_recording_and_workload_is_fixed():
         for task in step['tasks']:
             if task['type'] == 'collect':
                 collections.append((elapsed, task['dropoff']))
-    assert collections == [(75, 'return_s3_side'), (105, 'return_s3_side')]
+    # 하역 자리를 나눈다: 75 s 회수 로봇이 하역 뒤 충전소로 못 나가도 105 s 주인공이 그 자리로 들어가지 않는다
+    assert collections == [(75, 'return_2'), (105, 'return_s3_side')]
 
 
 def test_delayed_battery_group_is_disabled_in_other_demo_scenes():
