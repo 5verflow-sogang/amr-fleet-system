@@ -221,6 +221,32 @@ def test_scene12_runs_its_scene_script_with_the_scene12_guests():
     assert 'congestion_filter:=keepout' in on and 'localization:=ground_truth' in on
 
 
+def test_scene12_split_departs_into_the_west_aisle_and_records_the_robot_view():
+    # 1-2 분할 영상: 1호가 서쪽 통로로 출발한 뒤 손님이 몰리는 손님·시작 자리, 혼잡도 켬(keepout), 탑뷰 하나, 1호 RViz용 bag
+    procs = _demo_procs('demo_s12_split')
+    assert procs['scene']['cmd'].startswith(
+        'python3 /repo/tools/harness/demo_scene.py /repo/tools/harness/tasks/demo_s12_split.yaml ')
+    stack = procs['stack']['cmd']
+    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak_scene12_split.yaml' in stack
+    assert 'robots_restaurant_s12_split.yaml' in stack
+    assert 'congestion_filter:=keepout' in stack and 'localization:=ground_truth' in stack
+    assert procs['cameras']['cmd'].endswith('cameras:=top')
+    view = procs['view_bag']['cmd']
+    for topic in ('/tf', '/map', '/fleet/congestion', '/fleet/congestion_mask', '/fleet/task_assignments',
+                  '/amr_01/(scan|plan|cmd_vel|cmd_vel_nav|dwa/local_plan'):
+        assert topic in view, topic
+    assert '/fleet/task_assignments' in procs['rosbag']['cmd']
+    own = _own_params('demo_s12_split')
+    assert {'scene_file', 'congestion_filter', 'view_robot', 'localization', 'robots', 'guests'} <= own
+    # 기존 1-2는 그대로 (RViz bag 없음)
+    assert 'view_bag' not in _demo_procs('demo_s12')
+
+
+@pytest.mark.parametrize('name', ['demo_s11', 'demo_s12', 'demo_s2a', 'demo_s2b', 'demo_smoke'])
+def test_other_demo_scenes_do_not_record_the_robot_view(name):
+    assert 'view_bag' not in _demo_procs(name)
+
+
 @pytest.mark.parametrize('name', ['demo_s11', 'demo_smoke'])
 def test_other_demo_scenes_keep_the_task_generator(name):
     procs = _demo_procs(name)

@@ -1,0 +1,32 @@
+# 식당 시연 1-2 분할 영상: "관제는 혼잡을 알리고, 로봇은 스스로 길을 바꾼다". 1-2(demo_s12)를 바탕으로, 1호가 서쪽 통로로
+# 출발한 뒤 손님이 그 통로에 몰려 주행 중에 혼잡 알림(/fleet/congestion·혼잡 마스크) → 경로 변경(식당 프로필 1초 재계획 BT,
+# keepout 필터)이 일어난다. 1-2는 출발 전에 서쪽 통로가 막혀 있어 처음부터 우회한다.
+#   Actions Fleet Regression Test: scenario=demo_s12_split, repeats=1, label=split, params="slot=b1"
+# 한 실행에서 탑뷰 영상(video/top.mp4), RViz용 bag(view_bag/, 1호), 측정 rosbag(rosbag/)을 같이 받는다.
+# RViz 영상: tools/harness/rviz_video.sh <run_dir>/view_bag amr_01 (로컬 gui 이미지, 클라우드 이미지에는 RViz가 없다)
+# - 1호: 서쪽 통로 남쪽 입구 앞(-10.2, -7.0)에서 북쪽을 본다 (robots_restaurant_s12_split.yaml). 0초에 buffet_2 → t11 배달
+# - 손님: dynamic_obstacles_restaurant_peak_scene12_split.yaml. 서쪽 통로 손님 셋은 배식대 서쪽(구역 밖)에 서 있다가
+#   0초 + 1 s부터 서쪽 통로로 내려온다 (혼잡도 1.0까지 약 3 s). 1호는 그동안 서쪽 통로 쪽으로 1 m 남짓 가고 통로(y -5.0)에는
+#   안 들어간다
+# - 혼잡도 켬(congestion_filter keepout)이 기본이다. 끔과 나란히 보려면 params에 congestion_filter=none
+# 길이: 우회 경로 약 15 m + 배식대 도착(docking → loading)까지 1-2처럼 시뮬레이션 180 s
+name: demo_s12_split
+extends: demo_restaurant
+# docker_run.sh는 이 파일의 packages: 줄만 읽는다 (extends를 따라가지 않는다)
+packages: amr_bringup
+timeout_s: 5400
+params:
+  robots: robots_restaurant_s12_split.yaml
+  guests: dynamic_obstacles_restaurant_peak_scene12_split.yaml
+  task_generator: "false"
+  scene_script: python3 /repo/tools/harness/demo_scene.py
+  scene_file: demo_s12_split.yaml
+  cost_fn: euclidean
+  congestion_filter: keepout
+  # 탑뷰 하나 (카메라를 줄이면 RTF가 오른다)
+  cameras: top
+  robot_camera: "false"
+  view_robot: amr_01
+  # 녹화 전용 정답 위치 (AMCL은 바퀴 헛돎으로 2 m씩 밀려 거짓 도착, 1-2 녹화)
+  localization: ground_truth
+  duration_s: 180

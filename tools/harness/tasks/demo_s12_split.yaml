@@ -1,0 +1,19 @@
+# 식당 시연 1-2 분할 영상 (tools/harness/demo_scene.py 장면 파일, 하네스 demo_s12_split). 작업은 1-2(demo_s12.yaml)와 같다.
+# 동쪽 로봇 둘(4·5호)에 먼저 다른 배달을 주고, 0초에 1호에게 배식대 2번 자리(buffet_2) → 11번 테이블 배달을 요청하며
+# /demo/t0을 낸다. 1-2와 다른 점은 장면 시나리오 쪽이다: 1호가 서쪽 통로를 보고 서 있다가(robots_restaurant_s12_split.yaml)
+# 서쪽 통로로 출발하고, 서쪽 통로 손님 셋이 0초 + 1 s부터 그 통로로 내려와(dynamic_obstacles_restaurant_peak_scene12_split.yaml)
+# 혼잡도가 오르면 1초 재계획이 x -7.275 우회 통로로 바꾼다.
+# 누가 어느 작업을 맡나·자리 고르기는 demo_s12.yaml 머리말과 같다 (4·5호 픽업 t15·L03은 1호보다 동쪽 로봇이 가깝고,
+# buffet_2는 1호가 가장 가깝다). 1호 시작 자리가 (-10.0, -5.8)에서 (-10.2, -7.0)으로 옮겨도 buffet_2까지 1호가 가장 가깝다.
+steps:
+  - name: busy
+    gap_s: 0.5
+    tasks:
+      - {id: s12s_busy_c01, type: delivery, pickup: t15, dropoff: c01}   # amr_04
+      - {id: s12s_busy_L04, type: delivery, pickup: L03, dropoff: L04}   # amr_05
+  # 두 작업이 할당된 것을 작업표로 확인하고 3 s 뒤 = 0초 (/demo/t0). 서쪽 통로 손님은 이때부터 1 s 뒤에 움직인다
+  - name: request
+    after: {assigned: 2, delay_s: 3, timeout_s: 60}
+    t0: true
+    tasks:
+      - {id: s12s_buffet2_t11, type: delivery, pickup: buffet_2, dropoff: t11}
