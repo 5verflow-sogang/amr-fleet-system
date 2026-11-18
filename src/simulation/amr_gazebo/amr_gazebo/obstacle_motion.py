@@ -327,6 +327,19 @@ def _segment_meets_box(ax: float, ay: float, bx: float, by: float, hl: float, hw
     return t0 <= t1
 
 
+def released(spec: dict, t0: Optional[float], now: float) -> bool:
+    """장면 0초(/demo/t0)에 맞춰 나오는 손님인지와 나올 때가 됐는지. spec에 start_after_t0_s가 없으면 늘 True.
+
+    start_after_t0_s: 0초 [s, 시뮬레이션 시각] 뒤 이만큼 지나야 걷기 시작한다. 그 전에는 spawn 자리에 서 있다.
+    0초가 아직 안 왔으면(t0 None) 서 있다. 장면 시각에 맞춰 손님을 몰리게 할 때 쓴다 (1-2 분할 영상: 1호가 출발한 뒤
+    서쪽 통로에 손님이 들어간다). 손님은 스택과 함께 움직이기 시작해 0초와의 간격이 실행마다(RTF) 달라 자리만으로는 못 맞춘다
+    """
+    delay = spec.get('start_after_t0_s')
+    if delay is None:
+        return True
+    return t0 is not None and now >= t0 + float(delay)
+
+
 def body_twist(vx: float, vy: float, yaw: float, yaw_gain: float = 2.0,
                max_yaw_rate: float = 1.5) -> Tuple[float, float, float]:
     """월드 기준 속도를 몸체 기준 (vx, vy, wz)로 바꾼다. 몸체는 진행 방향을 보도록 돌린다.

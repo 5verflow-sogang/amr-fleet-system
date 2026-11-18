@@ -10,7 +10,7 @@ import yaml
 from amr_gazebo.obstacle_motion import (
     ROBOT_LENGTH, ROBOT_WIDTH, YIELD_DISTANCE, YIELD_PATIENCE_S, YIELD_SIDE_MARGIN, ObstacleMotion, blocks_path,
     body_twist,
-    catmull_rom, segment_box_distance)
+    catmull_rom, released, segment_box_distance)
 
 CONFIG = os.path.join(os.path.dirname(__file__), '..', 'config', 'dynamic_obstacles.yaml')
 DT = 0.05
@@ -523,3 +523,40 @@ def test_keep_away_simulated_guest_never_enters_radius_of_parked_robot():
 def test_negative_keep_away_rejected():
     with pytest.raises(ValueError):
         ObstacleMotion(_line(), random.Random(0), keep_away_m=-1.0)
+
+
+def test_guest_with_start_after_t0_waits_for_second_zero():
+    # 1-2 분할 영상: 서쪽 통로 손님은 /demo/t0 + start_after_t0_s부터 걷는다. 0초 전·0초 직후에는 서 있다
+    spec = {'id': 'g', 'start_after_t0_s': 1.5}
+    assert not released(spec, None, 100.0)
+    assert not released(spec, 10.0, 11.0)
+    assert released(spec, 10.0, 11.5)
+    # 키가 없으면 지금처럼 처음부터 걷는다
+    assert released({'id': 'g'}, None, 0.0)
+
+
+def test_scene12_split_guests_wait_outside_the_west_aisle_until_second_zero():
+    # 기다리는 손님은 혼잡도 구역 west_aisle(x -11.9 ~ -9.73, y -5.0 ~ 2.99) 밖(북쪽 배식대 쪽)에 서 있어야
+    # 0초 전 1호의 첫 경로가 서쪽 통로로 잡힌다. 나온 뒤에는 그 구역 안에서 움직인다 (정원 3명 = 혼잡도 1.0)
+    path = os.path.join(os.path.dirname(__file__), '..', 'config', 'dynamic_obstacles_restaurant_peak_scene12_split.yaml')
+    with open(path, encoding='utf-8') as f:
+        specs = yaml.safe_load(f)['obstacles']
+
+    def in_west(x, y):
+        return -11.9 <= x <= -9.73 and -5.0 <= y <= 2.99
+
+    held = [s for s in specs if 'start_after_t0_s' in s]
+    assert len(held) == 3
+    for s in held:
+        assert not in_west(s['spawn']['x'], s['spawn']['y']), s['id']
+        assert all(in_west(w['x'], w['y']) for w in s['waypoints']), s['id']
+    # 나머지 손님은 0초 전에 서쪽 통로 구역에 안 들어간다 (첫 경로가 서쪽 통로로 잡히게)
+    for s in specs:
+        if 'start_after_t0_s' in s:
+            continue
+        pts = [(w['x'], w['y']) for w in s['waypoints']] + [(s['spawn']['x'], s['spawn']['y'])]
+        if s['pattern'] == 'random':
+            xs, ys = zip(*pts)
+            assert max(xs) < -11.9 or min(xs) > -9.73 or max(ys) < -5.0 or min(ys) > 2.99, s['id']
+        else:
+            assert not any(in_west(x, y) for x, y in pts), s['id']
