@@ -419,6 +419,18 @@ def test_headon_obstacles_block_the_path():
         make_obstacles(1, 'cross', 1.0)                     # 가로지르기는 시드가 속도를 정한다
 
 
+def test_headon_moves_to_another_aisle():
+    # 식당 restaurant_avoidance: 매장 앞 통로 y 3.45, 목표 x 3 너머에서 출발해 서쪽 끝 x -11까지
+    o = make_obstacles(7, 'headon', path_y=3.45, spawn_x=(4.0, 4.8), end_x=-11.0)['obstacles'][0]
+    assert 4.0 <= o['spawn']['x'] <= 4.8 and abs(o['spawn']['y'] - 3.45) <= HEADON_OFFSET
+    assert o['waypoints'][1] == {'x': -11.0, 'y': o['spawn']['y']}
+    assert make_obstacles(7, 'headon') == make_obstacles(7, 'headon', path_y=HEADON_PATH_Y)  # 기본은 물류센터 그대로
+    with pytest.raises(ValueError):
+        make_obstacles(1, 'headon', end_x=12.0)             # 작업자는 서쪽으로 걷는다
+    with pytest.raises(ValueError):
+        make_obstacles(1, 'cross', path_y=3.45)             # 통로 위치는 headon에서만
+
+
 # --- 기록·재계산 ---
 
 def test_recorder_round_trip(tmp_path):

@@ -1,0 +1,97 @@
+# 식당 사람 정면 접근 (nav_avoidance_headon의 식당판). 물류센터 30회 충돌 0건이 식당 설정(서빙 로봇 0.565 x 0.537 m,
+# 식당 Nav2·안전 프로필)에서도 나오는지 본다. 판정 도구·작업자 규칙은 nav_avoidance_headon과 같다:
+# 작업자 1명이 로봇 경로 옆 ±0.3 m 안(늘 길을 막는다)을 마주 걸어오고, 로봇을 피하지 않지만 로봇이 멈춘 채 앞길을
+# 막으면 그 앞에서 선다(yield_to_robots). 식당 시연 손님(keep_away_m)처럼 미리 비켜 주지 않는다.
+# 통로 둘 (restaurant_gt 지도에서 잰 빈 폭, x -12~5.2 m 직선):
+#   aisle=stall  매장 앞 통로 y 3.45, 폭 약 2.25 m (기본)
+#   aisle=hall   4인석 1·2행 사이 홀 통로 y 0.22, 폭 1.75 m — 로봇 0.537 + 사람 0.5 m라 비켜 지나갈 틈이 좁다
+#
+#   tools/harness/gcp_run.sh restaurant_avoidance -n 15 --seed-base 2101 --label stall --ref exp/restaurant-headon --slot b1
+#   tools/harness/gcp_run.sh restaurant_avoidance -n 15 --seed-base 2116 --label stall --ref exp/restaurant-headon --slot b2
+#   ... --set aisle=hall --set aisle_y=0.22 --label hall
+#   ros2 run amr_safety avoidance_report <실행 폴더…> --runs 30 --require-avoidance --return-from pass
+name: restaurant_avoidance
+packages: amr_bringup
+num_robots: 1
+use_sim_time: true
+seed_base: 1
+timeout_s: 900
+params:
+  aisle: stall
+  aisle_y: "3.45"
+  # 로봇은 world x -7에서 출발해 x 3까지 동쪽으로 간다 (map = world). 작업자는 목표 너머 x 4.0~4.8에서 출발해
+  # 첫 전역 경로에 끼지 않고, 서쪽 끝 x -11까지 걷는다 (통로 동쪽 끝 5.2 - 작업자 반경 0.25 안)
+  goal_x: "3.0"
+  spawn_x: "4.0,4.8"
+  end_x: "-11.0"
+  after_goal_s: 5
+  record: "true"
+  seed_offset: "0"
+  worker_speed: "1.0"
+  cameras: top
+processes:
+  - name: avoidance_eval
+    cmd: >-
+      ros2 run amr_safety avoidance_eval --ros-args -r __ns:=/amr_01
+      -p use_sim_time:=true -p "map_origin_in_world:=[0.0,0.0,0.0]" -p output_dir:={run_dir}/avoidance
+      -p robot_length:=0.565 -p robot_width:=0.537
+    stop_first: true
+    wait_files: ["{run_dir}/avoidance/avoidance_summary.json"]
+    settle_s: 2
+  - name: system
+    # 식당 시연과 같은 스택(서빙 몸체·식당 Nav2/안전 프로필·정답 위치·추적·안전). Fleet·BT 끔: Nav2가 바로 주행한다
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:=1 gui:=false enable_camera:=false
+      world:=restaurant.sdf body:=serving localization:=ground_truth nav2_composition:=true
+      fleet:=false bt:=false nav2:=true tracking:=true safety:=true dynamic_obstacles:=false
+      seed:=$(( {seed} + {seed_offset} ))
+      robots_file:=/repo/experiments/restaurant_avoidance/robots_{aisle}.yaml
+      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
+    ready_topic: /amr_01/odometry/filtered
+    ready_timeout_s: 600
+    ready_cmds:
+      - ros2 lifecycle get /map_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/planner_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/controller_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/bt_navigator | grep -q '^active'
+      - timeout 5 ros2 topic echo --once /amr_01/perception/obstacles > /dev/null
+      - timeout 5 ros2 topic echo --once /amr_01/safety/status > /dev/null
+    settle_s: 5
+  - name: cameras
+    cmd: ros2 launch amr_gazebo demo_cameras.launch.py cameras:={cameras}
+    ready_cmds:
+      - timeout 20 ros2 topic list | grep -q '^/demo_cam/'
+    ready_timeout_s: 60
+    settle_s: 5
+  - name: camera_bag
+    cmd: ros2 bag record -o {run_dir}/camera_bag -e '/demo_cam/.*'
+    stop_first: true
+    settle_s: 1
+  - name: rosbag
+    cmd: >-
+      if [ "{record}" = true ];
+      then exec ros2 bag record -o {run_dir}/rosbag
+      -e '^/(tf|tf_static|amr_01/(scan|ground_truth/odom|odom|plan|cmd_vel|cmd_vel_nav|dwa/avoid_mode|dwa/passing|safety/status|perception/(obstacles|collision_risks))|dynamic_obstacles/.*/ground_truth/odom)$';
+      else exec sleep infinity; fi
+    stop_first: true
+  - name: obstacles
+    cmd: >-
+      ros2 run amr_safety avoidance_obstacles --seed $(( {seed} + {seed_offset} )) --mode headon --speed {worker_speed}
+      --path-y {aisle_y} --spawn-x {spawn_x} --end-x={end_x} --out {run_dir}/obstacles.yaml
+      && exec ros2 launch amr_gazebo dynamic_obstacles.launch.py config:={run_dir}/obstacles.yaml
+      seed:=$(( {seed} + {seed_offset} )) use_sim_time:=true
+    ready_topic: /dynamic_obstacles/worker_headon/ground_truth/odom
+driver:
+  mode: command
+  use_sim_time: true
+  timeout_s: 840
+  cmd: >-
+    ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose
+    "{{pose: {{header: {{frame_id: map}}, pose: {{position: {{x: {goal_x}, y: {aisle_y}}}, orientation: {{w: 1.0}}}}}}}}";
+    sleep {after_goal_s}
+postprocess:
+  - name: video
+    cmd: bash -c 'ros2 run amr_gazebo bag_to_mp4.py {run_dir}/camera_bag --out {run_dir}/video && rm -rf {run_dir}/camera_bag && du -sh {run_dir}/video'
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
