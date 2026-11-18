@@ -329,7 +329,7 @@ def test_scene11_off_sends_robot_1_and_on_sends_robot_3():
     robots = {k: tuple(v[:2]) for k, v in yaml.safe_load(S11_ROBOTS.read_text(encoding='utf-8'))['robots'].items()}
     buffet = st['stall_6'][:2]          # v3: 배식대 자리(buffet_1)가 매장 6으로 바뀌었다
     one, three = robots['amr_01'], robots['amr_03']
-    # 끔(직선 거리): 1호가 가깝다(9.75 m < 12.0 m). 매장 5였다면 3호가 가까워 끔·켬이 같아진다
+    # 끔(직선 거리): 1호가 가깝다(9.6 m < 12.0 m). 매장 5였다면 3호가 가까워 끔·켬이 같아진다
     assert math.dist(one, buffet) < math.dist(three, buffet)
     assert math.dist(three, st['stall_5'][:2]) < math.dist(one, st['stall_5'][:2])
     # 켬: 피크 몰림(서쪽 통로 1.0, 매장 앞 customer_1 한 명 1/6, v3는 배식대 줄이 없어 buffet_line 0)이면 3호

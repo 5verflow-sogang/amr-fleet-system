@@ -71,7 +71,7 @@ def fake_records(side='off'):
                          'dropoff': 't01', 'created': t0, 'assignee': who, 'state': 1}]
     table = [(t0 + 0.1, rows('')), (assign, rows(hero))]
     statuses = [{'t': arrive, 'task_id': 's11_buffet1_t01', 'state': 1, 'phase': 'loading'}]
-    start, goal = ROBOTS_S11[hero], (-10.5, 4.15)
+    start, goal = ROBOTS_S11[hero], (-10.5, 4.0)
     poses = {r: [(t, *xy) for t in (0.0, 60.0)] for r, xy in ROBOTS_S11.items() if r != hero}
     track = []
     for k in range(0, 121):
@@ -161,7 +161,7 @@ def test_text_values_fill_robot_names_times_and_distances():
     runs = {s: fake_run(s) for s in ov.SIDES}
     v = ov.text_values(runs, ov.load_stations(), ['amr_01', 'amr_03'])
     assert (v['robot_off'], v['robot_on'], v['arrive_off'], v['arrive_on']) == ('1호', '3호', '30', '15')
-    assert (v['dist_amr_01'], v['dist_amr_03']) == ('9.8', '12.0')
+    assert (v['dist_amr_01'], v['dist_amr_03']) == ('9.6', '12.0')
     assert ov.fill('{robot_on}가 {unknown}', v) == '3호가 {unknown}'
 
 
@@ -240,5 +240,5 @@ def test_full_frames_follow_the_guide_canvas(tmp_path):
 
 def test_s11_scene_distances_match_the_scene_file_header():
     st = ov.load_stations()
-    assert math.dist(ROBOTS_S11['amr_01'], st['stall_6']) == pytest.approx(9.75, abs=0.01)
+    assert math.dist(ROBOTS_S11['amr_01'], st['stall_6']) == pytest.approx(9.6, abs=0.01)
     assert math.dist(ROBOTS_S11['amr_03'], st['stall_6']) == pytest.approx(12.0, abs=0.01)
