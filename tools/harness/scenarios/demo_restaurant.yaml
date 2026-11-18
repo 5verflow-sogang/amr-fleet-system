@@ -38,6 +38,8 @@ params:
   # YOLO 인식: 카메라를 켠 로봇(robot_camera)에서만 뜬다. 서빙 몸체라 식당 프로필(COCO 원본, 사람만, amr_detection
   # detection_restaurant.yaml). 결과 /amr_0N/perception/objects(상자·확신도·거리, 촬영 시각)를 rosbag에 남겨 로봇 시점 영상에 그린다
   detection: "false"
+  # 측정 bag에 더 남길 토픽 (정규식 조각, '|'로 시작). 비우면 지금 목록 그대로. 장면 3 확인 녹화는 모든 로봇의 경로·속도 명령·스캔 등
+  record_extra: ""
   # 추적·안전 노드 (로봇마다 추적·안전·E-Stop 버튼 3개). 노드가 130개를 넘으면 마지막 로봇의 Nav2가
   # 서로를 못 찾는 것으로 보여(11/6, 늘 amr_05만) 끄고 확인 중이다
   bt: "true"
@@ -105,7 +107,7 @@ processes:
     settle_s: 1
   - name: rosbag
     # -e는 토픽 이름 안에서 찾기라 ^( … )$로 묶는다 (안 묶으면 /clock이 /clock_raw 약 1000 Hz까지 녹화한다)
-    cmd: ros2 bag record -o {run_dir}/rosbag -e '^(/fleet/task_status|/fleet/robot_states|/fleet/task_table|/fleet/congestion|/demo/t0|/clock|/amr_[0-9][0-9]/perception/objects)$'
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '^(/fleet/task_status|/fleet/robot_states|/fleet/task_table|/fleet/congestion|/demo/t0|/clock|/amr_[0-9][0-9]/perception/objects{record_extra})$'
     settle_s: 3
   # 장면 3에서만: 모든 로봇·카메라·측정 bag 준비 뒤 배터리/작업 노드를 함께 시작한다.
   - name: battery_group

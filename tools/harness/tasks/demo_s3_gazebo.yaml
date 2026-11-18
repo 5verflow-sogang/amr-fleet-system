@@ -1,4 +1,7 @@
-# 고정 요청 시각. 북쪽 서빙은 30초마다, 남쪽 회수는 75·105초. 두 조건 동일.
+# 장면 3 Gazebo 고정 요청 시각 (두 조건 동일). 4호는 북서쪽(매장 1·2 → t02·t03)에서 일하고, 남쪽 회수는 75·105 s.
+# 1·2·5호는 남동쪽 홀(충전소 옆), 3호는 남서쪽 대기 자리(-3.5, -6.3)에서 쉰다. 105 s 회수는 OFF에서 가까운 1·2·5호가 모두
+# 충전 중(남동쪽 홀이 빔)이라 3호가 넓은 남쪽 통로로 약 10.5 m를, ON에서는 미리 충전을 마친 2호가 대기 자리에서 약 5 m를 온다.
+# 3호의 길은 4호가 일하는 북쪽 통로도, 테이블 사이 좁은 틈도 지나지 않는다 (11/8 v7: 서쪽 t02에서 출발한 3호가 막혔다).
 # 같은 매장·테이블을 시간차(delay_s)로 다시 쓴다. 앞 작업이 안 끝났으면 서버 큐에서 기다리는 것이 의도라
 # 시작할 때의 자리 겹침 확인(demo_scene.py station_conflicts)을 끈다
 station_check: false
@@ -7,27 +10,27 @@ steps:
   after:
     delay_s: 0
   tasks:
-  - id: s3_north_000
+  - id: s3_west_000
     type: delivery
-    pickup: stall_1
-    dropoff: t02
+    pickup: stall_2
+    dropoff: t03
   t0: true
 - name: at_030
   after:
     delay_s: 30
   tasks:
-  - id: s3_north_030
+  - id: s3_west_030
     type: delivery
-    pickup: stall_2
-    dropoff: t03
+    pickup: stall_1
+    dropoff: t02
 - name: at_060
   after:
     delay_s: 30
   tasks:
-  - id: s3_north_060
+  - id: s3_west_060
     type: delivery
-    pickup: stall_1
-    dropoff: t02
+    pickup: stall_2
+    dropoff: t03
 - name: at_075
   after:
     delay_s: 15
@@ -40,10 +43,10 @@ steps:
   after:
     delay_s: 15
   tasks:
-  - id: s3_north_090
+  - id: s3_west_090
     type: delivery
-    pickup: stall_2
-    dropoff: t03
+    pickup: stall_1
+    dropoff: t02
 - name: at_105
   after:
     delay_s: 15
@@ -56,15 +59,15 @@ steps:
   after:
     delay_s: 15
   tasks:
-  - id: s3_north_120
+  - id: s3_west_120
     type: delivery
-    pickup: stall_1
-    dropoff: t02
+    pickup: stall_2
+    dropoff: t03
 - name: at_150
   after:
     delay_s: 30
   tasks:
-  - id: s3_north_150
+  - id: s3_west_150
     type: delivery
-    pickup: stall_2
-    dropoff: t03
+    pickup: stall_1
+    dropoff: t02

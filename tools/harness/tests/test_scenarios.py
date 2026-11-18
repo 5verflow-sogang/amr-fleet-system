@@ -300,9 +300,28 @@ def test_scene3_gazebo_policy_preserves_common_recording_conditions():
     on_args, off_args = _args(on['stack']['cmd']), _args(off['stack']['cmd'])
     assert 'charge_low_percent:=30.0' in on_args and 'min_in_service:=3' in on_args
     assert 'charge_low_percent:=20.0' in off_args and 'min_in_service:=0' in off_args
-    differing = lambda a: {v for v in a if not v.startswith(('charge_low_percent:=', 'min_in_service:='))}
+    # 주인공 카메라만 정책마다 다르다 (105 s 회수를 맡는 로봇: OFF 3호, ON 2호)
+    assert 'enable_camera:=amr_02' in on_args and 'enable_camera:=amr_03' in off_args
+    differing = lambda a: {v for v in a if not v.startswith(('charge_low_percent:=', 'min_in_service:=', 'enable_camera:='))}
     assert differing(on_args) == differing(off_args)
     assert '/repo/tools/harness/tasks/demo_s3_gazebo.yaml' in on['scene']['cmd']
+
+
+def test_scene3_gazebo_records_what_the_robot_view_and_stall_check_need():
+    procs = _demo_procs('demo_s3_gazebo', policy='on')
+    args = _args(procs['stack']['cmd'])
+    assert 'tracking:=true' in args and 'detection:=true' in args
+    bag = procs['rosbag']['cmd']
+    for topic in ('plan', 'cmd_vel', 'scan', 'safety/status', 'perception/obstacles', 'perception/objects'):
+        assert topic in bag, topic
+    assert run.load_scenario('demo_s3_gazebo')['config_patch']['amr_bringup/config/nav2_params.yaml'] == {
+        'global_costmap.global_costmap.ros__parameters.inflation_layer.inflation_radius': 0.8,
+        'local_costmap.local_costmap.ros__parameters.inflation_layer.inflation_radius': 0.8}
+
+
+def test_restaurant_record_extra_is_empty_by_default():
+    bag = _demo_procs('demo_s12')['rosbag']['cmd']
+    assert bag.endswith("|/amr_[0-9][0-9]/perception/objects)$'")
 
 
 def test_scene3_gazebo_uses_same_service_poses_for_scene_and_charging():
