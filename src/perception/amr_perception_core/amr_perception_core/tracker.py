@@ -1,7 +1,7 @@
 """여러 장애물을 KF로 동시에 추적한다 (ROS 비의존).
 
 매 프레임: 모든 트랙 예측 → 측정과 짝짓기(연관) → 짝지은 트랙 갱신 → 남은 측정으로 새 트랙
-→ 동적 여부 갱신 → 오래 관측되지 않은 트랙 삭제.
+→ 동적 여부 갱신(입구: 속력·증거·실제 이동, 출구: 멈춤) → 오래 관측되지 않은 트랙 삭제.
 
 연관은 마할라노비스 거리가 가까운 쌍부터 고르는 탐욕(greedy) 방식이고, 확정 트랙이 먼저 측정을 고른다.
 게이트 밖으로 한 번 벗어난 측정이 만든 미확정 트랙이 다음 프레임에 기존 트랙의 측정을 가로채
@@ -27,8 +27,8 @@ class TrackerConfig:
     confirm_hits: int = 3
     # 마지막 관측 후 이 시간 [s]이 지나면 삭제한다. LiDAR 10 Hz 기준 5프레임
     max_coast_time: float = 0.5
-    # 추정 속력이 이 값 [m/s]을 넘는 프레임이 dynamic_confirm_frames번 연속되면 동적으로 판정하고
-    # 트랙이 사라질 때까지 유지한다 (멈춰 선 사람도 동적 장애물). 정지 물체도 속도 추정 잡음으로
+    # 추정 속력이 이 값 [m/s]을 넘는 프레임이 dynamic_confirm_frames번 연속되면 동적으로 판정한다.
+    # 출구(dynamic_release_*)를 끄면 트랙이 사라질 때까지 유지한다. 정지 물체도 속도 추정 잡음으로
     # 순간 속력이 0.2 m/s를 넘곤 해서(σa 1.0일 때 프레임의 약 8%) 연속 조건을 둔다
     dynamic_speed_threshold: float = 0.25
     dynamic_confirm_frames: int = 5
@@ -57,6 +57,32 @@ class TrackerConfig:
     maneuver_margin: float = 0.15
     maneuver_max_age: float = 0.5
     maneuver_max_radius: float = 0.4
+    # 동적 입구 - 실제 이동: 속력·증거 조건에 더해, 입구 기준 자리에서 이 거리 [m] 이상 옮겨 가야 동적으로 판정한다
+    # (0이면 끔). 식당 테이블·의자 다리에 0.6 m/s로 다가가자 보이는 면이 바뀌어 군집 중심이 0.25~0.33 m/s로
+    # 0.5 s(약 0.15 m) 미끄러져 속력·증거 조건을 다 넘었다 (11/17 녹화).
+    # 입구 기준 자리는 속력 조건이 풀린 프레임(fast_frames 0)마다 지금 자리로 옮긴다: 속력 조건이 걸리기 시작한 뒤의
+    # 이동만 센다. 처음 본 자리에 고정하면 긴 테이블 옆을 지나갈 때 중심·최근접 점이 조금씩 밀린 것이 쌓여 0.3 m를
+    # 넘고, 그 뒤로는 이 조건이 늘 통과됐다 (#361 리뷰).
+    # 이동량은 군집 중심과 기준점(step의 ref_points, 센서에 가장 가까운 점) 중 덜 움직인 쪽으로 잰다. 보이는 면이 바뀌면
+    # 중심이, 옆을 지나가면 가장 가까운 점이 미끄러지지만 정지 물체에서 둘이 같이 미끄러지는 일은 드물다
+    # (Apollo 다중 기준점). 1.0 m/s로 걷는 사람은 속력 조건(5프레임, 0.5 s)과 같은 프레임에 넘는다
+    dynamic_min_displacement: float = 0.0
+    # 빈 공간 증거를 누적 대신 최근 이 프레임 수 안에서 센다 (0이면 누적). 누적이면 오래전 증거가 남아
+    # 나중에는 속력 조건만으로 동적이 된다. 관측이 없는 프레임은 증거 없음으로 센다
+    dynamic_evidence_window: int = 0
+    # 동적 출구: 동적 트랙의 추정 속력이 dynamic_release_speed [m/s] 미만인 프레임이
+    # - dynamic_release_frames번 연속이고 해제 기준 자리에서 dynamic_release_max_displacement [m] 안이면 바로 정적으로
+    #   내린다 (제자리에서 미끄러져 보였던 정지 물체)
+    # - dynamic_pause_frames번 연속이면 어디 있든 정적으로 내린다 (걸어와서 선 사람). 그 전까지는 '멈춤'이다:
+    #   동적 표시는 그대로라 안전 노드는 바깥 원·근접 저속을 걸고, TTC는 속력 조건(safety moving_min_speed)으로 빠진다
+    # 해제 기준 자리는 동적이 된 순간의 입구 기준 자리(속력 조건이 걸리기 시작한 자리)로 고정한다. 입구처럼 멈출 때마다
+    # 따라오게 하면 걸어와서 선 사람도 늘 0.5 m 안이 돼 3 s에 풀리고 10 s '멈춤'이 사라진다.
+    # 내릴 때 속력·증거 횟수를 0으로 돌리고 입구 기준 자리를 지금 자리로 옮긴다: 다시 동적이 되려면 입구 조건을 처음부터
+    # 넘는다. 둘 다 0이면 끈다 (트랙이 사라질 때까지 동적 유지)
+    dynamic_release_frames: int = 0
+    dynamic_pause_frames: int = 0
+    dynamic_release_speed: float = 0.1
+    dynamic_release_max_displacement: float = 0.5
 
     def __post_init__(self):
         if not (math.isfinite(self.gate_mahalanobis_sq) and self.gate_mahalanobis_sq > 0.0):
@@ -65,9 +91,18 @@ class TrackerConfig:
             value = getattr(self, name)
             if int(value) != value or value < 1:
                 raise ValueError(f'{name}는 1 이상의 정수여야 한다: {value}')
+        for name in ('dynamic_evidence_window', 'dynamic_release_frames', 'dynamic_pause_frames'):
+            value = getattr(self, name)
+            if int(value) != value or value < 0:
+                raise ValueError(f'{name}는 0 이상의 정수여야 한다: {value}')
+        if 0 < self.dynamic_evidence_window < self.dynamic_evidence_frames:
+            raise ValueError('dynamic_evidence_window는 dynamic_evidence_frames 이상이어야 한다')
+        if 0 < self.dynamic_pause_frames < self.dynamic_release_frames:
+            raise ValueError('dynamic_pause_frames는 dynamic_release_frames 이상이어야 한다')
         if not 0.0 < self.radius_smoothing <= 1.0:
             raise ValueError(f'radius_smoothing은 (0, 1] 범위여야 한다: {self.radius_smoothing}')
-        for name in ('maneuver_max_speed', 'maneuver_margin'):
+        for name in ('maneuver_max_speed', 'maneuver_margin', 'dynamic_min_displacement',
+                     'dynamic_release_speed', 'dynamic_release_max_displacement'):
             value = getattr(self, name)
             if not (math.isfinite(value) and value >= 0.0):
                 raise ValueError(f'{name}는 0 이상이어야 한다: {value}')
@@ -90,6 +125,15 @@ class Track:
     radius: Optional[float] = None  # 장애물 반경 [m] (측정 반경의 지수 평활). 반경 없이 측정하면 None
     last_z: Optional[np.ndarray] = None   # 마지막 관측 위치 (보조 연관 기준점)
     max_radius: Optional[float] = None    # 지금까지 본 가장 큰 측정 반경 [m] (보조 연관에서 큰 물체를 뺀다)
+    last_ref: Optional[np.ndarray] = None   # 마지막 관측 기준점 (step의 ref_points, 없으면 None)
+    # 입구 기준 자리 (TrackerConfig dynamic_min_displacement): 동적이 아닌 동안 속력 조건이 풀린 프레임마다 지금 자리
+    origin: Optional[np.ndarray] = None
+    origin_ref: Optional[np.ndarray] = None
+    # 해제 기준 자리 (TrackerConfig dynamic_release_max_displacement): 동적이 된 순간의 입구 기준 자리
+    release_origin: Optional[np.ndarray] = None
+    release_origin_ref: Optional[np.ndarray] = None
+    evidence_bits: int = 0      # 최근 dynamic_evidence_window 프레임의 증거 (비트, 이번 프레임이 맨 아래)
+    still_frames: int = 0       # 동적 트랙의 속력이 dynamic_release_speed 미만인 연속 프레임 수
 
 
 def _as_measurement(value: Sequence[float]) -> np.ndarray:
@@ -127,12 +171,15 @@ class MultiTargetTracker:
 
     def step(self, timestamp: float, measurements: Sequence[Sequence[float]],
              radii: Optional[Sequence[float]] = None,
-             free_evidence: Optional[Sequence[bool]] = None) -> List[Track]:
+             free_evidence: Optional[Sequence[bool]] = None,
+             ref_points: Optional[Sequence[Sequence[float]]] = None) -> List[Track]:
         """timestamp [s]의 측정 위치 목록을 반영하고 확정 트랙을 돌려준다. 측정이 없어도 호출한다.
 
         radii: 측정마다 장애물 반경 [m] (LiDAR 군집 반경). 주면 트랙 반경을 지수 평활로 갱신한다.
         free_evidence: 측정마다 빈 공간 침입 증거 (free_space.FreeSpaceGrid). 주면 동적 판정에
         증거 조건(dynamic_evidence_frames)을 더한다. 안 주면 속력만 본다.
+        ref_points: 측정마다 기준점 (x, y) (센서에 가장 가까운 군집 점). 주면 실제 이동량을 군집 중심과 기준점 중
+        덜 움직인 쪽으로 잰다 (dynamic_min_displacement, dynamic_release_max_displacement). 안 주면 측정 위치만 본다.
 
         측정은 고정 좌표계(odom 또는 map) 기준이어야 한다. 로봇 기준 좌표면 로봇 자신의 움직임이
         장애물 속도로 잡힌다. 시각이 거꾸로 가면 ValueError를 내고, 호출자가 reset()으로 처리한다.
@@ -148,6 +195,9 @@ class MultiTargetTracker:
         evidence = [bool(e) for e in free_evidence] if use_evidence else [False] * len(zs)
         if len(evidence) != len(zs):
             raise ValueError(f'free_evidence 개수({len(evidence)})가 측정 개수({len(zs)})와 다르다')
+        refs = [None] * len(zs) if ref_points is None else [_as_measurement(p) for p in ref_points]
+        if len(refs) != len(zs):
+            raise ValueError(f'ref_points 개수({len(refs)})가 측정 개수({len(zs)})와 다르다')
         self._last_time = t
 
         for track in self._tracks:
@@ -161,15 +211,21 @@ class MultiTargetTracker:
             else:
                 track.kf.update(zs[mi])
             track.last_z = zs[mi]
+            track.last_ref = refs[mi]
             self._update_radius(track, rs[mi])
-            track.evidence_frames += evidence[mi]
+            self._add_evidence(track, evidence[mi])
             track.hits += 1
             track.last_update = t
             if track.hits >= self.config.confirm_hits:
                 track.confirmed = True
+        if self.config.dynamic_evidence_window:
+            matched = {ti for ti, _ in matches + maneuver}
+            for ti, track in enumerate(self._tracks):
+                if ti not in matched:
+                    self._add_evidence(track, False)   # 관측 없는 프레임도 창을 민다
         for mi in unmatched:
-            track = self._new_track(zs[mi], t, rs[mi])
-            track.evidence_frames = int(evidence[mi])
+            track = self._new_track(zs[mi], t, rs[mi], refs[mi])
+            self._add_evidence(track, evidence[mi])
             self._tracks.append(track)
 
         self._tracks = [
@@ -180,15 +236,64 @@ class MultiTargetTracker:
             self._update_dynamic(track, use_evidence)
         return self.confirmed_tracks
 
+    def _add_evidence(self, track: Track, hit: bool) -> None:
+        window = self.config.dynamic_evidence_window
+        if not window:
+            track.evidence_frames += int(hit)
+            return
+        track.evidence_bits = ((track.evidence_bits << 1) | int(hit)) & ((1 << window) - 1)
+        track.evidence_frames = bin(track.evidence_bits).count('1')
+
+    @staticmethod
+    def displacement(track: Track, release: bool = False) -> float:
+        """기준 자리에서 옮겨 간 거리 [m]: 군집 중심과 기준점 중 덜 움직인 쪽.
+
+        release가 False면 입구 기준 자리(TrackerConfig dynamic_min_displacement), True면 해제 기준 자리
+        (dynamic_release_max_displacement, 동적이 된 순간에 고정. 없으면 입구 기준 자리).
+        """
+        origin, origin_ref = track.origin, track.origin_ref
+        if release and track.release_origin is not None:
+            origin, origin_ref = track.release_origin, track.release_origin_ref
+        d = float(np.hypot(*(track.last_z - origin)))
+        if origin_ref is not None and track.last_ref is not None:
+            d = min(d, float(np.hypot(*(track.last_ref - origin_ref))))
+        return d
+
     def _update_dynamic(self, track: Track, use_evidence: bool) -> None:
-        if track.kf.speed > self.config.dynamic_speed_threshold:
+        cfg = self.config
+        if track.kf.speed > cfg.dynamic_speed_threshold:
             track.fast_frames += 1
         else:
             track.fast_frames = 0
+            if not track.is_dynamic:
+                # 입구 기준 자리는 속력 조건이 풀린 동안 지금 자리를 따라간다 (속력 조건이 걸린 뒤의 이동만 센다)
+                track.origin, track.origin_ref = track.last_z, track.last_ref
         evidence_ok = (not use_evidence
-                       or track.evidence_frames >= self.config.dynamic_evidence_frames)
-        if track.fast_frames >= self.config.dynamic_confirm_frames and evidence_ok:
+                       or track.evidence_frames >= cfg.dynamic_evidence_frames)
+        moved_ok = (cfg.dynamic_min_displacement <= 0.0
+                    or self.displacement(track) >= cfg.dynamic_min_displacement)
+        if (not track.is_dynamic and track.fast_frames >= cfg.dynamic_confirm_frames
+                and evidence_ok and moved_ok):
             track.is_dynamic = True
+            track.release_origin, track.release_origin_ref = track.origin, track.origin_ref
+        self._release_dynamic(track)
+
+    def _release_dynamic(self, track: Track) -> None:
+        """동적 출구 (TrackerConfig dynamic_release_*): 멈춘 동적 트랙을 정적으로 내린다."""
+        cfg = self.config
+        if (not (cfg.dynamic_release_frames or cfg.dynamic_pause_frames) or not track.is_dynamic
+                or track.kf.speed >= cfg.dynamic_release_speed):
+            track.still_frames = 0
+            return
+        track.still_frames += 1
+        near = (cfg.dynamic_release_frames and track.still_frames >= cfg.dynamic_release_frames
+                and self.displacement(track, release=True) < cfg.dynamic_release_max_displacement)
+        long_pause = cfg.dynamic_pause_frames and track.still_frames >= cfg.dynamic_pause_frames
+        if near or long_pause:
+            track.is_dynamic = False
+            track.fast_frames = track.evidence_frames = track.evidence_bits = track.still_frames = 0
+            track.origin, track.origin_ref = track.last_z, track.last_ref
+            track.release_origin = track.release_origin_ref = None
 
     @staticmethod
     def _as_radii(radii: Optional[Sequence[float]], count: int) -> List[Optional[float]]:
@@ -210,7 +315,8 @@ class MultiTargetTracker:
         else:
             track.radius += self.config.radius_smoothing * (r - track.radius)
 
-    def _new_track(self, z: np.ndarray, t: float, radius: Optional[float] = None) -> Track:
+    def _new_track(self, z: np.ndarray, t: float, radius: Optional[float] = None,
+                   ref: Optional[np.ndarray] = None) -> Track:
         track = Track(
             track_id=self._next_id,
             kf=ConstantVelocityKF(z, t, self.config.kalman),
@@ -219,6 +325,9 @@ class MultiTargetTracker:
             confirmed=self.config.confirm_hits <= 1,
             radius=radius,
             max_radius=radius,
+            last_ref=ref,
+            origin=z,
+            origin_ref=ref,
         )
         self._next_id += 1  # 사라진 트랙의 ID는 다시 쓰지 않는다
         return track
