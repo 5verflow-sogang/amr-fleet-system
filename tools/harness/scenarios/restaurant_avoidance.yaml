@@ -29,6 +29,8 @@ params:
   seed_offset: "0"
   worker_speed: "1.0"
   cameras: top
+  # 상단 카메라 녹화. 끄면(false) CPU 렌더링·mp4 변환이 빠져 빨라진다 - 30회 본 측정은 끄고, 사진용 몇 회만 켠다
+  video: "true"
 processes:
   - name: avoidance_eval
     cmd: >-
@@ -58,13 +60,13 @@ processes:
       - timeout 5 ros2 topic echo --once /amr_01/safety/status > /dev/null
     settle_s: 5
   - name: cameras
-    cmd: ros2 launch amr_gazebo demo_cameras.launch.py cameras:={cameras}
+    cmd: if [ "{video}" = true ]; then exec ros2 launch amr_gazebo demo_cameras.launch.py cameras:={cameras}; else exec sleep infinity; fi
     ready_cmds:
-      - timeout 20 ros2 topic list | grep -q '^/demo_cam/'
+      - '[ "{video}" != true ] || timeout 20 ros2 topic list | grep -q "^/demo_cam/"'
     ready_timeout_s: 60
     settle_s: 5
   - name: camera_bag
-    cmd: ros2 bag record -o {run_dir}/camera_bag -e '/demo_cam/.*'
+    cmd: if [ "{video}" = true ]; then exec ros2 bag record -o {run_dir}/camera_bag -e '/demo_cam/.*'; else exec sleep infinity; fi
     stop_first: true
     settle_s: 1
   - name: rosbag
@@ -91,7 +93,7 @@ driver:
     sleep {after_goal_s}
 postprocess:
   - name: video
-    cmd: bash -c 'ros2 run amr_gazebo bag_to_mp4.py {run_dir}/camera_bag --out {run_dir}/video && rm -rf {run_dir}/camera_bag && du -sh {run_dir}/video'
+    cmd: bash -c '[ "{video}" != true ] || (ros2 run amr_gazebo bag_to_mp4.py {run_dir}/camera_bag --out {run_dir}/video && rm -rf {run_dir}/camera_bag && du -sh {run_dir}/video)'
 cleanup:
   - pkill -9 -f "[i]gn gazebo" || true
   - pkill -9 -f "[p]arameter_bridge" || true
