@@ -72,15 +72,18 @@
     free_space_hit_clearance: 0.2
     # 증거를 최근 이 프레임 수 안에서 센다 (0이면 누적). 누적이면 오래전 증거가 남아 나중에는 속력 조건만으로 동적이 된다
     dynamic_evidence_window: 10
-    # 동적 입구 - 실제 이동: 속력·증거에 더해 기준 자리(처음 본 자리)에서 이 거리 [m] 이상 옮겨 가야 동적 (0.0이면 끔).
+    # 동적 입구 - 실제 이동: 속력·증거에 더해, 속력 조건이 걸리기 시작한 자리(입구 기준 자리: 속력 조건이 풀린 동안
+    # 지금 자리를 따라간다)에서 이 거리 [m] 이상 옮겨 가야 동적 (0.0이면 끔). 처음 본 자리에 고정하면 긴 테이블 옆을
+    # 지나갈 때 조금씩 밀린 것이 쌓여 0.3 m를 넘었다 (#361 리뷰).
     # 이동량은 군집 중심과 센서에 가장 가까운 군집 점 중 덜 움직인 쪽. 식당 테이블·의자 다리에 0.6 m/s로 다가가자
     # 보이는 면이 바뀌어 중심이 0.5 s(약 0.15 m) 미끄러져 동적이 됐고, 1호가 그 앞에 60 s 넘게 섰다 (11/17 녹화).
-    # 0.6 m/s 이상으로 걷는 사람은 속력 조건(0.5 s)보다 먼저 넘는다
+    # 1.0 m/s로 걷는 사람은 속력 조건(0.5 s)과 같은 프레임에, 0.4~0.6 m/s는 0.2 s 안에서 늦게 넘는다
     dynamic_min_displacement: 0.3
-    # 동적 출구: 속력이 dynamic_release_speed [m/s] 미만인 프레임이 dynamic_release_frames번 연속이고 기준 자리에서
-    # dynamic_release_max_displacement [m] 안이면 바로 정적 (제자리에서 미끄러져 보였던 정지 물체),
+    # 동적 출구: 속력이 dynamic_release_speed [m/s] 미만인 프레임이 dynamic_release_frames번 연속이고 해제 기준 자리
+    # (동적이 된 순간의 입구 기준 자리)에서 dynamic_release_max_displacement [m] 안이면 바로 정적 (제자리에서 미끄러져
+    # 보였던 정지 물체),
     # dynamic_pause_frames번 연속이면 어디서든 정적 (걸어와서 선 사람. 그동안은 '멈춤': 동적 표시가 남아 안전 노드
-    # 근접 저속은 걸리고, TTC·바깥 원은 속력 조건 safety moving_min_speed로 빠진다). 둘 다 0이면 끔 (트랙이 사라질 때까지 동적)
+    # 바깥 원·근접 저속은 걸리고, TTC는 속력 조건 safety moving_min_speed로 빠진다). 둘 다 0이면 끔 (트랙이 사라질 때까지 동적)
     dynamic_release_frames: 30       # 3 s
     dynamic_pause_frames: 100        # 10 s
     dynamic_release_speed: 0.1
