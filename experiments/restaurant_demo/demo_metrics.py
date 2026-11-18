@@ -215,3 +215,96 @@ def scene2(tasks: dict[str, TableTask], cutoff: float, window: Optional[tuple[fl
                 'assign_order': [k.task_id for k in sorted((k for k in tasks.values() if k.assign is not None),
                                                            key=lambda k: k.assign)]})
     return out
+
+
+# ---------------------------------------------------------------- 3 (충전 스케줄링)
+TYPE_DELIVERY = 0
+TYPE_CHARGE = 1
+MODE_CHARGING = 2
+
+
+@dataclass(frozen=True)
+class RobotSample:
+    """/fleet/robot_states 한 개."""
+    t: float
+    mode: int
+    battery: float
+    task_id: str
+
+
+def _at(samples: Sequence[RobotSample], t: float) -> Optional[RobotSample]:
+    """t 이전(같음 포함) 마지막 상태. 없으면 None (samples는 시각 순)."""
+    last = None
+    for s in samples:
+        if s.t > t:
+            break
+        last = s
+    return last
+
+
+def hall_timeline(tasks: dict[str, TableTask], robots: dict[str, Sequence[RobotSample]], t_from: float, t_to: float,
+                  step: float = 0.5) -> list[dict]:
+    """시간별 홀 운영 대수. 행 = {t, charging(MODE_CHARGING 대수), out(충전 작업을 맡은 대수: 가는 중 + 충전 중),
+    hall_mode(= 로봇 수 - charging, 시나리오 문서의 정의), hall(= 로봇 수 - out, 서버 충전 정책의 정의), waiting(대기 배달 수),
+    battery {로봇: %}}.
+
+    충전 작업은 작업표에서 task_type이 TYPE_CHARGE인 것. 로봇이 그 작업을 맡은 동안(current_task_id) 홀에서 빠진 것으로 본다.
+    """
+    if (t_to - t_from) / step > 100_000:
+        # 시뮬레이션 시각과 실제 시각이 한 bag에 섞이면(다른 실행의 메시지가 들어오면) 구간이 수십 년이 된다
+        raise ValueError(f'시각 구간이 너무 길다 ({t_from:.1f} ~ {t_to:.1f} s): 다른 실행의 메시지가 섞였는지 본다')
+    charge_ids = {k.task_id for k in tasks.values() if k.task_type == TYPE_CHARGE}
+    deliveries = [k for k in tasks.values() if k.task_type == TYPE_DELIVERY]
+    ordered = {r: sorted(s, key=lambda x: x.t) for r, s in robots.items()}
+    rows, t = [], t_from
+    while t <= t_to + 1e-9:
+        now = {r: _at(s, t) for r, s in ordered.items()}
+        now = {r: s for r, s in now.items() if s is not None}
+        charging = sum(s.mode == MODE_CHARGING for s in now.values())
+        out = sum(s.mode == MODE_CHARGING or s.task_id in charge_ids for s in now.values())
+        waiting = sum(1 for k in deliveries if k.request <= t and (k.assign is None or k.assign > t))
+        rows.append({'t': round(t, 3), 'charging': charging, 'out': out, 'hall_mode': len(now) - charging,
+                     'hall': len(now) - out, 'waiting': waiting,
+                     'battery': {r: round(s.battery, 1) for r, s in sorted(now.items())}})
+        t += step
+    return rows
+
+
+def scene3(tasks: dict[str, TableTask], robots: dict[str, Sequence[RobotSample]], t0: Optional[float], end: float,
+           step: float = 0.5) -> dict:
+    """장면 3 지표. t0(배터리 0초, /demo/t0)부터 녹화 끝까지. t0이 없으면 첫 로봇 상태부터.
+
+    - hall_min: 충전 작업을 맡지 않은 로봇 수의 최저 (가는 중도 홀에서 빠진 것으로 본다, 서버 min_in_service와 같은 뜻)
+    - hall_mode_min: MODE_CHARGING이 아닌 로봇 수의 최저 (시나리오 문서의 계산)
+    - out_max: 동시에 충전 작업을 맡은 대수의 최대
+    - hall_seconds: 홀 운영 대수마다 머문 시간 (s)
+    - 배달 대기: 0초 뒤 요청된 배달의 할당 - 요청 (평균·최대), 녹화 끝까지 미할당 수, 대기 배달 수 최대
+    - charges: 충전 작업마다 로봇, 할당·완료 시각(0초 기준 s)
+    """
+    starts = [s[0].t for s in robots.values() if s]
+    if t0 is None:
+        t0 = min(starts) if starts else 0.0
+    rows = hall_timeline(tasks, robots, t0, end, step)
+    first = rows[0]['battery'] if rows else {}
+    new = [k for k in tasks.values() if k.task_type == TYPE_DELIVERY and t0 <= k.request <= end]
+    waits = [k.wait for k in new if k.assign is not None and k.assign <= end]
+    charges = sorted((k for k in tasks.values() if k.task_type == TYPE_CHARGE and k.assign is not None),
+                     key=lambda k: k.assign)
+    return {
+        't0': round(t0, 3), 'end': round(end, 3),
+        'hall_min': min((r['hall'] for r in rows), default=None),
+        'hall_mode_min': min((r['hall_mode'] for r in rows), default=None),
+        'out_max': max((r['out'] for r in rows), default=None),
+        # 홀 운영 대수(충전 작업 기준)마다 머문 시간 (s). 예: {5: 120.0, 4: 60.0, 3: 40.0, 2: 15.0}
+        'hall_seconds': {n: round(sum(step for r in rows if r['hall'] == n), 1)
+                         for n in sorted({r['hall'] for r in rows}, reverse=True)},
+        'waiting_max': max((r['waiting'] for r in rows), default=None),
+        'delivery_n': len(new), 'delivery_unassigned': len(new) - len(waits),
+        'delivery_wait_mean_s': round(st.mean(waits), 2) if waits else None,
+        'delivery_wait_max_s': round(max(waits), 2) if waits else None,
+        'battery_t0': first,
+        'battery_min': round(min((s.battery for v in robots.values() for s in v), default=math.nan), 1),
+        'charges': [{'robot': k.assignee, 'task_id': k.task_id, 'assign_s': round(k.assign - t0, 1),
+                     'end_s': None if k.end is None else round(k.end - t0, 1)} for k in charges],
+        'timeline': rows,
+    }

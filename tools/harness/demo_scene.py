@@ -18,7 +18,10 @@
 - after.timeout_s: 앞 단계 마지막 작업을 낸 뒤 N s가 지나면 조건이 안 맞아도 낸다 (scene.json에 timeout으로 남는다).
   near와 같이 쓰면 "위치 조건을 기다리되 N s까지만" - 0초 단계면 scene.json t0_by가 near 또는 timeout
 - gap_s: 단계 안 작업 사이 간격 (기본 0, 연달아 넣기)
+- repeat: 단계 작업 목록을 N번 되풀이한다 (작업 id 뒤에 _01, _02, ...). 일정한 간격의 배달 흐름 (장면 3)
 - t0: true면 그 단계 첫 작업을 낼 때 /demo/t0(std_msgs/Header, stamp = 시뮬레이션 시각, frame_id = 첫 작업 id)을 낸다
+단계와 따로 0초를 배터리로 정할 수도 있다 (장면 3, 켬/끔을 같은 배터리 순간에 맞춘다. 단계의 t0과 같이 쓰지 않는다):
+- t0_when.battery_below: 로봇 하나라도 /fleet/robot_states 배터리가 이 값(%) 밑이면 그때 /demo/t0 (frame_id = battery)
 작업 값 안의 {이름}은 --set 이름=값으로 채운다 (예: priority: "{collect_priority}").
 Task.created_time은 시뮬레이션 시각이다 (aging이 노드 시계로 대기 시간을 잰다). 정차 자세는 stations 파일(world)을
 map_origin_in_world로 map 좌표로 바꾼다 (작업 생성기와 같다).
@@ -28,6 +31,8 @@ map_origin_in_world로 map 좌표로 바꾼다 (작업 생성기와 같다).
 둘째가 첫째가 끝날 때까지 할당되지 않아 assigned 조건이 시간 초과로 끝난다 (11/8 녹화: 1-2 request, 2막 more 단계).
 그래서 같이 잡혀 있을 수 있는 작업은 자리가 서로 1 m 넘게 떨어져야 한다 - station_conflicts()가 확인하고, 시작할 때
 걸리면 멈춘다. 0초(t0) 단계 작업끼리(2막 회수 5건이 퇴식구 둘을 나눠 씀)는 일부러 줄을 세우므로 뺀다.
+station_check: false (장면 파일 맨 위, 선택): 이 확인을 하지 않는다. 장면 3처럼 같은 매장·테이블을 시간차(delay_s)로 다시
+쓰고, 앞 작업이 안 끝났으면 서버 큐에서 기다리는 것이 의도인 장면에 쓴다 (assigned·near 조건으로 다음 단계를 열지 않는다).
 
 hold: [로봇, ...] (장면 파일 맨 위, 선택): 그 로봇들을 장면 내내 할당에서 뺀다. 장면 동안 /<로봇>/zone_client/state에
 "failed"를 0.5 s마다 낸다 - amr_bt는 그 상태에서 놀고 있으면 MODE_ERROR를 보고하고(작업도 거부) 서버는 MODE_IDLE에만
@@ -97,9 +102,15 @@ def load_scene(path, params: Optional[dict] = None) -> list[Step]:
     steps, seen = [], set()
     for s in data['steps']:
         tasks = []
-        for t in s['tasks']:
-            task = SceneTask(task_id=str(t['id']), type=str(t['type']), pickup=str(t['pickup']),
-                             dropoff=str(t['dropoff']), priority=int(_fill(t.get('priority', 100), params)))
+        repeat = int(s.get('repeat', 1))
+        if repeat < 1:
+            raise ValueError(f'{s["name"]}: repeat은 1 이상: {repeat}')
+        for k in range(1, repeat + 1):
+            for t in s['tasks']:
+                task_id = str(t['id']) if repeat == 1 else f'{t["id"]}_{k:02d}'
+                tasks.append(SceneTask(task_id=task_id, type=str(t['type']), pickup=str(t['pickup']),
+                                       dropoff=str(t['dropoff']), priority=int(_fill(t.get('priority', 100), params))))
+        for task in tasks:
             if task.type not in TASK_TYPES:
                 raise ValueError(f'{task.task_id}: type은 {sorted(TASK_TYPES)} 중 하나: {task.type!r}')
             if not 0 <= task.priority <= 255:
@@ -107,17 +118,36 @@ def load_scene(path, params: Optional[dict] = None) -> list[Step]:
             if task.task_id in seen:
                 raise ValueError(f'작업 id 중복: {task.task_id}')
             seen.add(task.task_id)
-            tasks.append(task)
         steps.append(Step(name=str(s['name']), tasks=tasks, after=dict(s.get('after') or {}),
                           gap_s=float(s.get('gap_s', 0.0)), t0=bool(s.get('t0', False))))
     if sum(s.t0 for s in steps) > 1:
         raise ValueError('t0 단계는 하나만')
+    if data.get('t0_when') and any(s.t0 for s in steps):
+        raise ValueError('t0_when과 단계의 t0은 같이 쓰지 않는다')
     ids = {t.task_id for st in steps for t in st.tasks}
     for st in steps:
         near = st.after.get('near')
         if near is not None and near.get('task') not in ids:
             raise ValueError(f'{st.name}: after.near의 작업이 장면에 없다: {near}')
     return steps
+
+
+def load_t0_when(path) -> Optional[dict]:
+    """장면 파일의 t0_when (배터리로 정하는 0초). 없으면 None."""
+    rule = yaml.safe_load(Path(path).read_text(encoding='utf-8')).get('t0_when')
+    if not rule:
+        return None
+    if set(rule) != {'battery_below'}:
+        raise ValueError(f't0_when은 battery_below만: {sorted(rule)}')
+    return {'battery_below': float(rule['battery_below'])}
+
+
+def load_station_check(path) -> bool:
+    """장면 파일 맨 위 station_check (기본 true): false면 시작할 때 자리 겹침(station_conflicts)을 확인하지 않는다."""
+    value = yaml.safe_load(Path(path).read_text(encoding='utf-8')).get('station_check', True)
+    if not isinstance(value, bool):
+        raise ValueError(f'station_check은 true/false: {value!r}')
+    return value
 
 
 def load_hold(path) -> list[str]:
@@ -170,12 +200,14 @@ def table_counts(sent: list[str], table: dict, states: Optional[dict] = None) ->
 
 
 class Scene:
-    """단계 진행. tick(지금 시각, 작업표 {task_id: assignee}, 로봇 자세 {robot: (x, y)})이 이번에 할 일
-    [('t0', t) | ('task', SceneTask)]을 돌려준다. stations는 after.near에 쓴다 (작업 하역 자리 좌표)."""
+    """단계 진행. tick(지금 시각, 작업표 {task_id: assignee}, 로봇 자세 {robot: (x, y)}, 배터리 {robot: %})이
+    이번에 할 일 [('t0', t, frame_id) | ('task', SceneTask)]을 돌려준다. stations는 after.near에 쓴다 (작업 하역 자리 좌표).
+    t0_when이 있으면 배터리로 0초를 찍는다 (단계와 따로)."""
 
-    def __init__(self, steps: list[Step], stations: Optional[dict] = None):
+    def __init__(self, steps: list[Step], stations: Optional[dict] = None, t0_when: Optional[dict] = None):
         self.steps = steps
         self.stations = stations or {}
+        self.t0_when = t0_when
         self.tasks = {t.task_id: t for s in steps for t in s.tasks}
         self.index = 0          # 다음 단계
         self.queue: list[SceneTask] = []   # 지금 단계에서 아직 안 낸 작업
@@ -188,7 +220,8 @@ class Scene:
 
     @property
     def done(self) -> bool:
-        return self.index >= len(self.steps) and not self.queue
+        # 배터리 0초를 기다리는 장면은 0초가 찍힐 때까지 끝내지 않는다
+        return self.index >= len(self.steps) and not self.queue and (self.t0_when is None or self.t0 is not None)
 
     def _near(self, cond: dict, table: dict, robots: dict) -> bool:
         task = self.tasks[cond['task']]
@@ -217,11 +250,18 @@ class Scene:
         """작업표 상태를 기록에 남긴다 (scene.json ev: count)."""
         self.log.append({'t': round(now, 3), 'ev': 'count', **table_counts(self.sent, table, states)})
 
-    def tick(self, now: float, table: dict, robots: Optional[dict] = None) -> list[tuple]:
+    def tick(self, now: float, table: dict, robots: Optional[dict] = None,
+             batteries: Optional[dict] = None) -> list[tuple]:
         robots = robots or {}
         if self.step_start is None:
             self.step_start = now
         out = []
+        if self.t0_when and self.t0 is None and batteries \
+                and min(batteries.values()) < self.t0_when['battery_below']:
+            self.t0, self.t0_by = now, 'battery'
+            out.append(('t0', now, 'battery'))
+            self.log.append({'t': round(now, 3), 'ev': 't0', 'why': 'battery',
+                             'battery': {k: round(v, 2) for k, v in sorted(batteries.items())}})
         while True:
             if self.queue:
                 if now < self.next_at:
@@ -276,12 +316,12 @@ def _run(args, scene, stations, origin, hold=()):
 
     rclpy.init()
     node = Node('demo_scene', parameter_overrides=[rclpy.parameter.Parameter(
-        'use_sim_time', rclpy.Parameter.Type.BOOL, True)])
+        'use_sim_time', rclpy.Parameter.Type.BOOL, not args.wall_clock)])
     reliable = QoSProfile(depth=50, reliability=ReliabilityPolicy.RELIABLE)
     latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
     pub = node.create_publisher(Task, '/fleet/task_requests', reliable)
     t0_pub = node.create_publisher(Header, '/demo/t0', latched)
-    table, states, poses, modes = {}, {}, {}, {}
+    table, states, poses, modes, batteries = {}, {}, {}, {}, {}
 
     def on_table(m):
         table.clear()
@@ -294,6 +334,7 @@ def _run(args, scene, stations, origin, hold=()):
     def on_state(m):
         poses[m.robot_id] = (m.pose.position.x, m.pose.position.y)
         modes[m.robot_id] = m.mode
+        batteries[m.robot_id] = float(m.battery_percent)
 
     node.create_subscription(RobotState, '/fleet/robot_states', on_state, 10)
     hold_pubs = [node.create_publisher(String, f'/{r}/zone_client/state', 10) for r in hold]
@@ -334,7 +375,7 @@ def _run(args, scene, stations, origin, hold=()):
         if now() - last_count >= 1.0:
             last_count = now()
             scene.record(last_count, table, states)
-        for action in scene.tick(now(), table, poses):
+        for action in scene.tick(now(), table, poses, batteries):
             if action[0] == 't0':
                 h = Header(frame_id=action[2])
                 h.stamp = node.get_clock().now().to_msg()
@@ -370,16 +411,18 @@ def main(argv=None):
     ap.add_argument('--clearance', type=float, default=STATION_RESERVE_M,
                     help='서버 스테이션 예약 반경 (assignment.station_clearance_m). 장면 작업끼리 이 안에 겹치면 시작하지 않는다')
     ap.add_argument('--out', help='장면 기록 json')
+    ap.add_argument('--wall-clock', action='store_true', help='시뮬레이션 시계 대신 실제 시계 (Gazebo 없는 가짜 로봇)')
     a = ap.parse_args(argv)
     params = dict(item.split('=', 1) for item in a.set)
     steps = load_scene(a.scene, params)
     hold = load_hold(a.scene)
+    t0_when = load_t0_when(a.scene)
     stations = {k: tuple(float(x) for x in v) for k, v in
                 yaml.safe_load(Path(a.stations).read_text(encoding='utf-8'))['stations'].items()}
     unknown = sorted({n for s in steps for t in s.tasks for n in (t.pickup, t.dropoff)} - set(stations))
     if unknown:
         raise SystemExit(f'stations 파일에 없는 자리: {unknown}')
-    conflicts = station_conflicts(steps, stations, a.clearance)
+    conflicts = station_conflicts(steps, stations, a.clearance) if load_station_check(a.scene) else []
     if conflicts:
         raise SystemExit(f'같이 잡힐 수 있는 작업의 자리가 {a.clearance} m 안에 겹친다 (서버 스테이션 예약으로 할당이 '
                          f'멈춘다): {conflicts}')
@@ -388,7 +431,7 @@ def main(argv=None):
     c, s = math.cos(-origin[2]), math.sin(-origin[2])
     map_stations = {k: (c * (x - origin[0]) - s * (y - origin[1]), s * (x - origin[0]) + c * (y - origin[1]))
                     for k, (x, y, *_) in stations.items()}
-    scene = Scene(steps, map_stations)
+    scene = Scene(steps, map_stations, t0_when=t0_when)
     status = 'interrupted'
     try:
         status = _run(a, scene, stations, [float(v) for v in yaml.safe_load(a.map_origin)], hold)

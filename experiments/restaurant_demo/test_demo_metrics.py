@@ -183,7 +183,8 @@ def test_scene2_assign_order_and_counts():
     ('demo_2-1-off', ('2-1', 'off')), ('demo_1-2', None), ('run_1-2-on', None), ('demo_1-2-maybe', None),
     # 하네스·버킷 이름 (#319): s11 → 1-1, s12 → 1-2, s2… → 2 (1막·2막 이름 미정)
     ('demo_s11-on', ('1-1', 'on')), ('demo_s12-off', ('1-2', 'off')), ('demo_s2-on', ('2', 'on')),
-    ('demo_s21-on', ('2', 'on')), ('demo_s2_act2-off', ('2', 'off')), ('demo_smoke', None)])
+    ('demo_s21-on', ('2', 'on')), ('demo_s2_act2-off', ('2', 'off')), ('demo_smoke', None),
+    ('demo_s3-on', ('3', 'on')), ('demo_s3_fake-off', ('3', 'off'))])
 def test_parse_run_name(name, want):
     assert analyze.parse_run_name(name) == want
 
@@ -345,3 +346,44 @@ def test_analyze_stops_with_a_clear_message_when_no_scene_folder(tmp_path):
     (tmp_path / 'demo_smoke').mkdir()
     with pytest.raises(SystemExit, match='demo_s12-on'):
         analyze.main([str(tmp_path)])
+
+
+# ---------------------------------------------------------------- 3 (충전 스케줄링)
+def _sample(t, mode=1, battery=50.0, task=''):
+    return dm.RobotSample(t, mode, battery, task)
+
+
+def test_scene3_hall_counts_robots_going_to_charge_as_out_and_mode_charging_separately():
+    # 10 s에 충전 작업 c1을 1호에, 12 s에 c2를 2호에 준다. 1호는 15 s부터 충전 중(MODE_CHARGING 2), 30 s에 끝
+    tasks = dm.fold_table([
+        (5.0, [row('d1', created=5.0), row('c1', task_type=1), row('c2', task_type=1)]),
+        (10.0, [row('d1', created=5.0), row('c1', 'amr_01', 1, task_type=1), row('c2', task_type=1)]),
+        (12.0, [row('d1', 'amr_03', created=5.0), row('c1', 'amr_01', 1, task_type=1),
+                row('c2', 'amr_02', 1, task_type=1)]),
+        (30.0, [row('d1', 'amr_03', 2, created=5.0), row('c1', 'amr_01', 2, task_type=1),
+                row('c2', 'amr_02', 1, task_type=1)]),
+    ])
+    robots = {
+        'amr_01': [_sample(0.0, battery=31.0), _sample(10.0, 1, 29.0, 'c1'), _sample(15.0, 2, 28.0, 'c1'),
+                   _sample(30.0, 0, 70.0)],
+        'amr_02': [_sample(0.0, battery=33.0), _sample(12.0, 1, 30.0, 'c2')],
+        'amr_03': [_sample(0.0, battery=60.0), _sample(12.0, 1, 59.0, 'd1')],
+    }
+    s = dm.scene3(tasks, robots, t0=8.0, end=32.0, step=1.0)
+    by_t = {r['t']: r for r in s['timeline']}
+    assert (by_t[9.0]['hall'], by_t[11.0]['hall'], by_t[13.0]['hall'], by_t[16.0]['hall']) == (3, 2, 1, 1)
+    assert (by_t[13.0]['hall_mode'], by_t[16.0]['hall_mode']) == (3, 2)    # 가는 중은 MODE_CHARGING이 아니다
+    assert by_t[31.0]['hall'] == 2                                          # 1호는 충전을 마치고 돌아왔다
+    assert (s['hall_min'], s['hall_mode_min'], s['out_max']) == (1, 2, 2)
+    assert s['hall_seconds'] == {3: 2.0, 2: 5.0, 1: 18.0}       # 8~9 s 3대, 10~11·30~32 s 2대, 12~29 s 1대 (1 s 간격)
+    assert s['battery_t0'] == {'amr_01': 31.0, 'amr_02': 33.0, 'amr_03': 60.0}
+    assert [(c['robot'], c['assign_s']) for c in s['charges']] == [('amr_01', 2.0), ('amr_02', 4.0)]
+    # 배달 d1은 0초 전에 요청돼 대기 평균에서 빠진다. 대기 수에는 할당(12 s) 전까지 1
+    assert s['delivery_n'] == 0 and (by_t[11.0]['waiting'], by_t[13.0]['waiting']) == (1, 0)
+
+
+def test_scene3_refuses_mixed_clocks_instead_of_running_out_of_memory():
+    # 시뮬레이션 시각(16 s)과 실제 시각(1.79e9 s)이 섞인 bag (11/8 두 컨테이너가 DDS로 서로 메시지를 받았다)
+    robots = {'amr_01': [_sample(16.0), _sample(1.79e9)]}
+    with pytest.raises(ValueError, match='섞였'):
+        dm.scene3({}, robots, t0=16.0, end=1.79e9)
