@@ -129,6 +129,7 @@ void DwaController::configure(
   passing_ = std::make_unique<amr_planning_core::PassingManeuver>(passing);
   passing_pub_ = node->create_publisher<std_msgs::msg::Bool>(
     "dwa/passing", rclcpp::QoS(1).reliable().transient_local());
+  local_plan_pub_ = node->create_publisher<nav_msgs::msg::Path>("dwa/local_plan", rclcpp::QoS(1));
 
   obstacles_sub_ = node->create_subscription<amr_msgs::msg::TrackedObstacleArray>(
     "perception/obstacles", rclcpp::QoS(10),
@@ -157,6 +158,7 @@ void DwaController::cleanup()
   risks_sub_.reset();
   avoid_mode_pub_.reset();
   passing_pub_.reset();
+  local_plan_pub_.reset();
   passing_.reset();
   planner_.reset();
 }
@@ -169,6 +171,7 @@ void DwaController::activate()
   msg.data = planner_->avoidMode();
   avoid_mode_pub_->publish(msg);
   passing_pub_->on_activate();
+  local_plan_pub_->on_activate();
   msg.data = false;
   passing_pub_->publish(msg);
 }
@@ -177,6 +180,7 @@ void DwaController::deactivate()
 {
   avoid_mode_pub_->on_deactivate();
   passing_pub_->on_deactivate();
+  local_plan_pub_->on_deactivate();
 }
 
 void DwaController::setPlan(const nav_msgs::msg::Path & path)
@@ -406,6 +410,25 @@ geometry_msgs::msg::TwistStamped DwaController::computeVelocityCommands(
   cmd_vel.twist.linear.x = v;
   cmd_vel.twist.angular.z = (command.status == amr_planning_core::DwaStatus::kGoalReached) ?
     0.0 : command.w;
+  if (command.status == amr_planning_core::DwaStatus::kOk &&
+    local_plan_pub_->get_subscription_count() > 0)
+  {
+    // 고른 (v, w)로 sim_time 동안 갈 궤적 (RViz 로봇 시점). Grid 좌표 → costmap 프레임
+    nav_msgs::msg::Path local_plan;
+    local_plan.header = cmd_vel.header;
+    const std::vector<amr_planning_core::TrajectoryPoint> trajectory =
+      planner_->simulateTrajectory(state, v, command.w);
+    for (const amr_planning_core::TrajectoryPoint & p : trajectory) {
+      geometry_msgs::msg::PoseStamped point;
+      point.header = cmd_vel.header;
+      point.pose.position.x = p.x + origin_x;
+      point.pose.position.y = p.y + origin_y;
+      point.pose.orientation.z = std::sin(p.yaw / 2.0);
+      point.pose.orientation.w = std::cos(p.yaw / 2.0);
+      local_plan.poses.push_back(point);
+    }
+    local_plan_pub_->publish(local_plan);
+  }
   return cmd_vel;
 }
 
