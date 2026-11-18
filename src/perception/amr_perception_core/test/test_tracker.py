@@ -428,6 +428,44 @@ def test_released_track_must_pass_entry_again():
     assert any(_run(tracker, walk, start=len(flags) + 20))     # 다시 걸으면 다시 동적
 
 
+def test_slow_drift_does_not_open_entry_for_later_slide():
+    # #361 리뷰: 긴 테이블 옆을 지나가면 중심·최근접 점이 같이 조금씩 밀린다 (0.04 m/s로 10 s, 0.4 m). 처음 본 자리에
+    # 고정하면 그 뒤 0.6 s 미끄러짐(0.4 m/s, 0.24 m)에 입구가 열려 동적이 됐다(밀림 없이는 안 열림). 입구 기준 자리는
+    # 속력 조건이 풀린 동안 따라온다
+    def table(drift):
+        frames = [((0.0, 0.0), (0.0, -0.5))] * 10
+        frames += [((drift / 100 * k, 0.0), (drift / 100 * k, -0.5)) for k in range(1, 101)]
+        frames += [((drift + 0.04 * k, 0.0), (drift + 0.04 * k, -0.5)) for k in range(1, 7)]
+        return frames + [((drift + 0.24, 0.0), (drift + 0.24, -0.5))] * 30
+
+    config = TrackerConfig(**ENTRY, **EXIT)
+    assert not any(_run(MultiTargetTracker(config), table(0.0)))
+    assert not any(_run(MultiTargetTracker(config), table(0.4)))
+
+
+def test_person_who_walked_in_keeps_pause_with_entry_rule():
+    # 입구 기준 자리가 멈출 때마다 따라와도, 해제 기준 자리는 동적이 된 순간에 고정이라 걸어와서 선 사람은
+    # 3 s가 아니라 10 s '멈춤' 뒤에 풀린다
+    flags = _run(MultiTargetTracker(TrackerConfig(**ENTRY, **EXIT)),
+                 _walk_then_stand(walk_frames=15, stand_frames=130))                  # 1.4 m 걷고 섬 (15프레임째)
+    assert _first(flags) is not None and flags[15 + 50]
+    released = _first(flags, False, _first(flags))
+    assert released is not None and 15 + 100 <= released <= 15 + 115
+
+
+@pytest.mark.parametrize('speed', [0.4, 0.6])
+def test_entry_rule_delays_noisy_slow_person_by_at_most_half_a_second(speed):
+    # 속력 추정이 임계 근처에서 흔들려도(측정 잡음 0.03 m) 입구 기준 자리가 되돌아가 동적 판정이 크게 밀리지 않는다
+    rng = np.random.default_rng(3)
+    frames = []
+    for k in range(60):
+        z = (speed * 0.1 * k + rng.normal(0.0, 0.03), rng.normal(0.0, 0.03))
+        frames.append((z, (z[0], z[1] - 0.1)))
+    base = _first(_run(MultiTargetTracker(), frames))
+    gated = _first(_run(MultiTargetTracker(TrackerConfig(**ENTRY)), frames))
+    assert base is not None and gated is not None and gated - base <= 5
+
+
 def _old_evidence_then_slide(tracker):
     """처음 3프레임에만 증거가 있고, 한참 뒤 증거 없이 1.0 m/s로 미끄러진다."""
     tracks = []

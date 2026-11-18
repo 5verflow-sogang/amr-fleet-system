@@ -280,7 +280,7 @@ def test_config_rejects_bad_values(kwargs):
         SafetyConfig(**kwargs)
 
 
-# TTC·바깥 원은 지금 움직이는 트랙만 (moving_min_speed)
+# TTC는 지금 움직이는 트랙만 (moving_min_speed). 바깥 원·근접 저속은 멈춘 동적 트랙에도
 NOW_MOVING = SafetyConfig(moving_min_speed=0.15)
 
 
@@ -290,13 +290,16 @@ def _dyn(clearance=5.0, ttc=math.inf, speed=0.0):
 
 @pytest.mark.parametrize('speed, level', [(0.02, LEVEL_NORMAL), (0.15, LEVEL_CRITICAL), (1.0, LEVEL_CRITICAL)])
 def test_ttc_only_for_tracks_moving_now(speed, level):
-    # 거의 멈춘 동적 트랙(가짜 동적 테이블 0.0~0.04 m/s)에 다가가기만 해도 TTC가 줄어 섰다 (식당 11/17)
-    assert _update(SafetyMonitor(NOW_MOVING), obstacles=[_dyn(0.8, 0.2, speed)]).level == level
+    # 거의 멈춘 동적 트랙(가짜 동적 테이블 0.0~0.04 m/s)에 다가가기만 해도 TTC가 줄어 섰다 (식당 11/17).
+    # 바깥 원(1.5 m) 밖에 두어 TTC 규칙만 본다
+    assert _update(SafetyMonitor(NOW_MOVING), obstacles=[_dyn(2.0, 0.2, speed)]).level == level
 
 
-def test_outer_warning_circle_only_for_tracks_moving_now():
-    assert _update(SafetyMonitor(NOW_MOVING), obstacles=[_dyn(0.8, speed=0.02)]).level == LEVEL_NORMAL
-    assert _update(SafetyMonitor(NOW_MOVING), obstacles=[_dyn(0.8, speed=0.5)]).level == LEVEL_WARNING
+def test_outer_warning_circle_kept_for_stopped_dynamic_track():
+    # 걸어와서 선 사람이 다시 걸을 때를 대비해 멈춘 동적 트랙 옆도 0.6 m/s로 지나간다 (test_start_walking)
+    for speed in (0.02, 0.5):
+        state = _update(SafetyMonitor(NOW_MOVING), obstacles=[_dyn(0.8, speed=speed)])
+        assert (state.level, state.speed_limit) == (LEVEL_WARNING, NOW_MOVING.warning_speed_limit)
 
 
 def test_close_slow_kept_for_stopped_dynamic_track():
