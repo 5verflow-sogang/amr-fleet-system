@@ -23,4 +23,4 @@ steps:
     after: {assigned: 2, delay_s: 3, timeout_s: 60}
     t0: true
     tasks:
-      - {id: s12_buffet2_t11, type: delivery, pickup: buffet_2, dropoff: t11}
+      - {id: s12_buffet2_t11, type: delivery, pickup: stall_5, dropoff: t11}   # v3: 배식대 2번 자리(buffet_2)가 없어져 바로 동쪽 매장 5 (id는 유지)

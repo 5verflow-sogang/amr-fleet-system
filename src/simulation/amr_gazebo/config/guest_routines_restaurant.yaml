@@ -1,0 +1,138 @@
+# 식당 손님 일과 설정 → dynamic_obstacles_restaurant_routine.yaml (pattern routine). 경로는 생성기가 정답 지도에서 뽑는다:
+#
+#   python3 src/simulation/amr_gazebo/scripts/gen_guest_routines.py \
+#       src/simulation/amr_gazebo/config/guest_routines_restaurant.yaml \
+#       --map src/localization/amr_mapping/maps/restaurant_gt.yaml \
+#       --out src/simulation/amr_gazebo/config/dynamic_obstacles_restaurant_routine.yaml
+#
+# places: 자리 이름 → world [x, y]. 지도에서 몸 여유(0.32 m)가 없으면 가장 가까운 빈 칸으로 옮긴다.
+#   좌석 tNN_w/e: 테이블 서쪽·동쪽 의자 바깥 (의자 칸은 칠해져 있어 의자 옆 통로 쪽에 선다 = 앉아 있는 손님).
+#   첫 열(x -8.8) 서쪽 의자는 서쪽 통로(1-1 끔 1호 길)라 쓰지 않는다.
+# guests: start 자리에서 시작해 steps를 차례로 (go 자리로 걸어가 wait_s 동안 머문다). 마지막 단계 뒤에는 loop_from 단계부터
+#   되풀이한다. 되풀이가 이어지게 loop_from 직전 자리(0이면 start)와 마지막 자리가 같아야 한다.
+# 동작 번호(#)는 손님 동작 목록 50개의 번호다.
+# stand_files: 같이 띄우는 손님 파일(이 설정 옆). 그 파일의 서 있는 손님(stand) 자리도 비켜 경로를 뽑는다 (1-1 손님 자리)
+stand_files: [dynamic_obstacles_restaurant_peak_stand.yaml]
+places:
+  entrance: [-11.3, -5.5]
+  kiosk_1: [-10.6, -6.95]
+  kiosk_2: [-9.2, -6.95]
+  vending: [-7.6, -6.95]
+  return_cart: [-2.85, -6.95]
+  water_1: [2.9, -6.95]
+  water_2: [3.9, -6.95]
+  self_corner: [-10.95, -1.0]
+  t03_e: [-1.65, 1.95]
+  t04_w: [-0.7, 1.95]
+  t06_e: [-7.75, -1.05]
+  t07_w: [-6.8, -1.05]
+  t08_e: [-1.65, -1.05]
+  t09_e: [1.4, -1.05]
+  t11_e: [-7.75, -4.05]
+  t12_e: [-4.7, -4.05]
+  t13_e: [-1.65, -4.05]
+  t14_w: [-0.7, -4.05]
+  c01_w: [5.5, -3.8]
+
+defaults:
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+
+guests:
+  - id: routine_01
+    start: kiosk_1
+    steps:
+      - {go: kiosk_1, wait_s: [10, 25]}
+      - {go: t12_e, wait_s: [40, 90]}
+      - {go: water_1, wait_s: [5, 10]}
+      - {go: t12_e, wait_s: [60, 120]}
+    loop_from: 2
+    note: "#1 결제 후 착석 + #17 물 받고 착석"
+
+  - id: routine_02
+    start: kiosk_2
+    steps:
+      - {go: kiosk_2, wait_s: [15, 30]}
+      - {go: t07_w, wait_s: [60, 120]}
+      - {go: return_cart, wait_s: [5, 10]}
+      - {go: kiosk_2, wait_s: [10, 20]}
+      - {go: t07_w, wait_s: [60, 120]}
+    loop_from: 2
+    note: "#1 결제 후 착석, 그릇 반납 뒤 추가 주문"
+
+  - id: routine_03
+    start: t09_e
+    steps:
+      - {go: t09_e, wait_s: [20, 60]}
+      - {go: water_2, wait_s: [5, 10]}
+      - {go: t09_e, wait_s: [60, 150]}
+    loop_from: 1
+    note: "#17 앉아 있다가 물 받고 다시 앉기"
+
+  - id: routine_04
+    start: t14_w
+    steps:
+      - {go: t14_w, wait_s: [10, 40]}
+      - {go: vending, wait_s: [10, 20]}
+      - {go: t14_w, wait_s: [60, 120]}
+    loop_from: 1
+    note: "#23 자판기 음료"
+
+  - id: routine_05
+    start: t06_e
+    steps:
+      - {go: t06_e, wait_s: [15, 45]}
+      - {go: self_corner, wait_s: [10, 20]}
+      - {go: t06_e, wait_s: [40, 90]}
+    loop_from: 1
+    note: "#20 셀프 코너 반찬 (서쪽 통로를 지난다)"
+
+  - id: routine_06
+    start: t13_e
+    steps:
+      - {go: t13_e, wait_s: [30, 90]}
+      - {go: return_cart, wait_s: [5, 10]}
+      - {go: entrance, wait_s: [3, 6]}
+      - {go: kiosk_1, wait_s: [15, 30]}
+      - {go: t13_e, wait_s: [60, 120]}
+    loop_from: 1
+    note: "#33 그릇 반납 후 퇴장 → 새 손님으로 다시 들어와 결제 후 착석"
+
+  - id: routine_07
+    start: t08_e
+    steps:
+      - {go: t08_e, wait_s: [30, 60]}
+      - {go: t03_e, wait_s: [10, 25]}
+      - {go: t08_e, wait_s: [40, 80]}
+    loop_from: 1
+    note: "#13 옆 테이블 일행과 대화"
+
+  - id: routine_08
+    start: t04_w
+    steps:
+      - {go: t04_w, wait_s: [90, 180]}
+      - {go: water_1, wait_s: [5, 10]}
+      - {go: t04_w, wait_s: [90, 180]}
+    loop_from: 1
+    note: "#10 식사, 가끔 물"
+
+  - id: routine_09
+    start: c01_w
+    steps:
+      - {go: c01_w, wait_s: [30, 90]}
+      - {go: water_2, wait_s: [5, 10]}
+      - {go: c01_w, wait_s: [60, 120]}
+    loop_from: 1
+    note: "#17 2인석, 물"
+
+  - id: routine_10
+    start: t11_e
+    steps:
+      - {go: t11_e, wait_s: [20, 60]}
+      - {go: vending, wait_s: [15, 30]}
+      - {go: t11_e, wait_s: [60, 120]}
+    loop_from: 1
+    note: "#24 자판기 앞에서 고민"

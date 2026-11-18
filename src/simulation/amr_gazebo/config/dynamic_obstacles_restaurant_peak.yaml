@@ -6,10 +6,10 @@
 #
 # 몰리는 곳 (혼잡 구역 amr_fleet_manager/config/congestion_zones_restaurant.yaml):
 #   west_aisle  서쪽 통로(셀프 코너 앞) 3명 → 혼잡도 1.0. 남서쪽에서 배식대로 가는 지름길이 막힌다
-#   buffet_line 배식대 앞 3명 + customer_1 → 1.0
+#   buffet_line 배식대 서쪽 끝 옆에 줄 선 3명 → 0.75 (customer_1은 배식대 앞까지 오지 않는다)
 # 시나리오 1-1 예: 배식대(buffet_1) 주문이 들어올 때 놀고 있는 로봇이
 #   A (-10.5, -5.6, 북쪽)  배식대까지 약 10 m, 서쪽 통로(몰림)를 지난다
-#   B 매장 3 앞 (1.5, 4.15) 약 11.4 m, 매장 앞 통로(stall_front, 평상시 수준)를 지난다
+#   B 매장 3 앞 (1.5, 4.0) 약 11.4 m, 매장 앞 통로(stall_front, 평상시 수준)를 지난다
 #   → 혼잡도를 끄면 가까운 A, 켜면 B가 받는다. 1-2는 A가 가면서 서쪽 통로 대신 x -7.275 통로로 돌아가는지
 #   (1-2는 그 우회 통로를 왕복하는 customer_2를 뺀 dynamic_obstacles_restaurant_peak_scene12.yaml을 쓴다)
 # 형식·통로 좌표·멈춘 로봇에 비키는 규칙(yield_to_robots)은 dynamic_obstacles_restaurant.yaml 머리말과 같다.
@@ -23,11 +23,11 @@ obstacles:
     yield_patience_s: 3.0
     yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
-    spawn: {x: -10.0, y: 3.45, yaw: 0.0}
+    spawn: {x: 2.6, y: 3.45, yaw: 0.0}
     waypoints:
-      - {x: -10.0, y: 3.45}
+      - {x: 2.6, y: 3.45}
       - {x: 5.0, y: 3.45}
-    note: "매장 앞 통로를 동서로 왕복 (픽업하는 로봇과 겹치는 혼잡 구간)"
+    note: "매장 앞 통로를 동서로 왕복 (픽업하는 로봇과 겹치는 혼잡 구간). x 2.6 ~ 5.0만 걷는다: 예전(x -10 ~ 5)에는 배식대 자리 앞을 가로질렀고, 서쪽 끝을 매장 앞(x -5.8)에 두면 1-1 3호(3번 매장 앞 x 1.5에서 서쪽으로 출발)가 그 끝점에 왔을 때 손님이 돌아섬 → keep_away로 멈춤 → 5 s 뒤 돌아섬 → 끝점에서 다시 돌아섬을 되풀이해 3호가 약 100 s 못 지나갔다 (11/15 로컬). 3호 출발 자리 동쪽이라 마주치지 않는다"
 
   - id: customer_2
     type: customer
@@ -163,53 +163,3 @@ obstacles:
       - {x: -10.7, y: -2.5}
       - {x: -11.6, y: -2.5}
     note: "서쪽 통로 남쪽 끝 (셀프 코너 남쪽 빈 곳)에서 무작위"
-
-  # 배식대 앞 (zone buffet_line, capacity 4): 배식대 정차 로봇(buffet_1·2, 남쪽 끝 y 3.87) 바로 앞에서 무작위.
-  # 평상시 customer_1(y 3.45)까지 4명이면 혼잡도 1.0
-  - id: peak_4
-    type: customer
-    pattern: random
-    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
-    yield_robot_size: [0.565, 0.537]
-    yield_patience_s: 3.0
-    yield_progress_m: 0.1
-    speed_range_mps: [0.3, 0.7]
-    spawn: {x: -10.5, y: 3.3, yaw: 0.0}
-    waypoints:
-      - {x: -11.3, y: 3.15}
-      - {x: -6.7, y: 3.15}
-      - {x: -6.7, y: 3.6}
-      - {x: -11.3, y: 3.6}
-    note: "배식대 앞 무작위"
-
-  - id: peak_5
-    type: customer
-    pattern: random
-    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
-    yield_robot_size: [0.565, 0.537]
-    yield_patience_s: 3.0
-    yield_progress_m: 0.1
-    speed_range_mps: [0.3, 0.7]
-    spawn: {x: -8.0, y: 3.3, yaw: 3.1415927}
-    waypoints:
-      - {x: -11.3, y: 3.15}
-      - {x: -6.7, y: 3.15}
-      - {x: -6.7, y: 3.6}
-      - {x: -11.3, y: 3.6}
-    note: "배식대 앞 무작위"
-
-  - id: peak_6
-    type: customer
-    pattern: random
-    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
-    yield_robot_size: [0.565, 0.537]
-    yield_patience_s: 3.0
-    yield_progress_m: 0.1
-    speed_range_mps: [0.3, 0.7]
-    spawn: {x: -7.0, y: 3.2, yaw: 3.1415927}
-    waypoints:
-      - {x: -11.3, y: 3.15}
-      - {x: -6.7, y: 3.15}
-      - {x: -6.7, y: 3.6}
-      - {x: -11.3, y: 3.6}
-    note: "배식대 앞 무작위"

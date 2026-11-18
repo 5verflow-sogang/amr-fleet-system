@@ -1,0 +1,138 @@
+# 식당 시연 1-1용 손님 10명 (혼잡도에 센다, dynamic_obstacles_file). 피크 파일(dynamic_obstacles_restaurant_peak.yaml)의 손님 자리를
+# 서 있는 손님으로 바꿨다. 서쪽 통로(west_aisle) peak_1~3 + customer_4 = 4명 → 혼잡도 1.0 그대로.
+#
+# 모든 손님이 pattern stand다 (amr_gazebo/obstacle_motion.py): 제자리(spawn)에서 waypoints 두 점 사이를 왕복하는데,
+#   경유점 0.15 m 앞에서 돌아서 실제로는 약 ± 5 cm다 (0.02 ~ 0.05 m/s). 로봇이 1.5 m 안에서 다가오면(손님이 로봇 진행선
+#   옆 0.9 m 안) evade_dirs 중 로봇 진행선에서 가장 먼 쪽으로 0.8 m 비켜 서고, 모든 로봇이 2 m 밖이면 제자리로 돌아온다.
+# evade_dirs: 8방향 중 0.8 m 비켜 선 길이 식당 정답 지도(restaurant_gt)에서 비어 있는 방향만 (gen 스크립트로 뽑았다)
+
+obstacles:
+  - id: customer_1
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: 2.6, y: 3.45, yaw: 0.0}
+    waypoints:
+      - {x: 2.400, y: 3.450}
+      - {x: 2.800, y: 3.450}
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+    note: "매장 앞 통로, 3번 매장 동쪽"
+
+  - id: customer_2
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -7.275, y: -5.6, yaw: 0.0}
+    waypoints:
+      - {x: -7.475, y: -5.600}
+      - {x: -7.075, y: -5.600}
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, -1]]
+    note: "남쪽 통로, x -7.275 통로 아래"
+
+  - id: customer_3
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -3.0, y: -5.6, yaw: 0.0}
+    waypoints:
+      - {x: -3.200, y: -5.600}
+      - {x: -2.800, y: -5.600}
+    evade_dirs: [[1, 0], [-1, 0], [0, -1], [1, -1], [-1, -1]]
+    note: "남쪽 통로 (return_1 정차 자리 x -1.15에서 떨어뜨림)"
+
+  - id: customer_4
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -10.5, y: 0.55, yaw: 0.0}
+    waypoints:
+      - {x: -10.700, y: 0.550}
+      - {x: -10.300, y: 0.550}
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1]]
+    note: "서쪽 통로, 가운데 가로 통로 입구"
+
+  - id: customer_5
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: 4.74, y: -5.6, yaw: 0.0}
+    waypoints:
+      - {x: 4.540, y: -5.600}
+      - {x: 4.940, y: -5.600}
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, -1]]
+    note: "동쪽 세로 통로 아래"
+
+  - id: customer_6
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -6.0, y: -5.6, yaw: 0.0}
+    waypoints:
+      - {x: -6.200, y: -5.600}
+      - {x: -5.800, y: -5.600}
+    evade_dirs: [[1, 0], [-1, 0], [0, -1], [1, -1], [-1, -1]]
+    note: "남쪽 통로"
+
+  - id: customer_7
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -7.275, y: -2.45, yaw: 0.0}
+    waypoints:
+      - {x: -7.475, y: -2.450}
+      - {x: -7.075, y: -2.450}
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+    note: "아래 가로 통로와 x -7.275 통로가 만나는 곳"
+
+  - id: peak_1
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -10.45, y: -4.6, yaw: 0.0}
+    waypoints:
+      - {x: -10.650, y: -4.600}
+      - {x: -10.250, y: -4.600}
+    evade_dirs: [[0, 1], [0, -1], [-1, 1], [-1, -1]]
+    note: "서쪽 통로 남쪽 (1호 출발 자리 1 m 앞)"
+
+  - id: peak_2
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -10.0, y: 1.7, yaw: 0.0}
+    waypoints:
+      - {x: -10.200, y: 1.700}
+      - {x: -9.800, y: 1.700}
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+    note: "서쪽 통로 북쪽 (y 2.6이면 매장 6 → 1번 테이블 길 1.6 m 옆이라 비키지 않고 막아 1-1 로봇이 80~150 s 섰다)"
+
+  - id: peak_3
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -11.1, y: -3.1, yaw: 0.0}
+    waypoints:
+      - {x: -11.300, y: -3.100}
+      - {x: -10.900, y: -3.100}
+    evade_dirs: [[1, 0], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+    note: "서쪽 통로 남쪽, 셀프 코너 남쪽 빈 곳"
