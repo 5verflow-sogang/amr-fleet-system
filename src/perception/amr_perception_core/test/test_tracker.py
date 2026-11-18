@@ -88,6 +88,12 @@ def test_rejects_time_going_backwards():
     {'maneuver_margin': float('nan')},
     {'maneuver_max_age': 0.0},
     {'maneuver_max_radius': 0.0},
+    {'dynamic_min_displacement': -0.1},
+    {'dynamic_evidence_window': 1.5},
+    {'dynamic_evidence_window': 2},                          # 증거 3프레임을 모을 수 없다
+    {'dynamic_release_frames': -1},
+    {'dynamic_release_frames': 30, 'dynamic_pause_frames': 10},
+    {'dynamic_release_speed': float('nan')},
 ])
 def test_rejects_invalid_config(kwargs):
     with pytest.raises(ValueError):
@@ -329,3 +335,114 @@ def test_maneuver_association_skips_large_objects(radii, joined):
     tracker.step(2.0, [(1.65, 0.0)], [0.15])          # 1.9 → 1.65: 게이트 밖, 갈 수 있는 거리 0.30 m 안
     assert (len(tracker.tracks) == 1) == joined
     assert (tracker.tracks[0].last_update == pytest.approx(2.0)) == joined
+
+
+# 동적 입구 - 실제 이동 (dynamic_min_displacement, ref_points), 증거 창, 출구 (dynamic_release_*)
+ENTRY = dict(dynamic_min_displacement=0.3)
+EXIT = dict(dynamic_release_frames=30, dynamic_pause_frames=100, dynamic_release_speed=0.1,
+            dynamic_release_max_displacement=0.5)
+
+
+def _run(tracker, frames, start=0, dt=0.1):
+    """frames: 프레임마다 (군집 중심, 기준점 또는 None). 프레임마다 동적 트랙이 있는지를 돌려준다."""
+    flags = []
+    for k, (z, ref) in enumerate(frames, start):
+        tracks = tracker.step(k * dt, [z], free_evidence=[True], ref_points=None if ref is None else [ref])
+        flags.append(any(track.is_dynamic for track in tracks))
+    return flags
+
+
+def _first(flags, value=True, start=0):
+    return next((k for k in range(start, len(flags)) if flags[k] == value), None)
+
+
+def _table(slide_speed=0.5, slide_frames=8, still_frames=80, ref=(0.0, -0.5)):
+    """정지 테이블 (식당 11/17): 다가가는 로봇에게 보이는 면이 바뀌어 군집 중심만 미끄러지고, 가장 가까운 점은 그대로다."""
+    step = slide_speed * 0.1
+    frames = [((0.0, 0.0), ref)] * 10
+    frames += [((step * (i + 1), 0.0), ref) for i in range(slide_frames)]
+    return frames + [((step * slide_frames, 0.0), ref)] * still_frames
+
+
+def _walk_then_stand(speed=1.0, walk_frames=30, stand_frames=120):
+    frames = [((speed * 0.1 * k, 0.0), (speed * 0.1 * k, -0.1)) for k in range(walk_frames)]
+    end = speed * 0.1 * (walk_frames - 1)
+    return frames + [((end, 0.0), (end, -0.1))] * stand_frames
+
+
+def test_sliding_centroid_alone_makes_static_table_dynamic_for_good():
+    # 지금 규칙의 문제: 중심이 0.8 s 미끄러진 테이블이 동적이 되고 풀리지 않는다
+    flags = _run(MultiTargetTracker(), _table())
+    assert _first(flags) is not None and flags[-1]
+
+
+def test_displacement_measured_at_steadier_point_keeps_table_static():
+    assert not any(_run(MultiTargetTracker(TrackerConfig(**ENTRY)), _table()))
+
+
+def test_displacement_falls_back_to_centroid_without_ref_points():
+    frames = [(z, None) for z, _ in _table()]                # 중심 0.4 m 이동 ≥ 0.3 m
+    assert any(_run(MultiTargetTracker(TrackerConfig(**ENTRY)), frames))
+
+
+def test_displacement_gate_does_not_delay_walking_person():
+    frames = _walk_then_stand(stand_frames=0)
+    assert _first(_run(MultiTargetTracker(TrackerConfig(**ENTRY)), frames)) == \
+        _first(_run(MultiTargetTracker(), frames))
+
+
+def test_displacement_gate_delays_slow_person_by_at_most_one_frame():
+    # 0.3 m를 가는 데 0.5 m/s는 0.6 s: 속력 조건(5프레임, 0.5 s)보다 한 프레임 늦다
+    frames = _walk_then_stand(speed=0.5, walk_frames=40, stand_frames=0)
+    base = _first(_run(MultiTargetTracker(), frames))
+    gated = _first(_run(MultiTargetTracker(TrackerConfig(**ENTRY)), frames))
+    assert base is not None and base <= gated <= base + 1
+
+
+def test_track_stopped_near_origin_is_released_after_release_frames():
+    # 입구를 뚫은 제자리 미끄러짐 (중심만, 0.4 m)은 3 s 멈추면 정적으로 내린다
+    frames = [(z, None) for z, _ in _table()]
+    flags = _run(MultiTargetTracker(TrackerConfig(**EXIT)), frames)
+    became = _first(flags)
+    released = _first(flags, False, became)
+    assert became is not None and released is not None
+    assert 30 <= released - became <= 40
+
+
+def test_person_who_walked_far_is_paused_then_released():
+    flags = _run(MultiTargetTracker(TrackerConfig(**EXIT)), _walk_then_stand())   # 2.9 m 걷고 섬 (30프레임째)
+    assert flags[30 + 50]                     # 선 지 5 s: '멈춤' (동적 표시 유지)
+    released = _first(flags, False, _first(flags))
+    assert released is not None and 30 + 100 <= released <= 30 + 115
+
+
+def test_released_track_must_pass_entry_again():
+    tracker = MultiTargetTracker(TrackerConfig(**ENTRY, **EXIT))
+    flags = _run(tracker, _walk_then_stand())
+    assert not flags[-1]
+    end = 0.1 * 29
+    # 선 자리에서 중심만 0.5 m/s로 0.8 s(0.4 m) 미끄러짐: 기준 자리를 선 자리로 옮겼으므로 다시 동적이 되지 않는다
+    slide = [((end + 0.05 * min(k, 8), 0.0), (end, -0.1)) for k in range(1, 21)]
+    assert not any(_run(tracker, slide, start=len(flags)))
+    walk = [((end + 0.4 + 0.1 * k, 0.0), (end + 0.1 * k, -0.1)) for k in range(1, 15)]
+    assert any(_run(tracker, walk, start=len(flags) + 20))     # 다시 걸으면 다시 동적
+
+
+def _old_evidence_then_slide(tracker):
+    """처음 3프레임에만 증거가 있고, 한참 뒤 증거 없이 1.0 m/s로 미끄러진다."""
+    tracks = []
+    for k in range(40):
+        z = (0.0, 0.0) if k < 20 else (0.1 * (k - 20), 0.0)
+        tracks = tracker.step(k * 0.1, [z], free_evidence=[k < 3])
+    return tracks
+
+
+def test_evidence_window_forgets_old_evidence():
+    assert [t.is_dynamic for t in _old_evidence_then_slide(MultiTargetTracker())] == [True]
+    windowed = MultiTargetTracker(TrackerConfig(dynamic_evidence_window=10))
+    assert [t.is_dynamic for t in _old_evidence_then_slide(windowed)] == [False]
+
+
+def test_ref_points_length_must_match():
+    with pytest.raises(ValueError):
+        MultiTargetTracker().step(0.0, [(0.0, 0.0)], ref_points=[])

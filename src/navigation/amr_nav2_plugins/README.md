@@ -10,8 +10,9 @@
 | --- | --- | --- |
 | `amr_nav2_plugins::DwaController` | `nav2_core::Controller` | `amr_planning_core::DwaPlanner`(DWA, 동적 장애물 등속 예측 포함)를 감싼다 |
 | `amr_nav2_plugins::AStarGlobalPlanner` | `nav2_core::GlobalPlanner` | `amr_planning_core::AStarPlanner`(8방향 A*) + `smoothPath`(평활화)를 감싼다. 비교용 - 기본 planner는 NavFn |
+| `amr_nav2_plugins::FleetPeerLayer` | `nav2_costmap_2d::Layer` | `/fleet/robot_states`의 다른 로봇 위치를 외삽해 차체를 LETHAL로 그린다 (아래) |
 
-`plugins.xml`으로 내보낸다. `nav2_params.yaml`의 `controller_server.controller_plugins`에
+`plugins.xml`(Controller·Global Planner)과 `layers.xml`(costmap 레이어)로 내보낸다. `nav2_params.yaml`의 `controller_server.controller_plugins`에
 `"DWA"`로 추가하면 로드된다(기존 DWB baseline `"FollowPath"`는 비교용으로 남겨 둔다).
 
 ### `DwaController`가 하는 일
@@ -45,6 +46,24 @@
    (점마다 다음 점 방향, 마지막 점은 요청한 목표 자세). 실패하면 빈 경로를 돌려준다(planner_server가 실패 처리).
 3. 고르는 법: `ros2 launch amr_bringup nav2.launch.py planner:=astar` - `planner_server.AStar` 블록을 `GridBased`
    이름에 얹는다(BT의 `planner_id`를 그대로 쓰려고, `amr_bringup/planner.py`).
+
+### `FleetPeerLayer`가 하는 일
+
+LiDAR 스캔면(지면 0.38 m = `base_link` 0.18 + extrinsic z 0.2)이 다른 로봇 차체(0.03~0.33 m) 위를 지나가,
+`obstacle_layer`에는 다른 로봇이 LiDAR 원통(반경 4 cm) 한 점으로만 찍힌다. 그래서 로봇끼리 서로를 피하지 않고 부딪혀
+밀다 섰다(11/13 `fleet_stack` resp50: amr_03·04가 중심 거리 0.55 m로 200 s, 정체 14·24건 대부분 마주침).
+
+1. `/fleet/robot_states`(`amr_bt`가 2 Hz, RELIABLE)를 구독해 나(노드 네임스페이스 첫 칸 또는 `robot_id`)를 뺀
+   로봇의 위치를 모은다. 연속 두 상태로 속도를 추정해 지금 시각으로 외삽한다(`max_extrapolation` 상한, `timeout` 넘게 소식이
+   없으면 뺀다. `fleet_peers.hpp`, ROS 없이 테스트).
+2. `updateBounds`에서 차체 사각형(`peer_half_length`·`peer_half_width` + `padding`)을 costmap 좌표계로 옮기고(TF), 지난
+   주기에 그린 영역까지 bounds에 넣는다 - LayeredCostmap이 그 영역을 지운 뒤 새로 그리므로 `obstacle_layer`처럼 표시가 남지
+   않는다.
+3. `updateCosts`에서 사각형 셀을 LETHAL로 칠하되 **내 차체 안쪽 셀은 비운다**. 이미 붙어 있을 때 내 자리까지 LETHAL이면
+   DWA(`lethal_cost_threshold` 254)가 멀어지는 궤적도 고르지 못한다.
+4. `nav2_params.yaml`의 전역·지역 costmap에서 `inflation_layer` 앞에 둔다(팽창된다). 식당 프로필은 서빙 로봇(1.16 m)이
+   LiDAR로 서로 보이므로 끈다(`amr_bringup/nav2_profile.py`). 파라미터 이름을 `topic`이 아니라 `states_topic`으로 둔 것은
+   `nav2.launch.py`의 `RewrittenYaml`이 `topic` 키를 모두 스캔 토픽으로 바꾸기 때문이다.
 
 ## 파라미터
 

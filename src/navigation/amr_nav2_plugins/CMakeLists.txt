@@ -94,7 +94,17 @@ target_link_libraries(astar_planner
 )
 ament_target_dependencies(astar_planner ${dependencies})
 
+add_library(fleet_peer_layer SHARED
+  src/fleet_peer_layer.cpp
+)
+target_include_directories(fleet_peer_layer PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(fleet_peer_layer ${dependencies})
+
 pluginlib_export_plugin_description_file(nav2_core plugins.xml)
+pluginlib_export_plugin_description_file(nav2_costmap_2d layers.xml)
 
 install(
   DIRECTORY include/
@@ -102,7 +112,7 @@ install(
 )
 
 install(
-  TARGETS waypoint dwa_controller plan_path astar_planner
+  TARGETS waypoint dwa_controller plan_path astar_planner fleet_peer_layer
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -110,7 +120,7 @@ install(
 )
 
 ament_export_include_directories(include)
-ament_export_libraries(waypoint dwa_controller plan_path astar_planner)
+ament_export_libraries(waypoint dwa_controller plan_path astar_planner fleet_peer_layer)
 ament_export_targets(export_${PROJECT_NAME})
 ament_export_dependencies(${dependencies} amr_planning_core)
 
@@ -135,9 +145,12 @@ if(BUILD_TESTING)
   target_link_libraries(test_plan_path plan_path)
   ament_target_dependencies(test_plan_path tf2 tf2_geometry_msgs)
 
+  ament_add_gtest(test_fleet_peers test/test_fleet_peers.cpp)
+  target_include_directories(test_fleet_peers PRIVATE include)
+
   ament_add_gtest(test_plugin_loadable test/test_plugin_loadable.cpp)
-  target_link_libraries(test_plugin_loadable dwa_controller astar_planner)
-  ament_target_dependencies(test_plugin_loadable pluginlib nav2_core)
+  target_link_libraries(test_plugin_loadable dwa_controller astar_planner fleet_peer_layer)
+  ament_target_dependencies(test_plugin_loadable pluginlib nav2_core nav2_costmap_2d)
 endif()
 
 ament_package()

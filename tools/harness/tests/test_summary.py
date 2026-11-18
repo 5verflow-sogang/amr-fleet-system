@@ -281,8 +281,11 @@ def test_fleet_stack_metrics(tmp_path):
          [['amr_02', 't9', 'move_to_dropoff', '0', '134', '134.0', 'amr_05'],
           ['amr_05', 't13', 'move_to_pickup', '1', '129', '128.0', 'amr_02'],
           ['amr_01', 't1', 'move_to_pickup', '0', '66', '66.0', '']])
+    _csv(tmp_path / 'standoffs.csv', ['time', 'robot', 'direction', 'yield_to'],
+         [['50', 'amr_05', 'back', 'amr_02'], ['73', 'amr_05', 'back', 'amr_02']])
     m2 = fleet_metrics(tmp_path)
     assert (m2['fleet.stalls'], m2['fleet.stalls_paired'], m2['fleet.stall_s.max']) == (3, 2, 134.0)
+    assert m2['fleet.standoff_yields'] == 2 and 'fleet.standoff_yields' not in m
     # KPI: 수신 기준 200 ms 안, 장기 대기 1건은 FAIL, 정체 0건은 PASS
     assert kpi_verdict('fleet.response_recv_ms.mean', 175.0, 190.0) == 'PASS'
     assert kpi_verdict('fleet.zone_long_waits', 1.0, 1.0) == 'FAIL'
