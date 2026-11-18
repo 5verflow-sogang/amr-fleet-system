@@ -15,11 +15,12 @@ import demo_scene as ds  # noqa: E402
 
 TASKS = HARNESS / 'tasks'
 STATIONS = REPO / 'src' / 'fleet' / 'amr_fleet_manager' / 'config' / 'stations_restaurant.yaml'
+STATIONS_S3 = STATIONS.with_name('stations_restaurant_s3.yaml')   # 장면 3 전용 서비스 자세 (회수 반납 옆면 등)
 ROBOTS = REPO / 'src' / 'bringup' / 'amr_bringup' / 'config' / 'robots_restaurant.yaml'
 
 
-def stations():
-    return {k: tuple(v) for k, v in yaml.safe_load(STATIONS.read_text(encoding='utf-8'))['stations'].items()}
+def stations(path=STATIONS):
+    return {k: tuple(v) for k, v in yaml.safe_load(path.read_text(encoding='utf-8'))['stations'].items()}
 
 
 def run_scene(steps, events, robots_at=None):
@@ -280,6 +281,10 @@ def test_scene12_request_is_sent_with_t0_after_the_two_start_tasks_are_assigned(
 def test_scene_files_have_no_station_conflicts(scene):
     # 서버는 맡긴 작업의 픽업·하역을 끝날 때까지 잡아 둔다 (station_clearance_m 1 m). 같이 잡힐 수 있는 작업끼리 자리가
     # 겹치면 둘째가 앞 작업이 끝날 때까지 할당되지 않는다 (11/8 녹화: 1-2 request, 2막 more 단계 시간 초과)
+    if 'steps' not in yaml.safe_load((TASKS / scene).read_text(encoding='utf-8')):
+        pytest.skip('장면 파일이 아니다 (demo_s3_fake_robots.yaml: 가짜 로봇 설정)')
+    if not ds.load_station_check(TASKS / scene):
+        pytest.skip('station_check: false - 같은 자리를 시간차로 다시 쓰는 장면 (장면 3)')
     steps = ds.load_scene(TASKS / scene, {'collect_priority': '200'})
     assert ds.station_conflicts(steps, stations()) == []
 
@@ -429,3 +434,80 @@ def test_act2_keeps_off_the_south_east_corner():
     delivery = steps[1]['tasks'][0]
     assert (delivery['pickup'], delivery['dropoff']) == ('stall_2', 'c01')
     assert delivery['pickup'] not in start
+
+
+def test_repeat_cycles_the_task_list_with_numbered_ids(tmp_path):
+    path = tmp_path / 's.yaml'
+    path.write_text(yaml.safe_dump({'steps': [{'name': 'flow', 'gap_s': 8, 'repeat': 2, 'tasks': [
+        {'id': 'a', 'type': 'delivery', 'pickup': 'stall_4', 'dropoff': 'L03'},
+        {'id': 'b', 'type': 'delivery', 'pickup': 'stall_3', 'dropoff': 't10'}]}]}), encoding='utf-8')
+    steps = ds.load_scene(path)
+    assert [t.task_id for t in steps[0].tasks] == ['a_01', 'b_01', 'a_02', 'b_02']
+    _, out = run_scene(steps, {})
+    assert [(o[0], o[2]) for o in out] == [(0.0, 'a_01'), (8.0, 'b_01'), (16.0, 'a_02'), (24.0, 'b_02')]
+
+
+def test_battery_t0_fires_once_when_any_robot_drops_below_and_logs_the_batteries():
+    scene = ds.Scene(ds.load_scene(TASKS / 'demo_s3.yaml'), t0_when=ds.load_t0_when(TASKS / 'demo_s3.yaml'))
+    assert scene.t0_when == {'battery_below': 31.0}
+    assert ('t0', 0.0, 'battery') not in scene.tick(0.0, {}, batteries={'amr_01': 45.0, 'amr_05': 31.0})
+    out = scene.tick(10.0, {}, batteries={'amr_01': 44.0, 'amr_05': 30.9})
+    assert out[0] == ('t0', 10.0, 'battery') and scene.t0 == 10.0
+    assert {'t': 10.0, 'ev': 't0', 'why': 'battery', 'battery': {'amr_01': 44.0, 'amr_05': 30.9}} in scene.log
+    assert all(o[0] == 'task' for o in scene.tick(20.0, {}, batteries={'amr_05': 20.0}))   # 한 번만
+
+
+def test_battery_t0_scene_is_not_done_until_t0(tmp_path):
+    path = tmp_path / 's.yaml'
+    path.write_text(yaml.safe_dump({'t0_when': {'battery_below': 31}, 'steps': [{'name': 'a', 'tasks': [
+        {'id': 'a', 'type': 'delivery', 'pickup': 'stall_4', 'dropoff': 'L03'}]}]}), encoding='utf-8')
+    scene = ds.Scene(ds.load_scene(path), t0_when=ds.load_t0_when(path))
+    scene.tick(0.0, {}, batteries={'amr_01': 50.0})
+    assert not scene.done                            # 작업은 다 냈지만 0초가 아직
+    scene.tick(1.0, {}, batteries={'amr_01': 30.0})
+    assert scene.done and scene.t0 == 1.0
+
+
+def test_battery_t0_cannot_be_mixed_with_a_t0_step(tmp_path):
+    path = tmp_path / 's.yaml'
+    path.write_text(yaml.safe_dump({'t0_when': {'battery_below': 31}, 'steps': [{'name': 'a', 't0': True, 'tasks': [
+        {'id': 'a', 'type': 'delivery', 'pickup': 'stall_4', 'dropoff': 'L03'}]}]}), encoding='utf-8')
+    with pytest.raises(ValueError, match='t0_when'):
+        ds.load_scene(path)
+
+
+def test_scene3_flow_uses_restaurant_stations_away_from_the_west_aisle_and_buffet():
+    st = stations()
+    steps = ds.load_scene(TASKS / 'demo_s3.yaml')
+    names = {n for s in steps for t in s.tasks for n in (t.pickup, t.dropoff)}
+    assert names <= set(st), names - set(st)
+    # 손님 피크가 몰리는 서쪽 통로·배식대 앞(x < -6)은 쓰지 않는다
+    assert all(st[n][0] > -6.0 for n in names)
+    assert len({t.pickup for s in steps for t in s.tasks}) >= 3     # 매장 셋을 돌려 쓴다
+
+def test_station_check_off_skips_the_conflict_check(tmp_path):
+    # 장면 3은 같은 매장·테이블을 시간차로 다시 쓴다 (앞 작업이 안 끝났으면 서버 큐에서 기다리는 것이 의도)
+    path = tmp_path / 's.yaml'
+    path.write_text(yaml.safe_dump({'station_check': False, 'steps': [{'name': 'a', 'tasks': [
+        {'id': 'a', 'type': 'delivery', 'pickup': 'stall_4', 'dropoff': 'L03'}]}]}), encoding='utf-8')
+    assert ds.load_station_check(path) is False
+    path.write_text(yaml.safe_dump({'steps': []}), encoding='utf-8')
+    assert ds.load_station_check(path) is True
+    path.write_text(yaml.safe_dump({'station_check': 'no', 'steps': []}), encoding='utf-8')
+    with pytest.raises(ValueError, match='station_check'):
+        ds.load_station_check(path)
+
+
+@pytest.mark.parametrize('scene', ['demo_s3.yaml', 'demo_s3_gazebo.yaml'])
+def test_scene3_reuses_stations_by_time_and_turns_the_check_off(scene):
+    steps = ds.load_scene(TASKS / scene)
+    assert ds.station_conflicts(steps, stations(STATIONS_S3))     # 같은 자리를 시간차로 다시 쓴다
+    assert ds.load_station_check(TASKS / scene) is False
+
+
+def test_battery_t0_works_with_robot_poses_for_near_steps():
+    # dev의 after.near(로봇 자세)와 장면 3의 배터리 0초가 같은 tick에서 같이 돈다
+    scene = ds.Scene(ds.load_scene(TASKS / 'demo_s3.yaml'), {k: v[:2] for k, v in stations().items()},
+                     t0_when=ds.load_t0_when(TASKS / 'demo_s3.yaml'))
+    out = scene.tick(0.0, {}, {'amr_01': (0.0, 0.0)}, {'amr_01': 20.0})
+    assert out[0] == ('t0', 0.0, 'battery') and scene.t0_by == 'battery'
