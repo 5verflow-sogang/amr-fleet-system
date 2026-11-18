@@ -166,3 +166,19 @@ def test_scene12_first_robot_faces_east_and_scene11_faces_north():
     assert (s12['amr_01'].x, s12['amr_01'].y, s12['amr_01'].yaw) == (-10.0, -5.8, 0.0)
     assert s11['amr_01'].yaw == pytest.approx(math.pi / 2)
 
+
+def test_scene12_split_first_robot_faces_the_west_aisle():
+    # 1-2 분할 영상: 1호는 서쪽 통로 남쪽 입구 앞에서 북쪽(서쪽 통로)을 보고, 서쪽 통로 구역(y -5.0부터)까지 2 m 떨어져 있다.
+    # 나머지 4대는 1-2와 같다. 자리는 지도에서 비어 있고 분할 영상 손님 경로와 1 m 넘게 떨어져 있다
+    root = Path(__file__).resolve().parents[3]
+    split = {r.name: r for r in load_robots(str(Path(ROBOTS).with_name('robots_restaurant_s12_split.yaml')), 5)}
+    s12 = {r.name: r for r in load_robots(str(Path(ROBOTS).with_name('robots_restaurant_s12.yaml')), 5)}
+    first = split['amr_01']
+    assert (first.x, first.y) == (-10.2, -7.0) and first.yaw == pytest.approx(math.pi / 2)
+    assert -11.9 <= first.x <= -9.73 and -5.0 - first.y >= 2.0
+    assert all((split[n].x, split[n].y, split[n].yaw) == (s12[n].x, s12[n].y, s12[n].yaw) for n in split if n != 'amr_01')
+    assert free_on_map(root / 'localization' / 'amr_mapping' / 'maps' / 'restaurant_gt.pgm', first.x, first.y)
+    config = root / 'simulation' / 'amr_gazebo' / 'config'
+    obstacles = yaml.safe_load((config / 'dynamic_obstacles_restaurant_peak_scene12_split.yaml')
+                               .read_text(encoding='utf-8'))['obstacles']
+    assert all(obstacle_clearance(first.x, first.y, o) >= CLEARANCE_M for o in obstacles)
