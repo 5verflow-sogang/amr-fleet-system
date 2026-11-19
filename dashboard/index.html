@@ -10,7 +10,7 @@
     받기   /fleet/robot_states, /fleet/task_table, /fleet/task_status, /fleet/congestion, /amr_0N/safety/status, /clock
            /fleet/assignment_decisions (배정 판단. 메시지가 생기면 바로 쓴다), /amr_0N/plan (경로)
     보내기 /fleet/task_requests
-  주소 옵션: ws, collect_priority, collect_type, aging_rate, clock, min_hall (README.md)
+  주소 옵션: ws, collect_priority, collect_type, aging_rate, clock, min_hall, charge_why (README.md)
   시험: window.dashTest.feed(topic, msg)로 rosbridge 없이 메시지를 넣는다 (test/)
   어두운 바탕. 색은 평소 회색, 관제가 방금 판단한 것은 파랑, 직원이 누르는 것은 하늘색, 충전은 주황, 혼잡·문제만 빨강
   (ISA-101 고성능 HMI처럼 색을 아껴 쓴다). 지도는 실내 지도 앱(Mappedin)의 2D 보기처럼 회색 한 계열로 조용하게 그린다
@@ -245,6 +245,8 @@ const OPT = {
   agingRate: optNum('aging_rate', 0),
   clock: parseHms(query.get('clock')),
   minHall: optNum('min_hall', null),
+  // 충전 배정 근거 문구. 관제가 순서를 정하지 않는 비교군(장면 3 끔) 녹화는 "배터리 20% 미만"처럼 바꾼다
+  chargeWhy: query.get('charge_why') || '교대 충전',
 };
 const DELIVER_PRIORITY = 100;
 const ROBOT_IDS = ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05'];
@@ -505,7 +507,7 @@ function updateStops() {
 
 // ---- 관제 판단 (명세 3-4) ----
 // 문구 템플릿 2: 결정("N호 배정" / "{작업} N순위") · 작업(이름표 + 경로) · 근거(아래 이름 + 필요하면 " · 수치")
-const WHY = { nearest: '최단 거리', congestion: '혼잡 회피', only: '대기 로봇 1대', collect: '회수 우선', order: '요청 순서', aging: '장기 대기', charge: '교대 충전' };
+const WHY = { nearest: '최단 거리', congestion: '혼잡 회피', only: '대기 로봇 1대', collect: '회수 우선', order: '요청 순서', aging: '장기 대기', charge: OPT.chargeWhy };
 function assignDecision(r, robot, at) {
   const task = r.task, msg = decisionMsgs[task.task_id];
   const d = { kind: 'assign', at, taskId: task.task_id, robot, big: `${botName(robot)} 배정`, line: taskHtml(task), why: '', cmp: null, congestion: false, candidates: [] };

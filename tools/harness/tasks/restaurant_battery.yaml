@@ -1,0 +1,15 @@
+# 식당 배터리 실험(restaurant_battery)용 작업 일정: 매장·배식대에서 테이블로 20 s 간격 40건 (약 800 s).
+# 5대가 쉬지 않을 만큼은 아니어서 충전 차례·인터럽트 뒤 다른 로봇이 작업을 이어받는 것이 보인다. 이름은 stations_restaurant.yaml
+count: 40
+start_delay_s: 10.0
+arrival: fixed
+interval_s: 20.0
+flows:
+  - type: delivery
+    pickup: [stall_*, buffet_*]
+    dropoff: [t*]
+    weight: 1.0
+items:
+  small: 1.0
+priority: [0, 0]
+deadline_s: 0.0

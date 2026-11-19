@@ -1,0 +1,132 @@
+# 식당 시연 3 (충전 스케줄링) 손님: 손님이 몰린 서쪽에만 둔다 (11/8 회의 "사람 수 줄이기, 혼잡한 곳에만, 로봇한테 안 다가가게").
+# 피크 파일(dynamic_obstacles_restaurant_peak.yaml)에서 서쪽 통로·배식대 앞 손님(peak_1~6)과 서쪽 세로 통로 손님(customer_2)만
+# 그대로 옮겼다 (모두 x -6.7보다 서쪽). 장면 3 로봇이 다니는 동쪽·가운데(매장 2~4, 남동쪽 테이블, 충전소)에는 손님이 없다.
+# 예외: table_guest 한 명은 c01 서쪽 테이블 사이 통로(x 5.0)에서 남동쪽 홀 쪽으로 나왔다 들어간다 (y -3.75 ~ -4.35).
+# 105 s 회수 주인공이 c02에서 반납대로 가며 남쪽 통로 입구로 꺾을 때 카메라 앞(2.5 m, ±45° 안)에 손님이 나온다.
+# 켬/끔 모두 같은 자리라 공정하다. 늘 오가므로 주인공이 지날 때 거의 반드시 보인다 (시작 시각을 맞출 기능은 없다).
+# 로봇이 통로 입구로 꺾는 길(약 (5.2, -5.6))·c01·충전소·로봇 시작 자리에서 1.2 m 넘게 떨어져 있다.
+# 11/19 밤샘에서 자리를 세 번 옮겼다: x 9.9(대기 자리 길목) → 충전 뒤 복귀하는 로봇이 손님과 대기 로봇 사이로 비집고 들어감,
+# x 5.5(y -5.05까지) → 서쪽으로 가는 로봇과 몸 사이 0.11 m, x 5.0(y -4.65까지) → 통로 입구에서 5호가 4 s 기어감
+# (11/18 A2: 남쪽 좁은 통로 x 3.7의 bench_guest가 반납대에서 충전소로 나가는 5호를 막았다)
+
+obstacles:
+  - id: customer_2
+    type: customer
+    pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
+    speed_range_mps: [0.4, 0.9]
+    spawn: {x: -7.275, y: -5.6, yaw: 1.5707963}
+    waypoints:
+      - {x: -7.275, y: -5.6}
+      - {x: -7.275, y: 3.45}
+    note: "세로 통로 x -7.275 남북 왕복 (입구 쪽 → 매장, 화분 칸막이 틈으로 들어간다)"
+
+  - id: peak_1
+    type: customer
+    pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
+    speed_range_mps: [0.4, 0.8]
+    spawn: {x: -10.45, y: -4.6, yaw: 1.5707963}
+    waypoints:
+      - {x: -10.45, y: -4.6}
+      - {x: -10.45, y: 2.6}
+    note: "서쪽 통로 남→북"
+
+  - id: peak_2
+    type: customer
+    pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
+    speed_range_mps: [0.4, 0.8]
+    spawn: {x: -10.0, y: 2.6, yaw: -1.5707963}
+    waypoints:
+      - {x: -10.0, y: 2.6}
+      - {x: -10.0, y: -4.6}
+    note: "서쪽 통로 북→남 (첫 열 의자 등받이 x -9.68과 0.07 m)"
+
+  - id: peak_3
+    type: customer
+    pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
+    speed_range_mps: [0.4, 0.8]
+    spawn: {x: -11.0, y: -3.5, yaw: 0.0}
+    waypoints:
+      - {x: -11.6, y: -3.65}
+      - {x: -10.7, y: -3.65}
+      - {x: -10.7, y: -2.5}
+      - {x: -11.6, y: -2.5}
+    note: "서쪽 통로 남쪽 끝 (셀프 코너 남쪽 빈 곳)에서 무작위"
+
+  # 배식대 앞 (zone buffet_line, capacity 4): 배식대 정차 로봇(buffet_1·2, 남쪽 끝 y 3.87) 바로 앞에서 무작위.
+  # 평상시 customer_1(y 3.45)까지 4명이면 혼잡도 1.0
+  - id: peak_4
+    type: customer
+    pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
+    speed_range_mps: [0.3, 0.7]
+    spawn: {x: -10.5, y: 3.3, yaw: 0.0}
+    waypoints:
+      - {x: -11.3, y: 3.15}
+      - {x: -6.7, y: 3.15}
+      - {x: -6.7, y: 3.6}
+      - {x: -11.3, y: 3.6}
+    note: "배식대 앞 무작위"
+
+  - id: peak_5
+    type: customer
+    pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
+    speed_range_mps: [0.3, 0.7]
+    spawn: {x: -8.0, y: 3.3, yaw: 3.1415927}
+    waypoints:
+      - {x: -11.3, y: 3.15}
+      - {x: -6.7, y: 3.15}
+      - {x: -6.7, y: 3.6}
+      - {x: -11.3, y: 3.6}
+    note: "배식대 앞 무작위"
+
+  - id: peak_6
+    type: customer
+    pattern: random
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
+    speed_range_mps: [0.3, 0.7]
+    spawn: {x: -7.0, y: 3.2, yaw: 3.1415927}
+    waypoints:
+      - {x: -11.3, y: 3.15}
+      - {x: -6.7, y: 3.15}
+      - {x: -6.7, y: 3.6}
+      - {x: -11.3, y: 3.6}
+    note: "배식대 앞 무작위"
+  - id: table_guest
+    type: customer
+    pattern: straight
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    yield_patience_s: 3.0
+    yield_progress_m: 0.1
+    speed_range_mps: [0.5, 0.8]
+    spawn: {x: 5.0, y: -3.75, yaw: -1.5707963}
+    waypoints:
+      - {x: 5.0, y: -3.75}
+      - {x: 5.0, y: -4.35}
+    note: "c01 서쪽 테이블 사이 통로 → 남동쪽 홀 쪽 왕복 (105 s 회수 주인공이 통로 입구로 꺾는 길 앞)"

@@ -7,9 +7,10 @@
 단계와 조건 (하나라도 맞으면):
 - ESTOP: E-Stop 요청이 걸려 있음 (해제 요청 전까지 유지)
 - CRITICAL: 지금 명령의 진행 경로에 LiDAR 점이 걸림 (collision.path_hazard)
-  / 움직이는 트랙의 TTC ≤ ttc_critical / 스캔 끊김
+  / 지금 움직이는 트랙의 TTC ≤ ttc_critical / 스캔 끊김
 - WARNING: 진행 경로 밖이지만 LiDAR 점이 차체에서 critical_distance 이내
-  / 움직이는 트랙의 TTC ≤ ttc_warning / 움직이는 트랙이 dynamic_warning_distance 이내 / 추적·odom 끊김
+  / 지금 움직이는 트랙의 TTC ≤ ttc_warning / 동적 트랙이 dynamic_warning_distance 이내 / 추적·odom 끊김
+  ('지금 움직이는' = 동적 트랙 중 추정 속력이 moving_min_speed 이상. 바깥 원은 멈춘 동적 트랙에도 건다)
   - 움직이는 트랙이 dynamic_slow_distance 이내면 speed_limit을 dynamic_slow_speed_limit으로 더 낮춘다.
     진행 방향과 상관없다: 바로 옆에서 멀어지던 사람이 돌아서면 추적 속도가 따라오는 동안(약 0.5 s) TTC가
     무한으로 남아, 그 사이 출발·가속한 로봇에 부딪혔다 (I17 시드 1019·1029, 사람이 차체 0.2~0.3 m 옆에서 돌아섬)
@@ -57,6 +58,14 @@ class SafetyConfig:
     ttc_warning: float = 2.0
     # 움직이는 트랙(사람·지게차)이 차체에서 이 거리 [m] 안이면 미리 저속
     dynamic_warning_distance: float = 1.5
+    # TTC 규칙은 추정 속력이 이 값 [m/s] 이상인 동적 트랙에만 건다 (0이면 동적이면 다). 동적 표시는 '움직인 적 있음'이라
+    # 멈춰 선 사람이나 가짜 동적 물체에도 남는데, TTC는 로봇 자기 속도로도 줄어든다: 거의 멈춘(0.0~0.04 m/s) 가짜 동적
+    # 테이블에 다가가기만 해도 TTC 0.2 s 정지가 10번 났다 (식당 녹화 11/17). 멈춘 물체는 진행 경로 판정이 지킨다.
+    # 바깥 경고 원(dynamic_warning_distance)과 안쪽 근접 저속(dynamic_slow_distance)은 속력과 상관없이 그대로다.
+    # 바깥 원은 '곧 다시 움직일 수 있는' 멈춘 사람 옆을 미리 늦게 지나가게 하는 유일한 규칙이다: 원까지 속력 조건을 걸면
+    # 걸어와서 선 사람이 다시 걸을 때 TTC가 걸리는 시각(약 0.4 s)은 같은데 로봇이 0.8 m/s 그대로라 제동 거리가 0.18 m
+    # 길어져, 경로로 들어오는 사람과의 최소 간격이 줄었다 (모의 시험 test_start_walking, #361 리뷰)
+    moving_min_speed: float = 0.0
     # WARNING의 speed_limit [m/s] (#70: 반응 0.2 s + 1.0 m/s²로 0.3 m 안에 서는 최대 속도)
     warning_speed_limit: float = 0.6
     # 움직이는 트랙이 차체에서 이 거리 [m] 안이면 방향과 상관없이 dynamic_slow_speed_limit [m/s]까지 (0이면 끔).
@@ -91,7 +100,8 @@ class SafetyConfig:
             value = getattr(self, name)
             if not (math.isfinite(value) and value > 0.0):
                 raise ValueError(f'{name}는 양수여야 한다: {value}')
-        for name in ('release_hold_s', 'dynamic_slow_distance', 'dynamic_slow_unconfirmed_speed'):
+        for name in ('release_hold_s', 'dynamic_slow_distance', 'dynamic_slow_unconfirmed_speed',
+                     'moving_min_speed'):
             value = getattr(self, name)
             if not (math.isfinite(value) and value >= 0.0):
                 raise ValueError(f'{name}는 0 이상이어야 한다: {value}')
@@ -213,10 +223,12 @@ class SafetyMonitor:
                                          f'{c.dynamic_slow_speed_limit:.2f} m/s (track {obs.track_id})',
                                          obs.track_id, c.dynamic_slow_speed_limit))
                 continue
-            if obs.ttc <= c.ttc_critical:
+            # 지금 움직이는가 (moving_min_speed). 멈춘 동적 트랙은 TTC만 빼고 바깥 원·안쪽 근접 저속은 건다
+            moving = obs.speed >= c.moving_min_speed
+            if moving and obs.ttc <= c.ttc_critical:
                 causes.append(_Cause(LEVEL_CRITICAL, REASON_COLLISION_RISK,
                                      f'TTC {obs.ttc:.1f} s (track {obs.track_id})', obs.track_id))
-            elif obs.ttc <= c.ttc_warning:
+            elif moving and obs.ttc <= c.ttc_warning:
                 causes.append(_Cause(LEVEL_WARNING, REASON_COLLISION_RISK,
                                      f'TTC {obs.ttc:.1f} s (track {obs.track_id})', obs.track_id))
             slow = c.dynamic_slow_distance > 0.0 and obs.clearance <= c.dynamic_slow_distance

@@ -226,3 +226,130 @@ def test_other_demo_scenes_keep_the_task_generator(name):
     procs = _demo_procs(name)
     assert 'task_generator' in procs and 'scene' not in procs
     assert not any(arg.startswith('fleet_params_file:=') for arg in _stack_launch_args(procs))
+
+
+def _args(cmd):
+    """stack cmd의 $(test -n "값" && echo 인자)를 bash처럼 풀어 쓴다 (값이 비면 인자 없음)."""
+    import re
+    return re.sub(r'\$\(test -n "([^"]*)" && echo ([^)]*)\)', lambda m: m[2] if m[1] else '', cmd)
+
+
+def test_scene3_runs_the_scene_script_with_battery_and_charging_on_the_stack():
+    s = run.load_scenario('demo_s3')
+    assert s['processes'] == run.load_scenario('demo_restaurant')['processes']   # 공통 프로세스 그대로
+    procs = _demo_procs('demo_s3')
+    assert 'task_generator' not in procs
+    assert '/repo/tools/harness/tasks/demo_s3.yaml' in procs['scene']['cmd']
+    stack = procs['stack']['cmd']
+    assert 'bt_params_file:=amr_bt_battery_demo_s3.yaml' in _args(stack)
+    assert 'stations_file:=stations_restaurant.yaml' in stack
+    assert 'charging:=true' in stack and 'localization:=ground_truth' in stack
+    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_s3.yaml' in stack    # 손님은 서쪽에만
+
+
+def test_scene3_on_off_is_the_charging_policy_only():
+    on, off = _demo_procs('demo_s3', policy='on'), _demo_procs('demo_s3', policy='off')
+    on_policy, off_policy = 'charge_low_percent:=30.0 min_in_service:=3', 'charge_low_percent:=20.0 min_in_service:=0'
+    assert on_policy in on['stack']['cmd'] and off_policy in off['stack']['cmd']
+    assert on['stack']['cmd'].replace(on_policy, '') == off['stack']['cmd'].replace(off_policy, '')
+    assert on['scene']['cmd'] == off['scene']['cmd']
+    with pytest.raises(ValueError, match='policy'):
+        _demo_procs('demo_s3', policy='maybe')
+
+
+def test_scene3_other_scenes_keep_charging_off():
+    for name in ('demo_s2a', 'demo_s11'):
+        stack = _demo_procs(name)['stack']['cmd']
+        assert 'charging:=false' in stack and 'bt_params_file' not in _args(stack)
+
+
+def test_scene3_fake_robots_match_the_gazebo_battery_and_policy():
+    import yaml
+    repo = Path(run.HERE).parents[1]
+    bt = yaml.safe_load((repo / 'src/task/amr_bt/config/amr_bt_battery_demo_s3.yaml').read_text(encoding='utf-8'))
+    fake = yaml.safe_load((Path(run.HERE) / 'tasks/demo_s3_fake_robots.yaml').read_text(encoding='utf-8'))
+    assert fake['/**']['ros__parameters']['battery'] == bt['/**']['ros__parameters']['battery']
+    for i in range(1, 6):
+        assert (fake[f'/amr_{i:02d}/fake_robot']['ros__parameters']['battery']
+                == bt[f'/amr_{i:02d}/amr_bt']['ros__parameters']['battery'])
+    assert run.load_scenario('demo_s3_fake')['param_sets'] == run.load_scenario('demo_s3')['param_sets']
+
+
+def test_demo_stack_never_passes_an_empty_launch_argument():
+    # Humble ros2 launch는 'name:='(빈 값)을 malformed launch argument로 거부해 스택이 안 뜬다 (11/8 demo_s3 맥 스모크)
+    import re
+    for name in ('demo_restaurant', 'demo_s11', 'demo_s2a', 'demo_s2b', 'demo_s3'):
+        cmd = _args(_demo_procs(name)['stack']['cmd'])
+        assert not re.search(r':=(""|\s|$)', cmd), (name, re.findall(r'\S+:=(?:""|(?=\s)|$)', cmd))
+
+
+def test_scene3_fake_robots_start_where_the_gazebo_robots_spawn():
+    import yaml
+    repo = Path(run.HERE).parents[1]
+    robots = yaml.safe_load((repo / 'src/bringup/amr_bringup/config/robots_restaurant_s3.yaml').read_text(encoding='utf-8'))
+    fake = yaml.safe_load((Path(run.HERE) / 'tasks/demo_s3_fake_robots.yaml').read_text(encoding='utf-8'))
+    for name, (x, y, _) in robots['robots'].items():
+        assert fake[f'/{name}/fake_robot']['ros__parameters']['start_xy'] == [x, y], name
+    assert run.load_scenario('demo_s3')['params']['robots'] == 'robots_restaurant_s3.yaml'
+
+
+def test_scene3_gazebo_policy_preserves_common_recording_conditions():
+    on = _demo_procs('demo_s3_gazebo', policy='on')
+    off = _demo_procs('demo_s3_gazebo', policy='off')
+    assert on['scene']['cmd'] == off['scene']['cmd']
+    on_args, off_args = _args(on['stack']['cmd']), _args(off['stack']['cmd'])
+    assert 'charge_low_percent:=30.0' in on_args and 'min_in_service:=3' in on_args
+    assert 'charge_low_percent:=20.0' in off_args and 'min_in_service:=0' in off_args
+    # 주인공 카메라만 정책마다 다르다 (105 s 회수를 맡는 로봇: OFF 3호, ON 2호)
+    assert 'enable_camera:=amr_02' in on_args and 'enable_camera:=amr_03' in off_args
+    differing = lambda a: {v for v in a if not v.startswith(('charge_low_percent:=', 'min_in_service:=', 'enable_camera:='))}
+    assert differing(on_args) == differing(off_args)
+    assert '/repo/tools/harness/tasks/demo_s3_gazebo.yaml' in on['scene']['cmd']
+
+
+def test_scene3_gazebo_records_what_the_robot_view_and_stall_check_need():
+    procs = _demo_procs('demo_s3_gazebo', policy='on')
+    args = _args(procs['stack']['cmd'])
+    assert 'tracking:=true' in args and 'detection:=true' in args
+    bag = procs['rosbag']['cmd']
+    for topic in ('plan', 'cmd_vel', 'scan', 'safety/status', 'perception/obstacles', 'perception/objects'):
+        assert topic in bag, topic
+    # costmap 팽창 반경은 기본값 (11/18 A2: 0.8 m 시험에서 반납대 옆 좁은 통로 전역 경로가 끊겼다)
+    assert 'nav2_params.yaml' not in str(run.load_scenario('demo_s3_gazebo').get('config_patch', {}))
+
+
+def test_restaurant_record_extra_is_empty_by_default():
+    bag = _demo_procs('demo_s12')['rosbag']['cmd']
+    assert bag.endswith("|/amr_[0-9][0-9]/perception/objects)$'")
+
+
+def test_scene3_gazebo_uses_same_service_poses_for_scene_and_charging():
+    procs = _demo_procs('demo_s3_gazebo')
+    assert 'config/stations_restaurant_s3.yaml' in procs['scene']['cmd']
+    assert 'stations_file:=stations_restaurant_s3.yaml' in _args(procs['stack']['cmd'])
+    assert 'safety:=true' in _args(procs['stack']['cmd'])
+
+
+def test_scene3_battery_clock_starts_after_recording_and_workload_is_fixed():
+    import yaml
+
+    procs = _demo_procs('demo_s3_gazebo')
+    names = list(procs)
+    assert names.index('camera_bag') < names.index('battery_group') < names.index('scene')
+    assert names.index('rosbag') < names.index('battery_group')
+    assert 'bt:=false' in _args(procs['stack']['cmd'])
+    scene = yaml.safe_load((Path(run.HERE) / 'tasks/demo_s3_gazebo.yaml').read_text())
+    elapsed, collections = 0, []
+    for step in scene['steps']:
+        elapsed += step.get('after', {}).get('delay_s', 0)
+        for task in step['tasks']:
+            if task['type'] == 'collect':
+                collections.append((elapsed, task['pickup'], task['dropoff']))
+    # 테이블과 하역 자리를 나눈다: 105 s 주인공이 c01 큐에서 75 s 회수를 기다리지 않고, 두 로봇이 하역 자리에서 마주치지 않는다
+    assert collections == [(75, 'c01', 'return_2'), (105, 'c02', 'return_1')]
+
+
+def test_delayed_battery_group_is_disabled_in_other_demo_scenes():
+    procs = _demo_procs('demo_smoke')
+    assert 'battery_group' not in procs
+    assert 'bt:=true' in _args(procs['stack']['cmd'])
