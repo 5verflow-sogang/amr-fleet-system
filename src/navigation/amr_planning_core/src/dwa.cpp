@@ -190,7 +190,11 @@ bool DwaPlanner::evaluateFootprint(
       }
 
       const uint8_t cost = grid.cost(cell);
-      if (cost >= config_.lethal_cost_threshold) {
+      if (cost >= config_.lethal_cost_threshold &&
+        !(reverse_escaping_ &&
+        std::find(escape_ignored_cells_.begin(), escape_ignored_cells_.end(), cell) !=
+        escape_ignored_cells_.end()))
+      {
         *max_cell_cost = static_cast<double>(cost);
         return true;
       }
@@ -199,6 +203,31 @@ bool DwaPlanner::evaluateFootprint(
   }
 
   return false;
+}
+
+std::vector<Cell> DwaPlanner::lethalCellsUnderFootprint(
+  const Grid & grid, double x, double y, double yaw) const
+{
+  std::vector<Cell> cells;
+  const double step = std::max(grid.resolution() * 0.5, 1e-3);
+  const double cos_yaw = std::cos(yaw);
+  const double sin_yaw = std::sin(yaw);
+  for (double lx = -config_.footprint_half_length; lx <= config_.footprint_half_length + 1e-9;
+    lx += step)
+  {
+    for (double ly = -config_.footprint_half_width; ly <= config_.footprint_half_width + 1e-9;
+      ly += step)
+    {
+      const Cell cell = worldToCell(
+        x + lx * cos_yaw - ly * sin_yaw, y + lx * sin_yaw + ly * cos_yaw, grid.resolution());
+      if (grid.inBounds(cell) && grid.cost(cell) >= config_.lethal_cost_threshold &&
+        std::find(cells.begin(), cells.end(), cell) == cells.end())
+      {
+        cells.push_back(cell);
+      }
+    }
+  }
+  return cells;
 }
 
 bool DwaPlanner::footprintCollides(const Grid & grid, double x, double y, double yaw) const
@@ -348,7 +377,10 @@ double DwaPlanner::evaluateCost(
     1.0 : headingCost(trajectory_end, goal);
   const double clearance = max_cell_cost / 255.0;  // [0, 1]
   const double max_v = std::max(config_.max_v, 1e-6);
-  const double velocity = (max_v - v) / max_v;  // [0, 1], 0 = 최고 속도
+  // 후진 탈출은 속력(|v|)으로 매긴다 - v 그대로면 음수에서 1을 넘고(-0.2, max_v 0.5면 1.4) 가장 느린 후진(거의
+  // 제자리)이 가장 싸져 벽에서 떨어지지 못한다
+  const double speed = reverse_escaping_ ? std::abs(v) : v;
+  const double velocity = (max_v - speed) / max_v;  // [0, 1], 0 = 최고 속도
 
   return config_.heading_weight * heading +
          config_.clearance_weight * clearance +
@@ -408,21 +440,40 @@ DwaCommand DwaPlanner::selectWithAvoidFallback(
   const std::optional<Point2D> & final_goal) const
 {
   used_avoid_fallback_ = false;
+  used_reverse_escape_ = false;
   const bool rotating_before = rotating_in_place_;
   DwaCommand result = selectCommand(state, path, follow_path, grid, dynamic_obstacles, final_goal);
-  if (!avoid_mode_ || result.status != DwaStatus::kNoValidTrajectory) {
+  if (avoid_mode_ && result.status == DwaStatus::kNoValidTrajectory) {
+    // 회피 모드 여유(0.2 + 0.4 m)로는 갈 궤적이 하나도 없다 - 서 있는 작업자 0.33 m 옆이나, 뒤 끝이 작업자가 오는 길에
+    // 걸친 채 움직이는 중이면 모든 궤적이 "지금보다 가까워짐"이 된다. 그대로 (0, 0)을 내면 그 자리에 서서 부딪히거나
+    // 영영 못 비킨다(#263 시드 1001·1007·1028). 평소 여유(0.2 m)·가중치로 한 번 더 고른다 - 0.3 m 안의 위험은 안전 노드가
+    // 막는다. 궤적 길이(rollout_time_)는 회피 모드 그대로 3 s다. 히스테리시스 상태는 첫 탐색 전으로 되돌려 같은 조건에서 고른다.
+    rotating_in_place_ = rotating_before;
+    config_ = base_config_;
+    result = selectCommand(state, path, follow_path, grid, dynamic_obstacles, final_goal);
+    config_ = avoid_config_;
+    used_avoid_fallback_ = true;
+    ++avoid_fallback_count_;
+  }
+  if (!base_config_.reverse_escape_enabled || result.status != DwaStatus::kNoValidTrajectory) {
     return result;
   }
-  // 회피 모드 여유(0.2 + 0.4 m)로는 갈 궤적이 하나도 없다 - 서 있는 작업자 0.33 m 옆이나, 뒤 끝이 작업자가 오는 길에
-  // 걸친 채 움직이는 중이면 모든 궤적이 "지금보다 가까워짐"이 된다. 그대로 (0, 0)을 내면 그 자리에 서서 부딪히거나
-  // 영영 못 비킨다(#263 시드 1001·1007·1028). 평소 여유(0.2 m)·가중치로 한 번 더 고른다 - 0.3 m 안의 위험은 안전 노드가
-  // 막는다. 궤적 길이(rollout_time_)는 회피 모드 그대로 3 s다. 히스테리시스 상태는 첫 탐색 전으로 되돌려 같은 조건에서 고른다.
+  // 후진 탈출 (#354): 벽·선반을 보고 바짝 서면 전진도 제자리 회전(모서리 반경이 벽까지 거리보다 크다)도 막힌다.
+  // 선속도 창을 [reverse_escape_min_v, 0]으로 바꿔 후진·후진+회전 궤적을 고른다. 동적 장애물 여유는 지금 설정
+  // (회피 모드면 회피 모드 값) 그대로, 제자리 회전 모드 상태는 첫 탐색 전으로 되돌려 둔다(탈출 탐색은 모드를 안 쓴다).
+  const DwaConfig before = config_;
+  const bool rotating_after = rotating_in_place_;
   rotating_in_place_ = rotating_before;
-  config_ = base_config_;
+  config_.min_v = std::min(config_.reverse_escape_min_v, 0.0);
+  escape_ignored_cells_ = lethalCellsUnderFootprint(grid, state.x, state.y, state.yaw);
+  reverse_escaping_ = true;
   result = selectCommand(state, path, follow_path, grid, dynamic_obstacles, final_goal);
-  config_ = avoid_config_;
-  used_avoid_fallback_ = true;
-  ++avoid_fallback_count_;
+  reverse_escaping_ = false;
+  escape_ignored_cells_.clear();
+  config_ = before;
+  rotating_in_place_ = rotating_after;
+  used_reverse_escape_ = true;
+  ++reverse_escape_count_;
   return result;
 }
 
@@ -482,6 +533,11 @@ DwaCommand DwaPlanner::selectCommand(
     const double goal_cap = goalStoppingVelocity(d_goal);
     window.max_v = std::max(window.min_v, std::min(window.max_v, goal_cap));
   }
+  if (reverse_escaping_) {
+    // 후진 탈출: 선속도는 [reverse_escape_min_v, 0] 안에서만 (전진은 평소 탐색에서 이미 막혔다). 지금 앞으로 가는
+    // 중이라 한 주기에 0까지 못 줄이면 최대 감속 하나만 남는다(computeDynamicWindow와 같은 규칙)
+    window.max_v = std::max(window.min_v, std::min(window.max_v, 0.0));
+  }
 
   // [0]: 장애물에 안 닿는 궤적, [1]: 닿지만 허용 속도 조건으로 그 앞에 설 수 있는 궤적.
   // [0]이 하나라도 있으면 [1]은 보지 않는다 - 닿는 궤적까지 비용으로 겨루게 하면 heading이
@@ -499,7 +555,7 @@ DwaCommand DwaPlanner::selectCommand(
   const double heading_error = std::abs(normalizeAngle(
       std::atan2(goal.y - state.y, goal.x - state.x) - state.yaw));
   if (follow_path && config_.rotate_in_place_min_angle > 0.0 && !dynamic_near &&
-    !passing_tracking_)
+    !passing_tracking_ && !reverse_escaping_)
   {
     rotating_in_place_ = heading_error > (rotating_in_place_ ?
       config_.rotate_in_place_exit_angle : config_.rotate_in_place_min_angle);
@@ -560,6 +616,11 @@ DwaCommand DwaPlanner::selectCommand(
       for (int wi = 0; wi < config_.w_samples; ++wi) {
         const double w = sampleValue(sample_window.min_w, sample_window.max_w, wi, config_.w_samples);
 
+        if (reverse_escaping_ && std::abs(v) < kMinMovingSpeed && std::abs(w) <= kMinTurnRate) {
+          // 후진 탈출에서 정지는 후보가 아니다 - 지금 발밑의 셀을 충돌로 안 보므로 정지가 늘 "유효"해져, 뒤까지 막혀
+          // 갈 데가 없을 때도 kOk(0, 0)로 kNoValidTrajectory를 가린다
+          continue;
+        }
         const std::vector<TrajectoryPoint> trajectory = simulateTrajectory(state, v, w);
         const bool turning_in_place = std::abs(v) < kMinMovingSpeed && std::abs(w) > kMinTurnRate;
         const double footprint_margin = (turn_search && turning_in_place) ? turn_clearance : 0.0;

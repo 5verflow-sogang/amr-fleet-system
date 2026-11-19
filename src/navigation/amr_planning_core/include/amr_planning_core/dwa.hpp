@@ -208,6 +208,17 @@ struct DwaConfig
   double avoid_margin_add = 0.4;
   double avoid_weight_scale = 2.0;
   double avoid_rollout_time = 3.0;
+
+  // --- 후진 탈출 (navigation.md 4-12절, #354) ---
+
+  // 평소 탐색(회피 모드 대체 탐색 포함)이 kNoValidTrajectory면 같은 호출 안에서 선속도 창을
+  // [reverse_escape_min_v, 0]으로 바꿔 한 번 더 고른다 - 벽·선반을 보고 바짝 선 로봇(전진·제자리 회전이 다
+  // 막힘)이 후진·후진+회전으로 빠져나오게. 평소 주행은 min_v 그대로(전진만)라 바뀌지 않는다. 후진 궤적도
+  // 사각 풋프린트 충돌 검사를 그대로 거친다. 단 지금 자세의 풋프린트가 이미 덮고 있는 치명 셀은 이 탐색에서만
+  // 충돌로 보지 않는다(새로 닿는 셀은 그대로 충돌) - 스캔이 찍은 벽 셀이 풋프린트 끝에 걸려 있으면 모든 궤적이
+  // 첫 점부터 막혀 BackUp 복구처럼 거부되기 때문이다. 기본값 false는 연구 2(C API·DwaParams) 결과가 바뀌지 않게.
+  bool reverse_escape_enabled = false;
+  double reverse_escape_min_v = -0.2;
 };
 
 // 경로 위에서 로봇에 가장 가까운 점부터 누적 거리가 distance 이상이 되는 첫 점
@@ -304,6 +315,11 @@ public:
   bool lastUsedAvoidFallback() const noexcept {return used_avoid_fallback_;}
   std::size_t avoidFallbackCount() const noexcept {return avoid_fallback_count_;}
 
+  // 후진 탈출 (DwaConfig::reverse_escape_enabled): 마지막 computeVelocityCommand가 후진 탈출 탐색을 했는지(결과가
+  // kNoValidTrajectory여도 true)와 누적 횟수.
+  bool lastUsedReverseEscape() const noexcept {return used_reverse_escape_;}
+  std::size_t reverseEscapeCount() const noexcept {return reverse_escape_count_;}
+
   // 비켜 지나가기 추종 모드 (passing.hpp). 켜면 heading을 매기는 궤적 길이를 heading_time [s](sim_time 이하)로,
   // heading 기준점의 궤적 끝 앞 여유를 lookahead [m]로 줄이고 제자리 회전 모드를 쓰지 않는다 - 옮긴 경로의 S자를
   // 평소 기준점(궤적 끝 |v|*sim_time + lookahead_distance 앞, 0.5 m/s면 1.5 m)으로 따라가면 1.5 m 거리로 뭉개져
@@ -321,6 +337,10 @@ private:
   bool evaluateFootprint(
     const Grid & grid, double x, double y, double yaw, double * max_cell_cost,
     double margin = 0.0) const;
+
+  // (x, y, yaw) 자세의 풋프린트가 덮는 치명 셀(evaluateFootprint와 같은 샘플링). 후진 탈출이 지금 자세에서
+  // 이미 덮은 셀을 충돌로 보지 않으려고 쓴다.
+  std::vector<Cell> lethalCellsUnderFootprint(const Grid & grid, double x, double y, double yaw) const;
 
   // dynamicObstacleCollides의 내부 버전. 충돌 여부와 함께(비충돌 시) 가장 가까운
   // 장애물의 표면까지 거리(음수 없음, 장애물이 없으면 +inf)를 돌려준다.
@@ -379,6 +399,11 @@ private:
   double passing_lookahead_ = 0.0;
   mutable bool used_avoid_fallback_ = false;
   mutable std::size_t avoid_fallback_count_ = 0;
+  // 후진 탈출 탐색 중인지와, 그동안 충돌로 보지 않을 셀(지금 자세의 풋프린트가 이미 덮은 치명 셀)
+  mutable bool reverse_escaping_ = false;
+  mutable std::vector<Cell> escape_ignored_cells_;
+  mutable bool used_reverse_escape_ = false;
+  mutable std::size_t reverse_escape_count_ = 0;
 };
 
 }  // namespace amr_planning_core

@@ -358,6 +358,12 @@ controller_server:
       avoid_margin_add: 0.4
       avoid_weight_scale: 2.0
       avoid_rollout_time: 3.0
+      # 후진 탈출 (navigation.md 4-12절, #354): 평소 탐색(회피 모드 대체 탐색 포함)에 갈 궤적이 하나도 없을 때만 선속도
+      # [reverse_escape_min_v, 0]으로 한 번 더 고른다 - 벽·선반을 보고 바짝 서서 전진·제자리 회전이 다 막히면 후진·후진+회전으로
+      # 빠져나온다. 평소 주행은 min_v(0.0) 그대로 전진만. 후진 궤적도 사각 풋프린트 충돌 검사를 거친다(지금 자세가 이미 덮은
+      # 치명 셀만 이 탐색에서 뺀다). 식당 프로필(nav2_profile restaurant)도 이 값을 그대로 쓴다
+      reverse_escape_enabled: True
+      reverse_escape_min_v: -0.2
       # 정면 비켜 지나가기 (amr_planning_core/passing.hpp, 원 명세 7장 "1.0 m/s 장애물 재계획 회피"·"복귀 5초"):
       # 마주 오는(진행 방향과 135° 넘게 반대) 동적 장애물이 경로를 막으면, 전역 경로는 그대로 두고 경로 좌표에서
       # 옆 이탈을 나가기 S자(passing_ramp_out m) → 유지 → 들어오기 S자(passing_ramp_in m)로 옮긴 경로를 따라간다.
