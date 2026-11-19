@@ -344,9 +344,9 @@ def test_scene3_battery_clock_starts_after_recording_and_workload_is_fixed():
         elapsed += step.get('after', {}).get('delay_s', 0)
         for task in step['tasks']:
             if task['type'] == 'collect':
-                collections.append((elapsed, task['dropoff']))
-    # 하역 자리를 나눈다: 75 s 회수 로봇이 하역 뒤 충전소로 못 나가도 105 s 주인공이 그 자리로 들어가지 않는다
-    assert collections == [(75, 'return_2'), (105, 'return_s3_side')]
+                collections.append((elapsed, task['pickup'], task['dropoff']))
+    # 테이블과 하역 자리를 나눈다: 105 s 주인공이 c01 큐에서 75 s 회수를 기다리지 않고, 두 로봇이 하역 자리에서 마주치지 않는다
+    assert collections == [(75, 'c01', 'return_2'), (105, 'c02', 'return_1')]
 
 
 def test_delayed_battery_group_is_disabled_in_other_demo_scenes():

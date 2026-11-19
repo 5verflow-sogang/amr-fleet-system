@@ -459,9 +459,9 @@ def test_peak_scene12_changes_only_the_west_aisle_guests():
 
 def test_scene3_guests_are_the_west_peak_guests_plus_one_table_guest():
     # 장면 3은 피크 파일에서 서쪽 손님(peak_1~6, customer_2)만 그대로 옮겼다 (머리말). 로봇이 다니는 동쪽·가운데에는 없다.
-    # 예외 table_guest: 회수 하역 길을 가로질러 주인공 1인칭에 '갑자기 나오는 손님' 장면을 만든다. 남동쪽 홀의 넓은 곳에서만
-    # 오가고, 반납대→충전소 길·충전소·c01·로봇 시작 자리에서 손님 멈춤 거리(1.2 m)보다 멀다 (11/18 A2: 남쪽 좁은 통로 x 3.7의
-    # bench_guest가 반납대에서 충전소로 나가는 5호를 막았다)
+    # 예외 table_guest: c01 서쪽 테이블 사이 통로(x 5.0)에서 홀 쪽으로 나와, 105 s 회수 주인공이 남쪽 통로 입구로 꺾을 때
+    # 1인칭에 '갑자기 나오는 손님' 장면을 만든다. 통로 입구로 꺾는 길·충전소·c01·로봇 시작 자리에서 손님 멈춤 거리(1.2 m)보다
+    # 멀다 (11/19 밤샘: y -4.65까지 나오면 통로 입구에서 5호가 4 s 기어갔고, x 5.5에서는 서쪽으로 가는 로봇과 몸 사이 0.11 m)
     config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
     with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak.yaml'), encoding='utf-8') as f:
         peak = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
@@ -471,11 +471,12 @@ def test_scene3_guests_are_the_west_peak_guests_plus_one_table_guest():
     guest = scene3.pop('table_guest')
     xs = {w['x'] for w in guest['waypoints']}
     ys = [w['y'] for w in guest['waypoints']]
-    assert guest['pattern'] == 'straight' and len(xs) == 1 and 4.8 <= xs.pop() <= 5.6
-    assert -5.8 <= min(ys) and max(ys) <= -4.9 and max(ys) - min(ys) <= 1.0
+    assert guest['pattern'] == 'straight' and len(xs) == 1 and 4.8 <= xs.pop() <= 5.2
+    assert -4.4 <= min(ys) and max(ys) <= -3.6 and max(ys) - min(ys) <= 1.0
     assert set(guest['yield_to_robots']) == {f'amr_0{i}' for i in range(1, 6)}
     a, b = [(w['x'], w['y']) for w in guest['waypoints']]
-    for name, p in {'charger_c1': (5.0, -7.0), 'c01': (6.6, -5.3), 'amr_02 start': (6.5, -5.5)}.items():
+    for name, p in {'charger_c1': (5.0, -7.0), 'c01': (6.6, -5.3), 'amr_01 start': (6.5, -5.5),
+                    'south passage turn': (5.2, -5.6)}.items():
         assert _seg_dist(p, a, b) > 1.2, name
     for guest_id, spec in scene3.items():
         assert spec == peak[guest_id], guest_id

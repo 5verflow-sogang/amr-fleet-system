@@ -201,6 +201,6 @@ def test_scene3_gazebo_service_stops_allow_turning_on_the_map():
     root = Path(__file__).resolve().parents[3]
     stations = yaml.safe_load((root / 'fleet/amr_fleet_manager/config/stations_restaurant_s3.yaml').read_text())['stations']
     pgm = root / 'localization/amr_mapping/maps/restaurant_gt.pgm'
-    used = ('c01', 'c02', 'stall_1', 'stall_2', 'stall_3', 't02', 't03', 't04', 'return_1', 'return_2',
-            'charger_c1', 'charger_c2', 'charger_c3', 'return_s3_side')
+    used = ('c01', 'c02', 'stall_2', 't03', 'return_1', 'return_2',
+            'charger_c1', 'charger_c2', 'charger_c3', 'wait_1', 'wait_2')
     assert all(free_on_map(pgm, *stations[name][:2], half=0.35) for name in used)
