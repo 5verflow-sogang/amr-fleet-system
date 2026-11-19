@@ -18,6 +18,7 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>  <!-- /demo/t0 (start_after_t0_s 손님) -->
   <exec_depend>rosgraph_msgs</exec_depend>  <!-- clock_throttle_node (/clock) -->
   <exec_depend>vision_msgs</exec_depend>  <!-- 라벨 카메라 브리지 (camera/labels) -->
   <exec_depend>python3-yaml</exec_depend>

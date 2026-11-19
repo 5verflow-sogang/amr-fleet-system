@@ -16,8 +16,10 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Header
 
-from amr_gazebo.obstacle_motion import ObstacleMotion, body_twist
+from amr_gazebo.obstacle_motion import ObstacleMotion, body_twist, released
 
 # 로봇 GT가 이보다 오래 [ns] 끊기면 그 로봇을 모르는 것으로 본다 (마지막 정지 값에 계속 비켜 서 있지 않게)
 ROBOT_TIMEOUT_NS = 1_000_000_000
@@ -50,6 +52,13 @@ class DynamicObstacles(Node):
             specs = [s for s in specs if s['id'] in only]
 
         master = random.Random(seed or None)
+        self._specs = {s['id']: s for s in specs}
+        self._t0 = None   # 장면 0초 (/demo/t0, 시뮬레이션 시각 s). start_after_t0_s 손님은 이때까지 서 있다
+        self._held = {s['id'] for s in specs if s.get('start_after_t0_s') is not None}
+        if self._held:
+            latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                                 durability=DurabilityPolicy.TRANSIENT_LOCAL)
+            self.create_subscription(Header, '/demo/t0', self._on_t0, latched)
         self._motions = {}
         self._pose = {}
         self._cmd_pub = {}
@@ -78,7 +87,13 @@ class DynamicObstacles(Node):
             + f', seed={seed}'
             + (f', 로봇 {keep_away_m:g} m 안이면 섬: {", ".join(keep_away_robots)}'
                if keep_away_m > 0 and keep_away_robots else '')
-            + (f', 멈춘 로봇에 비킴: {", ".join(yield_to)}' if yield_to else ''))
+            + (f', 멈춘 로봇에 비킴: {", ".join(yield_to)}' if yield_to else '')
+            + (f', /demo/t0 뒤에 나옴: {", ".join(sorted(self._held))}' if self._held else ''))
+
+    def _on_t0(self, msg: Header):
+        if self._t0 is None:
+            self._t0 = msg.stamp.sec + msg.stamp.nanosec * 1e-9
+            self.get_logger().info(f'/demo/t0 {self._t0:.1f} s: {", ".join(sorted(self._held))} 출발 예정')
 
     def _on_odom(self, oid: str, msg: Odometry):
         p = msg.pose.pose
@@ -97,6 +112,12 @@ class DynamicObstacles(Node):
             if pose is None:
                 continue
             x, y, yaw = pose
+            if oid in self._held:
+                if not released(self._specs[oid], self._t0, now * 1e-9):
+                    self._cmd_pub[oid].publish(Twist())   # 0초 + start_after_t0_s 전: spawn 자리에 서 있는다
+                    continue
+                self._held.discard(oid)
+                self.get_logger().info(f'{oid}: 0초 뒤 {self._specs[oid]["start_after_t0_s"]} s, 걷기 시작')
             waiting, turn_backs, keeping = motion.waiting, motion.turn_backs, motion.keeping_away
             vx, vy = motion.step((x, y), robots, now * 1e-9)
             if motion.turn_backs != turn_backs:

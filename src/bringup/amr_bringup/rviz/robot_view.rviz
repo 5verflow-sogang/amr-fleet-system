@@ -1,0 +1,179 @@
+# 녹화용 화면이라 Displays·Time 패널 없이 3D 화면만 둔다 (패널이 있으면 1280x720 화면 대부분을 가린다).
+# 표시를 켜고 끄려면 RViz에서 Panels > Displays를 연다
+Panels: []
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Alpha: 1
+      Color Scheme: map
+      Draw Behind: true
+      Topic:
+        Value: /map
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Update Topic:
+        Value: /map_updates
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Use Timestamp: false
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Name: Global Costmap
+      Enabled: true
+      Alpha: 0.5
+      Color Scheme: costmap
+      Draw Behind: false
+      Topic:
+        Value: /amr_01/global_costmap/costmap
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Update Topic:
+        Value: /amr_01/global_costmap/costmap_updates
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Use Timestamp: false
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Name: Congestion Mask
+      Enabled: true
+      Alpha: 0.4
+      Color Scheme: costmap
+      Draw Behind: false
+      Topic:
+        Value: /fleet/congestion_mask
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Update Topic:
+        Value: /fleet/congestion_mask_updates
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Use Timestamp: false
+      Value: true
+    - Class: rviz_default_plugins/LaserScan
+      Name: LiDAR
+      Enabled: true
+      Topic:
+        Value: /amr_01/scan
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 3
+      Size (m): 0.05
+      Color Transformer: FlatColor
+      Color: 255; 40; 40
+      Decay Time: 0
+      Queue Size: 10
+      Use Fixed Frame: true
+      Use rainbow: false
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Name: Global Plan
+      Enabled: true
+      Topic:
+        Value: /amr_01/plan
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Color: 0; 170; 255
+      Alpha: 1
+      Line Style: Billboards
+      Line Width: 0.06
+      Buffer Length: 1
+      Pose Style: None
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Name: DWA Local Trajectory
+      Enabled: true
+      Topic:
+        Value: /amr_01/dwa/local_plan
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Color: 255; 170; 0
+      Alpha: 1
+      Line Style: Billboards
+      Line Width: 0.05
+      Buffer Length: 1
+      Pose Style: None
+      Value: true
+    - Class: rviz_default_plugins/Polygon
+      Name: Footprint
+      Enabled: true
+      Topic:
+        Value: /amr_01/local_costmap/published_footprint
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Color: 0; 255; 0
+      Alpha: 1
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Name: People Tracking
+      Enabled: true
+      Topic:
+        Value: /amr_01/perception/obstacle_markers
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      # 추적 표시: 몸통·속도 화살표만. 글자(labels: 트랙 번호·속력)는 화면을 덮어 끈다
+      Namespaces:
+        obstacles: true
+        velocity: true
+        labels: false
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Target Frame: amr_01/base_footprint
+      Angle: 0
+      Scale: 80
+      X: 0
+      Y: 0
+      Near Clip Distance: 0.01
+      Invert Z Axis: false
+      Enable Stereo Rendering:
+        Value: false
+      Value: TopDownOrtho (rviz_default_plugins)
+    Saved: ~
+Window Geometry:
+  Height: 720
+  Width: 1280
+  X: 0
+  Y: 0
+  Hide Left Dock: true
+  Hide Right Dock: true

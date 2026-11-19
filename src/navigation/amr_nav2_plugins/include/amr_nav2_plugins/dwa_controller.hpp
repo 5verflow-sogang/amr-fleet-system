@@ -96,6 +96,8 @@ private:
   // 옮긴 경로가 passing_clearance로 지나가게 정해져 있어 회피 모드 여유로는 그 경로를 따라가는 궤적이 없다
   std::unique_ptr<amr_planning_core::PassingManeuver> passing_;
   rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Bool>::SharedPtr passing_pub_;
+  // 고른 (v, w)의 지역 궤적(sim_time 동안, local costmap 프레임) - RViz 로봇 시점 표시용 dwa/local_plan
+  rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>::SharedPtr local_plan_pub_;
   // 비켜 지나가는 동안 heading을 매기는 궤적 길이 [s]·기준점 여유 [m] (DwaPlanner::setPassingTracking)
   double passing_heading_time_ = 0.8;
   double passing_lookahead_ = 0.2;
