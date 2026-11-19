@@ -1,9 +1,6 @@
-Panels:
-  - Class: rviz_common/Displays
-    Name: Displays
-    Help Height: 0
-  - Class: rviz_common/Time
-    Name: Time
+# 녹화용 화면이라 Displays·Time 패널 없이 3D 화면만 둔다 (패널이 있으면 1280x720 화면 대부분을 가린다).
+# 표시를 켜고 끄려면 RViz에서 Panels > Displays를 연다
+Panels: []
 Visualization Manager:
   Class: ""
   Displays:
@@ -139,7 +136,11 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-      Namespaces: {}
+      # 추적 표시: 몸통·속도 화살표만. 글자(labels: 트랙 번호·속력)는 화면을 덮어 끈다
+      Namespaces:
+        obstacles: true
+        velocity: true
+        labels: false
       Value: true
   Enabled: true
   Global Options:
@@ -160,7 +161,7 @@ Visualization Manager:
       Name: Current View
       Target Frame: amr_01/base_footprint
       Angle: 0
-      Scale: 60
+      Scale: 80
       X: 0
       Y: 0
       Near Clip Distance: 0.01
@@ -170,11 +171,9 @@ Visualization Manager:
       Value: TopDownOrtho (rviz_default_plugins)
     Saved: ~
 Window Geometry:
-  Displays:
-    collapsed: true
-  Time:
-    collapsed: true
   Height: 720
   Width: 1280
+  X: 0
+  Y: 0
   Hide Left Dock: true
   Hide Right Dock: true
