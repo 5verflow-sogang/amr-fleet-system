@@ -196,6 +196,11 @@ noVNC로 확인해보니 광원 바로 아래만 동그랗게 밝고 사이가 �
     돌아선다 (로봇이 작업자가 이미 옆에 왔을 때 서면 서로 기다리기만 한다). 움직이는 로봇에는 비키지 않는다
     (로봇이 피하는지 보는 시험용). straight·random 패턴만. 로봇 GT `/<ns>/ground_truth/odom`을 받는다.
     기본 `config/dynamic_obstacles.yaml`에는 없고, I17 회피 시나리오(`amr_safety` `avoidance_obstacles`)가 쓴다
+  - `start_trigger` (선택, `{robot, x, y, within_m}`): 그 로봇 중심이 점 (x, y)에서 `within_m` 안에 처음 들어올 때까지
+    처음 자리에 서 있다가 걷기 시작한다. 장면 녹화에서 사람과 로봇이 만나는 순간을 RTF와 상관없이 맞춘다. 한번 걷기 시작하면
+    다시 서지 않는다. 그 로봇 GT를 받는다. 출발 시각은 노드 로그 '출발 신호'에 남는다
+  - `once` (선택, 기본 false): straight·curve가 왕복하지 않고 경로 끝(돌아섰으면 처음 점)에 닿으면 선다.
+    식당 돌발 손님 장면(`config/dynamic_obstacles_restaurant_avoid.yaml`, 하네스 `nav_avoidance_restaurant`)이 둘 다 쓴다
 - Gazebo 쪽: `VelocityControl`(속도 명령) + `OdometryPublisher`(GT). 중력을 끄고 충돌체를 바닥에서 2.5 cm 띄웠다.
   바닥에 닿으면 마찰이 발밑을 잡아 키 큰 작업자가 넘어졌다. 로봇과는 충돌한다
 - `VelocityControl`은 마지막 명령을 유지한다. 노드만 죽으면 장애물이 계속 같은 방향으로 가니 sim도 같이 다시 띄운다

@@ -62,10 +62,11 @@ class DynamicObstacles(Node):
                 Odometry, f'/dynamic_obstacles/{oid}/ground_truth/odom',
                 lambda msg, oid=oid: self._on_odom(oid, msg), 10)
 
-        # 멈춘 로봇에 비키는 장애물이 볼 로봇: 이름 → (x, y, yaw, 속력, 받은 시각 [ns])
+        # 멈춘 로봇에 비키거나(yield_to_robots) 출발 신호로 볼(start_trigger) 로봇: 이름 → (x, y, yaw, 속력, 받은 시각 [ns])
         self._robots = {}
         yield_to = sorted({name for m in self._motions.values() for name in m.yield_to})
-        for name in sorted(set(yield_to) | set(keep_away_robots)):
+        triggers = {m.start_trigger[0] for m in self._motions.values() if m.start_trigger}
+        for name in sorted(set(yield_to) | set(keep_away_robots) | triggers):
             self.create_subscription(
                 Odometry, f'/{name}/ground_truth/odom',
                 lambda msg, name=name: self._on_robot(name, msg), 10)
@@ -78,7 +79,9 @@ class DynamicObstacles(Node):
             + f', seed={seed}'
             + (f', 로봇 {keep_away_m:g} m 안이면 섬: {", ".join(keep_away_robots)}'
                if keep_away_m > 0 and keep_away_robots else '')
-            + (f', 멈춘 로봇에 비킴: {", ".join(yield_to)}' if yield_to else ''))
+            + (f', 멈춘 로봇에 비킴: {", ".join(yield_to)}' if yield_to else '')
+            + ''.join(f', {m.id}는 {m.start_trigger[0]}이 ({m.start_trigger[1][0]:g}, {m.start_trigger[1][1]:g}) '
+                      f'{m.start_trigger[2]:g} m 안에 오면 출발' for m in self._motions.values() if m.start_trigger))
 
     def _on_odom(self, oid: str, msg: Odometry):
         p = msg.pose.pose
@@ -98,7 +101,14 @@ class DynamicObstacles(Node):
                 continue
             x, y, yaw = pose
             waiting, turn_backs, keeping = motion.waiting, motion.turn_backs, motion.keeping_away
+            started, finished = motion.started, motion.finished
             vx, vy = motion.step((x, y), robots, now * 1e-9)
+            if motion.started != started:
+                # 장면 편집이 이 시각을 찾는다 (손님이 나오는 순간)
+                self.get_logger().info(f'{oid}: 출발 신호 — {motion.start_trigger[0]}이 들어와 걷기 시작한다 '
+                                       f'(t = {now * 1e-9:.2f} s)')
+            if motion.finished != finished:
+                self.get_logger().info(f'{oid}: 경로 끝에 닿아 선다 (once, t = {now * 1e-9:.2f} s)')
             if motion.turn_backs != turn_backs:
                 self.get_logger().info(f'{oid}: 로봇이 계속 멈춰 있어 돌아선다')
             elif motion.keeping_away != keeping:
