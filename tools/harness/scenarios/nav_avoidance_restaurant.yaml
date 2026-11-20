@@ -1,0 +1,122 @@
+# 식당 돌발 손님 회피 장면 (2안 영상 녹화용). 물류센터 nav_avoidance(I17 가로지르기)를 식당 좌표로 옮겼다.
+#
+#   tools/harness/docker_run.sh nav_avoidance_restaurant -n 1 --label avoid      # 로컬 1회 (tools/harness README)
+#
+# 서빙 로봇 1호 1대가 음식을 싣고 1·2행 테이블 사이 가로 통로를 따라 t07로 가는 동안, 식사를 마친 손님 1명이
+# t03·t04 사이에서 나와 1호 앞을 가로질러 퇴식구로 간다 (amr_gazebo config/dynamic_obstacles_restaurant_avoid.yaml).
+# 손님은 1호가 만나는 점 2.2 m 안에 들어올 때 걷기 시작한다(start_trigger). 그래서 만나는 순간이 RTF와 상관없이 같다.
+# 완료 기준: 충돌 없이(avoidance_eval) 감속·정지한 뒤 다시 출발해 t07에 닿는다 (safety/status·cmd_vel 기록으로 본다).
+#
+# nav_avoidance와 다른 점
+# - 식당 월드·서빙 몸체(body:=serving): Nav2 footprint·식당 순항 0.8 m/s, 안전 노드 profile restaurant
+#   (amr_safety config/safety_restaurant.yaml이 safety.yaml 위에 얹힌다)
+# - 위치추정 ground_truth (식당 시연 녹화와 같다. 바퀴 헛돎으로 AMCL이 밀리는 문제가 영상에 섞이지 않게, demo_restaurant 머리말)
+# - 1호 카메라 + YOLO(식당 프로필, 사람만)를 켜 오른쪽 위 1인칭 칸을 찍는다. 카메라 원본은 mp4로 바꾸고 지운다
+# - 장애물 설정은 시드로 만들지 않고 고정 파일이다 (장면 녹화: 같은 장면을 다시 찍는다)
+# - 손님이 로봇 근처에서 서는 guest_keep_away_m은 쓰지 않는다 (통로 앞에서 서 버려 가로지르기가 되지 않는다).
+#   멈춘 로봇에만 비킨다 (yield_to_robots, I17과 같다)
+# - 녹화: 2안 영상 재료. 왼쪽 따라가기 화면은 로봇·손님 정답 위치(ground_truth/odom)로 다시 그리고, 오른쪽 아래
+#   인지 지도는 스캔·추적(perception/obstacles)·위험·경로로 그린다. 감속·정지 원인은 safety/status·dwa/avoid_mode로 본다
+name: nav_avoidance_restaurant
+packages: amr_bringup
+num_robots: 1
+use_sim_time: true
+seed_base: 1
+timeout_s: 3600
+params:
+  # 목표 = t07 (amr_fleet_manager config/stations_restaurant.yaml, 테이블 북쪽에서 남쪽을 본다). 식당 지도는 map = world
+  goal_x: -5.75
+  goal_y: -0.27
+  goal_qz: -0.70710678
+  goal_qw: 0.70710678
+  map: $(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml
+  map_origin: "[0.0,0.0,0.0]"
+  robots: robots_restaurant_avoid.yaml          # amr_bringup config/ 1호 출발 자세
+  # 장면: cross(손님이 테이블 사이에서 나와 앞을 가로지름, 기본) / headon_stall(매장 앞 통로에서 마주침) /
+  # two_stall(매장 앞에서 마주침 + 가로지름, 두 사람, 11/20 시연 영상 소스).
+  # 홀 통로(폭 1.8 m) 마주침은 1호가 비킬 자리가 모자라 몸 사이 0.20 m로 지나가 넣지 않았다 (11/20 3회차).
+  # param_sets가 손님 파일(amr_gazebo config/)과 손님 id를 채운다
+  scene: cross
+  localization: ground_truth
+  robot_camera: amr_01                           # false면 카메라·YOLO 없이 (더 빠르다)
+  detection: "true"
+  # 목표 결과를 받은 뒤 더 기록하는 시간 [s] (손님이 퇴식구에 닿는 모습까지)
+  after_goal_s: 5
+  record: "true"
+processes:
+  # 기록을 가장 먼저 띄운다: 첫 전역 경로가 기준 경로다. 손님 토픽은 1초마다 찾아 붙는다.
+  # 손님(customer)은 모양을 모르는 종류라 default_obstacle_radius(손님 충돌체 구 r 0.25 m)로 준다
+  - name: avoidance_eval
+    cmd: >-
+      ros2 run amr_safety avoidance_eval --ros-args -r __ns:=/amr_01
+      -p use_sim_time:=true -p "map_origin_in_world:={map_origin}" -p output_dir:={run_dir}/avoidance
+      -p robot_length:=0.565 -p robot_width:=0.537 -p default_obstacle_radius:=0.25
+    stop_first: true
+    wait_files: ["{run_dir}/avoidance/avoidance_summary.json"]
+    settle_s: 2
+  - name: system
+    # 로봇 1대 + 위치추정(정답) + Nav2 + 추적 + 안전 노드 (+ 카메라·YOLO). Fleet·BT 끔: Nav2가 바로 주행한다
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:=1 gui:=false world:=restaurant.sdf body:=serving
+      enable_camera:={robot_camera} detection:={detection}
+      fleet:=false bt:=false nav2:=true localization:={localization} tracking:=true safety:=true seed:={seed}
+      robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/{robots}
+      map:={map} map_origin_in_world:="{map_origin}"
+    ready_topic: /amr_01/ground_truth/odom
+    ready_timeout_s: 300
+    # 컨트롤러·플래너·BT가 active여야 목표를 받는다. 추적·안전 노드가 내기 시작해야 회피가 성립한다.
+    # YOLO가 모델을 다 읽기 전에 손님이 나오면 1인칭 칸에 상자가 없다 (검출이 없어도 빈 배열을 낸다)
+    ready_cmds:
+      - ros2 lifecycle get /map_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/planner_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/controller_server | grep -q '^active'
+      - ros2 lifecycle get /amr_01/bt_navigator | grep -q '^active'
+      - timeout 5 ros2 topic echo --once /amr_01/perception/obstacles > /dev/null
+      - timeout 5 ros2 topic echo --once /amr_01/safety/status > /dev/null
+      - test "{robot_camera}" = false || test "{detection}" != true || timeout 20 ros2 topic echo --once /amr_01/perception/objects > /dev/null
+    settle_s: 5
+  # 카메라와 측정 토픽을 나눠 녹화한다: 카메라 bag은 mp4로 바꾸고 지운다 (demo_restaurant와 같다)
+  - name: camera_bag
+    enabled: "{robot_camera}"
+    cmd: ros2 bag record -o {run_dir}/camera_bag -e '^/amr_01/camera/color/image_raw$'
+    settle_s: 1
+  - name: rosbag
+    # -e는 토픽 이름 안에서 찾기라 ^( … )$로 묶는다
+    cmd: >-
+      if [ "{record}" = true ];
+      then exec ros2 bag record -o {run_dir}/rosbag
+      -e '^/(tf|tf_static|amr_01/(scan|ground_truth/odom|odom|plan|cmd_vel|cmd_vel_nav|dwa/avoid_mode|dwa/passing|safety/status|perception/(obstacles|collision_risks|objects))|dynamic_obstacles/.*/ground_truth/odom)$';
+      else exec sleep infinity; fi
+    stop_first: true
+    settle_s: 2
+  - name: obstacles
+    # 손님은 1호가 다가올 때까지 처음 자리에 서 있다 (start_trigger). 출발 시각은 logs/obstacles.log '출발 신호'
+    cmd: >-
+      ros2 launch amr_gazebo dynamic_obstacles.launch.py
+      config:=$(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/config/{guests} seed:={seed} use_sim_time:=true
+    ready_topic: /dynamic_obstacles/{guest_id}/ground_truth/odom
+driver:
+  # 목표를 보내고 결과(도착·실패)를 기다린 뒤 조금 더 기록한다. 목표가 실패해도 기록은 남긴다
+  mode: command
+  use_sim_time: true
+  timeout_s: 1800
+  cmd: >-
+    ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose
+    "{{pose: {{header: {{frame_id: map}}, pose: {{position: {{x: {goal_x}, y: {goal_y}}}, orientation: {{z: {goal_qz}, w: {goal_qw}}}}}}}}}";
+    sleep {after_goal_s}
+postprocess:
+  # 후처리는 enabled를 보지 않아 카메라 bag이 있을 때만 바꾼다 (robot_camera false면 건너뜀)
+  - name: video
+    cmd: bash -c 'test -d {run_dir}/camera_bag || exit 0; ros2 run amr_gazebo bag_to_mp4.py {run_dir}/camera_bag --out {run_dir}/video && rm -rf {run_dir}/camera_bag && du -sh {run_dir}/video'
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
+param_sets:
+  scene:
+    cross: {guests: dynamic_obstacles_restaurant_avoid.yaml, guest_id: customer_cross}
+    # 매장 앞 통로(더 넓다)에서 마주침: 출발 자리와 목표(t02)도 바뀐다
+    headon_stall: {guests: dynamic_obstacles_restaurant_avoid_headon_stall.yaml, guest_id: customer_headon,
+                   robots: robots_restaurant_avoid_stall.yaml, goal_x: '-5.75', goal_y: '2.73'}
+    # 두 사람: 매장 앞 통로에서 마주 오는 손님 A를 비켜 지나친 직후 손님 B가 테이블 사이에서 나와 앞을 가로지른다
+    two_stall: {guests: dynamic_obstacles_restaurant_avoid_two_stall.yaml, guest_id: customer_headon,
+                robots: robots_restaurant_avoid_stall.yaml, goal_x: '-5.75', goal_y: '2.73'}
