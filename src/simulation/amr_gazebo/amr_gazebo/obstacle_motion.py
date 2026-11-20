@@ -23,6 +23,11 @@ yield_patience_s·yield_progress_m(선택)은 언제 돌아설지 정한다. 기
 YIELD_PATIENCE_S 동안 이어질 때다. yield_progress_m을 주면 속력 대신 위치를 본다: 막은 로봇이 그만큼도 못 움직인 채
 yield_patience_s가 지나면 돌아선다. 제자리에서 돌거나 조금씩 들썩이는 로봇(속력이 기준을 넘나든다) 앞에서 손님이 한없이
 서 있지 않게 한다 (식당 리허설: 손님과 로봇이 서로 기다림). random 패턴은 돌아설 때 로봇이 막지 않는 목표점을 고른다.
+
+start_trigger(선택, {robot, x, y, within_m})를 주면 그 로봇 중심이 점 (x, y)에서 within_m 안에 처음 들어올 때까지
+처음 자리에 서 있다가 걷기 시작한다. 장면 녹화에서 사람과 로봇이 만나는 순간을 실행 속도(RTF)와 상관없이 맞춘다
+(돌발 손님 회피 장면: 로봇이 다가오면 테이블 사이에서 손님이 나온다). 한번 걷기 시작하면 다시 서지 않는다.
+once(선택, 기본 false)를 주면 straight·curve 패턴이 왕복하지 않고 경로 끝(돌아섰으면 처음 점)에 닿으면 그 자리에 선다.
 """
 
 from __future__ import annotations
@@ -126,6 +131,14 @@ class ObstacleMotion:
         if len(waypoints) < 2:
             raise ValueError(f'{self.id}: waypoints가 2개 이상 필요하다')
         self._rng = rng
+        self.start_trigger = _parse_trigger(self.id, spec.get('start_trigger'))
+        self.started = self.start_trigger is None    # start_trigger가 있으면 로봇이 들어올 때까지 선다
+        self.once = spec.get('once', False)
+        if not isinstance(self.once, bool):
+            raise ValueError(f'{self.id}: once는 true 또는 false여야 한다: {self.once!r}')
+        if self.once and self.pattern == 'random':
+            raise ValueError(f'{self.id}: once는 straight·curve 패턴만 쓸 수 있다')
+        self.finished = False    # once: 경로 끝에 닿아 선 뒤
 
         if self.pattern == 'random':
             xs, ys = zip(*waypoints)
@@ -150,9 +163,16 @@ class ObstacleMotion:
 
         robots: 로봇 네임스페이스 → RobotState (world 기준). yield_to_robots의 로봇이 앞길을 막으면 (0, 0).
         t: 지금 시각 [s]. 없으면 돌아서지 않고 로봇이 비킬 때까지 기다린다.
+        start_trigger가 있으면 그 로봇이 들어오기 전까지, once면 경로 끝에 닿은 뒤로 (0, 0).
         """
-        while math.dist(xy, self._goal) < REACH_TOLERANCE:
+        if not self.started:
+            if not self._triggered(robots or {}):
+                return 0.0, 0.0
+            self.started = True
+        while not self.finished and math.dist(xy, self._goal) < REACH_TOLERANCE:
             self._advance()
+        if self.finished:
+            return 0.0, 0.0
         if self.keep_away_m > 0 and self._keep_away(xy, robots or {}, t):
             return 0.0, 0.0
         if self.yield_to and self._must_wait(xy, robots or {}, t):
@@ -255,6 +275,9 @@ class ObstacleMotion:
             self.speed = self._new_speed()
             return
         nxt = self._index + self._dir
+        if not 0 <= nxt < len(self.path) and self.once:
+            self.finished = True     # 한 번만 걷는다: 끝에 닿은 자리에 선다
+            return
         if not 0 <= nxt < len(self.path):
             # 끝에 닿았다: 방향을 바꾸고 이번 왕복 구간의 속도를 새로 뽑는다
             self._dir = -self._dir
@@ -262,6 +285,11 @@ class ObstacleMotion:
             self.speed = self._new_speed()
         self._index = nxt
         self._goal = self.path[nxt]
+
+    def _triggered(self, robots: Mapping[str, RobotState]) -> bool:
+        name, point, within = self.start_trigger
+        state = robots.get(name)
+        return state is not None and math.dist(state[:2], point) <= within
 
     def _goal_blocked(self, xy: Point, goal: Point, robots: Mapping[str, RobotState]) -> bool:
         dx, dy = goal[0] - xy[0], goal[1] - xy[1]
@@ -277,6 +305,21 @@ class ObstacleMotion:
 
     def _new_speed(self) -> float:
         return self._rng.uniform(*self.speed_range)
+
+
+def _parse_trigger(oid: str, spec) -> Optional[Tuple[str, Point, float]]:
+    """start_trigger {robot, x, y, within_m} → (로봇 이름, (x, y), within_m). 없으면 None."""
+    if spec is None:
+        return None
+    keys = {'robot', 'x', 'y', 'within_m'}
+    if not isinstance(spec, dict) or set(spec) != keys:
+        raise ValueError(f'{oid}: start_trigger는 {sorted(keys)} 네 키를 가진 사전이어야 한다: {spec!r}')
+    if not isinstance(spec['robot'], str) or not spec['robot']:
+        raise ValueError(f'{oid}: start_trigger.robot은 로봇 네임스페이스여야 한다: {spec["robot"]!r}')
+    within = float(spec['within_m'])
+    if not within > 0:
+        raise ValueError(f'{oid}: start_trigger.within_m은 양수여야 한다: {within}')
+    return spec['robot'], (float(spec['x']), float(spec['y'])), within
 
 
 def blocks_path(xy: Point, u: Point, reach: float, robot: RobotState, clearance: float,

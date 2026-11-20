@@ -81,6 +81,61 @@ def test_restaurant_scene_robots(scene):
     assert all(free_on_map(pgm, r.x, r.y) for r in points)
 
 
+def test_restaurant_avoidance_scene_route_and_guest_path_are_free():
+    # 돌발 손님 회피 장면 (하네스 nav_avoidance_restaurant): 1호 1대가 가로 통로 y 0.2를 따라 서쪽 t07로 가고,
+    # 손님은 x -1.175 세로 통로를 따라 남쪽 퇴식구로 한 번 걸어 그 통로를 가로지른다. 둘 다 지도(테이블·의자·칸막이)에서 비어야 한다
+    robots = load_robots(str(Path(ROBOTS).with_name('robots_restaurant_avoid.yaml')), 1)
+    assert [(r.name, r.x, r.y) for r in robots] == [('amr_01', 4.3, 0.2)]
+    assert robots[0].yaw == pytest.approx(math.pi)               # 서쪽을 본다
+    root = Path(__file__).resolve().parents[3]
+    pgm = root / 'localization' / 'amr_mapping' / 'maps' / 'restaurant_gt.pgm'
+    stations = yaml.safe_load((root / 'fleet' / 'amr_fleet_manager' / 'config' / 'stations_restaurant.yaml')
+                              .read_text(encoding='utf-8'))['stations']
+    goal_x, goal_y, _ = stations['t07']
+    # 로봇 길: 출발 → (t07 x, 0.2) → t07. 서빙 로봇 반폭 0.27 m
+    assert all(free_on_map(pgm, 4.3 - 0.25 * k, 0.2, half=0.3) for k in range(int((4.3 - goal_x) / 0.25) + 1))
+    assert free_on_map(pgm, goal_x, goal_y, half=0.3)
+    guest = yaml.safe_load((root / 'simulation' / 'amr_gazebo' / 'config' / 'dynamic_obstacles_restaurant_avoid.yaml')
+                           .read_text(encoding='utf-8'))['obstacles']
+    assert len(guest) == 1
+    g = guest[0]
+    (x0, y0), (x1, y1) = ((w['x'], w['y']) for w in g['waypoints'])
+    assert (g['spawn']['x'], g['spawn']['y']) == (x0, y0) and x0 == x1 and y0 > 0.2 > y1   # 통로를 북 → 남으로 가로지른다
+    assert g['once'] and g['start_trigger']['robot'] == 'amr_01'
+    assert (g['start_trigger']['x'], g['start_trigger']['y']) == (x0, 0.2)                  # 만나는 점 = 로봇 길 위
+    # 손님 몸 반지름 0.25 m
+    n = int((y0 - y1) / 0.1)
+    assert all(free_on_map(pgm, x0, y0 - (y0 - y1) * k / n, half=0.25) for k in range(n + 1))
+    # 출발 자리에서 손님 길과 떨어져 있다
+    assert obstacle_clearance(robots[0].x, robots[0].y, g) >= CLEARANCE_M
+
+
+@pytest.mark.parametrize('guests', ['dynamic_obstacles_restaurant_avoid_headon_stall.yaml',
+                                    'dynamic_obstacles_restaurant_avoid_two_stall.yaml'])
+def test_restaurant_avoidance_stall_scenes_are_free(guests):
+    # 매장 앞 통로 장면(scene=headon_stall·two_stall): 1호 출발 자리·t02 정차 자리와 손님 길이 지도에서 비고,
+    # 손님끼리 처음 자리가 몸(지름 0.5 m)보다 떨어져 있다
+    robots = load_robots(str(Path(ROBOTS).with_name('robots_restaurant_avoid_stall.yaml')), 1)
+    assert [(r.name, r.x, r.y) for r in robots] == [('amr_01', 4.6, 3.45)]
+    root = Path(__file__).resolve().parents[3]
+    pgm = root / 'localization' / 'amr_mapping' / 'maps' / 'restaurant_gt.pgm'
+    stations = yaml.safe_load((root / 'fleet' / 'amr_fleet_manager' / 'config' / 'stations_restaurant.yaml')
+                              .read_text(encoding='utf-8'))['stations']
+    assert free_on_map(pgm, robots[0].x, robots[0].y, half=0.3)
+    assert free_on_map(pgm, stations['t02'][0], stations['t02'][1], half=0.3)
+    config = root / 'simulation' / 'amr_gazebo' / 'config' / guests
+    specs = yaml.safe_load(config.read_text(encoding='utf-8'))['obstacles']
+    for g in specs:
+        (x0, y0), (x1, y1) = ((w['x'], w['y']) for w in g['waypoints'])
+        assert (g['spawn']['x'], g['spawn']['y']) == (x0, y0), g['id']
+        n = max(1, int(math.dist((x0, y0), (x1, y1)) / 0.1))
+        on_path = ((x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n) for k in range(n + 1))
+        assert all(free_on_map(pgm, x, y, half=0.25) for x, y in on_path), g['id']
+        assert g['once'] and g['start_trigger']['robot'] == 'amr_01', g['id']
+    starts = [(g['spawn']['x'], g['spawn']['y']) for g in specs]
+    assert all(math.dist(a, b) > 0.5 for i, a in enumerate(starts) for b in starts[i + 1:])
+
+
 def test_load_robots_count():
     assert len(load_robots(ROBOTS, 3)) == 3
     with pytest.raises(ValueError):

@@ -523,3 +523,77 @@ def test_keep_away_simulated_guest_never_enters_radius_of_parked_robot():
 def test_negative_keep_away_rejected():
     with pytest.raises(ValueError):
         ObstacleMotion(_line(), random.Random(0), keep_away_m=-1.0)
+
+
+# ---- start_trigger: 로봇이 다가오면 걷기 시작 / once: 한 번만 걷고 선다 ----
+
+TRIGGER = {'robot': 'amr_01', 'x': 5.0, 'y': 0.0, 'within_m': 2.0}
+
+
+def test_trigger_stands_until_robot_enters_then_keeps_walking():
+    m = ObstacleMotion({**_line(), 'start_trigger': TRIGGER}, random.Random(0))
+    assert m.step((0.0, 0.0), {}, 0.0) == (0.0, 0.0) and not m.started            # 로봇 GT가 아직 없다
+    assert m.step((0.0, 0.0), {'amr_01': (7.1, 0.0, math.pi, 0.5)}, 0.1) == (0.0, 0.0)   # 2.1 m: 밖
+    assert m.step((0.0, 0.0), {'amr_01': (6.9, 0.0, math.pi, 0.5)}, 0.2)[0] > 0 and m.started
+    # 한번 걷기 시작하면 로봇이 멀어지거나 GT가 끊겨도 계속 걷는다
+    assert m.step((0.1, 0.0), {'amr_01': (20.0, 0.0, math.pi, 0.5)}, 0.3)[0] > 0
+    assert m.step((0.2, 0.0), {}, 0.4)[0] > 0
+
+
+def test_trigger_ignores_other_robots():
+    m = ObstacleMotion({**_line(), 'start_trigger': TRIGGER}, random.Random(0))
+    assert m.step((0.0, 0.0), {'amr_02': (5.0, 0.0, 0.0, 0.5)}, 0.0) == (0.0, 0.0) and not m.started
+
+
+@pytest.mark.parametrize('pattern', ['straight', 'curve'])
+def test_once_stops_at_the_end(pattern):
+    m = ObstacleMotion({**_line(x1=3.0, pattern=pattern), 'once': True}, random.Random(0))
+    xy = (0.0, 0.0)
+    for _ in range(int(30 / DT)):
+        vx, vy = m.step(xy)
+        xy = (xy[0] + vx * DT, xy[1] + vy * DT)
+    assert m.finished and math.dist(xy, (3.0, 0.0)) < 0.15 + 0.5 * DT
+    assert m.step(xy) == (0.0, 0.0)
+
+
+def test_once_after_turn_back_stops_at_the_start():
+    # 멈춘 로봇이 길을 막아 돌아서면 처음 점에서 선다 (다시 로봇 쪽으로 가지 않는다)
+    spec = {**_line(), 'once': True, 'yield_to_robots': ['amr_01'], 'yield_patience_s': 1.0}
+    m = ObstacleMotion(spec, random.Random(0))
+    parked = {'amr_01': (3.0, 0.0, 0.0, 0.0)}
+    xy, t = (0.0, 0.0), 0.0
+    for _ in range(int(40 / DT)):
+        vx, vy = m.step(xy, parked, t)
+        xy, t = (xy[0] + vx * DT, xy[1] + vy * DT), t + DT
+    assert m.turn_backs == 1 and m.finished and math.dist(xy, (0.0, 0.0)) < 0.15 + 0.5 * DT
+
+
+def test_without_once_still_shuttles():
+    m = ObstacleMotion(_line(x1=3.0), random.Random(0))
+    xy = (0.0, 0.0)
+    for _ in range(int(9 / DT)):           # 3 m / 0.5 m/s = 6 s 뒤 되돌아온다
+        vx, vy = m.step(xy)
+        xy = (xy[0] + vx * DT, xy[1] + vy * DT)
+    assert not m.finished and xy[0] < 2.0
+
+
+@pytest.mark.parametrize('bad', [
+    {'robot': 'amr_01', 'x': 0.0, 'y': 0.0},                                  # within_m 없음
+    {'robot': 'amr_01', 'x': 0.0, 'y': 0.0, 'within_m': 0.0},
+    {'robot': '', 'x': 0.0, 'y': 0.0, 'within_m': 1.0},
+    {'robot': 'amr_01', 'x': 0.0, 'y': 0.0, 'within_m': 1.0, 'delay_s': 2.0},  # 모르는 키
+    'amr_01',
+])
+def test_rejects_bad_trigger(bad):
+    with pytest.raises(ValueError):
+        ObstacleMotion({**_line(), 'start_trigger': bad}, random.Random(0))
+
+
+@pytest.mark.parametrize('spec', [
+    {**_line(), 'once': 'yes'},
+    {'id': 'g', 'type': 'customer', 'pattern': 'random', 'speed_range_mps': [0.5, 0.5], 'once': True,
+     'spawn': {'x': 0.0, 'y': 0.0}, 'waypoints': [{'x': 0.0, 'y': 0.0}, {'x': 2.0, 'y': 2.0}]},
+])
+def test_rejects_bad_once(spec):
+    with pytest.raises(ValueError):
+        ObstacleMotion(spec, random.Random(0))

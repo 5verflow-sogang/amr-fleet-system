@@ -1,5 +1,6 @@
 """시나리오 파일 불러오기 (ROS 없이). extends로 물려받은 시나리오가 기반과 같은 프로세스를 쓰고 params만 바뀌는지 본다."""
 
+import math
 import sys
 import subprocess
 from pathlib import Path
@@ -37,7 +38,7 @@ def test_kpi_scenarios_extend_loc_basic(name, origin):
     assert s['params']['dynamic_obstacles'] == base['params']['dynamic_obstacles']
 
 
-@pytest.mark.parametrize('name', ['nav_avoidance', 'nav_avoidance_headon'])
+@pytest.mark.parametrize('name', ['nav_avoidance', 'nav_avoidance_headon', 'nav_avoidance_restaurant'])
 def test_nav_avoidance_stack_and_eval_share_map_origin(name):
     # 스택(지도·AMCL 초기 위치)과 회피 평가(기준 경로 map → world)가 같은 원점을 써야 경로 이탈에 원점 차이가 안 섞인다.
     # #249로 기본 지도가 v2가 됐을 때 평가만 v1 원점으로 남았다 (#262 이진 리뷰)
@@ -63,6 +64,37 @@ def test_nav_avoidance_headon_differs_from_crossing_only_in_worker_and_goal():
     rest = [p for p in s['processes'] if p['name'] != 'obstacles']
     assert rest == [p for p in base['processes'] if p['name'] != 'obstacles']
     assert s['driver'] == base['driver']
+
+
+def test_nav_avoidance_restaurant_meets_the_scene_setup():
+    # 식당 돌발 손님 장면: 식당 안전 설정(body:=serving → profile restaurant)·추적을 켜고, 목표는 t07, 손님은 1호가 다가올 때
+    # 한 번 가로지른다. 손님이 로봇 근처에서 서는 guest_keep_away_m은 쓰지 않는다 (가로지르기가 안 된다)
+    import yaml
+    s = run.load_scenario('nav_avoidance_restaurant')
+    params = apply_param_sets(s, {**s['params'], 'run_dir': '/tmp/r', 'seed': 1, 'repeat': 0, 'label': ''})
+    cmds = {p['name']: p['cmd'] for p in render(s['processes'], params)}
+    for arg in ('world:=restaurant.sdf', 'body:=serving', 'tracking:=true', 'safety:=true', 'nav2:=true',
+                'num_robots:=1', 'robots_restaurant_avoid.yaml'):
+        assert arg in cmds['system'], arg
+    assert 'guest_keep_away_m' not in cmds['system'] and 'keep_away' not in cmds['obstacles']
+    repo = Path(run.HERE).parents[1]
+    stations = yaml.safe_load((repo / 'src/fleet/amr_fleet_manager/config/stations_restaurant.yaml')
+                              .read_text(encoding='utf-8'))['stations']
+    x, y, yaw = stations['t07']
+    assert (float(s['params']['goal_x']), float(s['params']['goal_y'])) == (x, y)
+    qz, qw = float(s['params']['goal_qz']), float(s['params']['goal_qw'])
+    assert 2 * math.atan2(qz, qw) == pytest.approx(yaw, abs=1e-6)
+    # 장면마다 손님 파일과 손님 id가 맞고, 손님은 모두 1호를 출발 신호로 보고 한 번만 걷는다
+    for scene in ('cross', 'headon_stall', 'two_stall'):
+        base = {**s['params'], 'scene': scene, 'run_dir': '/tmp/r', 'seed': 1, 'repeat': 0, 'label': ''}
+        p = apply_param_sets(s, base, explicit=['scene'])
+        guests = yaml.safe_load((repo / 'src/simulation/amr_gazebo/config' / p['guests'])
+                                .read_text(encoding='utf-8'))['obstacles']
+        assert p['guest_id'] in [g['id'] for g in guests], scene
+        rendered = {q['name']: q for q in render(s['processes'], p)}
+        assert rendered['obstacles']['ready_topic'] == f"/dynamic_obstacles/{p['guest_id']}/ground_truth/odom"
+        assert p['guests'] in rendered['obstacles']['cmd']
+        assert all(g['start_trigger']['robot'] == 'amr_01' and g['once'] is True for g in guests), scene
 
 
 def test_config_patch_values_are_filled_from_params():

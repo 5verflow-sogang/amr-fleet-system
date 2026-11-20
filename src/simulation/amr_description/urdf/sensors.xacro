@@ -161,9 +161,10 @@
           <height>${rgbd['height']}</height>
           <format>R8G8B8</format>
         </image>
+        <!-- RGB 클립. Depth는 아래 depth_camera clip(명세 range_max)에서 따로 자른다 -->
         <clip>
           <near>${rgbd['range_min']}</near>
-          <far>${rgbd['range_max']}</far>
+          <far>${rgbd['rgb_range_max']}</far>
         </clip>
         <depth_camera>
           <clip>

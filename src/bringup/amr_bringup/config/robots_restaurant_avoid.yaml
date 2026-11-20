@@ -1,0 +1,5 @@
+# 식당 돌발 손님 회피 장면 (하네스 nav_avoidance_restaurant, 1대). 스폰 자세 [x, y, yaw] (m, rad, world = map).
+# 1·2행 테이블 사이 가로 통로(가운데 y 0.2)의 동쪽 끝(t05·t10 동쪽 의자 x 4.02와 6인석 벤치 x 약 5.25 사이)에서
+# 음식을 싣고 서쪽(t07)을 본다. 손님 동선은 amr_gazebo config/dynamic_obstacles_restaurant_avoid.yaml.
+robots:
+  amr_01: [4.3, 0.2, 3.14159265]

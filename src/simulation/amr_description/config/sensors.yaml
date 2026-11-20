@@ -19,7 +19,8 @@ lidar:                      # 2D LiDAR → /<ns>/scan_raw (sensor_msgs/LaserScan
     stddev: 0.03            # m. 명세 (가우시안 σ=0.03 m)
 
 # RGB와 Depth를 rgbd_camera 센서 하나로 낸다 (PR #22 논의). 같은 위치·해상도·내부 파라미터(K)라
-# RGB 픽셀과 depth 픽셀이 1:1로 대응한다. 대신 주기·클립 거리를 RGB와 Depth가 공유한다.
+# RGB 픽셀과 depth 픽셀이 1:1로 대응한다. 대신 주기와 가까운 클립 거리를 RGB와 Depth가 공유한다.
+# 먼 클립 거리는 나눈다: Depth는 명세 range_max, RGB는 rgb_range_max (Fortress rgbd_camera는 depth_camera clip을 따로 읽는다)
 rgbd_camera:                # frame <ns>/camera_optical_frame
   # → /<ns>/camera/color/image_raw (rgb8), /<ns>/camera/depth/image_raw (32FC1, m), /<ns>/camera/camera_info
   # 포인트클라우드는 depth 영상 + camera_info로 만든다 (Gazebo points는 좌표축이 frame_id와 달라 쓰지 않음)
@@ -29,6 +30,9 @@ rgbd_camera:                # frame <ns>/camera_optical_frame
   horizontal_fov: 87.0      # deg. 명세 (Depth). RGB는 명세 없음 → 같은 값
   range_min: 0.3            # m. 명세 없음. RealSense D435 최소 거리(약 0.28 m) 근거. RGB에도 적용된다
   range_max: 10.0           # m. 명세 (Depth)
+  # m. RGB 화면을 그리는 거리. Depth와 같은 10 m였을 때는 그 밖이 배경색으로 비어, 식당 통로 끝 벽이 카메라에서 10 m 안인
+  # 부분만 동그랗게 그려졌다 (11/20 돌발 손님 장면). 식당(24 x 16 m) 대각선보다 길게 둔다. YOLO도 이만큼 본다
+  rgb_range_max: 50.0
   depth_noise:
     type: gaussian
     mean: 0.0
