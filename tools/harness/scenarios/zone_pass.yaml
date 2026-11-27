@@ -1,0 +1,52 @@
+# 혼잡도 구역 정원 측정 (민지, 11/28). 식당 월드에 로봇 1대, 한 통로 안에만 손님 N명을 걷게 하고
+# 로봇이 통로 끝에서 끝까지 10번 오가며 한 번 지나는 시간을 잰다. 정원 = 통과 시간이 손님 0명일 때의 2배가 되는 인원
+# (BPR 식으로 맞춘다, experiments/zone_capacity/README.md).
+#   tools/harness/docker_run.sh zone_pass -n 1 --set zone=west_aisle --set guests_n=2 --label west_n2
+# 통로(zone): west_aisle / aisle_3 / aisle_5. 손님(guests_n): 0, 1, 2, 4 (experiments/zone_capacity/make_configs.py)
+# 결과: nav_kpi/nav_pairs.csv(쌍 = 통과 한 번, actual_s가 통과 시간, 시뮬레이션 s), meta.json params에 zone·guests_n
+# 시연(demo_restaurant)과 같게: 서빙 몸체, 1초 재계획 BT(body:=serving이면 자동), 추적·안전 켬, 손님 양보 1.2 m,
+# 위치는 정답 위치(통과 시간에 위치추정 밀림이 섞이지 않게). Fleet·BT·혼잡도 노드는 끈다 (Nav2가 바로 주행)
+name: zone_pass
+packages: amr_bringup amr_nav2_plugins
+num_robots: 1
+use_sim_time: true
+seed_base: 1
+# 통과 10번 × 최대 120 s(막힌 경우) = 시뮬레이션 20분. RTF 0.3까지 견딘다
+timeout_s: 5400
+params:
+  zone: west_aisle
+  guests_n: "0"
+  # 한 번 통과 제한 (시뮬레이션 s). 넘으면 그 통과는 실패(통과 시간 ≥ 이 값)로 남기고 다음 쌍으로 간다
+  pass_timeout_s: "120"
+processes:
+  - name: system
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:=1 gui:=false enable_camera:=false
+      fleet:=false bt:=false nav2:=true localization:=ground_truth tracking:=true safety:=true
+      world:=restaurant.sdf body:=serving seed:={seed}
+      robots_file:=/repo/experiments/zone_capacity/robots/{zone}.yaml
+      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
+      $(if [ "{guests_n}" = 0 ]; then echo dynamic_obstacles:=false;
+      else echo dynamic_obstacles:=true dynamic_obstacles_file:=/repo/experiments/zone_capacity/guests/{zone}_n{guests_n}.yaml; fi)
+      guest_keep_away_m:=1.2
+    ready_topic: /amr_01/ground_truth/odom
+    ready_timeout_s: 300
+    ready_cmds:
+      - timeout 20 ros2 lifecycle get /map_server | grep -q '^active'
+      - timeout 20 ros2 lifecycle get /amr_01/planner_server | grep -q '^active'
+      - timeout 20 ros2 lifecycle get /amr_01/controller_server | grep -q '^active'
+      - timeout 20 ros2 lifecycle get /amr_01/bt_navigator | grep -q '^active'
+    settle_s: 5
+driver:
+  mode: command
+  use_sim_time: true
+  timeout_s: 5300
+  cmd: >-
+    python3 /repo/experiments/nav_kpi/nav_kpi.py --out-dir {run_dir}/nav_kpi
+    --waypoints /repo/experiments/zone_capacity/waypoints/{zone}.yaml --origin "[0.0, 0.0, 0.0]"
+    --min-timeout-s {pass_timeout_s} --timeout-factor 1
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
+  - pkill -9 -f "[n]av_kpi.py" || true
+  - pkill -9 -f "[d]ynamic_obstacles_node" || true
