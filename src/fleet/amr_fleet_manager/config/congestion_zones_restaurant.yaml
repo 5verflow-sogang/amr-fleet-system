@@ -7,7 +7,8 @@
 #
 # 식당 기본 손님(일과 손님 10명, dynamic_obstacles_restaurant_routine.yaml)은 앉는 자리가 대부분 홀 서쪽이라 hall_west가
 # 5/6 안팎, hall_east 3/6 안팎이고 물·자판기·반납을 오갈 때 south가 잠깐 오른다.
-# 혼잡도 시연 1-1·1-2의 서 있는 몰림 손님(dynamic_obstacles_restaurant_peak_stand.yaml)은 서쪽 통로 4명으로 west_aisle 1.0.
+# 혼잡도 시연 1-1·1-2는 몰림 손님 10명을 더한다 (dynamic_obstacles_restaurant_routine_peak.yaml, 20명 모두 센다). 몰림 손님은
+# 처음 200 s 남짓 제자리에 머물러 서쪽 통로 4명으로 west_aisle 1.0, 매장 3 앞 1명으로 stall_front 1/6이다.
 # capacity는 통로 폭으로 잡은 [가정]이다: 1.5 m 안팎 통로 길이 7 m에 3명이면 로봇(폭 0.54 m)이 비켜 가기 어렵다.
 zones:
   - id: buffet_line

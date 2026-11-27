@@ -1,10 +1,7 @@
-# 식당 기본 손님의 일과 설정 → dynamic_obstacles_restaurant_routine.yaml (pattern routine). 식당 하네스 공통(demo_restaurant)과
-# 장면 2가 손님 파일로 쓰고(혼잡도에 센다), 혼잡도 시연 1-1·1-2는 staff 자리로 띄운다. 경로는 생성기가 정답 지도에서 뽑는다:
-#
-#   python3 src/simulation/amr_gazebo/scripts/gen_guest_routines.py \
-#       src/simulation/amr_gazebo/config/guest_routines_restaurant.yaml \
-#       --map src/localization/amr_mapping/maps/restaurant_gt.yaml \
-#       --out src/simulation/amr_gazebo/config/dynamic_obstacles_restaurant_routine.yaml
+# 식당 기본 손님 10명의 일과 설정 → dynamic_obstacles_restaurant_routine.yaml (pattern routine). 식당 하네스 공통
+# (demo_restaurant)과 장면 2가 손님 파일로 쓴다 (혼잡도에 센다). 혼잡도 시연 1-1·1-2는 이 10명에 몰림 손님 10명을 더한
+# guest_routines_restaurant_peak.yaml(이 파일을 include한다)을 쓴다. 경로는 생성기가 정답 지도에서 뽑는다 - 이 파일을 고치면
+# 두 결과 파일을 모두 다시 만든다 (명령은 scripts/gen_guest_routines.py 머리말)
 #
 # places: 자리 이름 → world [x, y]. 지도에서 몸 여유(0.32 m)가 없으면 가장 가까운 빈 칸으로 옮긴다.
 #   좌석 tNN_w/e: 테이블 서쪽·동쪽 의자 바깥 (의자 칸은 칠해져 있어 의자 옆 통로 쪽에 선다 = 앉아 있는 손님).
@@ -12,8 +9,6 @@
 # guests: start 자리에서 시작해 steps를 차례로 (go 자리로 걸어가 wait_s 동안 머문다). 마지막 단계 뒤에는 loop_from 단계부터
 #   되풀이한다. 되풀이가 이어지게 loop_from 직전 자리(0이면 start)와 마지막 자리가 같아야 한다.
 # 동작 번호(#)는 손님 동작 목록 50개의 번호다.
-# stand_files: 같이 띄우기도 하는 손님 파일(이 설정 옆). 그 파일의 서 있는 손님(stand) 자리도 비켜 경로를 뽑는다 (1-1·1-2 몰림 손님 자리)
-stand_files: [dynamic_obstacles_restaurant_peak_stand.yaml]
 places:
   entrance: [-11.3, -5.5]
   kiosk_1: [-10.6, -6.95]

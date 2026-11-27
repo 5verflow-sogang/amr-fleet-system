@@ -221,9 +221,9 @@ def test_scene12_runs_its_scene_script_with_the_standing_crowd():
     assert procs['scene']['cmd'].startswith(
         'python3 /repo/tools/harness/demo_scene.py /repo/tools/harness/tasks/demo_s12.yaml ')
     stack = procs['stack']['cmd']
-    # 손님은 1-1과 같다: 서 있는 몰림 손님만 세고, 일과 손님은 staff 자리
-    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak_stand.yaml' in stack
-    assert 'staff_file:=dynamic_obstacles_restaurant_routine.yaml' in stack
+    # 손님은 1-1과 같다: 일과 손님 20명(기본 10 + 몰림 10)을 한 파일로 띄워 모두 혼잡도에 센다
+    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_routine_peak.yaml' in stack
+    assert 'staff_file:=none' in stack
     assert 'robots_restaurant_s12.yaml' in stack
     assert {'scene_script', 'congestion_filter', 'guests', 'staff', 'localization'} <= _own_params('demo_s12')
     on = _demo_procs('demo_s12', congestion_filter='keepout', localization='ground_truth')['stack']['cmd']
@@ -236,9 +236,9 @@ def test_scene11_runs_its_scene_script_and_on_off_is_cost_fn_only():
     assert procs['scene']['cmd'].startswith(
         'python3 /repo/tools/harness/demo_scene.py /repo/tools/harness/tasks/demo_s11.yaml ')
     stack = procs['stack']['cmd']
-    assert 'robots_restaurant_s11.yaml' in stack and 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak_stand.yaml' in stack
-    # 혼잡도에 세지 않는 손님 (staff 자리): 일과대로 움직이는 손님 10명. 손님끼리도 본다
-    assert 'staff_file:=dynamic_obstacles_restaurant_routine.yaml' in stack and 'guest_avoid_peers:=true' in stack
+    assert 'robots_restaurant_s11.yaml' in stack and 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_routine_peak.yaml' in stack
+    # 일과 손님 20명(기본 10 + 몰림 10)을 한 파일로 띄워 모두 혼잡도에 센다. 세지 않는 사람은 없다. 손님끼리도 본다
+    assert 'staff_file:=none' in stack and 'guest_avoid_peers:=true' in stack
     assert 'localization:=ground_truth' in stack                    # 녹화 전용
     assert procs['cameras']['cmd'].endswith('cameras:=top_west,west,stalls')
     for topic in ('/fleet/task_table', '/fleet/robot_states', '/fleet/congestion', '/demo/t0'):

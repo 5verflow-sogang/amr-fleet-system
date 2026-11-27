@@ -1,0 +1,570 @@
+# 생성 파일: guest_routines_restaurant_peak.yaml 에서 scripts/gen_guest_routines.py로 만들었다 (지도 restaurant_gt.yaml). 손으로 고치지 말고 설정을 고쳐 다시 만든다.
+#
+# 손님 20명, 모두 pattern routine (amr_gazebo/obstacle_motion.py): steps를 차례로 - path를 따라 걸어 마지막 점에서 wait_s 동안
+# 머물고, 마지막 단계 뒤에는 loop_from 단계부터 되풀이한다. 걷는 동안은 로봇·다른 손님 앞에서 서고, 머무는 동안 로봇이 오면
+# evade_dirs 쪽으로 비켰다가 돌아온다. 손님 파일(dynamic_obstacles_file)로 띄워 모두 혼잡도에 센다.
+
+obstacles:
+- id: routine_01
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -10.6
+    y: -6.95
+    yaw: 0.0
+  steps:
+  - name: kiosk_1
+    path: [[-10.6, -6.95]]
+    wait_s: [10.0, 25.0]
+    evade_dirs: [[1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: t12_e
+    path: [[-10.675, -5.275], [-11.025, -4.875], [-11.075, -4.475], [-10.925, -4.225], [-9.925, -3.225], [-4.625, -3.425], [-4.625, -3.775]]
+    wait_s: [40.0, 90.0]
+    evade_dirs: [[1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: water_1
+    path: [[-4.275, -3.375], [-4.125, -3.225], [-3.175, -3.025], [4.725, -3.425], [5.075, -5.075], [5.275, -5.275], [5.375, -5.625], [5.275, -5.925], [5.025, -6.175], [3.625, -6.375], [2.9, -6.95]]
+    wait_s: [5.0, 10.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: t12_e
+    path: [[3.625, -6.375], [5.025, -6.175], [5.275, -5.925], [5.375, -5.575], [4.475, -3.225], [-3.825, -3.125], [-4.125, -3.225], [-4.525, -3.625], [-4.625, -3.775]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[1, 0], [0, 1], [1, 1], [-1, 1]]
+  loop_from: 2
+  note: '#1 결제 후 착석 + #17 물 받고 착석'
+- id: routine_02
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -9.2
+    y: -6.95
+    yaw: 0.0
+  steps:
+  - name: kiosk_2
+    path: [[-9.2, -6.95]]
+    wait_s: [15.0, 30.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: t07_w
+    path: [[-11.025, -4.875], [-11.075, -4.475], [-10.925, -4.225], [-9.275, -2.575], [-7.625, -1.925], [-6.8, -1.05]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  - name: return_cart
+    path: [[-9.075, -3.025], [-10.825, -4.125], [-11.025, -4.325], [-11.075, -4.725], [-10.925, -4.975], [-10.125, -5.775], [-2.875, -6.925]]
+    wait_s: [5.0, 10.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: kiosk_2
+    path: [[-7.725, -6.325], [-9.2, -6.95]]
+    wait_s: [10.0, 20.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: t07_w
+    path: [[-11.025, -4.875], [-11.075, -4.475], [-10.925, -4.225], [-9.275, -2.575], [-7.625, -1.925], [-6.8, -1.05]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  loop_from: 2
+  note: '#1 결제 후 착석, 그릇 반납 뒤 추가 주문'
+- id: routine_03
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: 1.525
+    y: -1.075
+    yaw: 0.0
+  steps:
+  - name: t09_e
+    path: [[1.525, -1.075]]
+    wait_s: [20.0, 60.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  - name: water_2
+    path: [[2.325, -2.425], [4.825, -3.775], [4.825, -4.025], [5.375, -5.575], [5.275, -5.925], [4.425, -6.725], [3.9, -6.95]]
+    wait_s: [5.0, 10.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: t09_e
+    path: [[5.125, -6.075], [5.325, -5.875], [5.375, -5.475], [4.125, -2.825], [1.875, -1.825], [1.525, -1.075]]
+    wait_s: [60.0, 150.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  loop_from: 1
+  note: '#17 앉아 있다가 물 받고 다시 앉기'
+- id: routine_04
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -0.825
+    y: -4.075
+    yaw: 0.0
+  steps:
+  - name: t14_w
+    path: [[-0.825, -4.075]]
+    wait_s: [10.0, 40.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  - name: vending
+    path: [[-1.825, -5.925], [-3.025, -6.225], [-7.6, -6.95]]
+    wait_s: [10.0, 20.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: t14_w
+    path: [[-2.725, -6.175], [-1.175, -5.225], [-0.825, -4.075]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  loop_from: 1
+  note: '#23 자판기 음료'
+- id: routine_05
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -7.75
+    y: -1.05
+    yaw: 0.0
+  steps:
+  - name: t06_e
+    path: [[-7.75, -1.05]]
+    wait_s: [15.0, 45.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  - name: self_corner
+    path: [[-7.925, -0.175], [-10.375, -0.625], [-10.95, -1.0]]
+    wait_s: [10.0, 20.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  - name: t06_e
+    path: [[-8.475, -0.025], [-7.575, -0.875], [-7.75, -1.05]]
+    wait_s: [40.0, 90.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  loop_from: 1
+  note: '#20 셀프 코너 반찬 (서쪽 통로를 지난다)'
+- id: routine_06
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -1.525
+    y: -4.075
+    yaw: 0.0
+  steps:
+  - name: t13_e
+    path: [[-1.525, -4.075]]
+    wait_s: [30.0, 90.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  - name: return_cart
+    path: [[-1.475, -5.775], [-2.875, -6.925]]
+    wait_s: [5.0, 10.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: entrance
+    path: [[-11.175, -5.575], [-11.3, -5.5]]
+    wait_s: [3.0, 6.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  - name: kiosk_1
+    path: [[-10.6, -6.95]]
+    wait_s: [15.0, 30.0]
+    evade_dirs: [[1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: t13_e
+    path: [[-9.325, -6.325], [-2.825, -6.225], [-1.175, -5.225], [-1.525, -4.075]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  loop_from: 1
+  note: '#33 그릇 반납 후 퇴장 → 새 손님으로 다시 들어와 결제 후 착석'
+- id: routine_07
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -1.525
+    y: -1.075
+    yaw: 0.0
+  steps:
+  - name: t08_e
+    path: [[-1.525, -1.075]]
+    wait_s: [30.0, 60.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  - name: t03_e
+    path: [[-1.525, 1.925]]
+    wait_s: [10.0, 25.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  - name: t08_e
+    path: [[-1.525, -1.075]]
+    wait_s: [40.0, 80.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  loop_from: 1
+  note: '#13 옆 테이블 일행과 대화'
+- id: routine_08
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -0.825
+    y: 1.925
+    yaw: 0.0
+  steps:
+  - name: t04_w
+    path: [[-0.825, 1.925]]
+    wait_s: [90.0, 180.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  - name: water_1
+    path: [[-0.825, 0.675], [4.675, -0.575], [4.825, -4.025], [5.375, -5.575], [5.275, -5.925], [5.025, -6.175], [3.625, -6.375], [2.9, -6.95]]
+    wait_s: [5.0, 10.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: t04_w
+    path: [[3.825, -6.225], [4.875, -6.225], [5.125, -6.075], [5.275, -5.925], [5.375, -5.575], [4.825, -3.925], [4.525, -0.325], [-1.125, 1.025], [-0.825, 1.925]]
+    wait_s: [90.0, 180.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  loop_from: 1
+  note: '#10 식사, 가끔 물'
+- id: routine_09
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: 5.425
+    y: -3.825
+    yaw: 0.0
+  steps:
+  - name: c01_w
+    path: [[5.425, -3.825]]
+    wait_s: [30.0, 90.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  - name: water_2
+    path: [[5.375, -5.725], [5.225, -5.975], [4.375, -6.725], [3.9, -6.95]]
+    wait_s: [5.0, 10.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: c01_w
+    path: [[5.125, -6.075], [5.325, -5.875], [5.375, -5.025], [5.425, -3.825]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  loop_from: 1
+  note: '#17 2인석, 물'
+- id: routine_10
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -7.75
+    y: -4.05
+    yaw: 0.0
+  steps:
+  - name: t11_e
+    path: [[-7.75, -4.05]]
+    wait_s: [20.0, 60.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  - name: vending
+    path: [[-7.925, -3.175], [-10.275, -3.575], [-11.025, -4.325], [-11.075, -4.725], [-10.925, -4.975], [-10.025, -5.875], [-7.6, -6.95]]
+    wait_s: [15.0, 30.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: t11_e
+    path: [[-10.775, -5.125], [-11.025, -4.875], [-11.075, -4.475], [-10.925, -4.225], [-9.925, -3.225], [-7.575, -3.475], [-7.75, -4.05]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  loop_from: 1
+  note: '#24 자판기 앞에서 고민'
+- id: crowd_01
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: 2.6
+    y: 3.45
+    yaw: 0.0
+  steps:
+  - name: stall_3_east
+    path: [[2.6, 3.45]]
+    wait_s: [200.0, 260.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+  - name: t05_w
+    path: [[2.275, 2.275], [2.275, 2.225]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: stall_3_east
+    path: [[2.425, 3.025], [2.6, 3.45]]
+    wait_s: [30.0, 60.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+  loop_from: 1
+  note: 매장 3 앞에서 음식을 기다리다 자리로, 다시 추가 주문 (예전 customer_1 자리)
+- id: crowd_02
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -7.275
+    y: -5.6
+    yaw: 0.0
+  steps:
+  - name: south_aisle_w
+    path: [[-7.275, -5.6]]
+    wait_s: [200.0, 260.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, -1]]
+  - name: t02_w
+    path: [[-10.325, -5.575], [-11.025, -4.875], [-11.075, -4.475], [-10.325, -2.875], [-9.875, -0.175], [-7.125, 1.425], [-6.8, 1.95]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  - name: south_aisle_w
+    path: [[-9.075, -0.025], [-10.325, -0.925], [-10.375, -3.675], [-11.025, -4.325], [-11.075, -4.725], [-10.925, -4.975], [-10.125, -5.775], [-7.275, -5.6]]
+    wait_s: [20.0, 40.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, -1]]
+  loop_from: 1
+  note: 남쪽 통로에서 일행을 기다리다 자리로 (예전 customer_2 자리, x -7.275 통로 아래)
+- id: crowd_03
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -3.0
+    y: -5.6
+    yaw: 0.0
+  steps:
+  - name: south_aisle_m
+    path: [[-3.0, -5.6]]
+    wait_s: [200.0, 260.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, -1], [1, -1], [-1, -1]]
+  - name: t13_w
+    path: [[-6.025, -6.225], [-9.725, -6.175], [-11.025, -4.875], [-11.075, -4.475], [-10.925, -4.225], [-9.925, -3.225], [-4.625, -3.125], [-4.325, -3.225], [-3.925, -3.625], [-3.825, -3.775]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[-1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: south_aisle_m
+    path: [[-4.175, -3.375], [-4.325, -3.225], [-4.775, -3.125], [-10.125, -3.425], [-11.025, -4.325], [-11.075, -4.725], [-10.925, -4.975], [-10.125, -5.775], [-7.175, -6.225], [-4.275, -6.175], [-3.0,
+        -5.6]]
+    wait_s: [20.0, 40.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, -1], [1, -1], [-1, -1]]
+  loop_from: 1
+  note: 남쪽 통로에서 자리를 찾다가 앉기 (예전 customer_3 자리)
+- id: crowd_04
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -10.5
+    y: 0.55
+    yaw: 0.0
+  steps:
+  - name: west_mid
+    path: [[-10.5, 0.55]]
+    wait_s: [200.0, 260.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1]]
+  - name: t07_e
+    path: [[-4.475, -0.525], [-4.575, -1.075]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  - name: west_mid
+    path: [[-4.625, -0.275], [-10.5, 0.55]]
+    wait_s: [30.0, 60.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1]]
+  loop_from: 1
+  note: 셀프 코너 줄에 서 있다가 자리로, 다시 줄 (예전 customer_4 자리, 서쪽 통로)
+- id: crowd_05
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: 4.74
+    y: -5.6
+    yaw: 0.0
+  steps:
+  - name: south_aisle_e
+    path: [[4.74, -5.6]]
+    wait_s: [200.0, 260.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, -1]]
+  - name: t10_w
+    path: [[4.525, -3.225], [1.925, -1.825], [2.225, -1.075]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  - name: south_aisle_e
+    path: [[2.225, -2.325], [4.825, -3.775], [4.74, -5.6]]
+    wait_s: [20.0, 40.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, -1]]
+  loop_from: 1
+  note: 동쪽 세로 통로 아래에서 기다리다 자리로 (예전 customer_5 자리)
+- id: crowd_06
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -6.0
+    y: -5.6
+    yaw: 0.0
+  steps:
+  - name: south_aisle_k
+    path: [[-6.0, -5.6]]
+    wait_s: [200.0, 260.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, -1], [1, -1], [-1, -1]]
+  - name: t02_e
+    path: [[-7.125, -6.225], [-9.875, -5.875], [-10.825, -5.075], [-11.025, -4.875], [-11.075, -4.475], [-10.325, -2.875], [-9.875, -0.175], [-7.425, 1.225], [-7.425, 2.075], [-7.275, 2.325], [-6.875, 2.725],
+      [-4.625, 2.575], [-4.625, 2.225]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[1, 0], [0, 1], [1, 1], [-1, 1]]
+  - name: south_aisle_k
+    path: [[-4.675, 2.625], [-6.975, 2.625], [-7.375, 2.225], [-8.125, 0.325], [-10.325, -0.825], [-10.375, -3.675], [-11.025, -4.325], [-11.075, -4.725], [-10.925, -4.975], [-10.125, -5.775], [-7.175,
+        -6.225], [-6.025, -5.625], [-6.0, -5.6]]
+    wait_s: [20.0, 40.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, -1], [1, -1], [-1, -1]]
+  loop_from: 1
+  note: 남쪽 통로에서 기다리다 자리로 (예전 customer_6 자리)
+- id: crowd_07
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -7.275
+    y: -2.45
+    yaw: 0.0
+  steps:
+  - name: hall_cross
+    path: [[-7.275, -2.45]]
+    wait_s: [200.0, 260.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+  - name: t08_w
+    path: [[-4.325, -2.075], [-3.875, -1.075]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  - name: hall_cross
+    path: [[-4.625, -2.375], [-7.275, -2.45]]
+    wait_s: [20.0, 40.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+  loop_from: 1
+  note: 테이블 사이 통로에서 일행과 이야기하다 자리로 (예전 customer_7 자리)
+- id: crowd_08
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -10.45
+    y: -4.6
+    yaw: 0.0
+  steps:
+  - name: west_south
+    path: [[-10.45, -4.6]]
+    wait_s: [200.0, 260.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [-1, -1]]
+  - name: t12_w
+    path: [[-9.525, -3.025], [-7.475, -3.475], [-6.8, -4.05]]
+    wait_s: [60.0, 120.0]
+    evade_dirs: [[-1, 0], [0, 1], [-1, 1], [-1, -1]]
+  - name: west_south
+    path: [[-7.775, -3.225], [-10.225, -3.525], [-10.45, -4.6]]
+    wait_s: [30.0, 60.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [-1, -1]]
+  loop_from: 1
+  note: 서쪽 통로 남쪽 줄 끝에 서 있다가 자리로 (예전 peak_1 자리, 1-1 1호 출발 자리 1 m 앞)
+- id: crowd_09
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -10.0
+    y: 1.7
+    yaw: 0.0
+  steps:
+  - name: west_north
+    path: [[-10.0, 1.7]]
+    wait_s: [200.0, 260.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  - name: self_corner_n
+    path: [[-10.95, 1.2]]
+    wait_s: [10.0, 20.0]
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+  - name: west_north
+    path: [[-10.0, 1.7]]
+    wait_s: [40.0, 80.0]
+    evade_dirs: [[-1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]]
+  loop_from: 1
+  note: 서쪽 통로 북쪽에 서 있다가 셀프 코너에서 수저를 챙긴다 (예전 peak_2 자리)
+- id: crowd_10
+  type: customer
+  pattern: routine
+  speed_range_mps: [0.5, 0.8]
+  yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+  yield_robot_size: [0.565, 0.537]
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  spawn:
+    x: -11.1
+    y: -3.1
+    yaw: 0.0
+  steps:
+  - name: west_corner
+    path: [[-11.1, -3.1]]
+    wait_s: [200.0, 260.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+  - name: self_corner_s
+    path: [[-10.875, -2.025], [-10.95, -2.0]]
+    wait_s: [10.0, 20.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1]]
+  - name: west_corner
+    path: [[-10.925, -2.775], [-11.1, -3.1]]
+    wait_s: [40.0, 80.0]
+    evade_dirs: [[1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+  loop_from: 1
+  note: 셀프 코너 남쪽 빈 곳에 서 있다가 반찬을 담는다 (예전 peak_3 자리)

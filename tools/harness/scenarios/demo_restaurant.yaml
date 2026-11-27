@@ -30,11 +30,12 @@ params:
   robots: robots_restaurant.yaml                 # amr_bringup config/ 시작 위치
   # 손님(amr_gazebo config/). 혼잡도 노드도 같은 파일을 센다. 식당 기본은 일과 손님 10명 (pattern routine: 키오스크 결제 →
   # 착석, 앉아 있다가 물·자판기·셀프 코너·반납 → 다시 착석. 일과는 guest_routines_restaurant.yaml). 대부분 홀 서쪽 자리라
-  # hall_west가 5/6 안팎이다. 혼잡도 기능을 보이는 1-1·1-2만 서 있는 몰림 손님(_peak_stand.yaml)을 여기에 두고 일과 손님은
-  # staff 자리로 띄운다 (세지 않음). 예전 걷는 손님 파일(직선 왕복·무작위: _restaurant·_peak·_peak_scene12)은 지웠다
+  # hall_west가 5/6 안팎이다. 혼잡도 기능을 보이는 1-1·1-2는 여기에 몰림 손님 10명을 더한 _routine_peak.yaml(20명, 모두 센다)을
+  # 쓴다 - 몰림 손님도 일과가 있다 (처음 200 s 남짓은 서쪽 통로 등 제자리, 그 뒤 자리·셀프 코너를 오간다).
+  # 예전 걷는 손님 파일(직선 왕복·무작위: _restaurant·_peak·_peak_scene12)과 서 있기만 하던 손님 파일(_peak_stand)은 지웠다
   guests: dynamic_obstacles_restaurant_routine.yaml
   # 혼잡도에 세지 않는 사람 (같은 형식). 기본은 띄우지 않는다 (11/8 매장 안 직원 빼기, 홀 손님만).
-  # 매장 직원: dynamic_obstacles_restaurant_staff.yaml, 1-1·1-2: 일과 손님 파일
+  # 매장 직원: dynamic_obstacles_restaurant_staff.yaml
   staff: none
   cost_fn: euclidean                             # 1-1 켬: congestion
   congestion_weight: "3.0"

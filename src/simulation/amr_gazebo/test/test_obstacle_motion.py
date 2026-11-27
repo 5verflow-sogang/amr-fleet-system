@@ -327,32 +327,64 @@ def test_customer_yields_to_serving_robot_size():
     assert any(w for _, _, w in log)
 
 
-# 식당 손님 파일: 기본은 일과 손님(routine), 혼잡도 시연 1-1·1-2의 몰림은 서 있는 손님(stand)
-RESTAURANT_GUESTS = {'dynamic_obstacles_restaurant_routine.yaml': 'routine',
-                     'dynamic_obstacles_restaurant_peak_stand.yaml': 'stand'}
+# 식당 손님 파일 → 손님 수: 기본은 일과 손님 10명, 혼잡도 시연 1-1·1-2는 몰림 손님 10명을 더한 20명. 모두 일과(routine)가 있다
+RESTAURANT_GUESTS = {'dynamic_obstacles_restaurant_routine.yaml': 10, 'dynamic_obstacles_restaurant_routine_peak.yaml': 20}
+
+
+def _restaurant_guests(name):
+    with open(os.path.join(os.path.dirname(__file__), '..', 'config', name), encoding='utf-8') as f:
+        return yaml.safe_load(f)['obstacles']
 
 
 @pytest.mark.parametrize('name', sorted(RESTAURANT_GUESTS))
-def test_restaurant_guests_yield_to_serving_robots(name):
-    path = os.path.join(os.path.dirname(__file__), '..', 'config', name)
-    with open(path, encoding='utf-8') as f:
-        specs = yaml.safe_load(f)['obstacles']
-    assert len(specs) == 10
+def test_restaurant_guests_have_routines_and_yield_to_serving_robots(name):
+    specs = _restaurant_guests(name)
+    assert len(specs) == RESTAURANT_GUESTS[name]
     for s in specs:
-        ObstacleMotion(s, random.Random(0))          # 설정이 받아들여진다
-        assert s['pattern'] == RESTAURANT_GUESTS[name], s['id']
+        assert ObstacleMotion(s, random.Random(0)).pattern == 'routine', s['id']      # 설정이 받아들여진다
+        assert len({st['name'] for st in s['steps']}) >= 2, s['id']                   # 한 자리에만 있지 않는다
         assert s['yield_to_robots'] == ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05'], s['id']
         assert s['yield_robot_size'] == [0.565, 0.537], s['id']
-        if s['pattern'] == 'routine':                # 걷는 동안 멈춘 로봇 앞에서 3 s 기다리고 비켜 간다
-            assert (s['yield_patience_s'], s['yield_progress_m']) == (3.0, 0.1), s['id']
+        assert (s['yield_patience_s'], s['yield_progress_m']) == (3.0, 0.1), s['id']  # 멈춘 로봇 앞에서 3 s 기다리고 비켜 간다
 
 
-def test_restaurant_has_no_scripted_walkers_left():
-    # 예전 걷는 손님(통로 직선 왕복·곡선·무작위)은 지웠다. 식당 손님은 일과 손님과 서 있는 몰림 손님뿐이고,
+def test_restaurant_has_no_scripted_walkers_or_standing_guests_left():
+    # 예전 걷는 손님(통로 직선 왕복·곡선·무작위)과 서 있기만 하던 손님 파일은 지웠다. 식당 손님은 일과 손님뿐이고,
     # 직원(_staff.yaml, 칸막이 안 주방 왕복)만 straight로 남는다
     config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
     files = sorted(n for n in os.listdir(config_dir) if n.startswith('dynamic_obstacles_restaurant'))
     assert files == sorted(RESTAURANT_GUESTS) + ['dynamic_obstacles_restaurant_staff.yaml']
+
+
+def test_peak_guests_are_the_default_guests_plus_a_crowd_that_holds_the_west_aisle():
+    # 몰림 파일 = 식당 기본 손님 10명(일과 그대로) + 몰림 손님 10명. 한 파일이라 20명 모두 혼잡도에 센다
+    base, peak = (_restaurant_guests(n) for n in sorted(RESTAURANT_GUESTS))
+    assert [g['id'] for g in peak[:10]] == [g['id'] for g in base]
+    for b, p in zip(base, peak):
+        assert [(s['name'], s['wait_s']) for s in b['steps']] == [(s['name'], s['wait_s']) for s in p['steps']]
+    crowd = peak[10:]
+    assert [g['id'] for g in crowd] == [f'crowd_{i:02d}' for i in range(1, 11)]
+    zones = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'fleet', 'amr_fleet_manager', 'config',
+                         'congestion_zones_restaurant.yaml')
+    with open(zones, encoding='utf-8') as f:
+        zones = {z['id']: z for z in yaml.safe_load(f)['zones']}
+
+    def inside(zone, p):
+        x0, x1, y0, y1 = zones[zone]['area']
+        return x0 <= p[0] <= x1 and y0 <= p[1] <= y1
+
+    # 처음 자리에서 200 s 넘게 머문다: 장면의 핵심 구간(1-1 약 140 s, 1-2 180 s) 동안 몰림이 그대로다
+    for g in crowd:
+        first = g['steps'][0]
+        assert first['path'] == [[g['spawn']['x'], g['spawn']['y']]] and first['wait_s'][0] >= 200.0, g['id']
+        assert first['evade_dirs'], g['id']                                          # 로봇이 오면 비킬 곳이 있다
+    start = [(g['spawn']['x'], g['spawn']['y']) for g in crowd]
+    assert sum(inside('west_aisle', p) for p in start) == 4 > zones['west_aisle']['capacity']   # 혼잡도 1.0
+    assert sum(inside('stall_front', p) for p in start) == 1                         # 1-1 켬 3호 비용 15.8 (1/6)
+    assert not any(inside('buffet_line', p) for p in start)
+    # 기본 손님은 처음에 서쪽 통로·매장 앞에 없다 (1-1 0초의 혼잡도는 몰림 손님이 정한다)
+    assert not [g['id'] for g in base for z in ('west_aisle', 'stall_front', 'buffet_line')
+                if inside(z, (g['spawn']['x'], g['spawn']['y']))]
 
 
 # 제자리에서 도는 로봇: 위치는 그대로인데 속력이 0과 0.1 m/s를 오간다 (식당 리허설에서 손님과 서로 기다림)
@@ -653,18 +685,19 @@ def test_rejects_bad_routine():
             ObstacleMotion(_routine(**bad), random.Random(0))
 
 
-def test_restaurant_routine_file_is_up_to_date_and_valid():
+@pytest.mark.parametrize('spec_name, out_name', [
+    ('guest_routines_restaurant.yaml', 'dynamic_obstacles_restaurant_routine.yaml'),
+    ('guest_routines_restaurant_peak.yaml', 'dynamic_obstacles_restaurant_routine_peak.yaml')])
+def test_restaurant_routine_files_are_up_to_date_and_valid(spec_name, out_name):
     # 생성 파일이 설정·지도와 맞는지 (설정을 고치고 다시 안 만든 것을 잡는다), 경유점 사이가 몸 여유를 지키는지
-    from amr_gazebo.guest_routes import GridMap, build_obstacles, stand_spots
+    from amr_gazebo.guest_routes import GridMap, build_obstacles, load_spec
     here = os.path.dirname(__file__)
-    with open(os.path.join(here, '..', 'config', 'guest_routines_restaurant.yaml'), encoding='utf-8') as f:
-        spec = yaml.safe_load(f)
+    spec = load_spec(os.path.join(here, '..', 'config', spec_name))
     grid = GridMap.load(os.path.join(here, '..', '..', '..', 'localization', 'amr_mapping', 'maps',
                                      'restaurant_gt.yaml'))
-    with open(os.path.join(here, '..', 'config', 'dynamic_obstacles_restaurant_routine.yaml'),
-              encoding='utf-8') as f:
+    with open(os.path.join(here, '..', 'config', out_name), encoding='utf-8') as f:
         generated = yaml.safe_load(f)['obstacles']
-    want = build_obstacles(spec, grid, stand_spots(spec, os.path.join(here, '..', 'config')))
+    want = build_obstacles(spec, grid)
     assert [o['id'] for o in generated] == [o['id'] for o in want]
     for g, w in zip(generated, want):
         assert g['steps'] == w['steps'] and g['spawn'] == w['spawn'], g['id']

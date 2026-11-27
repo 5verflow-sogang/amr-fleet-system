@@ -485,15 +485,15 @@ def _guest_near(guest_file, radius=1.0):
 GUESTS = REPO / 'src' / 'simulation' / 'amr_gazebo' / 'config'
 
 
-ROUTINE, PEAK_STAND = 'dynamic_obstacles_restaurant_routine.yaml', 'dynamic_obstacles_restaurant_peak_stand.yaml'
+ROUTINE, ROUTINE_PEAK = 'dynamic_obstacles_restaurant_routine.yaml', 'dynamic_obstacles_restaurant_routine_peak.yaml'
 
 
 @pytest.mark.parametrize('scene, guest_files', [
-    ('demo_s2a.yaml', [ROUTINE]), ('demo_s2b.yaml', [ROUTINE]), ('demo_s12.yaml', [PEAK_STAND, ROUTINE])])
+    ('demo_s2a.yaml', [ROUTINE]), ('demo_s2b.yaml', [ROUTINE]), ('demo_s12.yaml', [ROUTINE_PEAK])])
 def test_start_tasks_avoid_booths_and_guest_spots(scene, guest_files):
     # 부스 b01~b03: 11/9 녹화에서 도착 실패로 재큐(1막 b02), 로컬 재현(추적·안전 켬)에서 부스 칸에서 못 빠져나옴.
     # 손님이 머무는 자리 1 m 안: 11/9 녹화에서 5호가 t06 손님 무리에 오래 머묾. 장면이 쓰는 손님 파일 기준
-    # (식당 기본 일과 손님, 1-2는 서 있는 몰림 손님도)
+    # (식당 기본 일과 손님, 1-2는 몰림 손님을 더한 20명)
     steps = yaml.safe_load((TASKS / scene).read_text(encoding='utf-8'))['steps']
     start = {n for t in steps[0]['tasks'] for n in (t['pickup'], t['dropoff'])}
     assert not start & {'b01', 'b02', 'b03'}
