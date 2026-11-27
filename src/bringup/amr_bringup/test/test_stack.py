@@ -96,6 +96,13 @@ def test_body_picks_safety_profile(body, profile):
     assert args(stack(nav2=True, safety=True, body=body), 'safety.launch.py')['profile'] == profile
 
 
+@pytest.mark.parametrize('body, profile', [('amr', 'warehouse'), ('serving', 'restaurant')])
+def test_body_picks_detection_profile(body, profile):
+    # 식당(serving)은 인식도 식당 값(COCO 원본 모델, 사람만)을 쓴다. v1은 식당 의자·바닥을 사람·화물로 잡았다
+    items = stack(detection=True, enable_camera=True, body=body)
+    assert args(items, 'detection.launch.py')['profile'] == profile
+
+
 def test_map_server_only_on_first_robot():
     assert args(stack(index=0), 'localization.launch.py')['start_map_server'] == 'true'
     assert args(stack(index=1), 'localization.launch.py')['start_map_server'] == 'false'

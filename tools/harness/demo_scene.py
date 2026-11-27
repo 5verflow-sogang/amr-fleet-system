@@ -54,6 +54,12 @@ from typing import Optional
 
 import yaml
 
+try:
+    from rclpy.executors import ExternalShutdownException
+except ImportError:   # rclpy 없이(장면 단계 시험) 불러도 되게. 이때는 이 예외가 날 일이 없다
+    class ExternalShutdownException(Exception):
+        pass
+
 TASK_TYPES = {'delivery': 0, 'charge': 1, 'return': 2, 'collect': 3}   # amr_msgs/msg/Task.TYPE_*
 STATION_RESERVE_M = 1.0   # 서버 스테이션 예약 반경 (fleet_manager.yaml assignment.station_clearance_m)
 STATE_COMPLETED, STATE_FAILED = 2, 3   # amr_msgs/msg/TaskStatus.STATE_* (작업표 TaskRecord.state)
@@ -386,8 +392,9 @@ def main(argv=None):
     status = 'interrupted'
     try:
         status = _run(a, scene, stations, [float(v) for v in yaml.safe_load(a.map_origin)], hold)
-    except KeyboardInterrupt:
-        # 하네스가 녹화 시간이 끝나 SIGINT로 멈췄다. 그때까지 낸 것을 남긴다 (단계를 다 냈으면 done)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        # 하네스가 녹화 시간이 끝나 SIGINT로 멈췄다. 그때까지 낸 것을 남긴다 (단계를 다 냈으면 done).
+        # rclpy가 SIGINT를 먼저 받아 컨텍스트를 닫으면 spin_once가 KeyboardInterrupt 대신 ExternalShutdownException을 낸다
         status = 'done' if scene.done else 'interrupted'
     except Exception as e:   # rclpy 종료 예외 등도 기록은 남긴다
         status = f'error: {e!r}'
