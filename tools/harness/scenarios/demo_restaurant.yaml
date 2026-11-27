@@ -2,8 +2,8 @@
 # 식당 월드 + 서빙 로봇 5대 + Nav2·추적·안전 + 손님·직원 + 혼잡도 노드 + 고정 카메라(+ 로봇 시점 카메라) + 작업.
 # 결과:
 #   video/<카메라>.mp4 + video.json  카메라마다 영상(시뮬레이션 시각 15 fps)과 첫 프레임 시각. /demo/t0에 맞춰 자른다
-#   rosbag/                          측정 토픽(task_status·robot_states·task_table·congestion·/demo/t0)과 로봇별 Nav2 계획 경로
-#                                    (/amr_NN/plan, 편집 영상의 관제 경로 표시)만
+#   rosbag/                          측정 토픽(task_status·robot_states·task_table·congestion·/demo/t0), 로봇별 Nav2 계획 경로
+#                                    (/amr_NN/plan, 편집 영상의 관제 경로 표시), 로봇 시점 인식 결과(perception/objects)만
 #   assignments.csv, bag_info.txt, 요약의 run.real_time_factor
 # 카메라 원본(camera_bag/)은 mp4로 바꾼 뒤 지워 버킷에 올리지 않는다 (카메라 3대 60 s 약 8 GB → mp4 수십 MB).
 # 바꾸기에 실패하면 원본이 남아 그대로 올라간다.
@@ -42,6 +42,9 @@ params:
   congestion_filter: none                        # 1-2 켬: keepout
   cameras: top,west,stalls                       # amr_gazebo config/demo_cameras_restaurant.yaml 이름
   robot_camera: "false"                          # 로봇 시점: amr_01 등 (카메라 하나마다 RTF가 더 떨어진다)
+  # YOLO 인식: 카메라를 켠 로봇(robot_camera)에서만 뜬다. 서빙 몸체라 식당 프로필(COCO 원본, 사람만, amr_detection
+  # detection_restaurant.yaml). 결과 /amr_0N/perception/objects(상자·확신도·거리, 촬영 시각)를 rosbag에 남겨 로봇 시점 영상에 그린다
+  detection: "false"
   # 추적·안전 노드 (로봇마다 추적·안전·E-Stop 버튼 3개). 노드가 130개를 넘으면 마지막 로봇의 Nav2가
   # 서로를 못 찾는 것으로 보여(11/6, 늘 amr_05만) 끄고 확인 중이다
   tracking: "true"
@@ -65,7 +68,7 @@ processes:
   - name: stack
     cmd: >-
       ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true localization:={localization} tracking:={tracking} safety:={safety}
-      world:=restaurant.sdf body:=serving seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct}
+      detection:={detection} world:=restaurant.sdf body:=serving seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct}
       robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/{robots}
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
       dynamic_obstacles:=true dynamic_obstacles_file:={guests} staff_file:={staff} congestion:=restaurant
@@ -96,7 +99,7 @@ processes:
     cmd: ros2 bag record -o {run_dir}/camera_bag -e '/demo_cam/.*|/amr_[0-9][0-9]/camera/color/image_raw'
     settle_s: 1
   - name: rosbag
-    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/task_status|/fleet/robot_states|/fleet/task_table|/fleet/congestion|/demo/t0|/clock|/amr_[0-9][0-9]/plan'
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/task_status|/fleet/robot_states|/fleet/task_table|/fleet/congestion|/demo/t0|/clock|/amr_[0-9][0-9]/plan|/amr_[0-9][0-9]/perception/objects'
     settle_s: 3
   # 지도 원점은 실수로 준다 ('[0, 0, 0]'이면 작업 생성기가 시작하자마자 죽는다, 11/6 스모크)
   - name: task_generator

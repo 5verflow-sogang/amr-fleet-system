@@ -1,0 +1,10 @@
+# 식당(서빙 로봇, amr_bringup body:=serving) 덮어쓰기. detection.launch.py profile:=restaurant가 detection.yaml 뒤에 얹어
+# 여기 적은 키만 바뀐다. 물류센터 값(detection.yaml, v1 3종 모델)과 원 명세 인식 KPI는 그대로다.
+# v1은 물류센터 월드(작업자·화물 상자·표지판)로만 파인튜닝해, 식당 1호 시점 영상(11/17 맥 demo_s12 켬) 6장면에서
+# 의자·테이블 묶음과 배식대를 person, 바닥을 cargo로 잡았다. 같은 6장면에 COCO 원본은 손님마다 상자 하나(0.59~0.93),
+# 엉뚱한 상자 0개였다(먼 손님 몇 명은 놓침). 식당에는 화물·표지판이 없어 사람만 낸다
+/**/detection:
+  ros__parameters:
+    model_path: /opt/models/yolov8n.pt
+    model_classes: ["person"]
+    output_classes: ["person"]

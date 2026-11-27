@@ -1,0 +1,8 @@
+<library path="fleet_peer_layer">
+  <class type="amr_nav2_plugins::FleetPeerLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      /fleet/robot_states의 다른 로봇 위치를 외삽해 차체를 LETHAL로 그리는 costmap 레이어.
+      LiDAR 스캔면이 다른 로봇 차체 위를 지나 서로를 못 보는 것을 위치 공유로 메운다.
+    </description>
+  </class>
+</library>

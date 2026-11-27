@@ -32,6 +32,7 @@
 
 - 두 모델 모두 `docker/Dockerfile`이 이미지를 만들 때 받는다. v1은 해시(`ADD --checksum`)가 다르면 빌드가 멈춘다.
 - 모델을 바꾸면 `model_path`, `model_classes`, `output_classes`만 바꾼다. 모델에 없는 클래스 이름을 적으면 시작할 때 `ValueError`다.
+- 식당(서빙 로봇)은 `profile:=restaurant`로 `config/detection_restaurant.yaml`을 그 위에 얹어 **COCO 원본, `person`만** 쓴다. amr_bringup은 `body:=serving`이면 이걸 넘긴다. v1은 물류센터 월드로만 학습해 식당 1호 시점 6장면에서 의자·테이블 묶음과 배식대를 `person`, 바닥을 `cargo`로 잡았고, COCO 원본은 같은 장면에서 손님마다 상자 하나(0.59~0.93)에 엉뚱한 상자가 없었다(먼 손님 몇 명은 놓침, 11/17). 신뢰도·깊이 등 나머지 값과 원 명세 인식 KPI(물류센터, v1)는 그대로다
 
 ## 실행
 
@@ -40,6 +41,7 @@ ros2 launch amr_detection detection.launch.py                          # 네임�
 ros2 launch amr_detection detection.launch.py namespace:=amr_02
 ros2 launch amr_detection detection.launch.py target_frame:=amr_01/odom # 위치 추정 없이 시험할 때
 ros2 launch amr_detection detection.launch.py device:=cuda:0            # GPU 컨테이너
+ros2 launch amr_detection detection.launch.py profile:=restaurant       # 식당 값 (COCO 원본, 사람만)
 ```
 
 - 로봇 네임스페이스 안에서 띄워야 로봇 카메라(`/<ns>/camera/...`)를 받는다. `amr_bringup`은 `namespace:=<이름>`을 넘긴다.
