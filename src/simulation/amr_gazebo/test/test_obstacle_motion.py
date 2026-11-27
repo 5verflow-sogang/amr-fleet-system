@@ -327,37 +327,32 @@ def test_customer_yields_to_serving_robot_size():
     assert any(w for _, _, w in log)
 
 
-@pytest.mark.parametrize('name', [
-    'dynamic_obstacles_restaurant.yaml', 'dynamic_obstacles_restaurant_peak.yaml',
-    'dynamic_obstacles_restaurant_peak_scene12.yaml'])
-def test_restaurant_guests_yield_except_curve(name):
+# 식당 손님 파일: 기본은 일과 손님(routine), 혼잡도 시연 1-1·1-2의 몰림은 서 있는 손님(stand)
+RESTAURANT_GUESTS = {'dynamic_obstacles_restaurant_routine.yaml': 'routine',
+                     'dynamic_obstacles_restaurant_peak_stand.yaml': 'stand'}
+
+
+@pytest.mark.parametrize('name', sorted(RESTAURANT_GUESTS))
+def test_restaurant_guests_yield_to_serving_robots(name):
     path = os.path.join(os.path.dirname(__file__), '..', 'config', name)
     with open(path, encoding='utf-8') as f:
         specs = yaml.safe_load(f)['obstacles']
+    assert len(specs) == 10
     for s in specs:
         ObstacleMotion(s, random.Random(0))          # 설정이 받아들여진다
-        if s['pattern'] == 'curve':
-            assert not s.get('yield_to_robots'), s['id']
-        else:
-            assert s['yield_to_robots'] == ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05'], s['id']
-            assert s['yield_robot_size'] == [0.565, 0.537], s['id']
+        assert s['pattern'] == RESTAURANT_GUESTS[name], s['id']
+        assert s['yield_to_robots'] == ['amr_01', 'amr_02', 'amr_03', 'amr_04', 'amr_05'], s['id']
+        assert s['yield_robot_size'] == [0.565, 0.537], s['id']
+        if s['pattern'] == 'routine':                # 걷는 동안 멈춘 로봇 앞에서 3 s 기다리고 비켜 간다
             assert (s['yield_patience_s'], s['yield_progress_m']) == (3.0, 0.1), s['id']
 
 
-def _yield_keys(spec):
-    return {k: spec.get(k) for k in ('yield_to_robots', 'yield_robot_size', 'yield_patience_s', 'yield_progress_m')}
-
-
-def test_peak_scene12_has_same_guest_yield_settings_as_peak():
-    # scene12는 피크 파일에서 customer_2만 뺀 것이다 (머리말). 나머지 손님은 양보 설정도 같아야 한다
+def test_restaurant_has_no_scripted_walkers_left():
+    # 예전 걷는 손님(통로 직선 왕복·곡선·무작위)은 지웠다. 식당 손님은 일과 손님과 서 있는 몰림 손님뿐이고,
+    # 직원(_staff.yaml, 칸막이 안 주방 왕복)만 straight로 남는다
     config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
-    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak.yaml'), encoding='utf-8') as f:
-        peak = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
-    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak_scene12.yaml'), encoding='utf-8') as f:
-        scene12 = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
-    assert set(peak) - set(scene12) == {'customer_2'}
-    for guest_id, spec in scene12.items():
-        assert _yield_keys(spec) == _yield_keys(peak[guest_id]), guest_id
+    files = sorted(n for n in os.listdir(config_dir) if n.startswith('dynamic_obstacles_restaurant'))
+    assert files == sorted(RESTAURANT_GUESTS) + ['dynamic_obstacles_restaurant_staff.yaml']
 
 
 # 제자리에서 도는 로봇: 위치는 그대로인데 속력이 0과 0.1 m/s를 오간다 (식당 리허설에서 손님과 서로 기다림)
@@ -398,63 +393,6 @@ def test_rejects_bad_patience():
     for extra in ({'yield_patience_s': 0.0}, {'yield_progress_m': -0.1}):
         with pytest.raises(ValueError):
             ObstacleMotion({**WORKER, **extra}, random.Random(0))
-
-
-def _seg_dist(p, a, b):
-    ax, ay = a
-    dx, dy = b[0] - ax, b[1] - ay
-    t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy)))
-    return math.hypot(p[0] - (ax + t * dx), p[1] - (ay + t * dy))
-
-
-def _path_dist(spec, p):
-    """손님 활동 범위(직선: 경유점 꺾은선, 무작위: 경유점 상자, 스폰)까지 p의 가장 가까운 거리."""
-    pts = [(w['x'], w['y']) for w in spec['waypoints']]
-    d = [math.hypot(p[0] - spec['spawn']['x'], p[1] - spec['spawn']['y'])]
-    if spec['pattern'] == 'random':
-        xs, ys = [q[0] for q in pts], [q[1] for q in pts]
-        d.append(math.hypot(max(min(xs) - p[0], 0, p[0] - max(xs)), max(min(ys) - p[1], 0, p[1] - max(ys))))
-    else:
-        d += [_seg_dist(p, a, b) for a, b in zip(pts, pts[1:])]
-    return min(d)
-
-
-# 1-2 1호 출발 자리: dev robots_restaurant_s12.yaml (-10.5, -5.6)과 feat/demo-s12-script가 옮기는 (-10.0, -5.8)
-S12_STARTS = [(-10.5, -5.6), (-10.0, -5.8)]
-
-
-def test_peak_scene12_west_aisle_guests_crowd_the_middle_to_north():
-    # 1-2: 서쪽 통로 손님(peak_1~3)은 1호 출발 자리 둘레가 아니라 서쪽 통로 중간~북쪽(y -1.0 ~ 2.6)에 몰린다.
-    # 세 명 모두 혼잡도 구역 west_aisle 안이라(capacity 3) 혼잡도 1.0은 그대로다
-    config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
-    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak_scene12.yaml'), encoding='utf-8') as f:
-        scene12 = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
-    zones = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'fleet', 'amr_fleet_manager', 'config',
-                         'congestion_zones_restaurant.yaml')
-    with open(zones, encoding='utf-8') as f:
-        x0, x1, y0, y1 = next(z['area'] for z in yaml.safe_load(f)['zones'] if z['id'] == 'west_aisle')
-    for gid in ('peak_1', 'peak_2', 'peak_3'):
-        s = scene12[gid]
-        points = [(s['spawn']['x'], s['spawn']['y'])] + [(w['x'], w['y']) for w in s['waypoints']]
-        assert all(x0 <= x <= x1 and y0 <= y <= y1 for x, y in points), gid
-        assert min(y for _, y in points) >= -1.0, gid
-        for start in S12_STARTS:
-            assert _path_dist(s, start) > 1.0, (gid, start)
-
-
-def test_peak_scene12_changes_only_the_west_aisle_guests():
-    # peak_1~3 자리만 1-2 전용이고, 나머지 손님(customer_2 뺌)은 피크 파일과 같다
-    config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
-    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak.yaml'), encoding='utf-8') as f:
-        peak = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
-    with open(os.path.join(config_dir, 'dynamic_obstacles_restaurant_peak_scene12.yaml'), encoding='utf-8') as f:
-        scene12 = {s['id']: s for s in yaml.safe_load(f)['obstacles']}
-    for gid, spec in scene12.items():
-        if gid in ('peak_1', 'peak_2', 'peak_3'):
-            assert {k: v for k, v in spec.items() if k not in ('spawn', 'waypoints', 'note')} == \
-                {k: v for k, v in peak[gid].items() if k not in ('spawn', 'waypoints', 'note')}, gid
-        else:
-            assert spec == peak[gid], gid
 
 
 # ---- keep_away_m: 로봇 근처면 손님이 선다 (움직이는 로봇 포함) ----

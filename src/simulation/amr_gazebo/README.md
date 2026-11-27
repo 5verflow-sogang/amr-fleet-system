@@ -313,7 +313,7 @@ ros2 launch amr_gazebo rl_eval.launch.py mode:=brake_sweep payload_mass:=10.0 cs
 ros2 launch amr_gazebo world.launch.py world:=restaurant.sdf
 ros2 launch amr_gazebo spawn_robot.launch.py body:=serving x:=11.2 y:=-7.0 yaw:=3.14159   # 서빙 로봇(BellaBot 크기), wait_1
 C=$(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/config
-ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant.yaml seed:=1        # 평상시 손님 7명 (피크: _peak.yaml, 13명)
+ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant_routine.yaml seed:=1   # 식당 기본: 일과 손님 10명 (몰림: _peak_stand.yaml, 서 있는 손님 10명)
 ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant_staff.yaml name:=staff_obstacles   # 직원 6명
 ```
 
@@ -339,8 +339,8 @@ ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_
 | --- | --- | --- |
 | 앉은 손님 | 18 | 정지 모델 OpenRobotics `VisitorKidSit` (어른 앉은 모델은 Fuel에 없어 아이 모델) |
 | 서 있는 손님 | 9 | 정지 모델 OpenRobotics `FemaleVisitor`. 매장 카운터 옆(픽업 자리와 0.5 m 이상), 배식대 앞, 셀프 코너, 입구 |
-| 걷는 손님 | 7 (피크 13) | 동적 장애물 `customer` 타입(`models/dynamic_customer`), [`config/dynamic_obstacles_restaurant.yaml`](config/dynamic_obstacles_restaurant.yaml). 통로 가운데로 직선·곡선·무작위, 0.4–1.0 m/s. 피크 몰림 [`_peak.yaml`](config/dynamic_obstacles_restaurant_peak.yaml)은 서쪽 통로·배식대 앞에 6명을 더한다 (혼잡 구역 `amr_fleet_manager/config/congestion_zones_restaurant.yaml`의 `west_aisle` 3/3, `buffet_line` 3–4/4 확인). 손님 파일에는 손님만 넣는다 (혼잡도 노드가 전부 사람으로 센다) |
-| 걷는 손님 (시나리오 1-2) | 12 | 피크 파일에서 우회 통로(x −7.275)를 왕복하는 `customer_2`만 뺀 [`_peak_scene12.yaml`](config/dynamic_obstacles_restaurant_peak_scene12.yaml). 1-2는 서쪽 통로가 막혔을 때 로봇이 그 통로로 돌아가는지 보는데, `customer_2`와 통로 중간에서 마주쳐 막혔다 (11/6 이진 리허설). 혼잡도 노드는 `guests:=peak_scene12` |
+| 일과 손님 (식당 기본) | 10 | 동적 장애물 `customer` 타입(`models/dynamic_customer`), [`config/dynamic_obstacles_restaurant_routine.yaml`](config/dynamic_obstacles_restaurant_routine.yaml) (`pattern: routine`, 생성 파일). 키오스크 결제 → 착석, 앉아 있다가 물·자판기·셀프 코너·반납 → 다시 착석을 되풀이한다. 일과는 [`guest_routines_restaurant.yaml`](config/guest_routines_restaurant.yaml), 경로는 정답 지도에서 미리 뽑는다. 0.5–0.8 m/s. 혼잡도 노드가 센다 (`amr_fleet_manager` `guests:=normal`). 예전 걷는 손님(통로 직선 왕복·곡선·무작위, `_restaurant`·`_peak`·`_peak_scene12`)은 지웠다 |
+| 서 있는 몰림 손님 (시나리오 1-1·1-2) | 10 | [`_peak_stand.yaml`](config/dynamic_obstacles_restaurant_peak_stand.yaml) (`pattern: stand`). 서쪽 통로 4명으로 혼잡 구역 `west_aisle`이 1.0이 된다 (`guests:=peak`). 제자리에 서 있다가 로봇이 오면 0.8 m 비켜 선다. 이 장면들은 몰림 손님만 세고 일과 손님은 `staff_file` 자리로 같이 띄운다 |
 | 매장 직원 | 6 | 같은 동적 장애물로 칸막이 안 매장 주방 6곳을 왕복. 따로 [`_staff.yaml`](config/dynamic_obstacles_restaurant_staff.yaml), 같이 띄울 때 `name:=staff_obstacles` |
 
 - 걷는 손님·직원의 충돌체는 무게중심에 놓은 구(반지름 0.25 m, 마찰 0)다. 원기둥이었을 때는 배식대 앞 줄(피크)에서 손님끼리·가구와 모서리로 부딪혀 기울었고, 중력을 꺼 둬서 누운 채 남았다 (피크 13명 + 직원 5명 4분: 원기둥 2명 누움, 구 0명). 구는 어디서 부딪혀도 힘이 무게중심을 지나 기울이는 회전력이 없다. LiDAR는 메시를 보므로 센서 모습은 같다

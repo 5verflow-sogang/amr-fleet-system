@@ -4,8 +4,8 @@
 #   결과: gs://amr-fleet-results/runs/demo_s11-on/…/video/*.mp4 (끔은 demo_s11-off)
 # 시작 위치: 1호 입구 옆(-10.5, -5.6), 3호 3번 매장 앞 (robots_restaurant_s11.yaml). 경로 필터는 끈다.
 # 작업: 장면 스크립트(tools/harness/demo_scene.py, params scene_script)가 tasks/demo_s11.yaml대로 넣는다:
-#   2·4·5호 동쪽 회수 → 0초에 buffet_1 → 1번 테이블 배달과 /demo/t0. 끔은 1호(직선 최단), 켬은 3호(혼잡 구역 피함)가 받는다
-# 손님: 피크 파일 그대로 (peak_1~3 서쪽 통로 몰림, peak_4~6 배식대 앞). 직원은 혼잡도에 안 센다
+#   2·4·5호 동쪽 회수 → 0초에 매장 6(stall_6) → 1번 테이블 배달과 /demo/t0. 끔은 1호(직선 최단), 켬은 3호(혼잡 구역 피함)가 받는다
+# 손님: 서 있는 몰림 손님 10명(서쪽 통로 4명 → west_aisle 1.0)만 혼잡도에 세고, 식당 기본 일과 손님 10명은 staff 자리로 띄운다
 # 카메라: top_west(홀 서쪽 위 12 m, 1호 출발 자리·서쪽 통로·배식대·3번 매장이 한 화면) + west(서쪽 통로 눈높이) + stalls
 # 영상 편집: tools/demo/compose.py가 두 실행(끔·켬)의 영상·rosbag으로 강조 표시(로봇 동그라미·주문·배정·혼잡 구역)를
 #   입힌 비교 영상을 만든다 (컷시트 tools/demo/cuts/s11.yaml)
@@ -20,7 +20,8 @@ params:
   robots: robots_restaurant_s11.yaml
   guests: dynamic_obstacles_restaurant_peak_stand.yaml   # 1-1: 손님 10명이 서 있다가 로봇이 오면 비킨다 (pattern stand)
   # 일과대로 움직이는 손님 10명 (pattern routine: 키오스크 결제 → 착석, 앉아 있다가 물·자판기·셀프 코너·반납 → 다시 착석).
-  # staff 자리라 혼잡도에 안 센다. 일과는 amr_gazebo config/guest_routines_restaurant.yaml (서 있던 손님 파일은 _standing)
+  # 식당 기본 손님인데 여기서는 staff 자리라 혼잡도에 안 센다 (세면 hall_west가 5/6까지 올라 1-1 비용 비교가 달라진다).
+  # 일과는 amr_gazebo config/guest_routines_restaurant.yaml
   staff: dynamic_obstacles_restaurant_routine.yaml
   task_generator: "false"
   # 작업 넣기 (임시: tools/harness/demo_scene.py + 장면 파일). 연우 장면 스크립트가 오면 이 한 줄만 바꾼다

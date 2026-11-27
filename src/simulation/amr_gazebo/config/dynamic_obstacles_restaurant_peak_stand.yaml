@@ -1,5 +1,6 @@
-# 식당 시연 1-1용 손님 10명 (혼잡도에 센다, dynamic_obstacles_file). 피크 파일(dynamic_obstacles_restaurant_peak.yaml)의 손님 자리를
-# 서 있는 손님으로 바꿨다. 서쪽 통로(west_aisle) peak_1~3 + customer_4 = 4명 → 혼잡도 1.0 그대로.
+# 식당 혼잡도 시연 1-1·1-2용 몰림 손님 10명 (혼잡도에 센다, dynamic_obstacles_file). 예전 걷는 피크 손님(지운
+# dynamic_obstacles_restaurant_peak.yaml)의 자리를 서 있는 손님으로 바꿨다. 서쪽 통로(west_aisle) peak_1~3 + customer_4 = 4명
+# → 혼잡도 1.0. 같이 띄우는 식당 기본 일과 손님(_routine.yaml)은 이 장면들에서 staff 자리라 세지 않는다.
 #
 # 모든 손님이 pattern stand다 (amr_gazebo/obstacle_motion.py): 제자리(spawn)에서 waypoints 두 점 사이를 왕복하는데,
 #   경유점 0.15 m 앞에서 돌아서 실제로는 약 ± 5 cm다 (0.02 ~ 0.05 m/s). 로봇이 1.5 m 안에서 다가오면(손님이 로봇 진행선

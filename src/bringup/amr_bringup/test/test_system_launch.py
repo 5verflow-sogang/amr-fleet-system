@@ -156,12 +156,12 @@ def test_restaurant_args_reach_world_obstacles_and_fleet():
     module = load_module()
     context = context_with_defaults(
         module, num_robots=1, world='restaurant.sdf', dynamic_obstacles=True,
-        dynamic_obstacles_file='dynamic_obstacles_restaurant_peak.yaml', cost_fn='congestion', congestion_weight=2.0)
+        dynamic_obstacles_file='dynamic_obstacles_restaurant_routine.yaml', cost_fn='congestion', congestion_weight=2.0)
     actions = module._system(context)
     assert include_args(context, actions, 'world')['world'] == 'restaurant.sdf'
     config = include_args(context, actions, 'config')['config']
     assert config == os.path.join(get_package_share_directory('amr_gazebo'), 'config',
-                                  'dynamic_obstacles_restaurant_peak.yaml')
+                                  'dynamic_obstacles_restaurant_routine.yaml')
     assert os.path.exists(config)
     fleet = include_args(context, actions, 'cost_fn')
     assert (fleet['cost_fn'], fleet['congestion_weight']) == ('congestion', '2.0')
@@ -188,7 +188,7 @@ def test_congestion_node_uses_spawned_guests():
     module = load_module()
     context = context_with_defaults(
         module, num_robots=1, dynamic_obstacles=True, congestion='restaurant', map_origin_in_world='[0, 0, 0]',
-        dynamic_obstacles_file='dynamic_obstacles_restaurant_peak.yaml')
+        dynamic_obstacles_file='dynamic_obstacles_restaurant_routine.yaml')
     actions = module._system(context)
     congestion = include_args(context, actions, 'site')
     assert congestion['site'] == 'restaurant'
@@ -207,13 +207,13 @@ def test_staff_spawned_separately_and_not_counted():
     module = load_module()
     context = context_with_defaults(
         module, num_robots=1, dynamic_obstacles=True, congestion='restaurant',
-        dynamic_obstacles_file='dynamic_obstacles_restaurant_peak.yaml',
+        dynamic_obstacles_file='dynamic_obstacles_restaurant_routine.yaml',
         staff_file='dynamic_obstacles_restaurant_staff.yaml')
     actions = module._system(context)
     staff = include_args(context, actions, 'name')
     assert staff['name'] == 'staff_obstacles'
     assert staff['config'].endswith('config/dynamic_obstacles_restaurant_staff.yaml') and os.path.exists(staff['config'])
-    assert include_args(context, actions, 'site')['obstacles_file'].endswith('dynamic_obstacles_restaurant_peak.yaml')
+    assert include_args(context, actions, 'site')['obstacles_file'].endswith('dynamic_obstacles_restaurant_routine.yaml')
     # 기본은 직원 없음
     context = context_with_defaults(module, num_robots=1)
     with pytest.raises(AssertionError, match='name'):

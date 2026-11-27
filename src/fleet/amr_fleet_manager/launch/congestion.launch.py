@@ -1,7 +1,7 @@
 """혼잡도 노드. 손님 정답 위치로 구역별 혼잡도(/fleet/congestion)와 costmap 마스크를 발행한다 (api.md 4-5절).
 
     ros2 launch amr_fleet_manager congestion.launch.py                                  # 물류센터 가짜 구역
-    ros2 launch amr_fleet_manager congestion.launch.py site:=restaurant guests:=peak    # 식당, 피크 몰림 손님
+    ros2 launch amr_fleet_manager congestion.launch.py site:=restaurant guests:=peak    # 식당, 서 있는 몰림 손님
     ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<구역> obstacles_file:=<손님> map_origin_in_world:='[x, y, yaw]'
 
 site가 구역 파일·손님 파일·map 원점의 기본값을 한 번에 고른다. 셋 중 직접 준 것은 그 값을 쓴다.
@@ -17,13 +17,13 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 # site → (구역 파일, 손님 파일 {guests: 파일}, map_origin_in_world)
-# 손님 파일은 amr_gazebo config 아래. 식당 손님 파일에는 손님만 있다(직원은 _staff.yaml, 서 있는 손님은 세지 않는다)
+# 손님 파일은 amr_gazebo config 아래. 식당 손님 파일에는 손님만 있다 (직원은 _staff.yaml).
+# 식당 normal은 일과 손님 10명(pattern routine), peak는 서 있는 몰림 손님 10명(pattern stand, 시연 1-1·1-2)
 SITES = {
     'warehouse': ('congestion_zones.yaml', {'normal': 'dynamic_obstacles.yaml'}, [-0.0439, 1.4712, -0.00088]),
     'restaurant': ('congestion_zones_restaurant.yaml',
-                   {'normal': 'dynamic_obstacles_restaurant.yaml', 'peak': 'dynamic_obstacles_restaurant_peak.yaml',
-                    # 시나리오 1-2: 피크에서 우회 통로(x -7.275)를 왕복하는 customer_2를 뺐다
-                    'peak_scene12': 'dynamic_obstacles_restaurant_peak_scene12.yaml'},
+                   {'normal': 'dynamic_obstacles_restaurant_routine.yaml',
+                    'peak': 'dynamic_obstacles_restaurant_peak_stand.yaml'},
                    [0.0, 0.0, 0.0]),
 }
 
@@ -67,8 +67,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('site', default_value='warehouse', description='warehouse / restaurant'),
         DeclareLaunchArgument('guests', default_value='normal',
-                              description='손님 파일: normal / peak / peak_scene12 (식당만. peak는 서쪽 통로·배식대 앞에 6명 더, '
-                                          'peak_scene12는 peak에서 우회 통로의 customer_2를 뺀 1-2용)'),
+                              description='손님 파일: normal / peak (peak는 식당만. normal은 일과 손님 10명, '
+                                          'peak는 서쪽 통로에 4명이 몰린 서 있는 손님 10명)'),
         DeclareLaunchArgument('zones_file', default_value='', description='혼잡도 구역 파일. 비우면 site 기본'),
         DeclareLaunchArgument(
             'obstacles_file', default_value='',

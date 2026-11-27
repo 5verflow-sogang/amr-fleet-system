@@ -5,7 +5,7 @@
 # 작업은 작업 생성기 대신 장면 스크립트(지금은 임시로 tools/harness/demo_scene.py, params scene_script)가 장면 파일 tasks/demo_s2a.yaml대로 넣는다:
 #   5대 배달 → 배달 4건(9·15·4·2번) 대기 → 0초에 3번 테이블 회수 호출(→ return_1)과 /demo/t0
 # 기대: 켬은 다음에 일을 마친 2호가 바로 회수에 배정, 끔은 회수가 배달 4건 뒤 (장면 파일 머리말)
-# 손님은 평상시(normal). 시작 위치는 공통(robots_restaurant.yaml, 동쪽 대기 줄)
+# 손님은 식당 기본(일과 손님 10명, 혼잡도에 센다). 시작 위치는 공통(robots_restaurant.yaml, 동쪽 대기 줄)
 # 길이: 0초는 2호가 하역 1 m 앞에 올 때(평균 약 0.2 m/s면 시작 뒤 약 40 s). 끔에서 배달 4건 뒤 회수가 배정되는 것까지
 #   보려고 시뮬레이션 240 s 녹화한다 (11/9 녹화: 0초 뒤 첫 완료가 96 s 뒤였다). 영상은 1막·2막 합쳐 60 s로 자른다
 #   (/demo/t0 기준). RTF 약 0.05(11/8 2막 240 s에 5334 s)라 timeout_s를 늘린다
@@ -15,7 +15,7 @@ extends: demo_restaurant
 packages: amr_bringup
 timeout_s: 7200
 params:
-  guests: dynamic_obstacles_restaurant.yaml
+  guests: dynamic_obstacles_restaurant_routine.yaml
   task_generator: "false"
   # 작업 넣기 (임시: tools/harness/demo_scene.py + 장면 파일). 연우 장면 스크립트가 오면 이 한 줄만 바꾼다
   scene_script: python3 /repo/tools/harness/demo_scene.py

@@ -60,9 +60,13 @@ def obstacle_clearance(x: float, y: float, obstacle: dict) -> float:
     """world 좌표 점에서 동적 장애물 하나의 활동 범위까지 거리 (m). 범위 안이면 0.
 
     amr_gazebo config/dynamic_obstacles.yaml 형식: pattern이 random이면 waypoints를 감싼 사각형이 활동 범위이고,
-    straight·curve면 waypoints를 잇는 경로다.
+    straight·curve·stand면 waypoints를 잇는 경로다. routine(식당 일과 손님)은 spawn에서 steps의 path를 차례로 이은 경로다.
     """
-    points = [(float(w['x']), float(w['y'])) for w in obstacle['waypoints']]
+    if obstacle.get('pattern') == 'routine':
+        points = [(float(obstacle['spawn']['x']), float(obstacle['spawn']['y']))]
+        points += [(float(p[0]), float(p[1])) for step in obstacle['steps'] for p in step['path']]
+    else:
+        points = [(float(w['x']), float(w['y'])) for w in obstacle['waypoints']]
     if obstacle.get('pattern') == 'random':
         xs, ys = [p[0] for p in points], [p[1] for p in points]
         dx = max(min(xs) - x, 0.0, x - max(xs))

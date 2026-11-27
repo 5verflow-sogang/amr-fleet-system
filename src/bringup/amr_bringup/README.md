@@ -19,7 +19,8 @@ ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true
 ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true tracking:=true safety:=true dynamic_obstacles:=true
 
 # 식당 5대 (식당 시연). congestion:=restaurant가 혼잡도 노드를 손님 스폰과 같은 손님 파일·지도 원점으로 띄운다.
-# 손님은 1-1·1-2 모두 피크 파일(peak_1~3 서쪽 통로 → 1-2 우회, peak_4~6 배식대 앞 → 1-1). 직원은 staff_file로 따로 띄워 혼잡도에 안 센다.
+# 식당 기본 손님은 일과 손님 10명(dynamic_obstacles_restaurant_routine.yaml: 결제 → 착석 → 물·자판기·반납 → 착석)이다.
+# 혼잡도 시연 1-1·1-2는 아래처럼 서 있는 몰림 손님(_peak_stand.yaml, 서쪽 통로 4명)을 세고 일과 손님은 staff_file로 띄워 세지 않는다.
 # 장면별 시작 위치: robots_restaurant_s11.yaml(1-1), robots_restaurant_s12.yaml(1-2). 기본 robots_restaurant.yaml은 대기 위치
 # 기능 끔: 1-1 cost_fn:=euclidean(기본), 1-2 congestion_filter:=none(기본).
 # body:=serving이면 Nav2(footprint, 순항 0.8 m/s)와 안전 노드(amr_safety safety_restaurant.yaml)가 식당 값을 쓴다
@@ -28,8 +29,9 @@ ros2 launch amr_bringup system.launch.py nav2:=true zone_client:=true tracking:=
 ros2 launch amr_bringup system.launch.py world:=restaurant.sdf body:=serving nav2:=true tracking:=true safety:=true \
   robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant_s11.yaml \
   map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:='[0.0, 0.0, 0.0]' \
-  dynamic_obstacles:=true dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak.yaml \
-  staff_file:=dynamic_obstacles_restaurant_staff.yaml congestion:=restaurant cost_fn:=congestion congestion_filter:=keepout enable_camera:=amr_01
+  dynamic_obstacles:=true dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak_stand.yaml \
+  staff_file:=dynamic_obstacles_restaurant_routine.yaml guest_keep_away_m:=1.2 guest_avoid_peers:=true \
+  congestion:=restaurant cost_fn:=congestion congestion_filter:=keepout enable_camera:=amr_01
 
 # 로봇 하나에 목표 보내기 (map 기준)
 ros2 action send_goal /amr_01/navigate_to_pose nav2_msgs/action/NavigateToPose \

@@ -2,7 +2,7 @@
 #
 # 손님 10명, 모두 pattern routine (amr_gazebo/obstacle_motion.py): steps를 차례로 - path를 따라 걸어 마지막 점에서 wait_s 동안
 # 머물고, 마지막 단계 뒤에는 loop_from 단계부터 되풀이한다. 걷는 동안은 로봇·다른 손님 앞에서 서고, 머무는 동안 로봇이 오면
-# evade_dirs 쪽으로 비켰다가 돌아온다. 식당 시연 1-1은 staff 자리로 띄워 혼잡도에 세지 않는다.
+# evade_dirs 쪽으로 비켰다가 돌아온다. 식당 기본 손님이다 (혼잡도에 센다). 혼잡도 시연 1-1·1-2만 staff 자리로 띄워 세지 않는다.
 
 obstacles:
 - id: routine_01

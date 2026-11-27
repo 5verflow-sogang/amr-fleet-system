@@ -28,15 +28,15 @@ def test_shipped_robots_in_waiting_zone():
 
 
 def test_restaurant_robots_at_wait_stations():
-    # 식당 5대 (robots_restaurant.yaml): Fleet 대기 위치 wait_1~5에서 시작하고, 손님·직원 경로와 떨어져 있다
+    # 식당 5대 (robots_restaurant.yaml): Fleet 대기 위치 wait_1~5에서 시작하고, 손님(일과·서 있는 몰림)·직원 경로와 떨어져 있다
     robots = load_robots(str(Path(ROBOTS).with_name('robots_restaurant.yaml')), 5)
     root = Path(__file__).resolve().parents[3]
     stations = yaml.safe_load((root / 'fleet' / 'amr_fleet_manager' / 'config' / 'stations_restaurant.yaml')
                               .read_text(encoding='utf-8'))['stations']
     assert [(r.x, r.y, r.yaw) for r in robots] == [tuple(stations[f'wait_{i}']) for i in range(1, 6)]
     config = root / 'simulation' / 'amr_gazebo' / 'config'
-    for name in ('dynamic_obstacles_restaurant.yaml', 'dynamic_obstacles_restaurant_peak.yaml',
-                 'dynamic_obstacles_restaurant_peak_scene12.yaml', 'dynamic_obstacles_restaurant_staff.yaml'):
+    for name in ('dynamic_obstacles_restaurant_routine.yaml', 'dynamic_obstacles_restaurant_peak_stand.yaml',
+                 'dynamic_obstacles_restaurant_staff.yaml'):
         obstacles = yaml.safe_load((config / name).read_text(encoding='utf-8'))['obstacles']
         assert all(obstacle_clearance(r.x, r.y, o) >= CLEARANCE_M for r in robots for o in obstacles), name
 
@@ -90,11 +90,12 @@ def test_restaurant_scene_robots(scene):
         assert (robot.x, robot.y, robot.yaw) in [tuple(v) for k, v in stations.items() if k.startswith('wait_')], name
     points = list(robots.values())
     assert min(math.hypot(a.x - b.x, a.y - b.y) for i, a in enumerate(points) for b in points[i + 1:]) >= 1.0
-    # 1호 자리: 피크 손님·직원 경로와 떨어져 있고 지도(테이블·벽)에서 비어 있다
+    # 1호 자리: 서 있는 몰림 손님(1-1·1-2가 센다)·직원과 떨어져 있고 지도(테이블·벽)에서 비어 있다.
+    # 일과 손님은 걸어서 이 자리를 지나가기도 한다 (입구 → 키오스크). 그때는 손님이 로봇 앞에서 선다 (yield_to_robots)
     config = root / 'simulation' / 'amr_gazebo' / 'config'
-    for name in ('dynamic_obstacles_restaurant_peak.yaml', 'dynamic_obstacles_restaurant_staff.yaml'):
+    for name in ('dynamic_obstacles_restaurant_peak_stand.yaml', 'dynamic_obstacles_restaurant_staff.yaml'):
         obstacles = yaml.safe_load((config / name).read_text(encoding='utf-8'))['obstacles']
-        assert all(obstacle_clearance(first.x, first.y, o) >= CLEARANCE_M for o in obstacles), name
+        assert all(obstacle_clearance(first.x, first.y, o) >= CLEARANCE_M - 1e-6 for o in obstacles), name
     pgm = root / 'localization' / 'amr_mapping' / 'maps' / 'restaurant_gt.pgm'
     assert all(free_on_map(pgm, r.x, r.y) for r in points)
 
@@ -129,6 +130,11 @@ def test_obstacle_clearance():
     path = {'pattern': 'straight', 'waypoints': [{'x': 0.0, 'y': 0.0}, {'x': 10.0, 'y': 0.0}]}
     assert obstacle_clearance(5.0, 3.0, path) == pytest.approx(3.0)
     assert obstacle_clearance(-4.0, 3.0, path) == pytest.approx(5.0)    # 끝점까지
+    # 식당 일과 손님: spawn에서 단계마다 path를 이어 걷는다 (waypoints가 없다)
+    routine = {'pattern': 'routine', 'spawn': {'x': 0.0, 'y': 0.0},
+               'steps': [{'path': [[0.0, 0.0]]}, {'path': [[10.0, 0.0], [10.0, 4.0]]}]}
+    assert obstacle_clearance(5.0, 3.0, routine) == pytest.approx(3.0)
+    assert obstacle_clearance(12.0, 2.0, routine) == pytest.approx(2.0)
 
 
 def test_spawns_clear_of_dynamic_obstacles():
