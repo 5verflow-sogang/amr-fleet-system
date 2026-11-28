@@ -17,6 +17,23 @@
 #                빌드 결과는 이번 실행 동안만 쓰는 볼륨에 두어 두 번째 컨테이너부터는 빌드가 거의 없다
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# 실행마다 전용 docker 네트워크. 기본 bridge에 컨테이너 둘을 같이 띄우면 둘 다 첫 시도 도메인 1(ROS_DOMAIN_ID)과
+# IGN_PARTITION harness_1로 시작해 멀티캐스트 발견이 서로 넘어가, 상대 시뮬레이터의 /clock·스캔·Nav2 액션 서버가 섞인다
+# (11/28 zone_pass 병렬 16실행 전부 무효: "more than one action server", "Moved backwards in time").
+# 네트워크를 나누면 발견 메시지가 안 넘어간다. 컨테이너 안 DDS·Gazebo는 기본 bridge와 똑같이 동작하고 인터넷도 된다
+NET_LABEL=amr-harness
+NETWORK="amr-harness-$(date +%Y%m%d-%H%M%S)-$$"
+VOLUME=""
+cleanup() {
+  docker network rm "$NETWORK" > /dev/null 2>&1 || true
+  if [ -n "$VOLUME" ]; then docker volume rm "$VOLUME" > /dev/null 2>&1 || true; fi
+}
+# kill -9 등으로 못 지운 지난 네트워크를 치운다. 쓰는 중인 네트워크는 docker가 안 지우지만, HARNESS_FRESH는 반복 사이에
+# 잠깐 비므로 같이 도는 다른 실행 것을 지우지 않게 72시간 넘은 것만
+docker network prune -f --filter "label=$NET_LABEL" --filter "until=72h" > /dev/null 2>&1 || true
+docker network create --label "$NET_LABEL" "$NETWORK" > /dev/null
+trap cleanup EXIT
 IMAGE="${HARNESS_IMAGE:-amr-fleet-system:latest}"
 # HARNESS_PACKAGES: 빌드할 패키지(--packages-up-to). 없으면 시나리오 파일의 packages: 줄, 그것도 없으면 아래 기본값
 # (loc_basic·fleet_fake용). 실제 로봇 스택 시나리오(fleet_stack 등)는 packages: amr_bringup을 적어 둔다
@@ -32,7 +49,7 @@ run_container() {
   # --init: 부모가 먼저 끝난 프로세스(Gazebo 실행기 등)를 거둬 좀비가 쌓이지 않게 한다
   # --shm-size: 기본 64 MB면 로봇 5대 스택이 1회차에 거의 다 써, 반복할수록 Fast DDS가 공유 메모리를 못 잡고 UDP로 돌아가 CPU가 포화된다 (11/1 fleet_stack-kpi)
   # shellcheck disable=SC2086
-  docker run --rm --init --shm-size=1g -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-}" -e HARNESS_DISCORD_WEBHOOK \
+  docker run --rm --init --shm-size=1g --network "$NETWORK" -e HARNESS_IMAGE="$IMAGE" -e HARNESS_PREP="${HARNESS_PREP:-}" -e HARNESS_DISCORD_WEBHOOK \
     -e HARNESS_RUNNER_MACHINE -e HARNESS_RUNNER_SLOT -e HARNESS_TRIGGERED_BY $extra \
     -v "$REPO:/repo" -w /repo "$IMAGE" bash -c "
       set -e
@@ -71,8 +88,7 @@ while [ $# -gt 0 ]; do
 done
 STAMP="$(date +%Y%m%d-%H%M%S)"
 VOLUME="amr-harness-ws-$STAMP"
-docker volume create "$VOLUME" > /dev/null
-trap 'docker volume rm "$VOLUME" > /dev/null' EXIT
+docker volume create "$VOLUME" > /dev/null   # cleanup()이 지운다
 WEBHOOK="${HARNESS_DISCORD_WEBHOOK:-}"
 for ((i = 0; i < REPEATS; i++)); do
   # Discord 요약은 마지막 반복에서만 보낸다
