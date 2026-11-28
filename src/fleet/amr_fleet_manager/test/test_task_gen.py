@@ -1,5 +1,6 @@
 """작업 생성기 일정 만들기. rclpy 없이 돈다."""
 
+from dataclasses import replace
 import math
 from pathlib import Path
 
@@ -203,3 +204,7 @@ def test_collect_aging_loads(stations):
     assert [t for t in burst if '_b' not in t.task_id] == normal
     extra = [t for t in burst if '_b' in t.task_id]
     assert extra and all(t.type == 'collect' and 60.0 <= t.at_s < 180.0 for t in extra)
+    # collect_burst_flat(회수 우선 끔): 같은 seed면 collect_burst와 시각·위치가 같고 회수 우선순위만 100이다
+    flat = generate(select_load(scenario, 'collect_burst_flat'), stations, seed=1)
+    assert [replace(t, priority=0) for t in flat] == [replace(t, priority=0) for t in burst]
+    assert all(t.priority == 100 for t in flat) and any(t.type == 'collect' for t in flat)

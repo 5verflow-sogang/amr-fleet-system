@@ -5,6 +5,7 @@
 #   python3 tools/harness/run.py fleet_collect_aging -n 5 --set aging=off --label aging_off      # 과부하 (load 기본)
 #   python3 tools/harness/run.py fleet_collect_aging -n 5 --set aging=on  --label aging_on
 #   python3 tools/harness/run.py fleet_collect_aging -n 3 --set load=collect_burst --set aging_rate=0.833 --label burst_r0833
+#   python3 tools/harness/run.py fleet_collect_aging -n 3 --set load=collect_burst_flat --set duration_s=450 --label flat   # 회수 우선 끔
 #
 # 시간: 가짜 로봇은 odom이 없어 시뮬레이션 시계가 없다. 서버·작업 생성기·지표가 모두 실제 시간이라 같은 시계다
 # (#285: odom이 없으면 실제 시간 그대로). aging의 대기 시간(서버 노드 시계 − created_time)도 실제 시간이다.
@@ -20,6 +21,7 @@ params:
   # 주면 aging_rate를 이 값으로 덮어쓴다 (fleet_manager launch 인자, 설정 파일은 그대로). 비우면 aging이 고른 파일 값
   aging_rate: ""
   # 작업 부하 (collect_aging.yaml loads): overload(과부하, 첫 측정) / normal(처리량의 0.7배) / collect_burst(회수 몰림)
+  # / collect_burst_flat(회수 몰림인데 회수 우선순위도 100: 회수 우선 끔 기준선)
   load: overload
   algorithm: nearest
   num_robots: 3
@@ -56,6 +58,7 @@ param_sets:
     overload: {duration_s: '480'}
     normal: {duration_s: '330'}
     collect_burst: {duration_s: '330'}
+    collect_burst_flat: {duration_s: '330'}
 driver:
   mode: wait
   use_sim_time: false
