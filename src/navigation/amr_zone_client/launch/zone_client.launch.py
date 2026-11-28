@@ -12,6 +12,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -30,6 +31,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'zones_frame', default_value='',
             description='zones.yaml area_world의 좌표계. 시뮬레이션은 world (TF map ← world로 바꿔 쓴다). 비우면 map 그대로'),
+        DeclareLaunchArgument(
+            'stop_margin_m', default_value='0.5',
+            description='허가 없이 서는 자리: 구역 경계 이만큼 앞 [m] (config stop_margin_m을 덮어쓴다, 기본값은 같다). '
+                        '식당은 1.0 - 0.5면 기다리는 로봇이 통로 출구 길목에 서서 안의 로봇이 못 나온다 (11/28 headon_auto)'),
         Node(
             package='amr_zone_client',
             executable='zone_client_node',
@@ -41,6 +46,7 @@ def generate_launch_description():
                 'cmd_vel_out_topic': LaunchConfiguration('cmd_vel_out_topic'),
                 'use_sim_time': LaunchConfiguration('use_sim_time'),
                 'zones_frame': LaunchConfiguration('zones_frame'),
+                'stop_margin_m': ParameterValue(LaunchConfiguration('stop_margin_m'), value_type=float),
             }],
             output='screen',
         ),

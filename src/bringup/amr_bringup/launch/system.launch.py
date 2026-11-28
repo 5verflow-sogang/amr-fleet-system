@@ -92,7 +92,7 @@ def _system(context):
         congestion_filter=arg('congestion_filter'), nav2_composition=flag('nav2_composition'),
         payload_mass=arg('payload_mass'), seed=seed, map=arg('map'), map_origin_in_world=arg('map_origin_in_world'),
         use_imu=arg('use_imu'),
-        zones_file=arg('zones_file'), body=arg('body'))
+        zones_file=arg('zones_file'), zone_stop_margin_m=arg('zone_stop_margin_m'), body=arg('body'))
     opt.validate([r.name for r in robots])
 
     # 상대 이름이면 amr_gazebo config/ 아래 파일 (식당: dynamic_obstacles_restaurant_peak.yaml 등)
@@ -230,6 +230,8 @@ def generate_launch_description():
         # 서버와 로봇(구역 클라이언트)이 같은 파일을 쓴다. 교착 유도 실험은 구역을 나눈 파일을 준다
         ('zones_file', os.path.join(get_package_share_directory('amr_fleet_manager'), 'config', 'zones.yaml'),
          '구역 목록 (world 좌표)'),
+        ('zone_stop_margin_m', '0.5',
+         '구역 허가 없이 서는 자리: 경계 이만큼 앞 [m]. 식당 1.0 (0.5면 기다리는 로봇이 통로 출구 길목을 막는다)'),
         ('deadlock_strategy', 'revoke', '교착 해소 전략: revoke / avoid'),
     ]
     return LaunchDescription(
