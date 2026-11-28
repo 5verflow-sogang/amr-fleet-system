@@ -127,8 +127,9 @@ def plot_b(zones, st, mode, out, ax=None):
         if d is not None:
             ax.plot([d], [2.0], marker='|', color=s['c'], ms=16, mew=2)
             first = z == zones[0]
-            ax.annotate(f'정원 ≈ {d:.1f}명', (d, 2.0), xytext=(-62, 22) if first else (14, -26), textcoords='offset points',
-                        fontsize=9, color='#191919', arrowprops=dict(arrowstyle='-', color=s['c'], lw=1),
+            # 첫 통로는 왼쪽 위(축 숫자와 안 겹치게 x 0.1부터), 둘째는 오른쪽 아래
+            ax.annotate(f'정원 ≈ {d:.1f}명', (d, 2.0), xytext=(0.1, 2.9) if first else (d + 0.15, 1.55),
+                        textcoords='data', ha='left', va='center', fontsize=9, color='#191919', arrowprops=dict(arrowstyle='-', color=s['c'], lw=1),
                         bbox=dict(boxstyle='round,pad=0.25', fc='white', ec='none'))
     ax.axhline(2.0, color='#191919', lw=1, ls='--')
     xmax = max(r['n'] for z in zones for r in st[z]['rows'])
