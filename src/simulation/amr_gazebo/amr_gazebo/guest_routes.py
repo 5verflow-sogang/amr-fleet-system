@@ -24,10 +24,10 @@ PREFER_M = 0.7
 PREFER_GAIN = 2.0
 # 다른 손님이 머무는(서 있는) 자리에서 이만큼 [m] 안 칸은 웃돈을 붙이고, 줄인 직선도 이만큼 떨어져 지나게 한다
 AVOID_SPOT_M = 0.6
-AVOID_SPOT_COST = 20.0
-# 다른 손님 자리를 비켜 뽑은 길이 그냥 뽑은 길의 이 배수를 넘으면 그냥 뽑은 길을 쓴다. 앉는 자리 사이 통로가 모두 '비킬 곳'이
-# 되면 바로 앞 자리에 가려고 홀을 한 바퀴 돈다 (몰림 손님 crowd_03: 6.1 m 길을 17.1 m로). 지나가다 만나면 손님끼리 선다
-DETOUR_MAX = 2.0
+# 웃돈은 가볍게: 옆에 빈 길이 있으면 그쪽으로 가고, 없으면 그냥 지나간다 (지나가다 만나면 손님끼리 선다).
+# 20배였을 때는 앉는 자리 사이 통로가 모두 '비킬 곳'이 되어, 손님 20명에서 바로 앞 자리에 가려고 홀을 한 바퀴
+# 돌았다 (몰림 손님 crowd_03: 6.1 m 길을 17.1 m로)
+AVOID_SPOT_COST = 3.0
 # 머무는 자리에서 비킬 수 있는 방향: 이만큼 [m] 비켜 선 길이 비어 있으면 (몸 반지름만큼 여유)
 EVADE_STEP_M = 0.8
 EVADE_CLEARANCE_M = 0.25
@@ -253,9 +253,6 @@ def build_obstacles(spec: dict, grid: GridMap, other_spots: Sequence[Point] = ()
         for st in g['steps']:
             there = places[st['go']]
             path = grid.plan(here, there, avoid=spots)
-            direct = grid.plan(here, there)
-            if path_length(here, path) > DETOUR_MAX * path_length(here, direct):
-                path = direct
             steps.append({'name': st['go'],
                           'path': [[round(x, 3), round(y, 3)] for x, y in path],
                           'wait_s': [float(v) for v in st['wait_s']],
