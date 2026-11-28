@@ -451,11 +451,41 @@ def test_keep_away_stops_before_robot_ahead_even_if_moving(pattern):
     assert m.step((0.0, 0.0), {'amr_01': (2.0, 0.0, math.pi, 0.5)}, 0.1) != (0.0, 0.0) and not m.keeping_away
 
 
-def test_keep_away_walks_when_robot_is_behind():
-    # 로봇이 등 뒤(걷는 방향 반대쪽)에 있으면 멀어지는 중이라 계속 걷는다
+def test_keep_away_walks_when_robot_behind_is_parked_or_going_away():
+    # 로봇이 등 뒤(걷는 방향 반대쪽)에 서 있거나 멀어지는 중이면 계속 걷는다
     m = ObstacleMotion(_line(), random.Random(0), keep_away_m=1.2)
-    vx, _ = m.step((2.0, 0.0), {'amr_01': (1.5, 0.0, 0.0, 0.5)}, 0.0)
-    assert vx > 0 and not m.keeping_away
+    for robot in [(1.5, 0.0, 0.0, 0.0), (1.5, 0.0, math.pi, 0.5)]:
+        vx, vy = m.step((2.0, 0.0), {'amr_01': robot}, 0.0)
+        assert vx > 0 and vy == 0 and not m.keeping_away
+
+
+def test_keep_away_steps_aside_for_robot_coming_from_behind():
+    # 같은 쪽(+x)으로 오는 로봇이 등 뒤 0.5 m: 앞에서 걸으면 로봇이 손님 속도로 따라오므로 진행선 옆으로 비킨다
+    from amr_gazebo.obstacle_motion import EVADE_SPEED
+    m = ObstacleMotion(_line(), random.Random(0), keep_away_m=1.2)
+    vx, vy = m.step((2.0, 0.1), {'amr_01': (1.5, 0.0, 0.0, 0.5)}, 0.0)
+    assert vx == pytest.approx(0.0, abs=1e-9) and vy == pytest.approx(EVADE_SPEED)   # 손님이 왼쪽(+y)이라 왼쪽으로
+    vx, vy = m.step((2.0, -0.1), {'amr_01': (1.5, 0.0, 0.0, 0.5)}, 0.1)
+    assert vy == pytest.approx(-EVADE_SPEED)
+
+
+def test_keep_away_steps_aside_for_robot_walking_alongside():
+    # 로봇이 바로 옆(0.7 m)에서 같은 쪽으로 간다: 나란히 걷지 않고 옆으로 비킨다 (11/17 1-2 켬)
+    m = ObstacleMotion(_line(), random.Random(0), keep_away_m=1.2)
+    vx, vy = m.step((2.0, 0.0), {'amr_01': (2.0, -0.7, 0.0, 0.5)}, 0.0)
+    assert vx == pytest.approx(0.0, abs=1e-9) and vy > 0
+
+
+def test_keep_away_alongside_guest_gets_out_and_walks_on():
+    # 나란히 가는 로봇(+x 0.5 m/s, y -0.6)에서 1.2 m 밖으로 비킨 뒤 원래 길로 간다
+    m = ObstacleMotion(_line(x1=30.0), random.Random(0), keep_away_m=1.2)
+    xy, t, robot = (2.0, 0.0), 0.0, [2.0, -0.6]
+    for _ in range(int(10 / DT)):
+        vx, vy = m.step(xy, {'amr_01': (robot[0], robot[1], 0.0, 0.5)}, t)
+        xy = (xy[0] + vx * DT, xy[1] + vy * DT)
+        robot[0] += 0.5 * DT
+        t += DT
+    assert math.dist(xy, robot) >= 1.2 - 0.6 * DT and xy[0] > 2.5
 
 
 def test_keep_away_resumes_when_robot_leaves():
