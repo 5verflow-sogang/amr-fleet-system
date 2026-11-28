@@ -3,7 +3,8 @@
     PYTHONPATH=src/fleet/amr_fleet_core python3 -m amr_fleet_core.traffic.permit_zones \\
         src/localization/amr_mapping/maps/restaurant_gt.yaml \\
         src/fleet/amr_fleet_manager/config/stations_restaurant.yaml \\
-        -o src/fleet/amr_fleet_manager/config/zones_restaurant.yaml --png zones_restaurant.png
+        -o src/fleet/amr_fleet_manager/config/zones_restaurant.yaml \\
+        --png src/fleet/amr_fleet_manager/config/zones_restaurant.png
 
 상용 서빙·물류 로봇은 설치 기사가 지도에 "한 대만 들어가는 구역"을 손으로 그린다. 여기서는 후보를 지도에서 뽑고
 사람은 그림(--png)으로 확인만 한다. 결과 파일은 config/zones.yaml 형식이라 서버·구역 클라이언트를 고치지 않는다.
@@ -300,7 +301,7 @@ def main(argv=None) -> int:
 HEADER = """구역 허가(ZoneRequest/ZoneGrant) 대상 구역, 식당. 한 번에 한 대만 들어간다.
 자동 생성: amr_fleet_core.traffic.permit_zones ({map}, {stations}). 손으로 고치지 말고 다시 만든다.
 기준: 통로 폭 < {max_width:g} m, 정차 자리 사이 최단 경로가 {min_length:g} m 이상 지나는 곳, 긴 방향 양 끝 여유 {end_margin:g} m,
-겹치면 하나로, 충전·대기 자리는 뺀다. 그림: --png (모듈 설명 참고)
+겹치면 하나로, 충전·대기 자리는 뺀다. 검토 그림: 같은 이름의 .png (--png로 다시 그린다)
 
 area_world: [x_min, x_max, y_min, y_max] (m, Gazebo world 좌표 = 식당 map 좌표). 로봇 측 규칙은 zones.yaml과 같다."""
 
