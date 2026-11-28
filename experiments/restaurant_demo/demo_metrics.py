@@ -3,7 +3,7 @@
 시각은 모두 메시지 안의 시각(header.stamp, Task.created_time)이다. 녹화는 use_sim_time이라 시뮬레이션 시각(s)이다.
 
 1-2 (붐비는 통로 돌아가기, 로봇 1대)
-- 요청 → 배식대 자리(기본 buffet_2) 도착: 그 자리를 pickup 또는 dropoff로 가진 작업의 요청 시각(Task.created_time)부터
+- 요청 → 픽업 자리(기본 stall_5, v3 지도에서 배식대 2번 자리 buffet_2를 대신한 매장 5) 도착: 그 자리를 pickup 또는 dropoff로 가진 작업의 요청 시각(Task.created_time)부터
   그 자리 작업 단계(pickup이면 loading, dropoff면 unloading)를 처음 보고한 TaskStatus 시각까지.
   단계 보고가 없으면 COMPLETED 시각을 쓴다(dropoff일 때만 같은 뜻이다).
 - 멈춘 횟수: 같은 구간에서 그 로봇의 /fleet/robot_states 자세 차분 속도가 stop_speed 밑으로 stop_min_s 이상 머문 구간 수.
@@ -147,7 +147,7 @@ def stops(states: Sequence[tuple[float, float, float]], t0: float, t1: float,
 
 
 def scene12(tasks: dict[str, TableTask], statuses: Sequence[dict], robot_states: dict[str, list],
-            station: str = 'buffet_2', end: Optional[float] = None, **stop_kw) -> list[dict]:
+            station: str = 'stall_5', end: Optional[float] = None, **stop_kw) -> list[dict]:
     """station에 가는 작업마다 요청 → 도착 시간과 멈춘 횟수. robot_states = {robot_id: [(t, x, y)]}.
 
     도착하지 못한 작업은 end(녹화 끝)까지의 멈춤을 낸다 (end가 없으면 그 로봇의 마지막 자세 시각).

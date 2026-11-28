@@ -20,6 +20,8 @@
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.
 
 - 처리 순서 (스캔마다): (지도 대조 R2, 기본 꺼짐) → 군집화 → R1 크기 규칙(2 m 넘는 군집은 벽·랙 면) → 다리 묶기(가까운 작은 군집 두 개를 한 사람으로) → 스캔 촬영 시각의 `lidar_link → odom` TF로 변환 → KF 추적 → R3 속력 + R4 빈 공간 침입으로 `is_dynamic` → 트랙별 TTC. 근거는 [perception.md](../../../docs/algorithms/perception.md) 1~3절.
+- 스캔이 촬영 시각의 TF보다 먼저 오면 기다리지 않고 미뤄 두었다가 TF가 들어오는 순간 처리한다. 다음 스캔이 먼저 오면 앞 스캔은 버린다. 그래서 단일 스레드로 돈다 (전에는 TF를 받는 스레드를 따로 둔 다중 스레드였는데, rclpy 관리 비용으로 노드 CPU가 약 0.6코어 더 들었다).
+- numpy 계산 스레드는 1개다 (`amr_tracking/__init__.py`, `OPENBLAS_NUM_THREADS`). 기본값(CPU 수)이면 작은 행렬 계산 뒤에도 보조 스레드가 쉬지 않고 기다리며 CPU를 썼다.
 - 카메라 검출이 오면 트랙에 짝지어 클래스 근거를 쌓는다 (perception.md 1-6절).
 - 출력은 **`odom` 좌표계**다 (`fixed_frame`을 비우면 `<네임스페이스>/odom`, 예: `amr_01/odom`). `header.stamp`는 스캔 촬영 시각이다.
   - 소비자인 DWA가 odom에서 동작한다 (#47 리뷰, 이진).
@@ -37,7 +39,7 @@
 
 | 실행 파일 | 노드 이름 | 역할 |
 | --- | --- | --- |
-| `tracking_node` | `tracking` | 스캔(또는 위치 측정) → 다중 장애물 KF 추적 → `perception/obstacles`, `perception/collision_risks`, `perception/obstacle_markers`. 5초마다 프레임당 후보·트랙·동적 수, 단계별 처리 시간, 카메라 연관 수 로그 |
+| `tracking_node` | `tracking` | 스캔(또는 위치 측정) → 다중 장애물 KF 추적 → `perception/obstacles`, `perception/collision_risks`, `perception/obstacle_markers`. 5초마다 프레임당 후보·트랙·동적 수, 단계별 처리 시간, TF 미룸·버림·실패 수, 카메라 연관 수 로그 |
 | `synthetic_obstacles_node` | `synthetic_obstacles` | 시험용 측정 발행기. 장애물 2개(sin 왕복 최대 1.0 m/s, 원 궤도 0.8 m/s)에 잡음 σ 0.05 m |
 | `tracking_eval` | `tracking_eval` | **평가 전용.** 트랙을 Gazebo GT(`/dynamic_obstacles/<id>/ground_truth/odom`, 로봇 `ground_truth/odom`)와 비교해 위치·속도 오차, +1·+2 s 예측 오차, NEES, ID 전환, 동적 판정 지연, 가짜 동적 트랙과 그 때문에 늘어난 감속·정지(안전 노드 규칙)를 `out_dir`에 저장 (CSV·JSON). 지표·실행은 [perception.md](../../../docs/algorithms/perception.md) 1-7절 |
 

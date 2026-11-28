@@ -39,9 +39,10 @@ import rclpy
 from amr_msgs.msg import SafetyStatus, ZoneGrant, ZoneRequest
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry, Path
+from sensor_msgs.msg import LaserScan
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
 from std_msgs.msg import String
 from tf2_ros import TransformException
@@ -121,7 +122,13 @@ class ZoneClientNode(Node):
             backing_margin_m=p('backing_margin_m', 0.3).value,
             backing_max_distance_m=p('backing_max_distance_m', 6.0).value,
             backing_timeout_s=p('backing_timeout_s', 45.0).value,
+            yield_distance_m=p('yield_distance_m', 0.6).value,
+            yield_hold_s=p('yield_hold_s', 8.0).value,
+            yield_timeout_s=p('yield_timeout_s', 10.0).value,
         )
+        # 대치 양보 중 비킬 쪽 확인용 스캔 (상대 토픽 scan). 양보 중이 아니면 받아 두기만 한다
+        self._scan: Optional[LaserScan] = None
+        self.create_subscription(LaserScan, p('scan_topic', 'scan').value, self._on_scan, qos_profile_sensor_data)
         if not self._zones_frame or self._zones_frame == self._map_frame:
             self._core = ZoneClientCore(ZoneClientConfig(zones=zones, **self._core_params))
 
@@ -174,6 +181,29 @@ class ZoneClientNode(Node):
             f'zone_client({self._robot_id}): 구역 {zones and [z.zone_id for z in zones] or "없음"}, '
             f'구독 {zone_grants_topic} (허가), {plan_topic} (경로), {robot_pose_topic} (위치), '
             f'{safety_status_topic} (speed_limit) · 발행 {zone_requests_topic}, {_STATE_TOPIC} (상태)')
+
+    def _on_scan(self, msg: LaserScan):
+        self._scan = msg
+
+    def _yield_blocked(self, direction: float) -> bool:
+        """비키는 방향(+1 앞, -1 뒤) 차체 끝에서 yield_distance_m + 여유 안, 옆으로 차체 반폭 + 여유 안에 스캔 점이 있나.
+        차체 0.6 x 0.4 m(nav2_params footprint), LiDAR는 중심에서 앞으로 0.15 m(amr_description extrinsics.yaml).
+        스캔이 없으면 막힌 것으로 본다(fail-closed)."""
+        scan = self._scan
+        if scan is None:
+            return True
+        half_length, half_width, lidar_x, margin = 0.3, 0.2, 0.15, 0.1
+        reach = half_length + self._core_params['yield_distance_m'] + margin
+        angle = scan.angle_min
+        for r in scan.ranges:
+            if scan.range_min <= r <= scan.range_max:
+                x = r * math.cos(angle) + lidar_x
+                y = r * math.sin(angle)
+                along = direction * x
+                if half_length < along <= reach and abs(y) <= half_width + margin:
+                    return True
+            angle += scan.angle_increment
+        return False
 
     def _on_path(self, msg: Path):
         if self._shutting_down:
@@ -318,8 +348,10 @@ class ZoneClientNode(Node):
         if (self._safety_status_last_t is None
                 or now - self._safety_status_last_t > self._safety_status_timeout_s):
             safety_limit = None
+        direction = self._core.yield_direction
         outgoing, speed_cap, backing_linear_x, errors = self._core.update(
-            now, self._path_xy, robot_xy, safety_limit, self._last_cmd_vel_mps)
+            now, self._path_xy, robot_xy, safety_limit, self._last_cmd_vel_mps,
+            yield_blocked=direction is not None and self._yield_blocked(direction))
         self._backing_linear_x = backing_linear_x
         self._set_speed_cap(speed_cap)
         for error in errors:

@@ -19,11 +19,11 @@ obstacles:
     yield_patience_s: 3.0
     yield_progress_m: 0.1
     speed_range_mps: [0.4, 0.9]
-    spawn: {x: -10.0, y: 3.45, yaw: 0.0}
+    spawn: {x: 2.6, y: 3.45, yaw: 0.0}
     waypoints:
-      - {x: -10.0, y: 3.45}
+      - {x: 2.6, y: 3.45}
       - {x: 5.0, y: 3.45}
-    note: "매장 앞 통로를 동서로 왕복 (픽업하는 로봇과 겹치는 혼잡 구간)"
+    note: "매장 앞 통로를 동서로 왕복 (픽업하는 로봇과 겹치는 혼잡 구간). x 2.6 ~ 5.0만 걷는다: 예전(x -10 ~ 5)에는 배식대 자리 앞을 가로질렀고, 서쪽 끝을 매장 앞(x -5.8)에 두면 1-1 3호(3번 매장 앞 x 1.5에서 서쪽으로 출발)가 그 끝점에 왔을 때 손님이 돌아섬 → keep_away로 멈춤 → 5 s 뒤 돌아섬 → 끝점에서 다시 돌아섬을 되풀이해 3호가 약 100 s 못 지나갔다 (11/15 로컬). 3호 출발 자리 동쪽이라 마주치지 않는다"
 
   - id: customer_3
     type: customer
@@ -146,53 +146,3 @@ obstacles:
       - {x: -10.7, y: 2.4}
       - {x: -11.5, y: 2.4}
     note: "서쪽 통로 북쪽 (셀프 코너 북쪽 빈 곳)에서 무작위. 1-2: 피크 파일의 남쪽 끝 대신"
-
-  # 배식대 앞 (zone buffet_line, capacity 4): 배식대 정차 로봇(buffet_1·2, 남쪽 끝 y 3.87) 바로 앞에서 무작위.
-  # 평상시 customer_1(y 3.45)까지 4명이면 혼잡도 1.0
-  - id: peak_4
-    type: customer
-    pattern: random
-    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
-    yield_robot_size: [0.565, 0.537]
-    yield_patience_s: 3.0
-    yield_progress_m: 0.1
-    speed_range_mps: [0.3, 0.7]
-    spawn: {x: -10.5, y: 3.3, yaw: 0.0}
-    waypoints:
-      - {x: -11.3, y: 3.15}
-      - {x: -6.7, y: 3.15}
-      - {x: -6.7, y: 3.6}
-      - {x: -11.3, y: 3.6}
-    note: "배식대 앞 무작위"
-
-  - id: peak_5
-    type: customer
-    pattern: random
-    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
-    yield_robot_size: [0.565, 0.537]
-    yield_patience_s: 3.0
-    yield_progress_m: 0.1
-    speed_range_mps: [0.3, 0.7]
-    spawn: {x: -8.0, y: 3.3, yaw: 3.1415927}
-    waypoints:
-      - {x: -11.3, y: 3.15}
-      - {x: -6.7, y: 3.15}
-      - {x: -6.7, y: 3.6}
-      - {x: -11.3, y: 3.6}
-    note: "배식대 앞 무작위"
-
-  - id: peak_6
-    type: customer
-    pattern: random
-    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
-    yield_robot_size: [0.565, 0.537]
-    yield_patience_s: 3.0
-    yield_progress_m: 0.1
-    speed_range_mps: [0.3, 0.7]
-    spawn: {x: -7.0, y: 3.2, yaw: 3.1415927}
-    waypoints:
-      - {x: -11.3, y: 3.15}
-      - {x: -6.7, y: 3.15}
-      - {x: -6.7, y: 3.6}
-      - {x: -11.3, y: 3.6}
-    note: "배식대 앞 무작위"

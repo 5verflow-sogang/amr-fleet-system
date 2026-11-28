@@ -103,6 +103,7 @@ def test_reclaim_and_fallback_timeouts_reach_processes():
     # 연구 1 회수 기준·하이브리드 전환 기준 비교. 기본은 지금 동작(회수 5초, 전환 2초)
     base = _fleet_fake_procs(fleet_mode='hybrid')
     assert 'reclaim_timeout_s:=5.0' in base['fleet_manager']['cmd']
+    assert 'standoff:=false' in base['fleet_manager']['cmd']   # 가짜 로봇은 대치 양보를 못 따른다
     assert 'fallback_timeout_s:=2.0' in base['task_auctions']['cmd']
     sets = _fleet_fake_procs(fleet_mode='hybrid', reclaim_timeout_s='40', fallback_timeout_s='6')
     assert 'reclaim_timeout_s:=40' in sets['fleet_manager']['cmd']
@@ -220,7 +221,27 @@ def test_scene12_runs_its_scene_script_with_the_scene12_guests():
     assert 'congestion_filter:=keepout' in on and 'localization:=ground_truth' in on
 
 
-@pytest.mark.parametrize('name', ['demo_s11', 'demo_smoke'])
+def test_scene11_runs_its_scene_script_and_on_off_is_cost_fn_only():
+    procs = _demo_procs('demo_s11')
+    assert 'task_generator' not in procs
+    assert procs['scene']['cmd'].startswith(
+        'python3 /repo/tools/harness/demo_scene.py /repo/tools/harness/tasks/demo_s11.yaml ')
+    stack = procs['stack']['cmd']
+    assert 'robots_restaurant_s11.yaml' in stack and 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak_stand.yaml' in stack
+    # 혼잡도에 세지 않는 손님 (staff 자리): 일과대로 움직이는 손님 10명. 손님끼리도 본다
+    assert 'staff_file:=dynamic_obstacles_restaurant_routine.yaml' in stack and 'guest_avoid_peers:=true' in stack
+    assert 'localization:=ground_truth' in stack                    # 녹화 전용
+    assert procs['cameras']['cmd'].endswith('cameras:=top_west')   # 눈높이 west·stalls는 가려져 뺐다 (#348)
+    for topic in ('/fleet/task_table', '/fleet/robot_states', '/fleet/congestion', '/demo/t0'):
+        assert topic in procs['rosbag']['cmd']                      # tools/demo/compose.py가 읽는 토픽
+    assert {'scene_script', 'cost_fn', 'cameras', 'localization'} <= _own_params('demo_s11')
+    on, off = _demo_procs('demo_s11', cost_fn='congestion'), _demo_procs('demo_s11', cost_fn='euclidean')
+    assert 'cost_fn:=congestion' in on['stack']['cmd']
+    assert on['stack']['cmd'].replace('cost_fn:=congestion', 'cost_fn:=euclidean') == off['stack']['cmd']
+    assert on['scene']['cmd'] == off['scene']['cmd']
+
+
+@pytest.mark.parametrize('name', ['demo_smoke'])
 def test_other_demo_scenes_keep_the_task_generator(name):
     procs = _demo_procs(name)
     assert 'task_generator' in procs and 'scene' not in procs
