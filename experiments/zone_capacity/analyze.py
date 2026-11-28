@@ -91,7 +91,7 @@ def write_md(summary, path: Path):
         dn = f'{d:.1f}명' if d is not None else f"{max(s['medians'])}명 넘음"
         lines.append(f'| {zone} | ' + ' | '.join(cells) + f' | {fc} | {fb} | {fe} | {dn} |')
     lines += ['', '## 시간 초과(교착)를 뺀 통과만', '',
-              '시간 초과가 많으면 위 중앙값은 혼잡보다 교착(로봇 안전 정지와 손님 양보가 서로 기다림)을 잰다. 괄호는 지나간 통과 수.', '',
+              '시간 초과가 많으면 위 중앙값은 혼잡보다 교착(마주친 손님은 제자리에 서고 로봇은 감속해 거의 멈춤)을 잰다. 괄호는 지나간 통과 수.', '',
               '| 통로 | ' + ' | '.join(f'손님 {n}명' for n in ns) + ' |', '| --- |' + ' --- |' * len(ns)]
     for zone, s in summary.items():
         ok = s.get('ok_medians', {})

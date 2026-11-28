@@ -18,6 +18,8 @@ params:
   guests_n: "0"
   # 한 번 통과 제한 (시뮬레이션 s). 넘으면 그 통과는 실패(통과 시간 ≥ 이 값)로 남기고 다음 쌍으로 간다
   pass_timeout_s: "120"
+  # true면 로봇 정답 위치·경로·안전 상태와 손님 위치를 rosbag으로 남긴다 (교착 영상용, experiments/zone_capacity/animate.py)
+  record: "false"
 processes:
   - name: system
     cmd: >-
@@ -37,6 +39,13 @@ processes:
       - timeout 20 ros2 lifecycle get /amr_01/controller_server | grep -q '^active'
       - timeout 20 ros2 lifecycle get /amr_01/bt_navigator | grep -q '^active'
     settle_s: 5
+  - name: rosbag
+    cmd: >-
+      if [ "{record}" = true ];
+      then exec ros2 bag record -o {run_dir}/rosbag
+      -e '^/(amr_01/(ground_truth/odom|plan|safety/status|cmd_vel)|dynamic_obstacles/guest_[0-9]+/ground_truth/odom)$';
+      else exec sleep infinity; fi
+    stop_first: true
 driver:
   mode: command
   use_sim_time: true
