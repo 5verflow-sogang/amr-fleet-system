@@ -95,10 +95,10 @@ def main():
 
         page.click('[data-table="t07"]')
         page.click('#serve')                 # 음식 서빙을 누르면 매장 버튼이 펼쳐진다
-        page.click('[data-store="buffet_1"]')
+        page.click('[data-store="stall_6"]')
         sent2 = page.evaluate('dashTest.sent[1].msg.task_id')
         t = wait_until(page, f"!!recordOf('{sent2}')?.assignee_id", 10)
-        ok('완료 조건', '배식대 → 7번 테이블 서빙 호출 → 배정이 보인다', t is not None, f'{t:.2f}s' if t is not None else '10초 안에 배정 안 됨')
+        ok('완료 조건', '중식 → 7번 테이블 서빙 호출 → 배정이 보인다', t is not None, f'{t:.2f}s' if t is not None else '10초 안에 배정 안 됨')
         page.wait_for_timeout(300)
         page.screenshot(path=str(args.out / 'stack_3_서빙배정.png'))
 

@@ -78,7 +78,7 @@ window.H = {
   // 로봇 5대가 모두 일하는 중
   allBusy() {
     const xy = { amr_01: [-8.8, -3.05], amr_02: [-0.6, 1.0], amr_03: [3.4, -2.6], amr_04: [6.9, 1.2], amr_05: [-4.5, 3.6] };
-    const from = ['buffet_1', 'stall_3', 'stall_2', 'stall_4', 'stall_1'], to = ['t11', 't08', 't15', 'L01', 't02'];
+    const from = ['stall_6', 'stall_3', 'stall_2', 'stall_4', 'stall_1'], to = ['t11', 't08', 't15', 'L01', 't02'];
     const recs = Object.keys(xy).map((id, i) => H.task(`w${i}`, from[i], to[i], { age: 90, who: id, state: 1 }));
     Object.entries(xy).forEach(([id, [x, y]], i) => { H.robot(id, x, y, 1, `w${i}`); H.status(`w${i}`, id, 1, i === 4 ? 'loading' : 'move_to_dropoff'); });
     return recs;
@@ -234,7 +234,7 @@ def test_map(browser, c):
     ev(page, "H.robot('amr_03', S.stall_3[0], S.stall_3[1]); dashTest.tick();")
     run(page, 600)
     tf = page.evaluate("document.getElementById('bot-amr_03').style.transform")
-    c.ok('3-3', '정차 위치(양식 앞)에 서면 지도에서도 그 자리', tf == 'translate(378px, 107.8px)', tf)
+    c.ok('3-3', '정차 위치(양식 앞)에 서면 지도에서도 그 자리', tf == 'translate(378px, 112px)', tf)
 
     ev(page, "H.zones([['buffet_line', [-11.9, -6.1, 3.0, 4.63], 4, 1.0]]); dashTest.tick();")
     strong = page.evaluate("[...document.querySelectorAll('#map text')].some(t => t.textContent === '혼잡 4명')")
@@ -250,7 +250,7 @@ def test_map(browser, c):
 
     page.close()
     page = open_page(browser)
-    ev(page, """const busy = H.scene11(); const t = H.task('d11', 'buffet_1', 't07');
+    ev(page, """const busy = H.scene11(); const t = H.task('d11', 'stall_6', 't07');
       H.decision('d11', 'amr_03', 'congestion', [['amr_03', 11.4, 3.8, 22.8], ['amr_01', 9.8, 9.2, 37.3]]);
       t.assignee_id = 'amr_03'; H.table([...busy, t]); H.robot('amr_03', 1.2, 4.15, 1, 'd11'); dashTest.tick();""")
     blue = "#bot-amr_03 .pulse[stroke='#6ea8ff']"   # 문제 로봇의 빨간 고리와 구분
@@ -270,14 +270,14 @@ def test_map(browser, c):
 
 def test_decision(browser, c):
     page = open_page(browser)
-    ev(page, """const busy = H.scene11(); const t = H.task('d11', 'buffet_1', 't07');
+    ev(page, """const busy = H.scene11(); const t = H.task('d11', 'stall_6', 't07');
       H.decision('d11', 'amr_03', 'congestion', [['amr_03', 11.4, 3.8, 22.8], ['amr_01', 9.8, 9.2, 37.3]]);
       t.assignee_id = 'amr_03'; H.table([...busy, t]); H.robot('amr_03', 1.2, 4.15, 1, 'd11'); dashTest.tick();""")
     big, why = page.inner_text('#p-decide .big'), page.inner_text('#p-decide .why')
     th = page.evaluate("[...document.querySelectorAll('#p-decide th')].map(t => t.textContent)")
     line = page.evaluate("[document.querySelector('#p-decide .line .tag').textContent, document.querySelector('#p-decide .line .tl > span:last-child').textContent]")
     c.ok('3-4', '혼잡 반영 배정: "3호 배정", 이름표 서빙 + 경로, 근거 "혼잡 회피", 로봇·거리·혼잡 구간', big == '3호 배정' and why == '혼잡 회피'
-         and th == ['로봇', '거리', '혼잡 구간'] and line == ['서빙', '배식대 → 7번 테이블'], f'{big} / {why} / {th} / {line}')
+         and th == ['로봇', '거리', '혼잡 구간'] and line == ['서빙', '중식 → 7번 테이블'], f'{big} / {why} / {th} / {line}')
     now_text = page.inner_text('#p-decide h2 small')
     run(page, 12300)   # 다시 그리기(0.25초마다)가 12초를 지난 뒤에 한 번 오게
     later = page.inner_text('#p-decide h2 small')
@@ -285,7 +285,7 @@ def test_decision(browser, c):
     page.close()
 
     page = open_page(browser)
-    ev(page, """const busy = H.scene11(); const t = H.task('d11', 'buffet_1', 't07');
+    ev(page, """const busy = H.scene11(); const t = H.task('d11', 'stall_6', 't07');
       H.decision('d11', 'amr_01', 'euclidean', [['amr_01', 9.8, 0, 9.8], ['amr_03', 11.4, 0, 11.4]]);
       t.assignee_id = 'amr_01'; H.table([...busy, t]); dashTest.tick();""")
     th = page.evaluate("[...document.querySelectorAll('#p-decide th')].map(t => t.textContent)")
@@ -293,7 +293,7 @@ def test_decision(browser, c):
     page.close()
 
     page = open_page(browser)
-    ev(page, "const busy = H.scene11(); const t = H.task('d11', 'buffet_1', 't07'); t.assignee_id = 'amr_03'; H.table([...busy, t]); dashTest.tick();")
+    ev(page, "const busy = H.scene11(); const t = H.task('d11', 'stall_6', 't07'); t.assignee_id = 'amr_03'; H.table([...busy, t]); dashTest.tick();")
     no_topic = page.inner_text('#p-decide .big') == '3호 배정' and page.query_selector('#p-decide .why') is None and page.query_selector('#p-decide table') is None
     c.ok('3-4', '판단 토픽이 없어도 배정되면 큰 글씨와 작업 줄', no_topic, page.inner_text('#p-decide'))
     page.close()
@@ -314,7 +314,7 @@ def test_decision(browser, c):
         page.close()
 
     page = open_page(browser, 'ws=off&aging_rate=1.667')
-    ev(page, """const busy = H.allBusy(); const d = H.task('d_c1', 'buffet_1', 'c01', { age: 70 });
+    ev(page, """const busy = H.allBusy(); const d = H.task('d_c1', 'stall_6', 'c01', { age: 70 });
       H.table([...busy, d]); dashTest.tick(); const col = H.task('collect_y', 't06', 'return_1', { pr: 200 }); H.table([...busy, d, col]); dashTest.tick();""")
     first = page.evaluate("document.querySelector('#qbody tr').dataset.task")
     fresh = page.evaluate("document.querySelector('#qbody tr').classList.contains('new')")
@@ -441,7 +441,7 @@ def test_call(browser, c):
     m2 = page.evaluate('dashTest.sent[1].msg')
     closed = page.query_selector('[data-store]') is None
     c.ok('3-7', '"음식 서빙"을 누르면 매장 5개가 펼쳐지고, 고르면 서빙 1건(task_type 0, priority 100, 한식 → 3번)을 보내고 닫힌다',
-         stores == ['배식대', '한식', '분식', '양식', '카페'] and on and m2['task_type'] == 0 and m2['priority'] == 100 and m2['pickup_station_id'] == 'stall_1'
+         stores == ['중식', '일식', '한식', '분식', '양식', '카페'] and on and m2['task_type'] == 0 and m2['priority'] == 100 and m2['pickup_station_id'] == 'stall_1'
          and m2['dropoff_station_id'] == 't03' and closed, f'{stores} 파랑={on} 닫힘={closed}')
     c.ok('5-3', '서빙 보낸 뒤 "서빙 요청 완료 · 한식 → 3번 테이블"', page.inner_text('#p-call .toast') == '서빙 요청 완료 · 한식 → 3번 테이블', page.inner_text('#p-call .toast'))
     page.close()
@@ -457,16 +457,16 @@ def test_call(browser, c):
 
 def test_popups(browser, c):
     page = open_page(browser)
-    ev(page, "const busy = H.scene11(); const t = H.task('d11', 'buffet_1', 't07'); t.assignee_id = 'amr_03'; H.table([...busy, t]); H.robot('amr_03', 1.2, 4.15, 1, 'd11'); dashTest.tick();")
+    ev(page, "const busy = H.scene11(); const t = H.task('d11', 'stall_6', 't07'); t.assignee_id = 'amr_03'; H.table([...busy, t]); H.robot('amr_03', 1.2, 4.15, 1, 'd11'); dashTest.tick();")
     shown = lambda: page.evaluate("!document.getElementById('pop').hidden")
     page.click('#rc-amr_01'); a = shown() and page.inner_text('#pop h3').startswith('1호')
     page.click('#rc-amr_02'); b = page.inner_text('#pop h3').startswith('2호')
     page.keyboard.press('Escape'); esc_closed = not shown()
     page.click('#bot-amr_03', force=True); bot = shown()  # 퍼지는 고리 애니메이션 때문에 '멈춘 요소'를 기다리지 않는다
     page.click('#pop [data-close]'); x_closed = not shown()
-    page.click('#row-d11'); row = shown() and '배식대 → 7번 테이블' in page.inner_text('#pop h3')
+    page.click('#row-d11'); row = shown() and '중식 → 7번 테이블' in page.inner_text('#pop h3')
     page.click('header'); out_closed = not shown()
-    page.click('#p-decide'); dec = shown() and '배식대 → 7번 테이블' in page.inner_text('#pop h3')
+    page.click('#p-decide'); dec = shown() and '중식 → 7번 테이블' in page.inner_text('#pop h3')
     page.click('header')
     page.click('[data-tile="hall"]'); bat = shown() and page.inner_text('#pop h3').startswith('배터리')
     c.ok('3-8', '로봇 원·카드·작업 순서 줄·관제 판단·홀 투입 칸을 누르면 창, 다른 것을 누르면 바뀌고 ✕·Esc·바깥으로 닫힌다',
@@ -474,7 +474,7 @@ def test_popups(browser, c):
     page.close()
 
     page = open_page(browser)
-    ev(page, "const t = H.task('s1', 'buffet_2', 't11', { who: 'amr_01', state: 1 }); H.table([t]); H.robot('amr_01', -10.5, 0.6, 1, 's1'); H.status('s1', 'amr_01', 1, 'move_to_pickup'); dashTest.tick();")
+    ev(page, "const t = H.task('s1', 'stall_5', 't11', { who: 'amr_01', state: 1 }); H.table([t]); H.robot('amr_01', -10.5, 0.6, 1, 's1'); H.status('s1', 'amr_01', 1, 'move_to_pickup'); dashTest.tick();")
     page.click('#rc-amr_01')
     early = None
     for i in range(80):
@@ -486,7 +486,7 @@ def test_popups(browser, c):
     kv = flat(page.inner_text('#pop .kv'))
     c.ok('3-8', '안전 정지 40초: 상자는 "장애물 감지 · 0:3n"(칩 이름 반복 없음), 30초 전에는 할 일 없음, 지나면 "로봇 앞 통로를 확보하세요". 작업 줄에 이름표 + 경로',
          early and '확보하세요' not in early and late.startswith('장애물 감지 · 0:3') and late.endswith('로봇 앞 통로를 확보하세요')
-         and kv.startswith('작업 서빙 배식대 → 11번 테이블'), f'{early!r} → {late!r} / {kv}')
+         and kv.startswith('작업 서빙 일식 → 11번 테이블'), f'{early!r} → {late!r} / {kv}')
     page.close()
 
     page = open_page(browser)
@@ -587,7 +587,7 @@ def test_overlap(browser, c):
     found = {}
     for name, (r, fn, cands, xy) in scenes.items():
         page = open_page(browser)
-        ev(page, f"""const busy = H.scene11(); const t = H.task('d11', 'buffet_1', 't07'); H.decision('d11', '{r}', '{fn}', {cands});
+        ev(page, f"""const busy = H.scene11(); const t = H.task('d11', 'stall_6', 't07'); H.decision('d11', '{r}', '{fn}', {cands});
           t.assignee_id = '{r}'; H.table([...busy, t]); H.robot('{r}', {xy[0]}, {xy[1]}, 1, 'd11'); H.status('d11', '{r}', 1, 'move_to_pickup'); dashTest.tick();""")
         run(page, 600)
         page.wait_for_timeout(700)   # 로봇이 미끄러지는 효과(실제 시간 0.5초)가 끝난 자리에서 잰다
@@ -599,7 +599,7 @@ def test_overlap(browser, c):
 def test_style(browser, c):
     page = open_page(browser, 'ws=off&aging_rate=1.667&min_hall=3')
     texts = []
-    ev(page, "const busy = H.scene11(); const t = H.task('d11', 'buffet_1', 't07'); H.decision('d11', 'amr_03', 'congestion', [['amr_03', 11.4, 3.8, 22.8], ['amr_01', 9.8, 9.2, 37.3]]); t.assignee_id = 'amr_03'; H.table([...busy, t]); H.robot('amr_03', 1.2, 4.15, 1, 'd11'); dashTest.tick();")
+    ev(page, "const busy = H.scene11(); const t = H.task('d11', 'stall_6', 't07'); H.decision('d11', 'amr_03', 'congestion', [['amr_03', 11.4, 3.8, 22.8], ['amr_01', 9.8, 9.2, 37.3]]); t.assignee_id = 'amr_03'; H.table([...busy, t]); H.robot('amr_03', 1.2, 4.15, 1, 'd11'); dashTest.tick();")
     texts.append(page.inner_text('body'))
     page.click('#rc-amr_03'); texts.append(page.inner_text('body'))
     page.click('#row-d11'); texts.append(page.inner_text('body'))
@@ -646,7 +646,7 @@ def shots(browser, out):
     keep_alive(page, 16)
     snap(page, '01_평소')
 
-    s11 = """const busy = H.scene11(); const t = H.task('d11', 'buffet_1', 't07');
+    s11 = """const busy = H.scene11(); const t = H.task('d11', 'stall_6', 't07');
       H.decision('d11', '{r}', '{fn}', {c}); t.assignee_id = '{r}'; H.table([...busy, t]);
       H.robot('{r}', ...({{amr_03: [1.2, 4.15], amr_01: [-10.5, -5.3]}})['{r}'], 1, 'd11'); H.status('d11', '{r}', 1, 'move_to_pickup'); dashTest.tick();"""
     for name, r, fn, cands in (('02_1-1_켬', 'amr_03', 'congestion', "[['amr_03', 11.4, 3.8, 22.8], ['amr_01', 9.8, 9.2, 37.3]]"),
@@ -656,7 +656,7 @@ def shots(browser, out):
         run(page, 600)
         snap(page, name)
 
-    s212 = """const busy = H.allBusy(); const d = H.task('dc1', 'buffet_1', 'c01', { age: 75 });
+    s212 = """const busy = H.allBusy(); const d = H.task('dc1', 'stall_6', 'c01', { age: 75 });
       const cols = [8, 6, 5, 3, 2].map((a, i) => H.task(`collect_${i}`, ['t03', 't01', 't06', 't08', 't12'][i], 'return_1', { age: a, pr: 200 }));
       H.table([...busy, d]); dashTest.tick(); H.table([...busy, d, ...cols]); dashTest.tick();"""
     for name, query in (('04_2-12_끔', 'ws=off&min_hall=3'), ('05_2-12_켬', 'ws=off&min_hall=3&aging_rate=1.667')):
@@ -700,7 +700,7 @@ def shots(browser, out):
     snap(page, '11_마무리-02')
 
     page = page_at(datetime(2026, 11, 8, 12, 12, 30), hall=[[179, 5]])
-    ev(page, """const t = H.task('s1', 'buffet_2', 't11', { who: 'amr_01', state: 1 }); H.table([...H.scene11().slice(1), t]);
+    ev(page, """const t = H.task('s1', 'stall_5', 't11', { who: 'amr_01', state: 1 }); H.table([...H.scene11().slice(1), t]);
       H.bat('amr_01', -10.5, 0.6, 1, 's1', 64, .5); H.status('s1', 'amr_01', 1, 'move_to_pickup'); dashTest.tick();""")
     for _ in range(80):
         ev(page, "H.alive(); H.safety('amr_01', 2); H.robot('amr_01', -10.5, 0.6, 1, 's1', 64);")

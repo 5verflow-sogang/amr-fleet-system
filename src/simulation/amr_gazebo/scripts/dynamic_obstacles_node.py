@@ -5,7 +5,12 @@
 속도 명령(/dynamic_obstacles/<id>/cmd_vel)을 낸다. Gazebo와는 dynamic_obstacles.launch.py의 브리지가 잇는다.
 이동 패턴은 amr_gazebo.obstacle_motion에 있다. yield_to_robots가 있는 장애물이 있으면
 그 로봇들의 GT odom(/<ns>/ground_truth/odom, world 기준)도 받는다.
+
+avoid_peers(파라미터)를 켜면 손님끼리 본다: /dynamic_obstacles/<id>/ground_truth/odom을 모두 찾아(다른 이동 노드가 띄운
+손님 포함, 식당은 손님 파일과 staff 파일을 따로 띄운다) 각 장애물에 다른 손님 위치와, 같은 노드 손님이 비켜 가는 자리를 준다.
 """
+
+import re
 
 import math
 import random
@@ -18,6 +23,10 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 from amr_gazebo.obstacle_motion import ObstacleMotion, body_twist
+
+# 다른 노드 장애물 odom 토픽을 찾는 주기 [s]
+PEER_DISCOVERY_S = 2.0
+_PEER_TOPIC = re.compile(r'^/dynamic_obstacles/([^/]+)/ground_truth/odom$')
 
 # 로봇 GT가 이보다 오래 [ns] 끊기면 그 로봇을 모르는 것으로 본다 (마지막 정지 값에 계속 비켜 서 있지 않게)
 ROBOT_TIMEOUT_NS = 1_000_000_000
@@ -40,6 +49,8 @@ class DynamicObstacles(Node):
         # 로봇 중심이 이 반경 [m] 안에 있고 그쪽으로 걷는 중이면 선다 (0이면 끔). 볼 로봇은 keep_away_robots
         keep_away_m = float(self.declare_parameter('keep_away_m', 0.0).value)
         keep_away_robots = [s for s in self.declare_parameter('keep_away_robots', ['']).value if s]
+        # 손님끼리 본다 (식당 시연). 끄면 예전처럼 서로 겹쳐 지나간다 (물류센터 회피 시험 조건)
+        self._avoid_peers = bool(self.declare_parameter('avoid_peers', False).value)
 
         with open(config, encoding='utf-8') as f:
             specs = yaml.safe_load(f)['obstacles']
@@ -52,6 +63,7 @@ class DynamicObstacles(Node):
         master = random.Random(seed or None)
         self._motions = {}
         self._pose = {}
+        self._pose_ns = {}     # id → 마지막으로 받은 시각 [ns] (다른 노드 장애물이 사라지면 빼려고)
         self._cmd_pub = {}
         for spec in specs:
             oid = spec['id']
@@ -70,6 +82,9 @@ class DynamicObstacles(Node):
                 Odometry, f'/{name}/ground_truth/odom',
                 lambda msg, name=name: self._on_robot(name, msg), 10)
 
+        if self._avoid_peers:
+            self.create_timer(PEER_DISCOVERY_S, self._discover_peers)
+
         # 시뮬레이션 시간 기준 (use_sim_time). sim이 멈추면 명령도 멈춘다
         self.create_timer(1.0 / rate, self._control)
         self.get_logger().info(
@@ -78,11 +93,22 @@ class DynamicObstacles(Node):
             + f', seed={seed}'
             + (f', 로봇 {keep_away_m:g} m 안이면 섬: {", ".join(keep_away_robots)}'
                if keep_away_m > 0 and keep_away_robots else '')
+            + (', 손님끼리 봄' if self._avoid_peers else '')
             + (f', 멈춘 로봇에 비킴: {", ".join(yield_to)}' if yield_to else ''))
 
     def _on_odom(self, oid: str, msg: Odometry):
         p = msg.pose.pose
         self._pose[oid] = (p.position.x, p.position.y, _yaw(p.orientation))
+        self._pose_ns[oid] = self.get_clock().now().nanoseconds
+
+    def _discover_peers(self):
+        """다른 이동 노드가 움직이는 장애물의 odom도 받는다 (이미 받는 id는 건너뛴다)."""
+        for topic, _ in self.get_topic_names_and_types():
+            m = _PEER_TOPIC.match(topic)
+            if m and m.group(1) not in self._pose_ns and m.group(1) not in self._motions:
+                oid = m.group(1)
+                self._pose_ns[oid] = 0
+                self.create_subscription(Odometry, topic, lambda msg, oid=oid: self._on_odom(oid, msg), 10)
 
     def _on_robot(self, name: str, msg: Odometry):
         p, v = msg.pose.pose, msg.twist.twist.linear
@@ -92,13 +118,20 @@ class DynamicObstacles(Node):
     def _control(self):
         now = self.get_clock().now().nanoseconds
         robots = {name: r[:4] for name, r in self._robots.items() if now - r[4] < ROBOT_TIMEOUT_NS}
+        if self._avoid_peers:
+            spots = {oid: p[:2] for oid, p in self._pose.items() if now - self._pose_ns.get(oid, 0) < ROBOT_TIMEOUT_NS}
         for oid, motion in self._motions.items():
             pose = self._pose.get(oid)
             if pose is None:
                 continue
             x, y, yaw = pose
             waiting, turn_backs, keeping = motion.waiting, motion.turn_backs, motion.keeping_away
-            vx, vy = motion.step((x, y), robots, now * 1e-9)
+            peers = None
+            if self._avoid_peers:
+                # 다른 손님 위치 + 같은 노드 손님이 비켜 가는 자리 (앞 손님이 이번 주기에 고른 자리도 보인다)
+                peers = [p for o, p in spots.items() if o != oid] + \
+                    [m.claimed for o, m in self._motions.items() if o != oid and m.claimed is not None]
+            vx, vy = motion.step((x, y), robots, now * 1e-9, peers)
             if motion.turn_backs != turn_backs:
                 self.get_logger().info(f'{oid}: 로봇이 계속 멈춰 있어 돌아선다')
             elif motion.keeping_away != keeping:

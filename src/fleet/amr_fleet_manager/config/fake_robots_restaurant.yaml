@@ -28,7 +28,7 @@
 # 3호: 양식 매장 앞 (stall_3, 시나리오 1-1의 3호)
 /amr_03/fake_robot:
   ros__parameters:
-    start_xy: [1.5, 4.15]
+    start_xy: [1.5, 4.0]
 /amr_04/fake_robot:
   ros__parameters:
     start_xy: [11.2, -5.8]
