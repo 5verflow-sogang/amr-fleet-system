@@ -733,7 +733,8 @@ z / f_x & 0 & (u - c_x) / f_x \\
 
 optical frame 위치를 `target_frame`(기본 `map`)으로 옮긴다.
 
-- TF는 **영상 촬영 시각**(`rgb.header.stamp`)의 `camera_optical_frame → target_frame`을 찾는다 (`tf_timeout` 0.1 s). 추론에 걸린 시간만큼 로봇이 움직였어도 영상을 찍은 순간의 카메라 자세로 옮긴다.
+- TF는 **영상 촬영 시각**(`rgb.header.stamp`)의 `camera_optical_frame → target_frame`을 찾는다. 추론에 걸린 시간만큼 로봇이 움직였어도 영상을 찍은 순간의 카메라 자세로 옮긴다.
+- 추론이 끝났을 때 그 시각의 TF가 아직 없으면 결과를 미뤄 두었다가, TF가 들어오는 순간 발행한다 (`Buffer.wait_for_transform_async`, 추적 노드와 같은 방식). 미룬 결과가 있는 동안 다음 추론을 쉬고, `tf_timeout`(0.5 s, 실제 시간)을 넘기면 그 결과를 버린다. 노드는 단일 스레드로 돈다. 전에는 TF를 받는 스레드를 따로 둔 다중 스레드였는데, 그 스레드가 영상·TF를 받는 파이썬 일로 추론과 GIL을 다퉈 추론이 4~10배 느려졌다 (11/17 녹화 재생, 맥: 208~520 ms → 약 47 ms).
 - optical frame과 `camera_link`의 축 차이(rpy (−π/2, 0, −π/2))는 TF 트리가 처리한다. 노드는 영상의 `frame_id`를 그대로 쓴다.
 - TF 회전 쿼터니언은 정규화해 회전 행렬 $R$로 바꾼다 (`quaternion_to_matrix`). TF 메시지 값이 정확히 단위 길이가 아닐 수 있다.
 
@@ -778,4 +779,4 @@ p' = R\,p + t, \qquad \Sigma' = R\,\Sigma_{cam}\,R^\top
 | `robot` | (0.3, 0.8, 0.3) |
 | 그 밖 | (0.7, 0.7, 0.7) |
 
-- 노드는 `stats_period`(5 s)마다 처리 FPS, 평균 추론 시간, 촬영→발행 지연, 객체 수, 깊이 없어 뺀 검출 수, TF 실패 프레임 수를 로그로 남긴다. 원 명세 KPI(CPU 10 FPS) 측정용이다.
+- 노드는 `stats_period`(5 s)마다 처리 FPS, 평균 추론 시간, 촬영→발행 지연, 객체 수, 깊이 없어 뺀 검출 수, TF 실패 프레임 수, TF를 기다려 미룬·버린 결과 수를 로그로 남긴다. 원 명세 KPI("추론 속도" CPU 10 FPS) 측정용이다 (`tools/harness/detection_fps.py`가 읽는다).

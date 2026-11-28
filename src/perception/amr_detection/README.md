@@ -14,7 +14,8 @@
 | Subscribe | `camera/depth/image_raw` | `sensor_msgs/msg/Image` | Depth `32FC1` (m), RGB와 픽셀 1:1. bbox 대표 깊이에 쓴다 |
 | Subscribe | `camera/camera_info` | `sensor_msgs/msg/CameraInfo` | 내부 파라미터 K. 처음 받은 값을 쓴다 |
 
-- TF: 영상 촬영 시각의 `camera_optical_frame → target_frame`을 조회한다.
+- TF: 영상 촬영 시각의 `camera_optical_frame → target_frame`을 조회한다. 추론이 끝났을 때 그 TF가 아직 없으면 결과를 미뤄 두었다가 TF가 들어오면 발행한다(`tf_timeout` 0.5 s 넘으면 버림). 노드는 단일 스레드로 돈다(`test/test_tf_defer.py`).
+- 5 s마다 처리 FPS·추론 시간·촬영→발행 지연·TF 미룸/버림 수를 로그로 남긴다. 원 명세 KPI "추론 속도 CPU 10 FPS"는 하네스 `yolo_fps`가 이 줄로 잰다.
 - 처리 과정과 식(YOLO, Pinhole 역투영, 대표 깊이, 공분산 전파, 좌표 변환)은 [docs/algorithms/perception.md 4절](../../../docs/algorithms/perception.md#4-yolo-인식과-3d-변환).
 
 전체 API 명세는 [docs/api.md](../../../docs/api.md)에 반영한다.

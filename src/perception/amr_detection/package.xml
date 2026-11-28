@@ -30,6 +30,10 @@
   <!-- ultralytics(YOLO)·torch는 rosdep 키가 없어 docker/Dockerfile에서 pip로 설치한다 -->
 
   <test_depend>python3-pytest</test_depend>
+  <test_depend>geometry_msgs</test_depend>
+  <!-- test_tf_defer.py가 detection_node를 불러온다. CI(ros:humble)는 test_depend까지만 설치한다 -->
+  <test_depend>cv_bridge</test_depend>
+  <test_depend>python3-opencv</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

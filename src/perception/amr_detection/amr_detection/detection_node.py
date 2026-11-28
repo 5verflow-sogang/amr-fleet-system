@@ -4,6 +4,13 @@ RGB와 Depth는 rgbd_camera 센서 하나에서 나와 시각이 같고 픽셀�
 추론이 카메라 주기(30 Hz)보다 느리므로 최신 짝 하나만 보관하고 타이머가 처리한다. 밀린 프레임을
 차례로 처리하면 결과가 점점 과거 장면이 된다.
 위치는 영상 촬영 시각의 TF로 target_frame(기본 map)에 옮긴다. header.stamp는 촬영 시각이다 (api.md 4-3절).
+
+촬영 시각 TF 기다리기: 추론이 끝났을 때 그 영상 촬영 시각의 TF가 아직 없으면, 결과를 미뤄 두었다가 TF가 들어오는
+순간 발행한다 (tf2 Buffer.wait_for_transform_async, amr_tracking 추적 노드와 같은 방식). 미룬 결과가 있는 동안에는
+다음 추론을 쉬어 /tf 콜백이 먼저 돌게 하고, tf_timeout(실제 시간)을 넘기면 그 결과를 버린다.
+콜백 안에서 TF를 기다리지 않으므로 단일 스레드 executor로 돈다. 전에는 TF를 받는 스레드를 따로 둔 다중 스레드
+executor였는데, 그 스레드가 초당 30쌍의 영상·TF 메시지를 받는 파이썬 일을 하며 추론과 GIL을 다퉈 추론이 느려졌다
+(11/17 녹화 재생, 맥: 추론 208~520 ms → 약 47 ms, 발행 2~4 → 13.7 FPS. GCP 본 측정은 #357).
 """
 
 import signal
@@ -13,8 +20,7 @@ from cv_bridge import CvBridge
 import message_filters
 import numpy as np
 import rclpy
-from rclpy.duration import Duration
-from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
@@ -57,7 +63,8 @@ class DetectionNode(Node):
         self.sigma_px = p('pixel_noise_std', 5.0).value
         self.sigma_z = p('depth_noise_std', 0.02).value
         self.target_frame = p('target_frame', 'map').value
-        self.tf_timeout = Duration(seconds=p('tf_timeout', 0.1).value)
+        # 촬영 시각 TF를 기다리는 최대 시간 [s, 실제 시간]. 그동안 다음 추론을 쉬고, 넘으면 그 결과를 버린다
+        self.tf_timeout = p('tf_timeout', 0.5).value
         self.marker_size = p('marker_size', 0.4).value
         self.stats_period = p('stats_period', 5.0).value
 
@@ -66,6 +73,8 @@ class DetectionNode(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.camera = None
         self.latest = None
+        # TF를 기다리는 결과: (future, rgb, bgr, depth, 검출, 추론 시간 [s], 미룬 시각 [s, monotonic])
+        self._pending = None
         self._reset_stats()
 
         self.pub = self.create_publisher(DetectedObject3DArray, 'perception/objects', 10)
@@ -81,7 +90,8 @@ class DetectionNode(Node):
         self.create_timer(1.0 / p('max_rate', 30.0).value, self.process_latest)
         self.get_logger().info(
             f'detection: camera → perception/objects ({self.target_frame}), '
-            f'클래스 {self.detector.class_map}, 입력 {self.detector.kwargs["imgsz"]} px')
+            f'클래스 {self.detector.class_map}, 입력 {self.detector.kwargs["imgsz"]} px, '
+            f'torch 스레드 {self.detector.num_threads}')
 
     def on_camera_info(self, msg: CameraInfo):
         if self.camera is None:
@@ -96,6 +106,17 @@ class DetectionNode(Node):
     def process_latest(self):
         if self.latest is None or self.camera is None:
             return
+        if self._pending is not None:
+            # 앞 결과가 촬영 시각 TF를 기다린다 (모듈 설명 "촬영 시각 TF 기다리기")
+            if time.monotonic() - self._pending[-1] < self.tf_timeout:
+                return          # 이번 차례는 넘겨 /tf 콜백이 먼저 돌게 한다
+            future = self._pending[0]
+            self._pending = None
+            # 버퍼의 대기 목록에서 빠진다. 취소도 완료 콜백(_on_tf)을 부르지만, 취소를 보고 아무것도 하지 않는다
+            future.cancel()
+            self.stats['tf_drop'] += 1
+            self.get_logger().warn(f'촬영 시각 TF가 {self.tf_timeout} s 안에 오지 않아 결과를 버림',
+                                   throttle_duration_sec=5.0)
         rgb_msg, depth_msg = self.latest
         self.latest = None
 
@@ -105,12 +126,36 @@ class DetectionNode(Node):
         detections = self.detector.detect(bgr)
         infer_s = time.monotonic() - start
 
+        future = self.tf_buffer.wait_for_transform_async(
+            self.target_frame, rgb_msg.header.frame_id, Time.from_msg(rgb_msg.header.stamp))
+        if future.done():
+            self.publish_result(rgb_msg, bgr, depth, detections, infer_s)
+            return
+        self.stats['deferred'] += 1
+        self._pending = (future, rgb_msg, bgr, depth, detections, infer_s, time.monotonic())
+        future.add_done_callback(self._on_tf)
+
+    def _on_tf(self, future):
+        """미뤄 둔 결과의 촬영 시각 TF가 들어왔다. TF 수신 콜백(Buffer.set_transform) 안에서 불린다."""
+        if future.cancelled() or self._pending is None or self._pending[0] is not future:
+            return
+        _, rgb_msg, bgr, depth, detections, infer_s, _ = self._pending
+        self._pending = None
+        if future.exception() is not None:
+            self.stats['tf_fail'] += 1
+            self.get_logger().warn(f'TF 확인 실패, 프레임 건너뜀: {future.exception()}',
+                                   throttle_duration_sec=5.0)
+            return
+        self.publish_result(rgb_msg, bgr, depth, detections, infer_s)
+
+    def publish_result(self, rgb_msg: Image, bgr, depth, detections, infer_s: float):
+        """촬영 시각의 TF로 검출을 3D로 옮겨 발행한다. infer_s: 영상 변환 + YOLO 시간 (통계용)."""
         stamp = rgb_msg.header.stamp
         try:
             tf = self.tf_buffer.lookup_transform(
-                self.target_frame, rgb_msg.header.frame_id, Time.from_msg(stamp),
-                timeout=self.tf_timeout)
+                self.target_frame, rgb_msg.header.frame_id, Time.from_msg(stamp))
         except TransformException as e:
+            # 방금 TF가 있다고 확인했으므로 드물다
             self.stats['tf_fail'] += 1
             self.get_logger().warn(f'TF 없음, 프레임 건너뜀: {e}', throttle_duration_sec=5.0)
             return
@@ -144,11 +189,14 @@ class DetectionNode(Node):
 
     def _reset_stats(self):
         self.stats = {'frames': 0, 'objects': 0, 'no_depth': 0, 'tf_fail': 0,
-                      'infer_s': 0.0, 'latency_s': 0.0}
+                      'infer_s': 0.0, 'latency_s': 0.0, 'deferred': 0, 'tf_drop': 0}
         self.stats_start = time.monotonic()
 
     def _log_stats(self):
-        """처리 FPS(원 명세 KPI: CPU 10 FPS), 추론 시간, 촬영→발행 지연을 주기적으로 남긴다."""
+        """처리 FPS, 추론 시간(원 명세 KPI: 추론 속도 CPU 10 FPS), 촬영→발행 지연을 주기적으로 남긴다.
+
+        tools/harness/detection_fps.py가 이 줄을 읽는다. 앞부분(…TF 실패 N프레임)의 모양을 바꾸면 그쪽도 바꾼다.
+        """
         elapsed = time.monotonic() - self.stats_start
         if elapsed < self.stats_period:
             return
@@ -156,34 +204,19 @@ class DetectionNode(Node):
         self.get_logger().info(
             f'{s["frames"] / elapsed:.1f} FPS, 추론 {1000 * s["infer_s"] / n:.0f} ms, '
             f'촬영→발행 {1000 * s["latency_s"] / n:.0f} ms, 객체 {s["objects"]}개, '
-            f'깊이 없어 뺀 검출 {s["no_depth"]}개, TF 실패 {s["tf_fail"]}프레임')
+            f'깊이 없어 뺀 검출 {s["no_depth"]}개, TF 실패 {s["tf_fail"]}프레임, '
+            f'TF 미룸 {s["deferred"]}·버림 {s["tf_drop"]}')
         self._reset_stats()
-
-
-def make_executor(node: Node) -> MultiThreadedExecutor:
-    """TF를 콜백과 다른 스레드에서 받는 executor.
-
-    단일 스레드(rclpy.spin)면 /tf 수신이 콜백과 같은 줄에 서서, 콜백이 무겁거나 lookup_transform(timeout=)으로
-    기다리는 동안 TF가 쌓여 버퍼가 뒤처진다 (Mac Docker에서 0.35~0.6 s, "TF 없음" 반복).
-    TransformListener는 /tf 구독을 Reentrant 그룹에 두므로 두 번째 스레드가 받는다. 이 노드의 콜백은 기본
-    그룹(MutuallyExclusive)이라 지금처럼 하나씩 실행되어 공유 상태에 락이 필요 없다.
-    TransformListener(spin_thread=True)는 같은 노드를 다른 executor에 붙였다가 rclpy.spin이 도로 가져가서
-    (노드 하나 = executor 하나) Humble에서 효과가 없다.
-    """
-    executor = MultiThreadedExecutor(num_threads=2)
-    executor.add_node(node)
-    return executor
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = DetectionNode()
-    executor = make_executor(node)
     try:
-        executor.spin()
+        # 단일 스레드: 콜백 안에서 TF를 기다리지 않는다 (모듈 설명 "촬영 시각 TF 기다리기")
+        rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        executor.shutdown()
         node.destroy_node()
