@@ -14,7 +14,7 @@ import analyze  # noqa: E402
 import demo_metrics as dm  # noqa: E402
 
 
-def row(task_id, assignee='', state=0, task_type=0, created=0.0, pickup='kitchen', dropoff='buffet_2', priority=100):
+def row(task_id, assignee='', state=0, task_type=0, created=0.0, pickup='kitchen', dropoff='stall_5', priority=100):
     return {'task_id': task_id, 'task_type': task_type, 'priority': priority, 'pickup': pickup, 'dropoff': dropoff,
             'created': created, 'assignee': assignee, 'state': state}
 
@@ -41,7 +41,7 @@ def test_snapshots_out_of_order_are_sorted():
 
 # ---------------------------------------------------------------- 1-2
 def _task(**kw):
-    base = dict(task_id='d1', task_type=0, priority=100, pickup='kitchen', dropoff='buffet_2', created=100.0,
+    base = dict(task_id='d1', task_type=0, priority=100, pickup='kitchen', dropoff='stall_5', created=100.0,
                 first_seen=100.5, assign=101.0, assignee='amr_01', end=None, final_state=1)
     base.update(kw)
     return dm.TableTask(**base)
@@ -52,21 +52,21 @@ def test_arrival_is_first_unloading_phase_at_dropoff():
           {'t': 110.0, 'task_id': 'd1', 'state': 1, 'phase': 'move_to_dropoff'},
           {'t': 131.0, 'task_id': 'd1', 'state': 1, 'phase': 'unloading'},
           {'t': 125.0, 'task_id': 'other', 'state': 1, 'phase': 'unloading'}]
-    assert dm.arrival_time(_task(), st, 'buffet_2') == 130.0
+    assert dm.arrival_time(_task(), st, 'stall_5') == 130.0
 
 
 def test_arrival_at_pickup_station_uses_loading():
-    task = _task(pickup='buffet_2', dropoff='t11')
+    task = _task(pickup='stall_5', dropoff='t11')
     st = [{'t': 120.0, 'task_id': 'd1', 'state': 1, 'phase': 'unloading'},
           {'t': 115.0, 'task_id': 'd1', 'state': 1, 'phase': 'loading'}]
-    assert dm.arrival_time(task, st, 'buffet_2') == 115.0
+    assert dm.arrival_time(task, st, 'stall_5') == 115.0
 
 
 def test_arrival_falls_back_to_completed_only_for_dropoff():
     st = [{'t': 140.0, 'task_id': 'd1', 'state': 2, 'phase': ''}]
-    assert dm.arrival_time(_task(), st, 'buffet_2') == 140.0
-    assert dm.arrival_time(_task(pickup='buffet_2', dropoff='t11'), st, 'buffet_2') is None
-    assert dm.arrival_time(_task(dropoff='buffet_1'), st, 'buffet_2') is None
+    assert dm.arrival_time(_task(), st, 'stall_5') == 140.0
+    assert dm.arrival_time(_task(pickup='stall_5', dropoff='t11'), st, 'stall_5') is None
+    assert dm.arrival_time(_task(dropoff='stall_6'), st, 'stall_5') is None
 
 
 def _track(segments, t0=100.0, hz=2.0):
@@ -98,10 +98,10 @@ def test_stops_never_departing():
 
 
 def test_scene12_reports_request_to_arrival_and_stops_for_the_station_tasks_only():
-    tasks = {'d1': _task(), 'd2': _task(task_id='d2', dropoff='buffet_1', created=105.0)}
+    tasks = {'d1': _task(), 'd2': _task(task_id='d2', dropoff='stall_6', created=105.0)}
     st = [{'t': 118.0, 'task_id': 'd1', 'state': 1, 'phase': 'unloading'}]
     poses = {'amr_01': _track([(1, 0), (5, 0.4), (2, 0), (10, 0.4)])}
-    rows = dm.scene12(tasks, st, poses, station='buffet_2')
+    rows = dm.scene12(tasks, st, poses, station='stall_5')
     assert len(rows) == 1
     r = rows[0]
     assert (r['task_id'], r['robot'], r['request_to_arrival_s']) == ('d1', 'amr_01', 18.0)
@@ -268,7 +268,7 @@ def _write_bag(path, scene, arrive=True):
     if scene == '1-2':
         for t in [10.5, 11.0, 12.0, 30.0]:
             assignee, state = ('', 0) if t < 11 else ('amr_01', 1 if t < 30 else 2)
-            m = msgs.FleetTaskTable(records=[record('d1', 0, 'buffet_2', 10.0, assignee, state)])
+            m = msgs.FleetTaskTable(records=[record('d1', 0, 'stall_5', 10.0, assignee, state)])
             m.header.stamp = stamp(t)
             put('/fleet/task_table', m, t)
         x = 0.0
@@ -320,7 +320,7 @@ def test_analyze_harness_layout_runs_latest_in_table_all_in_json(tmp_path):
     old = scene / 'demo_s12-on_20261106-235900_00'
     new = scene / 'demo_s12-on_20261107-101500_00'
     _write_bag(old / 'rosbag', '1-2')
-    _write_bag(new / 'rosbag', '1-2', arrive=False)    # 최근 실행은 buffet_2에 못 닿았다
+    _write_bag(new / 'rosbag', '1-2', arrive=False)    # 최근 실행은 stall_5에 못 닿았다
     _fake_bag(new / 'camera_bag')                      # 읽으면 깨지는 가짜 - 고르면 안 된다
     _write_bag(tmp_path / 'demo_s2-off' / 'demo_s2-off_20261107-090000_00' / 'rosbag', '2')
     out = tmp_path / 'results.md'
