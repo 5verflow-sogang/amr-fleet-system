@@ -78,6 +78,8 @@ driver:
   mode: wait
   use_sim_time: true
   duration_s: "{duration_s}"
+  # 두 배달이 다 끝나면 5 s 뒤 끝낸다 (duration_s는 막혔을 때 상한)
+  stop_after_tasks: 2
 postprocess:
   - name: fleet_metrics
     cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots {num_robots}
