@@ -56,6 +56,8 @@ python3 tools/harness/summarize.py tools/harness/results/loc_basic_*
 - `ready_s`: 실행 시작부터 프로세스마다 준비(`ready_topic`·`ready_cmds` 통과)될 때까지 걸린 시간(초). 뒤 반복에서 늘거나 기동 실패(`_failN`)가 늘면 격리 문제다.
 - `leftover_processes`: 정리(프로세스 그룹 종료·`cleanup`) 뒤에도 살아 있는 ROS·Gazebo 프로세스. 비어 있어야 한다. 남은 시뮬레이터가 `/clock`을 계속 내면 다음 실행의 시계가 튀고, 같은 이름의 발행자가 겹친다.
 
+**동시 실행 격리**: `docker_run.sh`는 실행마다 전용 docker 네트워크(`amr-harness-<시각>-<PID>`, 라벨 `amr-harness`)를 만들고 끝나면 지운다. 컨테이너마다 첫 시도가 같은 도메인 1·`IGN_PARTITION harness_1`로 시작하므로, 기본 bridge에 둘을 같이 띄우면 멀티캐스트 발견이 서로 넘어가 상대 시뮬레이터의 `/clock`·스캔·Nav2 액션 서버가 섞였다 (11/28 zone_pass 병렬 16실행 무효. `drive.log`에 `more than one action server`, `system.log`에 `Moved backwards in time`). 강제 종료로 남은 네트워크는 72시간 뒤 다음 실행이 치운다. 같은 머신에서 여러 개를 돌릴 때는 빌드가 메모리를 많이 써서(docker 메모리 8 GB에서 둘이 같이 빌드하면 `cc1plus` Killed) 앞 실행의 빌드가 끝난 뒤 다음 것을 띄운다. 시뮬레이션이 CPU를 나눠 쓰므로 `real_time_factor`도 내려간다(1개 약 0.85 → 2개 약 0.6~0.7). 시간은 시뮬레이션 시각으로 재지만 제어 주기를 놓쳐 주행이 달라질 수 있다 (11/28 확인: 손님 없는 통로 통과가 혼자면 10/10, 둘이면 9/10). 통과 시간·성공률처럼 주행을 재는 실험은 한 번에 하나씩 돌리고, 같이 돌렸다면 `real_time_factor`를 함께 적는다.
+
 그래도 뒤 반복으로 갈수록 결과가 달라지는지 의심되면 `HARNESS_FRESH=1`로 반복마다 컨테이너를 새로 띄워 비교한다. 빌드 결과는 이번 실행 동안만 쓰는 docker 볼륨에 두어 두 번째 컨테이너부터는 빌드가 거의 없고, 끝나면 볼륨을 지운다. Discord 요약은 마지막 반복에서 한 번만 보낸다.
 
 **시나리오** (`scenarios/*.yaml`)
