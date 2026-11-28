@@ -455,6 +455,8 @@ def test_load_scene_rejects_near_on_an_unknown_task(tmp_path):
 
 # ---------------------------------------------------------------- 11/9 녹화: 부스·손님 근처 자리
 def _guest_near(guest_file, radius=1.0):
+    """손님이 머무는 곳에서 radius 안 스테이션. 서 있는 손님(stand)은 제자리, 일과 손님(routine)은 단계마다 머무는 자리
+    (걸어서 지나가는 길은 치지 않는다 - 잠깐이고 걷는 손님은 로봇 앞에서 선다), 그 밖의 패턴은 경로·활동 범위."""
     st = stations()
     out = set()
 
@@ -464,9 +466,13 @@ def _guest_near(guest_file, radius=1.0):
         return math.dist(q, (a[0] + t * dx, a[1] + t * dy))
     for o in yaml.safe_load(guest_file.read_text(encoding='utf-8'))['obstacles']:
         pts = [(w['x'], w['y']) for w in o.get('waypoints', [])]
+        stays = {'stand': [(o['spawn']['x'], o['spawn']['y'])],
+                 'routine': [tuple(s['path'][-1]) for s in o.get('steps', [])]}.get(o['pattern'])
         for name, v in st.items():
             q = v[:2]
-            if o['pattern'] == 'random':
+            if stays:
+                d = min(math.dist(q, p) for p in stays)
+            elif o['pattern'] == 'random':
                 xs, ys = [a[0] for a in pts], [a[1] for a in pts]
                 d = math.hypot(max(min(xs) - q[0], 0, q[0] - max(xs)), max(min(ys) - q[1], 0, q[1] - max(ys)))
             else:
@@ -479,16 +485,20 @@ def _guest_near(guest_file, radius=1.0):
 GUESTS = REPO / 'src' / 'simulation' / 'amr_gazebo' / 'config'
 
 
-@pytest.mark.parametrize('scene, guest_file', [
-    ('demo_s2a.yaml', 'dynamic_obstacles_restaurant.yaml'), ('demo_s2b.yaml', 'dynamic_obstacles_restaurant.yaml'),
-    ('demo_s12.yaml', 'dynamic_obstacles_restaurant_peak_scene12.yaml')])
-def test_start_tasks_avoid_booths_and_guest_paths(scene, guest_file):
+ROUTINE, ROUTINE_PEAK = 'dynamic_obstacles_restaurant_routine.yaml', 'dynamic_obstacles_restaurant_routine_peak.yaml'
+
+
+@pytest.mark.parametrize('scene, guest_files', [
+    ('demo_s2a.yaml', [ROUTINE]), ('demo_s2b.yaml', [ROUTINE]), ('demo_s12.yaml', [ROUTINE_PEAK])])
+def test_start_tasks_avoid_booths_and_guest_spots(scene, guest_files):
     # 부스 b01~b03: 11/9 녹화에서 도착 실패로 재큐(1막 b02), 로컬 재현(추적·안전 켬)에서 부스 칸에서 못 빠져나옴.
-    # 손님 경로 1 m 안 자리: 11/9 녹화에서 5호가 t06 손님 무리에 오래 머묾. 장면이 쓰는 손님 파일 기준
+    # 손님이 머무는 자리 1 m 안: 11/9 녹화에서 5호가 t06 손님 무리에 오래 머묾. 장면이 쓰는 손님 파일 기준
+    # (식당 기본 일과 손님, 1-2는 몰림 손님을 더한 20명)
     steps = yaml.safe_load((TASKS / scene).read_text(encoding='utf-8'))['steps']
     start = {n for t in steps[0]['tasks'] for n in (t['pickup'], t['dropoff'])}
     assert not start & {'b01', 'b02', 'b03'}
-    assert not start & _guest_near(GUESTS / guest_file), start & _guest_near(GUESTS / guest_file)
+    for guest_file in guest_files:
+        assert not start & _guest_near(GUESTS / guest_file), (guest_file, start & _guest_near(GUESTS / guest_file))
 
 
 def test_act2_keeps_off_the_south_east_corner():

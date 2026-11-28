@@ -3,9 +3,13 @@
 #                                  scenario=demo_s12, repeats=1, label=off, params="congestion_filter=none slot=b2"
 # 시작 위치: 1호 입구 옆(-10.0, -5.8), 동쪽을 본다 (robots_restaurant_s12.yaml). 배정 비용은 직선 거리(euclidean).
 # 1초 재계획 BT는 body:=serving이면 자동(#307 머지 뒤)
-# 손님: 1-2 전용 피크 파일 peak_scene12 (#340: customer_2 뺌, 서쪽 통로 peak_1~3은 중간~북쪽이라 1호 출발 자리가 빈다)
+# 손님: 1-1과 같다 - 식당 기본 일과 손님 10명 + 몰림 손님 10명(처음 200 s 남짓 제자리: 서쪽 통로 4명 → west_aisle 1.0,
+#   1호 출발 자리와 1.2 m 이상), 20명 모두 혼잡도에 센다. 예전 1-2 전용 걷는 손님 파일(peak_scene12)은 지웠다.
+#   [확인 필요] 이 손님 구성으로는 아직 녹화하지 않았다. 우회 통로(x -7.275)에 처음 서 있는 손님 둘(crowd_02 남쪽 끝,
+#   crowd_07 아래 가로 통로 교차점)은 로봇이 오면 0.8 m 비켜 선다. 일과 손님을 세면서 우회 통로가 있는 hall_west도 6명 중
+#   6명 안팎(마스크 비용이 높지만 치명은 아님, api.md 4-5절)이라 켬 경로가 예전과 달라질 수 있다
 # 작업: 장면 스크립트(지금은 임시로 tools/harness/demo_scene.py, params scene_script)가 tasks/demo_s12.yaml대로 넣는다:
-#   5·4호 동쪽 배달 2건 → 0초에 1호에게 buffet_2 → 11번 테이블 배달과 /demo/t0. 연우 장면 스크립트가 오면 scene_script 한 줄만 바꾼다
+#   5·4호 동쪽 배달 2건 → 0초에 1호에게 매장 5(stall_5) → 11번 테이블 배달과 /demo/t0. 연우 장면 스크립트가 오면 scene_script 한 줄만 바꾼다
 # 길이: 0초는 시작 약 10 s 뒤. 켬은 우회 경로 12.8 m를 손님 사이로 가고, 배식대 2번 자리 도착(docking → loading)까지 찍으려고
 #   시뮬레이션 180 s 녹화한다 (11/8 녹화는 120 s로는 도착 전에 끝났다)
 name: demo_s12
@@ -16,7 +20,8 @@ packages: amr_bringup
 timeout_s: 5400
 params:
   robots: robots_restaurant_s12.yaml
-  guests: dynamic_obstacles_restaurant_peak_scene12.yaml
+  guests: dynamic_obstacles_restaurant_routine_peak.yaml   # 일과 손님 20명 (기본 10 + 몰림 10), 모두 혼잡도에 센다
+  staff: none
   task_generator: "false"
   # 작업 넣기 (임시: tools/harness/demo_scene.py + 장면 파일). 연우 장면 스크립트가 오면 이 한 줄만 바꾼다
   scene_script: python3 /repo/tools/harness/demo_scene.py

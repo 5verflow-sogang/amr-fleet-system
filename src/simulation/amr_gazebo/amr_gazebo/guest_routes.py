@@ -24,7 +24,10 @@ PREFER_M = 0.7
 PREFER_GAIN = 2.0
 # 다른 손님이 머무는(서 있는) 자리에서 이만큼 [m] 안 칸은 웃돈을 붙이고, 줄인 직선도 이만큼 떨어져 지나게 한다
 AVOID_SPOT_M = 0.6
-AVOID_SPOT_COST = 20.0
+# 웃돈은 가볍게: 옆에 빈 길이 있으면 그쪽으로 가고, 없으면 그냥 지나간다 (지나가다 만나면 손님끼리 선다).
+# 20배였을 때는 앉는 자리 사이 통로가 모두 '비킬 곳'이 되어, 손님 20명에서 바로 앞 자리에 가려고 홀을 한 바퀴
+# 돌았다 (몰림 손님 crowd_03: 6.1 m 길을 17.1 m로)
+AVOID_SPOT_COST = 3.0
 # 머무는 자리에서 비킬 수 있는 방향: 이만큼 [m] 비켜 선 길이 비어 있으면 (몸 반지름만큼 여유)
 EVADE_STEP_M = 0.8
 EVADE_CLEARANCE_M = 0.25
@@ -227,7 +230,7 @@ def _distance_transform(occupied: List[List[bool]], res: float) -> List[List[flo
 def build_obstacles(spec: dict, grid: GridMap, other_spots: Sequence[Point] = ()) -> List[dict]:
     """일과 설정(places·defaults·guests) → dynamic_obstacles yaml의 obstacles 목록 (pattern routine).
 
-    경로는 다른 손님이 머무는 자리(이 설정의 모든 머무는 자리 + other_spots: 같이 띄우는 서 있는 손님 자리)를 비켜 뽑는다.
+    경로는 다른 손님이 머무는 자리(이 설정의 모든 머무는 자리 + other_spots)를 비켜 뽑는다.
     """
     places = {name: grid.snap((float(p[0]), float(p[1]))) for name, p in spec['places'].items()}
     dwell = {places[n] for g in spec['guests'] for n in [g['start']] + [st['go'] for st in g['steps']]
@@ -268,14 +271,35 @@ def build_obstacles(spec: dict, grid: GridMap, other_spots: Sequence[Point] = ()
     return out
 
 
-def stand_spots(spec: dict, base: Path) -> List[Point]:
-    """spec의 stand_files(base 기준, 같이 띄우는 손님 파일)에서 서 있는 손님(pattern stand) 자리."""
-    spots: List[Point] = []
-    for name in spec.get('stand_files') or []:
-        data = yaml.safe_load((Path(base) / name).read_text(encoding='utf-8'))
-        spots += [(float(o['spawn']['x']), float(o['spawn']['y'])) for o in data['obstacles']
-                  if o.get('pattern') == 'stand']
-    return spots
+def load_spec(path) -> dict:
+    """일과 설정 파일. include(같은 폴더의 다른 일과 설정)가 있으면 그 places·guests를 앞에 잇고 defaults를 물려받는다.
+
+    몰림 설정이 식당 기본 손님을 그대로 품을 때 쓴다 (기본 손님 + 몰림 손님을 한 파일로 띄워 모두 혼잡도에 센다).
+    자리·손님 이름이 겹치면 오류다.
+    """
+    path = Path(path)
+    spec = yaml.safe_load(path.read_text(encoding='utf-8'))
+    places, guests, defaults = {}, [], {}
+    for name in spec.get('include') or []:
+        base = load_spec(path.parent / name)
+        _merge_new(places, base['places'], f'{path.name}: include {name} 자리')
+        guests += base['guests']
+        defaults.update(base.get('defaults') or {})
+    _merge_new(places, spec.get('places') or {}, f'{path.name}: 자리')
+    guests += spec.get('guests') or []
+    ids = [g['id'] for g in guests]
+    twice = sorted({i for i in ids if ids.count(i) > 1})
+    if twice:
+        raise ValueError(f'{path.name}: 손님 id가 겹친다 {twice}')
+    defaults.update(spec.get('defaults') or {})
+    return {'places': places, 'guests': guests, 'defaults': defaults}
+
+
+def _merge_new(into: dict, more: dict, what: str) -> None:
+    twice = sorted(set(into) & set(more))
+    if twice:
+        raise ValueError(f'{what} 이름이 겹친다 {twice}')
+    into.update(more)
 
 
 def path_length(start: Sequence[float], path: Sequence[Sequence[float]]) -> float:

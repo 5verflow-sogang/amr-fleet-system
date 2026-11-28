@@ -164,7 +164,8 @@ def test_scene2_runs_the_scene_script_instead_of_the_task_generator(name):
     assert f'/repo/tools/harness/tasks/{name}.yaml' in cmd and '--out /tmp/r/scene.json' in cmd
     assert '--num-robots 5' in cmd
     stack = procs['stack']['cmd']
-    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant.yaml' in stack     # 손님 평상시
+    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_routine.yaml' in stack     # 식당 기본: 일과 손님
+    assert 'staff_file:=none' in stack and 'guest_avoid_peers:=true' in stack
     assert 'num_robots:=5' in stack and 'body:=serving' in stack
     # 측정 bag에 #326 측정 스크립트가 읽는 토픽과 /demo/t0
     for topic in ('/fleet/task_status', '/fleet/robot_states', '/fleet/task_table', '/demo/t0'):
@@ -208,15 +209,24 @@ def test_scene2_localization_can_be_ground_truth():
     assert 'localization:=amcl' in _demo_procs('demo_s2b')['stack']['cmd']
 
 
-def test_scene12_runs_its_scene_script_with_the_scene12_guests():
+def test_restaurant_default_guests_follow_routines():
+    # 식당 기본(demo_restaurant → 스모크, 장면 2): 일과 손님을 혼잡도에 세고, 세지 않는 사람은 띄우지 않는다
+    for name in ('demo_restaurant', 'demo_smoke'):
+        stack = _demo_procs(name)['stack']['cmd']
+        assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_routine.yaml' in stack and 'staff_file:=none' in stack
+
+
+def test_scene12_runs_its_scene_script_with_the_standing_crowd():
     procs = _demo_procs('demo_s12')
     assert 'task_generator' not in procs
     assert procs['scene']['cmd'].startswith(
         'python3 /repo/tools/harness/demo_scene.py /repo/tools/harness/tasks/demo_s12.yaml ')
     stack = procs['stack']['cmd']
-    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak_scene12.yaml' in stack
+    # 손님은 1-1과 같다: 일과 손님 20명(기본 10 + 몰림 10)을 한 파일로 띄워 모두 혼잡도에 센다
+    assert 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_routine_peak.yaml' in stack
+    assert 'staff_file:=none' in stack
     assert 'robots_restaurant_s12.yaml' in stack
-    assert {'scene_script', 'congestion_filter', 'guests', 'localization'} <= _own_params('demo_s12')
+    assert {'scene_script', 'congestion_filter', 'guests', 'staff', 'localization'} <= _own_params('demo_s12')
     on = _demo_procs('demo_s12', congestion_filter='keepout', localization='ground_truth')['stack']['cmd']
     assert 'congestion_filter:=keepout' in on and 'localization:=ground_truth' in on
 
@@ -227,9 +237,9 @@ def test_scene11_runs_its_scene_script_and_on_off_is_cost_fn_only():
     assert procs['scene']['cmd'].startswith(
         'python3 /repo/tools/harness/demo_scene.py /repo/tools/harness/tasks/demo_s11.yaml ')
     stack = procs['stack']['cmd']
-    assert 'robots_restaurant_s11.yaml' in stack and 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_peak_stand.yaml' in stack
-    # 혼잡도에 세지 않는 손님 (staff 자리): 일과대로 움직이는 손님 10명. 손님끼리도 본다
-    assert 'staff_file:=dynamic_obstacles_restaurant_routine.yaml' in stack and 'guest_avoid_peers:=true' in stack
+    assert 'robots_restaurant_s11.yaml' in stack and 'dynamic_obstacles_file:=dynamic_obstacles_restaurant_routine_peak.yaml' in stack
+    # 일과 손님 20명(기본 10 + 몰림 10)을 한 파일로 띄워 모두 혼잡도에 센다. 세지 않는 사람은 없다. 손님끼리도 본다
+    assert 'staff_file:=none' in stack and 'guest_avoid_peers:=true' in stack
     assert 'localization:=ground_truth' in stack                    # 녹화 전용
     assert procs['cameras']['cmd'].endswith('cameras:=top_west,west,stalls')
     for topic in ('/fleet/task_table', '/fleet/robot_states', '/fleet/congestion', '/demo/t0'):

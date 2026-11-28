@@ -313,14 +313,14 @@ ros2 launch amr_gazebo rl_eval.launch.py mode:=brake_sweep payload_mass:=10.0 cs
 ros2 launch amr_gazebo world.launch.py world:=restaurant.sdf
 ros2 launch amr_gazebo spawn_robot.launch.py body:=serving x:=11.2 y:=-7.0 yaw:=3.14159   # 서빙 로봇(BellaBot 크기), wait_1
 C=$(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/config
-ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant.yaml seed:=1        # 평상시 손님 7명 (피크: _peak.yaml, 13명)
+ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant_routine.yaml seed:=1   # 식당 기본: 일과 손님 10명 (몰림까지 20명: _routine_peak.yaml)
 ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_restaurant_staff.yaml name:=staff_obstacles   # 직원 6명
 ```
 
 | 구역 | 내용 |
 | --- | --- |
 | 매장 (북쪽) | 중식·일식·한식·분식·양식·카페 6곳(서→동, 3 m 칸). 배식대 없이 각 매장 앞 카운터에서 픽업(`stall_6·5·1·2·3·4`, 11/12 배식대 자리에 5·6을 이었다), 한글 간판. 동쪽은 직원 통로(문 x 7.0–8.2, 양옆 화분) |
-| 홀 | 100석. 4인 타원 테이블 15개(`t01~t15`, 3행 x 5열), 6인 테이블 4개(`L01~L04`, 동서 등받이 벤치, 2 x 2로 붙여 사이에 1.0 m 십자 통로: 서빙 로봇 한 대만 지나가고 두 대는 엇갈리지 못한다), 동쪽 벽 부스 3개(`b01~b03`), 2인 테이블 2개(`c01·c02`), 서쪽 벽 셀프 코너. 구조 기둥 4개, 3행 남쪽 화분 칸막이(남쪽 통로와 좌석을 나눔). 테이블 `restaurant_foodcourt_table`(흰 상판 + 금속 U자 다리), 의자 `restaurant_wooden_chair`, 벤치 `restaurant_foodcourt_bench`. 치수는 아래 표 |
+| 홀 | 100석. 4인 타원 테이블 15개(`t01~t15`, 3행 x 5열), 6인 테이블 4개(`L01~L04`, 동서 등받이 벤치, 2 x 2로 붙여 사이에 1.0 m 십자 통로: 서빙 로봇 한 대만 지나가고 두 대는 엇갈리지 못한다), 동쪽 벽 부스 3개(`b01~b03`), 2인 테이블 2개(`c01·c02`), 서쪽 벽 셀프 코너. 구조 기둥 4개. 3행 남쪽 화분 칸막이는 없앴다(11/28, 남쪽 통로에서 좌석으로 바로 들어간다). 테이블 `restaurant_foodcourt_table`(흰 상판 + 금속 U자 다리), 의자 `restaurant_wooden_chair`, 벤치 `restaurant_foodcourt_bench`. 치수는 아래 표 |
 | 남쪽 | 키오스크·자판기(나중에 계산 카운터로 바꿀 자리), 퇴식대(스테인리스 5단 선반 2개 `return_1·2` + 흰 카운터 + 불투명 유리창, 옆에 예비 회수 카트 `restaurant_dish_return`), 정수대(정수기 3대·개수대·WATER 간판, 퇴식대 동쪽), 충전소 3개, 동쪽 벽 대기 위치(`wait_1~5`) |
 
 치수: 애슐리·쿠우쿠우·대형마트 푸드코트의 실제 도면은 공개된 것이 없어, 식당 설계 자료의 권장값과 서빙로봇 사양에 맞췄다. 로봇은 `body:=serving`(Pudu BellaBot 크기 0.565 x 0.537 x 1.29 m, 공식 최소 통로 0.8 m) 기준이다.
@@ -331,7 +331,7 @@ ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_
 | 앉은 자리 | 테이블 끝에서 의자 등받이까지 0.45 m (+ 의자 뺄 여유 0.1 m) | 의자를 빼면 테이블에서 45–50 cm(18–20 in) 나온다 |
 | 테이블 열 사이 (서비스 통로) | 의자 등받이 사이 1.37 m, 앉아 있으면 약 1.2 m. x −4.225·1.875 통로는 1·3행에 기둥이 있어 2행 높이에서만 지나간다 | 보조 통로 0.9–1.1 m(36–44 in). 서빙로봇 최소 통로 0.8 m(Pudu BellaBot 공식) |
 | 테이블 행 사이 | 테이블 끝 사이 1.8 m (테이블 끝에 정차한 로봇 옆으로 약 1.08 m 남아 다른 로봇이 지나간다) | 로봇 최소 통로 0.8 m + 정차 로봇 0.72 m(정차 간격 0.15 m 포함) |
-| 주 통로 | 매장 앞 1.57 m(테이블 정차 로봇이 있으면 0.85 m), 셀프 코너 앞 1.56 m, 4인석–6인석 사이 1.0 m, 6인석–부스 사이 1.09 m, 6인석 2 x 2 사이 한 대 통로 1.0 m(로봇 폭 0.537 m, 두 대 나란히 1.07 m라 못 엇갈림. Nav2 inflation 0.55 기준 가운데 비용 약 126으로 경로가 잡힌다), 남쪽 통로(화분 칸막이–퇴식구 정차 로봇) 1.07 m | 주 통로 1.2–1.5 m(48–60 in) |
+| 주 통로 | 매장 앞 1.57 m(테이블 정차 로봇이 있으면 0.85 m), 셀프 코너 앞 1.56 m, 4인석–6인석 사이 1.0 m, 6인석–부스 사이 1.09 m, 6인석 2 x 2 사이 한 대 통로 1.0 m(로봇 폭 0.537 m, 두 대 나란히 1.07 m라 못 엇갈림. Nav2 inflation 0.55 기준 가운데 비용 약 126으로 경로가 잡힌다), 남쪽 통로(3행 좌석까지 열려 있다. 화분 칸막이가 있을 때는 칸막이–퇴식구 정차 로봇 1.07 m) | 주 통로 1.2–1.5 m(48–60 in) |
 
 사람 (전부 충돌체 있음):
 
@@ -339,8 +339,8 @@ ros2 launch amr_gazebo dynamic_obstacles.launch.py config:=$C/dynamic_obstacles_
 | --- | --- | --- |
 | 앉은 손님 | 18 | 정지 모델 OpenRobotics `VisitorKidSit` (어른 앉은 모델은 Fuel에 없어 아이 모델) |
 | 서 있는 손님 | 9 | 정지 모델 OpenRobotics `FemaleVisitor`. 매장 카운터 옆(픽업 자리와 0.5 m 이상), 배식대 앞, 셀프 코너, 입구 |
-| 걷는 손님 | 7 (피크 13) | 동적 장애물 `customer` 타입(`models/dynamic_customer`), [`config/dynamic_obstacles_restaurant.yaml`](config/dynamic_obstacles_restaurant.yaml). 통로 가운데로 직선·곡선·무작위, 0.4–1.0 m/s. 피크 몰림 [`_peak.yaml`](config/dynamic_obstacles_restaurant_peak.yaml)은 서쪽 통로·배식대 앞에 6명을 더한다 (혼잡 구역 `amr_fleet_manager/config/congestion_zones_restaurant.yaml`의 `west_aisle` 3/3, `buffet_line` 3–4/4 확인). 손님 파일에는 손님만 넣는다 (혼잡도 노드가 전부 사람으로 센다) |
-| 걷는 손님 (시나리오 1-2) | 12 | 피크 파일에서 우회 통로(x −7.275)를 왕복하는 `customer_2`만 뺀 [`_peak_scene12.yaml`](config/dynamic_obstacles_restaurant_peak_scene12.yaml). 1-2는 서쪽 통로가 막혔을 때 로봇이 그 통로로 돌아가는지 보는데, `customer_2`와 통로 중간에서 마주쳐 막혔다 (11/6 이진 리허설). 혼잡도 노드는 `guests:=peak_scene12` |
+| 일과 손님 (식당 기본) | 10 | 동적 장애물 `customer` 타입(`models/dynamic_customer`), [`config/dynamic_obstacles_restaurant_routine.yaml`](config/dynamic_obstacles_restaurant_routine.yaml) (`pattern: routine`, 생성 파일). 키오스크 결제 → 착석, 앉아 있다가 물·자판기·셀프 코너·반납 → 다시 착석을 되풀이한다. 일과는 [`guest_routines_restaurant.yaml`](config/guest_routines_restaurant.yaml), 경로는 정답 지도에서 미리 뽑는다. 0.5–0.8 m/s. 혼잡도 노드가 센다 (`amr_fleet_manager` `guests:=normal`). 예전 걷는 손님(통로 직선 왕복·곡선·무작위, `_restaurant`·`_peak`·`_peak_scene12`)은 지웠다 |
+| 몰림 손님 (시나리오 1-1·1-2) | +10 | [`_routine_peak.yaml`](config/dynamic_obstacles_restaurant_routine_peak.yaml) (`pattern: routine`, 생성 파일, 기본 10명 + 몰림 10명 = 20명을 한 파일로 띄워 모두 센다, `guests:=peak`). 몰림 손님도 일과가 있다 ([`guest_routines_restaurant_peak.yaml`](config/guest_routines_restaurant_peak.yaml)): 처음 200~260 s는 제자리(서쪽 통로 4명 → 혼잡 구역 `west_aisle` 1.0)에 머물며 로봇이 오면 0.8 m 비켰다가 돌아오고, 그 뒤 자리·셀프 코너를 오간다. 예전 서 있기만 하던 손님 파일(`_peak_stand`)은 지웠다 |
 | 매장 직원 | 6 | 같은 동적 장애물로 칸막이 안 매장 주방 6곳을 왕복. 따로 [`_staff.yaml`](config/dynamic_obstacles_restaurant_staff.yaml), 같이 띄울 때 `name:=staff_obstacles` |
 
 - 걷는 손님·직원의 충돌체는 무게중심에 놓은 구(반지름 0.25 m, 마찰 0)다. 원기둥이었을 때는 배식대 앞 줄(피크)에서 손님끼리·가구와 모서리로 부딪혀 기울었고, 중력을 꺼 둬서 누운 채 남았다 (피크 13명 + 직원 5명 4분: 원기둥 2명 누움, 구 0명). 구는 어디서 부딪혀도 힘이 무게중심을 지나 기울이는 회전력이 없다. LiDAR는 메시를 보므로 센서 모습은 같다

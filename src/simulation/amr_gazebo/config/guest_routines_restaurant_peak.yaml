@@ -1,0 +1,125 @@
+# 식당 혼잡도 시연 1-1·1-2 손님 20명의 일과 설정 → dynamic_obstacles_restaurant_routine_peak.yaml (pattern routine).
+# 식당 기본 손님 10명(guest_routines_restaurant.yaml, include)에 몰림 손님 10명을 더한다. 한 파일로 띄워 20명 모두 혼잡도에 센다.
+# 만들기: scripts/gen_guest_routines.py 머리말. 형식은 guest_routines_restaurant.yaml 머리말.
+#
+# 몰림 손님(crowd_NN): 예전에 제자리에 서 있기만 하던 손님(pattern stand, 지운 _peak_stand.yaml) 10명의 자리에서 시작해
+# 일과를 한다. 첫 단계는 그 자리에서 200~260 s 머문다 - 장면의 핵심 구간(1-1: 0초 뒤 매장 6 → 1번 테이블 배달 약 140 s,
+# 1-2: 녹화 180 s) 동안은 예전처럼 그 자리에 있고(로봇이 오면 비켰다가 돌아온다), 그 뒤부터 자리·셀프 코너를 오간다.
+#   서쪽 통로 4명(crowd_04·08·09·10) → 혼잡 구역 west_aisle(capacity 3) 1.0. 09·10은 일과 내내 서쪽 통로 안이다
+#   매장 3 앞 1명(crowd_01) → stall_front 1/6 (1-1 켬에서 3호 비용 15.8)
+# 자리: 1-1·1-2 핵심 테이블(t01, t11)과 기본 손님이 앉는 자리는 쓰지 않는다
+include: [guest_routines_restaurant.yaml]
+places:
+  # 몰림 손님이 처음 서 있는 자리 (예전 서 있는 손님 자리 그대로)
+  stall_3_east: [2.6, 3.45]
+  south_aisle_w: [-7.275, -5.6]
+  south_aisle_m: [-3.0, -5.6]
+  south_aisle_e: [4.74, -5.6]
+  south_aisle_k: [-6.0, -5.6]
+  hall_cross: [-7.275, -2.45]
+  west_mid: [-10.5, 0.55]
+  west_south: [-10.45, -4.6]
+  west_north: [-10.0, 1.7]
+  west_corner: [-11.1, -3.1]
+  # 몰림 손님이 가는 자리
+  self_corner_n: [-10.95, 1.2]
+  self_corner_s: [-10.95, -2.0]
+  t02_w: [-6.8, 1.95]
+  t02_e: [-4.7, 1.95]
+  t05_w: [2.35, 1.95]
+  t07_e: [-4.7, -1.05]
+  t08_w: [-3.75, -1.05]
+  t10_w: [2.35, -1.05]
+  t12_w: [-6.8, -4.05]
+  t13_w: [-3.75, -4.05]
+
+guests:
+  - id: crowd_01
+    start: stall_3_east
+    steps:
+      - {go: stall_3_east, wait_s: [200, 260]}
+      - {go: t05_w, wait_s: [60, 120]}
+      - {go: stall_3_east, wait_s: [30, 60]}
+    loop_from: 1
+    note: "매장 3 앞에서 음식을 기다리다 자리로, 다시 추가 주문 (예전 customer_1 자리)"
+
+  - id: crowd_02
+    start: south_aisle_w
+    steps:
+      - {go: south_aisle_w, wait_s: [200, 260]}
+      - {go: t02_w, wait_s: [60, 120]}
+      - {go: south_aisle_w, wait_s: [20, 40]}
+    loop_from: 1
+    note: "남쪽 통로에서 일행을 기다리다 자리로 (예전 customer_2 자리, x -7.275 통로 아래)"
+
+  - id: crowd_03
+    start: south_aisle_m
+    steps:
+      - {go: south_aisle_m, wait_s: [200, 260]}
+      - {go: t13_w, wait_s: [60, 120]}
+      - {go: south_aisle_m, wait_s: [20, 40]}
+    loop_from: 1
+    note: "남쪽 통로에서 자리를 찾다가 앉기 (예전 customer_3 자리)"
+
+  - id: crowd_04
+    start: west_mid
+    steps:
+      - {go: west_mid, wait_s: [200, 260]}
+      - {go: t07_e, wait_s: [60, 120]}
+      - {go: west_mid, wait_s: [30, 60]}
+    loop_from: 1
+    note: "셀프 코너 줄에 서 있다가 자리로, 다시 줄 (예전 customer_4 자리, 서쪽 통로)"
+
+  - id: crowd_05
+    start: south_aisle_e
+    steps:
+      - {go: south_aisle_e, wait_s: [200, 260]}
+      - {go: t10_w, wait_s: [60, 120]}
+      - {go: south_aisle_e, wait_s: [20, 40]}
+    loop_from: 1
+    note: "동쪽 세로 통로 아래에서 기다리다 자리로 (예전 customer_5 자리)"
+
+  - id: crowd_06
+    start: south_aisle_k
+    steps:
+      - {go: south_aisle_k, wait_s: [200, 260]}
+      - {go: t02_e, wait_s: [60, 120]}
+      - {go: south_aisle_k, wait_s: [20, 40]}
+    loop_from: 1
+    note: "남쪽 통로에서 기다리다 자리로 (예전 customer_6 자리)"
+
+  - id: crowd_07
+    start: hall_cross
+    steps:
+      - {go: hall_cross, wait_s: [200, 260]}
+      - {go: t08_w, wait_s: [60, 120]}
+      - {go: hall_cross, wait_s: [20, 40]}
+    loop_from: 1
+    note: "테이블 사이 통로에서 일행과 이야기하다 자리로 (예전 customer_7 자리)"
+
+  - id: crowd_08
+    start: west_south
+    steps:
+      - {go: west_south, wait_s: [200, 260]}
+      - {go: t12_w, wait_s: [60, 120]}
+      - {go: west_south, wait_s: [30, 60]}
+    loop_from: 1
+    note: "서쪽 통로 남쪽 줄 끝에 서 있다가 자리로 (예전 peak_1 자리, 1-1 1호 출발 자리 1 m 앞)"
+
+  - id: crowd_09
+    start: west_north
+    steps:
+      - {go: west_north, wait_s: [200, 260]}
+      - {go: self_corner_n, wait_s: [10, 20]}
+      - {go: west_north, wait_s: [40, 80]}
+    loop_from: 1
+    note: "서쪽 통로 북쪽에 서 있다가 셀프 코너에서 수저를 챙긴다 (예전 peak_2 자리)"
+
+  - id: crowd_10
+    start: west_corner
+    steps:
+      - {go: west_corner, wait_s: [200, 260]}
+      - {go: self_corner_s, wait_s: [10, 20]}
+      - {go: west_corner, wait_s: [40, 80]}
+    loop_from: 1
+    note: "셀프 코너 남쪽 빈 곳에 서 있다가 반찬을 담는다 (예전 peak_3 자리)"

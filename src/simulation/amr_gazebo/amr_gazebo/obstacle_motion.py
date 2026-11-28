@@ -24,6 +24,8 @@ straight·random 패턴만 쓸 수 있다 (curve는 구간이 표본 간격 0.5 
 keep_away_m(생성자 인자, 0이면 끔)을 주면 패턴·로봇 이름과 상관없이, 로봇 중심이 keep_away_m 안에 있고 그쪽으로
 걷는 중이면(로봇 쪽 성분이 양수) 그 자리에 선다. 움직이는 로봇에도 선다 (식당 시연: 손님이 로봇에 부딪히지 않게).
 로봇이 멀어지거나 걷는 방향이 로봇에서 멀어지면 다시 걷는다. KEEP_AWAY_PATIENCE_S 넘게 서 있으면 온 쪽으로 돌아선다.
+로봇 쪽으로 걷는 게 아니어도, 움직이는 로봇이 keep_away_m 안이고 손님이 그 로봇 앞쪽이나 옆이면(나란히 걷기, 로봇 앞에서
+같은 쪽으로 걷기) 로봇 진행선에서 옆으로 비킨다 (EVADE_SPEED). 로봇이 멀어지면 원래 가던 길로 간다.
 yield_robot_size(선택, [길이, 폭] m)는 비킬 때 보는 로봇 차체 크기다. 없으면 물류 AMR(ROBOT_LENGTH × ROBOT_WIDTH).
 식당 서빙 로봇(body:=serving)은 0.565 × 0.537 m를 준다.
 yield_patience_s·yield_progress_m(선택)은 언제 돌아설지 정한다. 기본(없음)은 막은 로봇의 속력이 STOPPED_SPEED 아래로
@@ -91,6 +93,9 @@ YIELD_SIDE_MARGIN = 0.05
 YIELD_PATIENCE_S = 5.0
 # keep_away_m: 로봇 때문에 이만큼 [s] 넘게 서 있으면 온 쪽으로 돌아선다 (로봇이 손님 앞에 멈춰 둘 다 기다리지 않게)
 KEEP_AWAY_PATIENCE_S = 5.0
+# keep_away_m: 움직이는 로봇의 앞쪽·옆(로봇 진행 방향 성분이 거리의 -이 비율보다 큼)에 있으면 진행선에서 옆으로 비킨다
+# (손님이 로봇과 나란히 걷거나 로봇 앞에서 같은 쪽으로 걸으면 로봇 안전 노드가 계속 감속한다: 11/17 1-2 켬, 약 8 s)
+MAKE_WAY_BEHIND = 0.2
 # 로봇 차체 [m] (amr_description, avoidance_eval robot_length·width). yield_robot_size가 없을 때 쓴다
 ROBOT_LENGTH = 0.6
 ROBOT_WIDTH = 0.4
@@ -244,6 +249,9 @@ class ObstacleMotion:
             self._advance()
         if self.keep_away_m > 0 and self._keep_away(xy, robots or {}, t):
             return 0.0, 0.0
+        way = self._make_way(xy, robots or {}) if self.keep_away_m > 0 else None
+        if way is not None:
+            return way
         if self.yield_to and self._must_wait(xy, robots or {}, t):
             return 0.0, 0.0
         if self._peer_wait(xy, self._goal, peers, t):
@@ -272,6 +280,28 @@ class ObstacleMotion:
             self._keep_since = None
             return False
         return True
+
+    def _make_way(self, xy: Point, robots: Mapping[str, RobotState]) -> Optional[Tuple[float, float]]:
+        """keep_away_m 안에서 움직이는 로봇의 앞쪽·옆이면 그 로봇 진행선에서 옆으로 비키는 속도 (아니면 None).
+        여럿이면 가장 가까운 로봇을 피한다. 로봇 뒤쪽(로봇이 멀어지는 중)은 비키지 않는다."""
+        near = None
+        for rx, ry, yaw, speed in robots.values():
+            ox, oy = xy[0] - rx, xy[1] - ry
+            d = math.hypot(ox, oy)
+            if d >= self.keep_away_m or speed < STOPPED_SPEED:
+                continue
+            hx, hy = math.cos(yaw), math.sin(yaw)
+            if ox * hx + oy * hy <= -MAKE_WAY_BEHIND * d:
+                continue
+            if near is None or d < near[0]:
+                near = (d, ox, oy, hx, hy)
+        if near is None:
+            return None
+        _, ox, oy, hx, hy = near
+        nx, ny = -hy, hx                     # 진행 방향의 왼쪽
+        if ox * nx + oy * ny < 0:            # 손님이 오른쪽이면 오른쪽으로
+            nx, ny = -nx, -ny
+        return EVADE_SPEED * nx, EVADE_SPEED * ny
 
     def _must_wait(self, xy: Point, robots: Mapping[str, RobotState], t: Optional[float]) -> bool:
         """길을 막은 로봇 때문에 서야 하면 True (self.waiting도 같은 값).
@@ -385,6 +415,9 @@ class ObstacleMotion:
         self._goal = self._detour if self._detour is not None else path[self._pi]
         if self.keep_away_m > 0 and self._keep_away(xy, robots, t):
             return 0.0, 0.0
+        way = self._make_way(xy, robots) if self.keep_away_m > 0 else None
+        if way is not None:
+            return way
         if self.yield_to and self._must_wait(xy, robots, t):
             return 0.0, 0.0
         if self._peer_wait(xy, self._goal, peers, t):
