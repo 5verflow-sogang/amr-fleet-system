@@ -602,7 +602,6 @@ const STALLS = [[-10.5, 1.3, '중식'], [-7.5, 1.3, '일식'], [-4.5, 1.3, '한�
 STALLS.forEach(([c, hw]) => fixture(c - hw, c + hw, 4.63, 5.3));
 fixture(-12, -11.5, -3.5, 2.2, 2);
 [[-4.225, 1.7], [1.875, 1.7], [-4.225, -4.3], [1.875, -4.3]].forEach(([x, y]) => fixture(x - .2, x + .2, y - .2, y + .2, 2));          // 기둥
-[[-9.65, -7.9], [-6.6, -1.85], [-0.5, 4.25]].forEach(([a, b]) => rect(a, b, -5.24, -4.96, { fill: MAP.plant, stroke: MAP.plantLine, rx: 3.5 }, fur));   // 화분 칸막이
 [-1.15, 1.15].forEach(x => fixture(x - .85, x + .85, -8, -7.3, 2));             // 퇴식구
 [5, 6.5, 8].forEach(x => fixture(x - .3, x + .3, -7.98, -7.75, 2));             // 충전기
 for (const [id, [cx, cy, w, h]] of Object.entries(TABLES)) {                    // 의자
