@@ -34,7 +34,9 @@ params:
   cost_fn: euclidean                             # 1-1 켬: congestion
   congestion_weight: "3.0"
   congestion_filter: none                        # 1-2 켬: keepout
-  cameras: top,west,stalls                       # amr_gazebo config/demo_cameras_restaurant.yaml 이름
+  # 탑뷰만 (11/12): west·stalls는 카메라 앞 손님·기둥이 화면 1/3을 가려 못 썼고, 카메라 하나가 RTF를 0.13 → 0.08로 떨어뜨린다.
+  # 다른 뷰가 필요하면 눈높이(1.6 m) 대신 2.8 m 천장 각도로 (amr_gazebo config/demo_cameras_restaurant.yaml 이름)
+  cameras: top
   robot_camera: "false"                          # 로봇 시점: amr_01 등 (카메라 하나마다 RTF가 더 떨어진다)
   # YOLO 인식: 카메라를 켠 로봇(robot_camera)에서만 뜬다. 서빙 몸체라 식당 프로필(COCO 원본, 사람만, amr_detection
   # detection_restaurant.yaml). 결과 /amr_0N/perception/objects(상자·확신도·거리, 촬영 시각)를 rosbag에 남겨 로봇 시점 영상에 그린다

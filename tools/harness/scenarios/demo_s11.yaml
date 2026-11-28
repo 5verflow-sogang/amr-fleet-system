@@ -29,7 +29,7 @@ params:
   cost_fn: euclidean
   congestion_weight: "3.0"
   congestion_filter: none
-  cameras: top_west,west,stalls
+  cameras: top_west
   robot_camera: "false"
   # 녹화 전용이라 시뮬레이터 정답 위치 (AMCL은 손님 사이에서 밀려 거짓 도착이 난다, demo_restaurant 머리말)
   localization: ground_truth

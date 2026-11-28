@@ -231,7 +231,7 @@ def test_scene11_runs_its_scene_script_and_on_off_is_cost_fn_only():
     # 혼잡도에 세지 않는 손님 (staff 자리): 일과대로 움직이는 손님 10명. 손님끼리도 본다
     assert 'staff_file:=dynamic_obstacles_restaurant_routine.yaml' in stack and 'guest_avoid_peers:=true' in stack
     assert 'localization:=ground_truth' in stack                    # 녹화 전용
-    assert procs['cameras']['cmd'].endswith('cameras:=top_west,west,stalls')
+    assert procs['cameras']['cmd'].endswith('cameras:=top_west')   # 눈높이 west·stalls는 가려져 뺐다 (#348)
     for topic in ('/fleet/task_table', '/fleet/robot_states', '/fleet/congestion', '/demo/t0'):
         assert topic in procs['rosbag']['cmd']                      # tools/demo/compose.py가 읽는 토픽
     assert {'scene_script', 'cost_fn', 'cameras', 'localization'} <= _own_params('demo_s11')
