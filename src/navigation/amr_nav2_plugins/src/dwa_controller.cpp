@@ -79,6 +79,8 @@ void DwaController::configure(
   declareAndGet(node, prefix + "avoid_margin_add", config.avoid_margin_add);
   declareAndGet(node, prefix + "avoid_weight_scale", config.avoid_weight_scale);
   declareAndGet(node, prefix + "avoid_rollout_time", config.avoid_rollout_time);
+  declareAndGet(node, prefix + "reverse_escape_enabled", config.reverse_escape_enabled);
+  declareAndGet(node, prefix + "reverse_escape_min_v", config.reverse_escape_min_v);
   AvoidModeParams avoid;
   avoid.enabled = config.avoid_mode_enabled;
   declareAndGet(node, prefix + "avoid_ttc_enter_s", avoid.enter_ttc_s);
@@ -145,10 +147,10 @@ void DwaController::configure(
   RCLCPP_INFO(
     logger_,
     "DwaController(%s) 설정: max_v=%.2f max_w=%.2f v_samples=%d w_samples=%d "
-    "dynamic_weight=%.2f lookahead=%.2fm avoid_mode=%s(TTC<%.1fs)",
+    "dynamic_weight=%.2f lookahead=%.2fm avoid_mode=%s(TTC<%.1fs) reverse_escape=%s(%.2fm/s)",
     name_.c_str(), config.max_v, config.max_w, config.v_samples, config.w_samples,
     config.dynamic_weight, lookahead_distance_, config.avoid_mode_enabled ? "on" : "off",
-    avoid.enter_ttc_s);
+    avoid.enter_ttc_s, config.reverse_escape_enabled ? "on" : "off", config.reverse_escape_min_v);
 }
 
 void DwaController::cleanup()
@@ -385,6 +387,14 @@ geometry_msgs::msg::TwistStamped DwaController::computeVelocityCommands(
       "DWA: 회피 모드 여유로 갈 궤적이 없어 평소 여유로 다시 골랐다 -> %s (누적 %zu주기)",
       command.status == amr_planning_core::DwaStatus::kOk ? "찾음" : "못 찾음",
       planner_->avoidFallbackCount());
+  }
+
+  if (planner_->lastUsedReverseEscape()) {
+    RCLCPP_INFO_THROTTLE(
+      logger_, *node_.lock()->get_clock(), 1000,
+      "DWA: 갈 궤적이 없어 후진 탈출로 다시 골랐다 -> %s (v=%.2f w=%.2f, 누적 %zu주기)",
+      command.status == amr_planning_core::DwaStatus::kOk ? "찾음" : "못 찾음", command.v, command.w,
+      planner_->reverseEscapeCount());
   }
 
   if (command.status == amr_planning_core::DwaStatus::kNoValidTrajectory) {

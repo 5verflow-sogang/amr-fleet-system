@@ -258,6 +258,7 @@ python3 experiments/planner_compare/compare.py --out /tmp/planner_compare   # pa
 | `avoid_margin_add` / `avoid_weight_scale` / `avoid_rollout_time` | 0.4 m / 2.0 / 3.0 s | 4-10절. 회피 모드에서 안전 여유 더하기, 동적 가중치 곱, 궤적 시뮬레이션 길이 |
 | `avoid_ttc_enter_s` / `avoid_exit_hold_s` / `avoid_risk_timeout_s` (플러그인) | 3.0 / 0.5 / 0.3 s | 4-10절. 켜기 TTC, 끄기 전 유지 시간, collision_risks 끊김 판정 |
 | `passing_*` (플러그인, `PassingConfig`) | 꺼짐 (창고 스택 yaml 켬) | 4-11절. 정면 비켜 지나가기. 스택 값: 여유 0.4 m, 옆 이탈 상한 0.9 m, 나가기·들어오기 0.6 m, 추종 기준 0.8 s·0.2 m |
+| `reverse_escape_enabled` / `reverse_escape_min_v` | false / -0.2 m/s (창고·식당 스택 yaml true) | 4-12절. 갈 궤적이 없을 때만 후진 창으로 한 번 더 고른다. 연구 2는 false 고정 |
 
 **샘플 수 (10/27, 창고 스택 `nav2_params.yaml` 10 x 15):** `computeVelocityCommand` 한 번 계산 시간을 재고
 (x86 8코어, 다른 부하 없음, 3 x 3 m local costmap + 통로 벽·inflation, 90° 꺾이는 경로, max_v 0.5, 300회 중앙값),
@@ -561,6 +562,31 @@ Dynamic Street Scenarios in a Frenet Frame", ICRA 2010의 옆 이탈 계획을 �
 길이·여유)는 그대로다. 상태는 `dwa/passing`(`std_msgs/Bool`, transient local)으로 바뀔 때 발행하고 INFO 로그를 남긴다.
 
 **연구 2**(C API `DwaParams`)는 `PassingManeuver`를 부르지 않는다. 플러그인에서만 쓰고, `passing_enabled` 기본은 false다.
+
+### 4-12. 후진 탈출 (`reverse_escape_enabled`, #354)
+
+**원인.** fleet 대치 양보(#352) 검증 standoff_resp에서 남은 정체 10건 중 7건이 로봇 한 대가 벽·선반을 보고 혼자 선 것이었다
+(amr_03 870 s, amr_04 480 s). 스테이션 도착 직후 벽까지 0.35 m(선반 0.25 m)인데 창고 풋프린트(0.6 x 0.4 m)의 모서리 반경이
+0.36 m라 제자리 회전이 벽을 치고, `min_v` 0.0이라 후진 궤적이 없어 앞·회전·후진이 모두 막혔다. 스캔이 찍은 벽 셀이
+풋프린트 앞 끝 셀에 걸쳐 있으면 정지 샘플까지 첫 점부터 닿아 "유효한 궤적 없음"이 이어지고(`Failed to make progress`), BackUp
+복구도 시작 자세 충돌로 `Collision Ahead` 거부된다.
+
+**조건.** 평소 탐색(4-10 회피 모드 대체 탐색 포함)이 `kNoValidTrajectory`일 때만, 같은 호출 안에서 선속도 창을
+[`reverse_escape_min_v`, 0](동적 윈도우 `acc_v·dt` 안)으로 바꿔 한 번 더 고른다. 평소 주행은 `min_v` 그대로 전진만이라
+바뀌지 않는다(`ReverseEscapeNeverReversesInNormalDriving`: 직선·90° 좁은 통로·뒤쪽 목표 제자리 회전에서 후진 0회). 후진
+궤적도 사각 풋프린트 충돌 검사를 그대로 거친다 - 다만 **지금 자세의 풋프린트가 이미 덮은 치명 셀은 이 탐색에서만 충돌로
+보지 않는다**(새로 닿는 셀은 그대로 충돌, 4-6의 "이미 여유 안인 동적 장애물은 멀어지는 궤적을 허용"과 같은 발상). 안 그러면
+위 경우 모든 궤적이 첫 점부터 막혀 BackUp처럼 거부된다. 정지(v=0, w=0)는 후보가 아니다 - 발밑 셀을 빼면 정지가 늘 유효해져
+뒤까지 막힌 경우를 kOk(0, 0)로 가린다. 속도 비용은 속력 |v|로 매긴다(v 그대로면 음수에서 1을 넘고 가장 느린 후진이 가장
+싸져 벽에서 떨어지지 못한다). heading은 평소처럼 궤적 끝 방향으로 매겨, 후진하면서 목표 쪽으로 도는 궤적을 고른다. 제자리
+회전 모드(4-9)는 이 탐색에서 쓰지 않는다. 한 주기 후진으로 발밑이 벗어나면 다음 주기부터 평소 탐색으로 돌아가
+(`ReverseEscapeClosedLoopLeavesWallAndHeadsToGoal`) 돌아서 간다. 안전 노드 `path_hazard`는 후진이면 뒤쪽 띠를 보고 멀어지는
+명령은 막지 않는다.
+
+**파라미터.** `reverse_escape_enabled`(`DwaConfig` 기본 false - 연구 2 C API·`DwaParams` 결과가 바뀌지 않게, 창고·식당 스택
+`nav2_params.yaml` `DWA` true), `reverse_escape_min_v`(-0.2 m/s). 쓰면 `DWA: 갈 궤적이 없어 후진 탈출로 다시 골랐다` INFO 로그
+(1 s 제한)를 남긴다. 안 되는 경우: 벽 셀이 풋프린트에 안 걸치고(벽까지 0.35 m 그대로) 정지만 남으면 평소 탐색이 kOk(0, 0)라
+후진 탈출이 켜지지 않는다 - 그때는 이전처럼 progress_checker·복구로 넘어간다.
 
 ## 5. Pure Pursuit · Stanley · PID
 

@@ -1926,4 +1926,168 @@ TEST(DwaPlannerTest, PassingTrackingReturnsToPathInShorterDistanceAtSpeed)
     << "평소 " << normal.distance << " m, 추종 모드 " << passing.distance << " m";
 }
 
+// --- 후진 탈출 (#354) ---
+
+namespace
+{
+
+// 벽을 보고 바짝 선 로봇 (#354 standoff_resp: 스테이션 도착 직후 벽까지 0.35 m, 선반은 0.25 m). 로봇 (5.0, 3.0),
+// 벽(+x)을 본다. 스캔이 찍은 벽 셀(0.05 m)이 풋프린트 앞 끝(x 5.30)이 든 셀 [5.25, 5.30)부터라 지금 자세가 이미 그
+// 셀에 걸친다 - 그래서 전진·제자리 회전은 물론 정지까지 첫 점부터 닿고(로그의 "유효한 궤적 없음" 연속), BackUp도
+// 시작 자세 충돌로 거부됐다.
+// 다음 목적지는 뒤쪽(경로가 -x로 간다).
+struct WallFacing
+{
+  TestGrid grid{200, 120, 0.05};
+  std::vector<Point2D> path;
+  RobotState state;
+
+  WallFacing()
+  {
+    grid.setRegion(5.27, 5.60, 0.0, 5.99, 254);  // 셀 105 = [5.25, 5.30)부터: 풋프린트 앞 끝 샘플이 걸친다
+    appendLine(path, 5.0, 3.0, 1.0, 3.0);
+    state.x = 5.0;
+    state.y = 3.0;
+    state.yaw = 0.0;
+  }
+};
+
+DwaConfig makeEscapeConfig(bool enabled)
+{
+  DwaConfig config = makeStackConfig();
+  config.reverse_escape_enabled = enabled;
+  return config;
+}
+
+}  // namespace
+
+TEST(DwaPlannerTest, ReverseEscapeBacksAwayFromWallItFaces)
+{
+  const WallFacing scene;
+  // 꺼져 있으면 지금과 같다: 갈 궤적이 하나도 없다
+  const DwaPlanner off(makeEscapeConfig(false));
+  EXPECT_EQ(off.computeVelocityCommand(scene.state, scene.path, scene.grid.grid()).status,
+    DwaStatus::kNoValidTrajectory);
+  EXPECT_FALSE(off.lastUsedReverseEscape());
+
+  const DwaPlanner on(makeEscapeConfig(true));
+  const DwaCommand command = on.computeVelocityCommand(scene.state, scene.path, scene.grid.grid());
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  EXPECT_LT(command.v, 0.0);
+  // 한 주기 감속 한계(acc_v*dt)와 reverse_escape_min_v 안
+  EXPECT_GE(command.v, -on.config().acc_v * on.config().dt - 1e-9);
+  EXPECT_TRUE(on.lastUsedReverseEscape());
+  EXPECT_EQ(on.reverseEscapeCount(), 1u);
+  // 설정은 탐색 뒤 원래대로 (전진만)
+  EXPECT_DOUBLE_EQ(on.config().min_v, 0.0);
+}
+
+TEST(DwaPlannerTest, ReverseEscapeRespectsMinVelocityAndRearWall)
+{
+  // 후진 속도는 reverse_escape_min_v 밑으로 안 내려간다
+  WallFacing scene;
+  DwaConfig config = makeEscapeConfig(true);
+  config.reverse_escape_min_v = -0.05;
+  DwaCommand command = DwaPlanner(config).computeVelocityCommand(
+    scene.state, scene.path, scene.grid.grid());
+  ASSERT_EQ(command.status, DwaStatus::kOk);
+  EXPECT_LT(command.v, 0.0);
+  EXPECT_GE(command.v, -0.05 - 1e-9);
+
+  // 뒤도 막혀 있으면(풋프린트 뒤 끝 x 4.70 바로 뒤가 벽) 후진 궤적도 사각 풋프린트 충돌 검사로 빠져 그대로 정지한다
+  scene.grid.setRegion(4.50, 4.69, 0.0, 5.99, 254);
+  command = DwaPlanner(makeEscapeConfig(true)).computeVelocityCommand(
+    scene.state, scene.path, scene.grid.grid());
+  EXPECT_EQ(command.status, DwaStatus::kNoValidTrajectory);
+}
+
+TEST(DwaPlannerTest, ReverseEscapeClosedLoopLeavesWallAndHeadsToGoal)
+{
+  const WallFacing scene;
+  const DwaConfig config = makeEscapeConfig(true);
+  const DwaPlanner planner(config);
+  RobotState state = scene.state;
+  int reverse_steps = 0;
+  int forward_steps_after = 0;
+  bool reached = false;
+  for (int step = 0; step < 1500; ++step) {
+    const DwaCommand command = planner.computeVelocityCommand(state, scene.path, scene.grid.grid());
+    if (command.status == DwaStatus::kGoalReached) {
+      reached = true;
+      break;
+    }
+    ASSERT_EQ(command.status, DwaStatus::kOk) << "step " << step;
+    if (command.v < 0.0) {
+      ++reverse_steps;
+    } else if (command.v > 0.0 && reverse_steps > 0) {
+      ++forward_steps_after;
+    }
+    state.x += command.v * std::cos(state.yaw) * config.dt;
+    state.y += command.v * std::sin(state.yaw) * config.dt;
+    state.yaw = wrapAngle(state.yaw + command.w * config.dt);
+    state.v = command.v;
+    state.w = command.w;
+    // 벽 쪽으로 더 들어가지 않는다: 풋프린트 앞 끝(모서리 중 가장 큰 x)이 처음(5.30)을 넘지 않는다. 처음 걸친 셀
+    // 안에서 후진+회전하는 동안은 그 셀에 닿아 있을 수 있다(탈출 탐색이 충돌로 안 보는 셀)
+    const double front =
+      state.x + 0.3 * std::abs(std::cos(state.yaw)) + 0.2 * std::abs(std::sin(state.yaw));
+    ASSERT_LE(front, 5.30 + 1e-9) << "step " << step << " yaw=" << state.yaw;
+  }
+  EXPECT_FALSE(planner.footprintCollides(scene.grid.grid(), state.x, state.y, state.yaw));
+  EXPECT_GT(reverse_steps, 0);
+  EXPECT_GT(forward_steps_after, 0);  // 빠져나온 뒤에는 평소처럼 전진으로 간다
+  EXPECT_TRUE(reached) << "x=" << state.x << " y=" << state.y << " yaw=" << state.yaw;
+}
+
+TEST(DwaPlannerTest, ReverseEscapeNeverReversesInNormalDriving)
+{
+  // 켜 두어도 평소 주행(갈 궤적이 있을 때)은 전진만 쓴다: 직선, 90° 꺾어 좁은 통로, 크게 틀어진 출발(제자리 회전)
+  const DwaConfig config = makeEscapeConfig(true);
+  auto run = [&](const Grid & grid, const std::vector<Point2D> & path, RobotState state) {
+      const DwaPlanner planner(config);
+      bool reached = false;
+      for (int step = 0; step < 1500; ++step) {
+        const DwaCommand command = planner.computeVelocityCommand(state, path, grid);
+        if (command.status == DwaStatus::kGoalReached) {
+          reached = true;
+          break;
+        }
+        EXPECT_EQ(command.status, DwaStatus::kOk) << "step " << step;
+        EXPECT_GE(command.v, 0.0) << "step " << step;
+        state.x += command.v * std::cos(state.yaw) * config.dt;
+        state.y += command.v * std::sin(state.yaw) * config.dt;
+        state.yaw = wrapAngle(state.yaw + command.w * config.dt);
+        state.v = command.v;
+        state.w = command.w;
+      }
+      EXPECT_EQ(planner.reverseEscapeCount(), 0u);
+      return reached;
+    };
+
+  TestGrid open(200, 120, 0.05);
+  std::vector<Point2D> straight;
+  appendLine(straight, 1.0, 3.0, 8.0, 3.0);
+  RobotState start;
+  start.x = 1.0;
+  start.y = 3.0;
+  EXPECT_TRUE(run(open.grid(), straight, start));
+
+  TestGrid corridor(120, 120, 0.05, 254);
+  corridor.setRegion(0.0, 5.99, 0.0, 1.99, 0);
+  corridor.setRegion(2.70, 3.29, 2.0, 5.99, 0);
+  std::vector<Point2D> turn;
+  appendLine(turn, 0.6, 1.0, 3.0, 1.0);
+  appendLine(turn, 3.0, 1.0, 3.0, 5.0);
+  start.x = 0.6;
+  start.y = 1.0;
+  EXPECT_TRUE(run(corridor.grid(), turn, start));
+
+  std::vector<Point2D> behind;
+  appendLine(behind, 5.0, 3.0, 1.0, 3.0);
+  start.x = 5.0;
+  start.y = 3.0;
+  start.yaw = 0.0;  // 목표가 바로 뒤 - 벽이 없으면 제자리로 돌아서 간다
+  EXPECT_TRUE(run(open.grid(), behind, start));
+}
+
 }  // namespace amr_planning_core
