@@ -30,7 +30,7 @@ processes:
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
       dynamic_obstacles:=true dynamic_obstacles_file:={guests} nav2_composition:=true
       guest_keep_away_m:=1.2 guest_avoid_peers:=true
-      zone_client:={permit_zones} zones_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/zones_restaurant.yaml
+      zone_client:={permit_zones} zones_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/zones_restaurant.yaml zone_stop_margin_m:=1.0
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:={spawn_interval_s}
     ready_topic: /fleet/heartbeat
     ready_cmds:
