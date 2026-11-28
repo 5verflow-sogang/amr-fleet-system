@@ -5,8 +5,9 @@
 #   label=standoff  params="zone_client=true fleet_params=fleet_manager.yaml slot=b2"                 대치 양보만 (#352)
 #   label=zone      params="zone_client=true fleet_params=fleet_manager.yaml zones_file=Z/zones_aisle.yaml slot=b3"
 #                   손으로 그린 중앙 통로 구역(한 대씩) + 대치 양보 (11/16)
-#   label=auto      params="zone_client=true zones_file=C/zones_restaurant.yaml slot=b4"
-#                   지도에서 자동으로 찾은 구역 (amr_fleet_core.traffic.permit_zones), 식당 서버 설정 그대로(양보 끔)
+#   label=auto      params="zone_client=true zones_file=C/zones_restaurant.yaml stop_margin_m=1.0 slot=b4"
+#                   지도에서 자동으로 찾은 구역 (amr_fleet_core.traffic.permit_zones), 식당 서버 설정 그대로(양보 끔).
+#                   정지선 1.0 m: 0.5면 기다리는 로봇이 남쪽 출구 길목(7.0, -2.3)에 서서 0/6 완료였다 (11/28)
 # 한 대 통과 시험 (정면 대치 off 2회에서 한 대도 좁은 통로를 못 지나감 - DWA 궤적 없음·안전 정지·추적 오탐):
 #   params="num_robots=1 robots=robots_solo.yaml scene=scene_solo.yaml [tracking=false] [safety=false]"
 # 판정: 요약의 fleet.tasks_completed(2면 둘 다 도착), fleet.stalls(60 s 넘게 못 움직임), fleet.standoff_yields, fleet.zone_requests
@@ -26,6 +27,8 @@ params:
   zone_client: "false"
   # 구역 파일 절대 경로 (서버·구역 클라이언트가 같이 읽는다)
   zones_file: /repo/experiments/restaurant_headon/zones_none.yaml
+  # 허가 없이 서는 자리 (구역 경계 앞 m). 손 구역(11/16)은 0.5로 쟀다
+  stop_margin_m: "0.5"
   # 식당 서버 설정: 대치 양보 끔 (fleet_manager_restaurant.yaml). fleet_manager.yaml이면 기본(양보 켬). 워크플로는 빈 값을 못 받는다
   fleet_params: fleet_manager_restaurant.yaml
   localization: ground_truth
@@ -43,7 +46,7 @@ processes:
       tracking:={tracking} safety:={safety} zone_client:={zone_client} enable_camera:={robot_camera}
       world:=restaurant.sdf body:=serving seed:={seed} delay_ms:={delay_ms} loss_pct:={loss_pct}
       robots_file:=/repo/experiments/restaurant_headon/{robots}
-      zones_file:={zones_file}
+      zones_file:={zones_file} zone_stop_margin_m:={stop_margin_m}
       map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
       dynamic_obstacles:=false nav2_composition:=true
       $(test -n "{fleet_params}" && echo fleet_params_file:={fleet_params})
