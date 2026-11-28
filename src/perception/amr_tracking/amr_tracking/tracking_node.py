@@ -8,8 +8,10 @@ measurement_source:
 - poses: geometry_msgs/PoseArray 위치 측정 (synthetic_obstacles_node 시험용). 반경은 obstacle_radius 고정.
 
 출력은 odom 좌표계다 (DWA가 odom에서 동작하고, map은 위치 보정 때 점프해 가짜 속도가 생긴다).
-is_dynamic은 추적 속력(R3, tracker.py)에 빈 공간 침입 증거(use_free_space, free_space.py)를 더해 정한다.
-로봇이 움직이면 벽·랙 조각의 중심이 미끄러져 속력이 생기는데, 이 조각은 빔이 지나간 빈 칸에 들어가지 않는다.
+is_dynamic은 추적 속력(R3, tracker.py)에 빈 공간 침입 증거(use_free_space, free_space.py)와 실제 이동량
+(dynamic_min_displacement)을 더해 정한다. 로봇이 움직이면 벽·랙 조각의 중심이 미끄러져 속력이 생기는데, 이 조각은
+빔이 지나간 빈 칸에 들어가지 않고 제자리에서 멀리 가지 않는다. 이동량은 군집 중심과 센서에 가장 가까운 군집 점 중
+덜 움직인 쪽으로 잰다. 동적 트랙이 멈춰 있으면 정적으로 내린다 (dynamic_release_*, tracker.py).
 
 R2 정적 지도 대조 (use_static_map): 군집화 전에 지도의 막힌 칸(부풀림 map_inflation) 위 스캔 점을 뺀다
 (amr_perception_core static_map.py). 스캔 촬영 시각의 TF(map → lidar_link)가 필요하다. 지도나 TF가 없으면
@@ -161,6 +163,12 @@ class TrackingNode(Node):
             maneuver_margin=p('maneuver_margin', 0.15).value,
             maneuver_max_age=p('maneuver_max_age', 0.5).value,
             maneuver_max_radius=p('maneuver_max_radius', 0.4).value,
+            dynamic_min_displacement=p('dynamic_min_displacement', 0.3).value,
+            dynamic_evidence_window=p('dynamic_evidence_window', 10).value,
+            dynamic_release_frames=p('dynamic_release_frames', 30).value,
+            dynamic_pause_frames=p('dynamic_pause_frames', 100).value,
+            dynamic_release_speed=p('dynamic_release_speed', 0.1).value,
+            dynamic_release_max_displacement=p('dynamic_release_max_displacement', 0.5).value,
         ))
         self.clustering = ClusteringConfig(
             breakpoint_lambda_deg=p('breakpoint_lambda_deg', 10.0).value,
@@ -394,6 +402,10 @@ class TrackingNode(Node):
         t_cluster = time.monotonic()
         points = np.array([c.centroid for c in clusters]).reshape(-1, 2)
         points = transform_points_2d(points, scan_yaw, (t.x, t.y))
+        # 실제 이동량의 기준점: 센서에 가장 가까운 군집 점 (군집 점은 lidar_link 기준)
+        nearest = np.array([c.points[np.argmin(np.einsum('ij,ij->i', c.points, c.points))]
+                            for c in clusters]).reshape(-1, 2)
+        nearest = transform_points_2d(nearest, scan_yaw, (t.x, t.y))
         evidence = None
         if self.free_space is not None:
             now = Time.from_msg(scan.header.stamp).nanoseconds * 1e-9
@@ -411,7 +423,7 @@ class TrackingNode(Node):
         header = scan.header
         header.frame_id = self.fixed_frame    # 시각은 스캔 촬영 시각 그대로
         self.stats['candidates'] += len(clusters)
-        self.track_and_publish(header, points, [c.radius for c in clusters], evidence)
+        self.track_and_publish(header, points, [c.radius for c in clusters], evidence, nearest)
         end = time.monotonic()
         self.stats['proc_s'] += end - arrival
         # 단계별 [s]: TF 기다림(도착 → TF 찾음, 미룬 시간 포함, 계산 아님), 지도 대조, 군집화, 빈 공간,
@@ -432,7 +444,7 @@ class TrackingNode(Node):
                     endpoint_margin=g.endpoint_margin, free_memory=g.free_memory,
                     hit_quiet=g.hit_quiet, hit_clearance=g.hit_clearance)
 
-    def track_and_publish(self, header, measurements, radii, evidence=None):
+    def track_and_publish(self, header, measurements, radii, evidence=None, ref_points=None):
         t = Time.from_msg(header.stamp).nanoseconds * 1e-9
         last = self.tracker.last_time
         if last is not None and t < last:
@@ -440,7 +452,7 @@ class TrackingNode(Node):
             self.get_logger().warn(f'측정 시각이 거꾸로 감 ({t:.3f} < {last:.3f} s) → 트랙 초기화')
             self.tracker.reset()
         try:
-            tracks = self.tracker.step(t, measurements, radii, evidence)
+            tracks = self.tracker.step(t, measurements, radii, evidence, ref_points=ref_points)
         except ValueError as e:
             self.get_logger().warn(f'측정 프레임 무시: {e}', throttle_duration_sec=5.0)
             return

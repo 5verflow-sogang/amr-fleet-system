@@ -47,8 +47,8 @@
     # 지금까지 본 가장 큰 군집 반경이 이보다 큰 트랙(지게차)은 하지 않는다. 큰 물체는 가려지거나 보이는 면이 바뀔 때
     # 중심이 0.4~0.6 m 튀어 12 m 안 지게차 속도가 나빠졌다(개발용 B 0.236 → 0.281 m/s). 사람은 0.24 m 이하였다
     maneuver_max_radius: 0.4
-    # R3: 속력이 dynamic_speed_threshold [m/s]를 넘는 프레임이 dynamic_confirm_frames번 연속되면 동적 (이후 유지).
-    # 멈춰 선 사람도 동적으로 남는다. 정지 물체의 속도 추정 잡음으로 한두 프레임 넘는 것은 연속 조건이 거른다
+    # R3: 속력이 dynamic_speed_threshold [m/s]를 넘는 프레임이 dynamic_confirm_frames번 연속되면 동적 (아래 출구로 푼다).
+    # 정지 물체의 속도 추정 잡음으로 한두 프레임 넘는 것은 연속 조건이 거른다
     dynamic_speed_threshold: 0.25
     dynamic_confirm_frames: 5
     # 빈 공간 침입 증거 (amr_perception_core free_space.py): 군집 점이 "최근 빔이 지나간(비어 있던) 칸"에
@@ -70,6 +70,24 @@
     # m. 이번 스캔 반사점에서 이 거리 안의 칸은 비어 있다고 적지 않는다. 물체 옆을 스치는 빔이 옆 칸을 비었다고
     # 적어, 로봇이 움직여 다른 면이 보이면 랙 다리·기둥이 동적이 됐다 (녹화 재생 10/10)
     free_space_hit_clearance: 0.2
+    # 증거를 최근 이 프레임 수 안에서 센다 (0이면 누적). 누적이면 오래전 증거가 남아 나중에는 속력 조건만으로 동적이 된다
+    dynamic_evidence_window: 10
+    # 동적 입구 - 실제 이동: 속력·증거에 더해, 속력 조건이 걸리기 시작한 자리(입구 기준 자리: 속력 조건이 풀린 동안
+    # 지금 자리를 따라간다)에서 이 거리 [m] 이상 옮겨 가야 동적 (0.0이면 끔). 처음 본 자리에 고정하면 긴 테이블 옆을
+    # 지나갈 때 조금씩 밀린 것이 쌓여 0.3 m를 넘었다 (#361 리뷰).
+    # 이동량은 군집 중심과 센서에 가장 가까운 군집 점 중 덜 움직인 쪽. 식당 테이블·의자 다리에 0.6 m/s로 다가가자
+    # 보이는 면이 바뀌어 중심이 0.5 s(약 0.15 m) 미끄러져 동적이 됐고, 1호가 그 앞에 60 s 넘게 섰다 (11/17 녹화).
+    # 1.0 m/s로 걷는 사람은 속력 조건(0.5 s)과 같은 프레임에, 0.4~0.6 m/s는 0.2 s 안에서 늦게 넘는다
+    dynamic_min_displacement: 0.3
+    # 동적 출구: 속력이 dynamic_release_speed [m/s] 미만인 프레임이 dynamic_release_frames번 연속이고 해제 기준 자리
+    # (동적이 된 순간의 입구 기준 자리)에서 dynamic_release_max_displacement [m] 안이면 바로 정적 (제자리에서 미끄러져
+    # 보였던 정지 물체),
+    # dynamic_pause_frames번 연속이면 어디서든 정적 (걸어와서 선 사람. 그동안은 '멈춤': 동적 표시가 남아 안전 노드
+    # 바깥 원·근접 저속은 걸리고, TTC는 속력 조건 safety moving_min_speed로 빠진다). 둘 다 0이면 끔 (트랙이 사라질 때까지 동적)
+    dynamic_release_frames: 30       # 3 s
+    dynamic_pause_frames: 100        # 10 s
+    dynamic_release_speed: 0.1
+    dynamic_release_max_displacement: 0.5
     # 트랙 반경 = 군집 반경의 지수 평활 (새 값 반영 비율). 프레임마다 보이는 면이 달라 군집 반경이 흔들린다
     radius_smoothing: 0.3
     # poses 입력처럼 반경 측정이 없을 때 쓰는 고정 반경 [m]
