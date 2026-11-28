@@ -58,6 +58,9 @@ params:
   # Fleet 서버 설정 덮어쓰기 (system.launch fleet_params_file, #333). 비우면 fleet_manager.yaml 그대로 (aging 0.0).
   # 장면 2 2막 켬: fleet_manager_restaurant.yaml (aging 1.667)
   fleet_params: ""
+  # 좁은 통로 구역 허가: 지도에서 찾은 구역(amr_fleet_manager config/zones_restaurant.yaml)에 한 대씩 들어간다.
+  # 기본 끔 - 켜면 통로 앞에서 기다려 1-1·1-2 수치가 달라진다 (포스터 수치는 끔으로 쟀다)
+  permit_zones: "false"
 processes:
   - name: stack
     cmd: >-
@@ -69,6 +72,7 @@ processes:
       cost_fn:={cost_fn} congestion_weight:={congestion_weight} congestion_filter:={congestion_filter} nav2_composition:=true
       $(test -n "{fleet_params}" && echo fleet_params_file:={fleet_params})
       enable_camera:={robot_camera} guest_keep_away_m:=1.2 guest_avoid_peers:=true
+      zone_client:={permit_zones} zones_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/zones_restaurant.yaml
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:={spawn_interval_s}
     ready_topic: /fleet/heartbeat
     ready_cmds:

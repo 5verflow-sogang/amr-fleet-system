@@ -1,0 +1,11 @@
+# 구역 허가(ZoneRequest/ZoneGrant) 대상 구역, 식당. 한 번에 한 대만 들어간다.
+# 자동 생성: amr_fleet_core.traffic.permit_zones (restaurant_gt.yaml, stations_restaurant.yaml). 손으로 고치지 말고 다시 만든다.
+# 기준: 통로 폭 < 1.3 m, 정차 자리 사이 최단 경로가 1 m 이상 지나는 곳, 긴 방향 양 끝 여유 0.6 m,
+# 겹치면 하나로, 충전·대기 자리는 뺀다. 그림: --png (모듈 설명 참고)
+#
+# area_world: [x_min, x_max, y_min, y_max] (m, Gazebo world 좌표 = 식당 map 좌표). 로봇 측 규칙은 zones.yaml과 같다.
+zones:
+  - id: narrow_01
+    capacity: 1
+    area_world: [3.25, 10.95, -2, 4.65]
+    description: 통로 폭 1.30 m 이하, 7.7 x 6.7 m. 안의 정차 자리 L01, L02, L03, L04, b01, b02, b03, stall_4, t05, t10
