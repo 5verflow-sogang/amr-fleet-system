@@ -12,7 +12,7 @@
 
 | 장면 | 쓰는 토픽 | 지표 |
 | --- | --- | --- |
-| `s12` → 1-2 (붐비는 통로 돌아가기) | `/fleet/task_table`, `/fleet/task_status`, `/fleet/robot_states` | 요청 → 배식대 2번 자리(`buffet_2`) 도착 시간, 그 사이 멈춘 횟수 |
+| `s12` → 1-2 (붐비는 통로 돌아가기) | `/fleet/task_table`, `/fleet/task_status`, `/fleet/robot_states` | 요청 → 매장 5(`stall_5`, v3에서 배식대 2번 자리를 대신한 픽업 자리) 도착 시간, 그 사이 멈춘 횟수 |
 | `s2…` → 2 (회수 호출 + aging) | `/fleet/task_table` | 1막 회수 대기 시간(평균·최대·미할당), 2막 기아 시간 |
 
 녹화할 때 이 토픽이 bag에 들어가야 한다. 시각은 메시지 안 시각(use_sim_time이면 시뮬레이션 s)이다.

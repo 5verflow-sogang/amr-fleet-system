@@ -222,7 +222,7 @@ def test_act2_robot_4_is_the_only_one_working():
     assert core['after']['near'] == {'task': 'b_busy_t03', 'within_m': 2.0} and core.get('t0')
     # 1-2·2막 핵심 자리와 그 1 m 안은 시작 작업에 쓰지 않는다
     st = stations()
-    core_names = ['buffet_2', 't11', 'c01', 't01', 't06', 't08', 't12', 't14', 'return_1', 'return_2']
+    core_names = ['stall_5', 't11', 'c01', 't01', 't06', 't08', 't12', 't14', 'return_1', 'return_2']
     start = [n for t in busy for n in (t['pickup'], t['dropoff'])]
     assert not [(a, b) for a in start for b in core_names if ds.stations_near(st, a, b)]
 
@@ -255,16 +255,16 @@ def test_scene12_start_tasks_go_to_robots_4_and_5_and_the_request_to_robot_1():
     owners = _busy_owners('demo_s12.yaml', S12_ROBOTS)
     # 동쪽 픽업(t15, L03)이라 1호(서쪽 입구 옆)보다 4·5호가 가깝다
     assert [owners[r][0] for r in ('amr_04', 'amr_05')] == ['s12_busy_c01', 's12_busy_L04'] and len(owners) == 2
-    # 핵심 요청 픽업(buffet_2)은 남은 로봇 중 1호가 가장 가깝다
+    # 핵심 요청 픽업(stall_5, v3 전 buffet_2)은 남은 로봇 중 1호가 가장 가깝다
     st = stations()
     robots = {k: tuple(v[:2]) for k, v in yaml.safe_load(S12_ROBOTS.read_text(encoding='utf-8'))['robots'].items()}
     idle = {k: v for k, v in robots.items() if k not in owners}
-    assert min(idle, key=lambda r: math.dist(idle[r], st['buffet_2'][:2])) == 'amr_01'
+    assert min(idle, key=lambda r: math.dist(idle[r], st['stall_5'][:2])) == 'amr_01'
     steps = ds.load_scene(TASKS / 'demo_s12.yaml')
     core = [s for s in steps if s.t0]
     assert len(core) == 1
     assert [(t.task_id, t.type, t.pickup, t.dropoff) for t in core[0].tasks] == [
-        ('s12_buffet2_t11', 'delivery', 'buffet_2', 't11')]
+        ('s12_buffet2_t11', 'delivery', 'stall_5', 't11')]
 
 
 def test_scene12_request_is_sent_with_t0_after_the_two_start_tasks_are_assigned():
@@ -273,6 +273,79 @@ def test_scene12_request_is_sent_with_t0_after_the_two_start_tasks_are_assigned(
     # 마지막 시작 작업(0.5 s) 뒤 3 s, 그 전에(3.0 s) 둘 다 할당됐다
     assert (3.5, 't0', 's12_buffet2_t11') in out and (3.5, 'task', 's12_buffet2_t11') in out
     assert [o[0] for o in out if o[2].startswith('s12_busy')] == [0.0, 0.5]
+
+
+# ---------------------------------------------------------------- 1-1 (demo_s11)
+S11_ROBOTS = REPO / 'src' / 'bringup' / 'amr_bringup' / 'config' / 'robots_restaurant_s11.yaml'
+ZONES = REPO / 'src' / 'fleet' / 'amr_fleet_manager' / 'config' / 'congestion_zones_restaurant.yaml'
+
+
+def _in_rect(a, b, area):
+    """선분 a→b 중 사각형 [x_min, x_max, y_min, y_max] 안 길이 (amr_fleet_core cost.segment_length_in_rect와 같은 식.
+    그 패키지는 scipy를 불러 하네스 CI에서 못 쓴다)."""
+    x0, x1, y0, y1 = area
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, a[0] - x0), (dx, x1 - a[0]), (-dy, a[1] - y0), (dy, y1 - a[1])):
+        if p == 0.0:
+            if q < 0.0:
+                return 0.0
+            continue
+        t = q / p
+        t0, t1 = (max(t0, t), t1) if p < 0.0 else (t0, min(t1, t))
+        if t0 > t1:
+            return 0.0
+    return (t1 - t0) * math.hypot(dx, dy)
+
+
+def _congestion_cost(values, weight=3.0):
+    """cost_fn congestion: 직선 + weight × Σ(구역 혼잡도 × 로봇 → 픽업 선분이 그 구역 안을 지나는 길이)."""
+    zones = {z['id']: z['area'] for z in yaml.safe_load(ZONES.read_text(encoding='utf-8'))['zones']}
+    return lambda r, st: math.dist(r, st) + weight * sum(v * _in_rect(r, st, zones[k]) for k, v in values.items())
+
+
+def test_scene11_start_tasks_go_to_robots_2_4_5_and_leave_1_and_3_idle():
+    owners = _busy_owners('demo_s11.yaml', S11_ROBOTS)
+    assert {r: v[0] for r, v in owners.items()} == {
+        'amr_05': 's11_busy_b03', 'amr_04': 's11_busy_c02', 'amr_02': 's11_busy_l04'}
+    steps = ds.load_scene(TASKS / 'demo_s11.yaml')
+    core = [s for s in steps if s.t0]
+    assert [(t.task_id, t.type, t.pickup, t.dropoff) for t in core[0].tasks] == [
+        ('s11_buffet1_t01', 'delivery', 'stall_6', 't01')]
+    scene, out = run_scene(steps, {2.0: assign_all})
+    assert (4.0, 't0', 's11_buffet1_t01') in out                 # 마지막 시작 작업(1.0 s) 뒤 3 s
+    # 시작 작업 자리는 핵심 요청 자리와 스테이션 예약 1 m 안을 쓰지 않는다
+    st = stations()
+    start = {n for s in steps if not s.t0 for t in s.tasks for n in (t.pickup, t.dropoff)}
+    assert not [(a, b) for a in start for b in ('stall_6', 't01') if ds.stations_near(st, a, b)]
+    # 시작 작업끼리도 자리가 겹치지 않는다: 겹치면 앞 작업이 끝날 때까지 배정이 밀려 0초가 타임아웃으로 나간다 (11/10 녹화)
+    busy = [t for s in steps if not s.t0 for t in s.tasks]
+    assert not [(a.task_id, b.task_id) for i, a in enumerate(busy) for b in busy[i + 1:]
+                if any(ds.stations_near(st, x, y) for x in (a.pickup, a.dropoff) for y in (b.pickup, b.dropoff))]
+
+
+def test_scene11_off_sends_robot_1_and_on_sends_robot_3():
+    st = stations()
+    robots = {k: tuple(v[:2]) for k, v in yaml.safe_load(S11_ROBOTS.read_text(encoding='utf-8'))['robots'].items()}
+    buffet = st['stall_6'][:2]          # v3: 배식대 자리(buffet_1)가 매장 6으로 바뀌었다
+    one, three = robots['amr_01'], robots['amr_03']
+    # 끔(직선 거리): 1호가 가깝다(9.6 m < 12.0 m). 매장 5였다면 3호가 가까워 끔·켬이 같아진다
+    assert math.dist(one, buffet) < math.dist(three, buffet)
+    assert math.dist(three, st['stall_5'][:2]) < math.dist(one, st['stall_5'][:2])
+    # 켬: 피크 몰림(서쪽 통로 1.0, 매장 앞 customer_1 한 명 1/6, v3는 배식대 줄이 없어 buffet_line 0)이면 3호
+    # (11/15 로컬 녹화의 3호 비용 15.80과 같은 값)
+    peak = _congestion_cost({'west_aisle': 1.0, 'stall_front': 1 / 6})
+    assert peak(three, buffet) == pytest.approx(15.8, abs=0.05)
+    assert peak(three, buffet) + 5.0 < peak(one, buffet)
+    # 서쪽 통로가 비면 1호로 돌아간다 - 몰림이 실제로 배정을 바꾼다
+    thin = _congestion_cost({'west_aisle': 0.0, 'stall_front': 1 / 6})
+    assert thin(one, buffet) < thin(three, buffet)
+    # 평상시(hall_west만 1.0)면 둘 다 그 구역을 안 지나 끔과 같다
+    calm = _congestion_cost({'hall_west': 1.0})
+    assert calm(one, buffet) < calm(three, buffet)
+    # 시작 작업도 켬에서 같다: cafe 혼잡 1.0이어도 L04는 2호가 3호보다 싸다
+    cafe = _congestion_cost({'cafe': 1.0})
+    assert cafe(robots['amr_02'], st['L04'][:2]) < cafe(three, st['L04'][:2])
 
 
 # ---------------------------------------------------------------- 서버 스테이션 예약과 작업표 상태

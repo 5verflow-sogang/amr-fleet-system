@@ -169,7 +169,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('runs', help='runs/ (demo_<장면>-<on|off>/<실행 id>/ 폴더들이 있는 곳)')
     ap.add_argument('--out', help='표(.md). 같은 이름 .json에 실행 id마다 원값')
-    ap.add_argument('--station', default='buffet_2', help='1-2 도착 자리')
+    ap.add_argument('--station', default='stall_5', help='1-2 도착 자리')
     ap.add_argument('--act2', nargs=2, type=float, metavar=('START', 'END'), help='2막 구간 (첫 요청 기준 s)')
     ap.add_argument('--stop-speed', type=float, default=0.05)
     ap.add_argument('--stop-min-s', type=float, default=1.0)
