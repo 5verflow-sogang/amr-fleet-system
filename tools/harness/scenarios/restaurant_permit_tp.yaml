@@ -1,0 +1,63 @@
+# 구역 허가 처리량 (식당 5대, PR #372). 모든 테이블로 배달을 계속 넣어 5대를 포화시킨 채 구역 허가 켬/끔을 비교한다.
+#   label=tp_off  params="slot=a"
+#   label=tp_on   params="permit_zones=true slot=a"
+# 판정: 요약 fleet.throughput_per_min·fleet.tasks_completed, zone_waits.csv(켬: 구역 입구에서 기다린 시간).
+# 시연(demo_restaurant)과 같은 스택·손님(일과 손님 10명, 손님끼리 보기)이고 카메라 녹화는 뺐다 (RTF). 위치는 정답 위치
+name: restaurant_permit_tp
+packages: amr_bringup
+num_robots: 5
+use_sim_time: true
+seed_base: 1
+timeout_s: 7200
+params:
+  num_robots: 5
+  spawn_interval_s: 25
+  delay_ms: 100
+  loss_pct: 0
+  duration_s: 600
+  permit_zones: "false"
+  guests: dynamic_obstacles_restaurant_routine.yaml
+  localization: ground_truth
+  tracking: "true"
+  safety: "true"
+processes:
+  - name: stack
+    cmd: >-
+      ros2 launch amr_bringup system.launch.py num_robots:={num_robots} nav2:=true localization:={localization}
+      tracking:={tracking} safety:={safety} world:=restaurant.sdf body:=serving seed:={seed}
+      delay_ms:={delay_ms} loss_pct:={loss_pct}
+      robots_file:=$(ros2 pkg prefix amr_bringup)/share/amr_bringup/config/robots_restaurant.yaml
+      map:=$(ros2 pkg prefix amr_mapping)/share/amr_mapping/maps/restaurant_gt.yaml map_origin_in_world:="[0.0, 0.0, 0.0]"
+      dynamic_obstacles:=true dynamic_obstacles_file:={guests} nav2_composition:=true
+      guest_keep_away_m:=1.2 guest_avoid_peers:=true
+      zone_client:={permit_zones} zones_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/zones_restaurant.yaml
+      assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:={spawn_interval_s}
+    ready_topic: /fleet/heartbeat
+    ready_cmds:
+      - for i in $(seq -f %02g 1 {num_robots}); do timeout 20 ros2 lifecycle get /amr_$i/bt_navigator | grep -q '^active' || exit 1; done
+      - timeout 20 ros2 lifecycle get /map_server | grep -q '^active'
+    ready_timeout_s: 600
+    settle_s: 5
+  - name: cpu_monitor
+    cmd: python3 /repo/tools/harness/cpu_monitor.py --out {run_dir}/cpu.csv --interval 1.0
+    settle_s: 1
+  - name: rosbag
+    cmd: ros2 bag record -o {run_dir}/rosbag -e '/fleet/.*|/amr_[0-9][0-9]/fleet/.*|/clock'
+    settle_s: 3
+  - name: task_generator
+    cmd: >-
+      ros2 launch amr_fleet_manager task_generator.launch.py seed:={seed} schedule_out:={run_dir}/tasks.json use_sim_time:=true
+      map_origin_in_world:="[0.0, 0.0, 0.0]"
+      stations_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/stations_restaurant.yaml
+      scenario_file:=/repo/tools/harness/tasks/restaurant_permit.yaml
+driver:
+  mode: wait
+  use_sim_time: true
+  duration_s: "{duration_s}"
+postprocess:
+  - name: fleet_metrics
+    cmd: ros2 run amr_fleet_manager fleet_metrics {run_dir}/rosbag --out {run_dir} --delay-ms {delay_ms} --num-robots {num_robots}
+cleanup:
+  - pkill -9 -f "[i]gn gazebo" || true
+  - pkill -9 -f "[p]arameter_bridge" || true
+  - pkill -9 -f "[c]pu_monitor.py" || true

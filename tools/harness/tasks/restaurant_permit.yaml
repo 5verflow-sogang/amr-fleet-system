@@ -1,0 +1,16 @@
+# 구역 허가 처리량(restaurant_permit_tp)용 작업 일정: 매장 6곳에서 식당 테이블 24개 전부(4인석 t·6인석 L·부스 b·2인석 c)로
+# 배달을 짧은 간격으로 계속 넣어 5대를 포화시킨다. 테이블마다 같은 확률이라 동쪽 6인석·부스 블록(L·b 7개)과 블록에 함께 든
+# t05·t10까지 9/24가 허가 구역 안이다. 형식은 amr_fleet_manager config/scenarios/basic.yaml, 이름은 stations_restaurant.yaml
+count: 200
+start_delay_s: 5.0
+arrival: fixed
+interval_s: 4.0
+flows:
+  - type: delivery
+    pickup: [stall_*]
+    dropoff: [t*, L0*, b0*, c0*]     # c*는 charger_*까지 잡아서 c0*
+    weight: 1.0
+items:
+  small: 1.0
+priority: [0, 0]
+deadline_s: 0.0

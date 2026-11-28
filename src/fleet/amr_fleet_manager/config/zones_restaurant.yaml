@@ -7,5 +7,5 @@
 zones:
   - id: narrow_01
     capacity: 1
-    area_world: [3.25, 10.95, -2, 4.65]
-    description: 통로 폭 1.30 m 이하, 7.7 x 6.7 m. 안의 정차 자리 L01, L02, L03, L04, b01, b02, b03, stall_4, t05, t10
+    area_world: [3.25, 10.95, -2, 4.1]
+    description: 통로 폭 1.30 m 이하, 7.7 x 6.1 m. 안의 정차 자리 L01, L02, L03, L04, b01, b02, b03, stall_4, t05, t10
