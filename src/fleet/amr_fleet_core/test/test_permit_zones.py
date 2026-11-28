@@ -79,9 +79,11 @@ def test_committed_restaurant_zones_match_the_map(restaurant):
 
 
 def test_restaurant_zone_covers_the_hand_drawn_central_aisle(restaurant):
-    """11/16 restaurant_headon에서 손으로 그려 정면 대치 3/3을 푼 중앙 통로(로봇 중심 x 7.2~7.7)를 자동 구역이 덮는다."""
+    """11/16 restaurant_headon에서 손으로 그려 정면 대치 3/3을 푼 중앙 통로(experiments/restaurant_headon/zones_aisle.yaml)의
+    좁은 구간(로봇 중심 x 7.2~7.7, 6인석 남북 끝 y -1.05~3.4)을 자동 구역이 덮는다. 손 구역의 북쪽 끝 4.35는 직원 문 화분이
+    통로를 좁히던 때 값이라 비교하지 않는다"""
     _, _, zones = restaurant
-    assert any(z.rect[0] <= 7.2 and z.rect[1] >= 7.7 and z.rect[2] <= -1.45 and z.rect[3] >= 4.35 for z in zones)
+    assert any(z.rect[0] <= 7.2 and z.rect[1] >= 7.7 and z.rect[2] <= -1.05 and z.rect[3] >= 3.4 for z in zones)
 
 
 def test_no_robot_parks_inside_a_restaurant_zone(restaurant):
