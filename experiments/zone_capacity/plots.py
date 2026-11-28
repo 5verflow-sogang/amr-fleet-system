@@ -8,8 +8,12 @@
   B_relative      손님 수 → 상대 통과 시간 (손님 0명 = 1) + "2배 = 정원" 기준선. 두 통로를 한 축에
   C_distribution  통과 한 번씩 (시간 초과는 세모로 제한 시간에) + 중앙값 막대
   D_within60      60 s 안에 지나간 비율
-  E_capacity      정원: 가정값(통로 길이) vs 측정값(통과 시간 2배)
-  poster          B + E 한 장 (흑백)
+  F_deadlock      120 s 안에 못 지나간 비율 (로봇 안전 정지와 손님 양보가 서로 기다리는 교착)
+  G_relative_ok   B와 같되 시간 초과를 뺀 통과만 (교착을 빼면 얼마나 느려지나)
+  poster          B + F 한 장 (흑백)
+
+11/28 결과에서 "2배가 되는 손님 수"는 0.4~0.6명이었지만 시간 초과(교착)가 30~50%라 정원으로 쓰지 않았다.
+그래서 정원 표시는 그리지 않고, 2배 선만 기준으로 둔다 (README "결과")
 """
 
 import argparse
@@ -38,7 +42,6 @@ plt.rcParams.update({'axes.unicode_minus': False, 'axes.spines.top': False, 'axe
                      'axes.titlelocation': 'left'})
 
 NAMES = {'west_aisle': '서쪽 통로 (폭 1.6 m)', 'aisle_3': '세로 통로 (폭 1.37 m)'}
-ASSUMED = {'west_aisle': 3, 'aisle_3': 3}       # 7·12구역의 가정값 (통로 길이 2.3 m당 1명)
 STYLE = {   # 통로별 고정 순서: 컬러는 기본 팔레트 1·2번, 흑백은 검정·회색 + 마커 모양
     'color': {'west_aisle': dict(c='#257de0', m='o', ls='-'), 'aisle_3': dict(c='#f47230', m='s', ls='-')},
     'mono': {'west_aisle': dict(c='#191919', m='o', ls='-'), 'aisle_3': dict(c='#8a8a8a', m='s', ls='--')},
@@ -65,7 +68,9 @@ def stats(data):
             xs = [p['time_s'] for p in sel]
             cens = sum(1 for p in sel if p['censored'])
             lo, hi = boot_ci(xs)
+            ok = [p['time_s'] for p in sel if not p['censored']]
             rows.append({'n': n, 'xs': xs, 'med': median(xs), 'lo': lo, 'hi': hi, 'k': len(xs), 'cens': cens,
+                         'ok_med': median(ok) if ok else None, 'ok_k': len(ok),
                          'within60': sum(1 for p in sel if not p['censored'] and p['time_s'] <= 60) / len(sel)})
         t0 = rows[0]['med']
         out[z] = {'rows': rows, 't0': t0, 'fit': summary[z].get('fit'), 'dbl': summary[z].get('doubling_n')}
@@ -112,38 +117,32 @@ def plot_a(zones, st, mode, out):
     plt.close(fig)
 
 
-def plot_b(zones, st, mode, out, ax=None):
+def plot_b(zones, st, mode, out, ax=None, key='med'):
+    """key='med': 시간 초과를 120 s로 넣은 중앙값 (B), 'ok_med': 시간 초과를 뺀 통과만의 중앙값 (G)"""
     own = ax is None
     if own:
         fig, ax = plt.subplots(figsize=(6.4, 4.0))
     top = 1
     for z in zones:
         s, rows, t0 = STYLE[mode][z], st[z]['rows'], st[z]['t0']
-        ns = [r['n'] for r in rows]
-        ys = [r['med'] / t0 for r in rows]
+        t0 = rows[0][key]
+        pts = [(r['n'], r[key] / t0) for r in rows if r[key] is not None]
+        ns, ys = [n for n, _ in pts], [y for _, y in pts]
         top = max(top, max(ys))
         ax.plot(ns, ys, marker=s['m'], ls=s['ls'], color=s['c'], lw=2, ms=8, label=NAMES[z])
-        d = st[z]['dbl']
-        if d is not None:
-            ax.plot([d], [2.0], marker='|', color=s['c'], ms=16, mew=2)
-            first = z == zones[0]
-            # 첫 통로는 왼쪽 위(축 숫자와 안 겹치게 x 0.1부터), 둘째는 오른쪽 아래
-            ax.annotate(f'정원 ≈ {d:.1f}명', (d, 2.0), xytext=(0.1, 2.9) if first else (d + 0.15, 1.55),
-                        textcoords='data', ha='left', va='center', fontsize=9, color='#191919', arrowprops=dict(arrowstyle='-', color=s['c'], lw=1),
-                        bbox=dict(boxstyle='round,pad=0.25', fc='white', ec='none'))
     ax.axhline(2.0, color='#191919', lw=1, ls='--')
-    xmax = max(r['n'] for z in zones for r in st[z]['rows'])
-    ax.text(xmax, 1.93, '2배 = 정원 기준', fontsize=8.5, color='#191919', va='top', ha='right')
+    ax.text(0.05, 2.06, '2배', fontsize=8.5, color='#191919', va='bottom', ha='left')   # 왼쪽 끝은 선이 1 근처라 비어 있다
     ax.axhline(1.0, color=GRID, lw=1)
     ax.set_xlabel('통로 안 손님 수 (명)')
     ax.set_ylabel('통과 시간 (손님 0명 = 1)')
-    ax.set_title('통과 시간이 2배가 되는 손님 수 = 정원')
+    ax.set_title('손님 0명 대비 통과 시간' if key == 'med' else '시간 초과를 뺀 통과만: 손님 0명 대비')
     ax.set_xticks(sorted({r['n'] for z in zones for r in st[z]['rows']}))
     ax.set_ylim(0, max(4.0, top * 1.1))
     grid(ax)
     ax.legend(frameon=False, fontsize=9, loc='lower right')
     if own:
-        note(fig, FOOT.format(k=st[zones[0]]['rows'][0]['k']) + '. 점 = 중앙값')
+        extra = '. 점 = 중앙값' if key == 'med' else '. 점 = 지나간 통과만의 중앙값'
+        note(fig, FOOT.format(k=st[zones[0]]['rows'][0]['k']) + extra)
         fig.tight_layout(rect=(0, 0.03, 1, 1))
         fig.savefig(out, dpi=200)
         plt.close(fig)
@@ -201,40 +200,40 @@ def plot_d(zones, st, mode, out):
     plt.close(fig)
 
 
-def plot_e(zones, st, mode, out, ax=None):
+def plot_f(zones, st, mode, out, ax=None):
     own = ax is None
     if own:
-        fig, ax = plt.subplots(figsize=(5.6, 3.2))
-    ys = list(range(len(zones)))[::-1]
-    for y, z in zip(ys, zones):
+        fig, ax = plt.subplots(figsize=(6.4, 3.8))
+    ns = sorted({r['n'] for z in zones for r in st[z]['rows']})
+    w = 0.36
+    for i, z in enumerate(zones):
         s = STYLE[mode][z]
-        a, m = ASSUMED[z], st[z]['dbl']
-        ax.plot([m if m is not None else 0, a], [y, y], color=GRID, lw=6, solid_capstyle='round')
-        ax.plot([a], [y], marker='o', ms=11, mfc='white', mec=TEXT2, mew=2, ls='none')
-        ax.text(a, y + 0.22, f'가정 {a}명', ha='center', fontsize=9, color=TEXT2)
-        if m is not None:
-            ax.plot([m], [y], marker=s['m'], ms=11, color=s['c'], ls='none')
-            ax.text(m, y + 0.22, f'측정 {m:.1f}명', ha='center', fontsize=9, color='#191919', fontweight='bold')
-    ax.set_yticks(ys)
-    ax.set_yticklabels([NAMES[z] for z in zones])
-    ax.set_xlim(0, max(ASSUMED.values()) + 0.8)
-    ax.set_ylim(-0.6, len(zones) - 0.3)
-    ax.set_xlabel('정원 (명): 통과 시간이 2배가 되는 손님 수')
-    ax.set_title('정원: 가정값과 측정값')
-    ax.spines['left'].set_visible(False)
-    ax.tick_params(axis='y', length=0)
-    grid(ax, 'x')
+        rows = {r['n']: r for r in st[z]['rows']}
+        xs = [n + (i - (len(zones) - 1) / 2) * (w + 0.03) for n in ns]
+        ys = [rows[n]['cens'] / rows[n]['k'] * 100 if n in rows else 0 for n in ns]
+        ax.bar(xs, ys, width=w, color=s['c'], label=NAMES[z], hatch=None if mode == 'color' or i == 0 else '///',
+               edgecolor='white', lw=0)
+        for x, y in zip(xs, ys):
+            ax.text(x, y + 1.5, f'{y:.0f}%', ha='center', fontsize=8, color='#191919')
+    ax.set_xticks(ns)
+    ax.set_xlabel('통로 안 손님 수 (명)')
+    ax.set_ylabel('120 s 안에 못 지나간 비율 (%)')
+    ax.set_title('통로에서 멈춰 버린 비율 (교착)')
+    ax.set_ylim(0, 70)
+    grid(ax)
+    ax.legend(frameon=False, fontsize=9, loc='upper left')
     if own:
-        fig.tight_layout()
+        note(fig, FOOT.format(k=st[zones[0]]['rows'][0]['k']))
+        fig.tight_layout(rect=(0, 0.03, 1, 1))
         fig.savefig(out, dpi=200)
         plt.close(fig)
 
 
 def plot_poster(zones, st, out):
     plt.rcParams.update({'font.size': 12, 'axes.titlesize': 14, 'axes.labelsize': 12})
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(12, 4.6), gridspec_kw={'width_ratios': [1.4, 1]})
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(12, 4.6), gridspec_kw={'width_ratios': [1.2, 1]})
     plot_b(zones, st, 'mono', None, ax=a1)
-    plot_e(zones, st, 'mono', None, ax=a2)
+    plot_f(zones, st, 'mono', None, ax=a2)
     note(fig, FOOT.format(k=st[zones[0]]['rows'][0]['k']))
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(out, dpi=220)
@@ -256,12 +255,13 @@ def main():
         plot_b(zones, st, mode, out / f'B_relative_{mode}.png')
         plot_c(zones, st, mode, out / f'C_distribution_{mode}.png')
         plot_d(zones, st, mode, out / f'D_within60_{mode}.png')
-        plot_e(zones, st, mode, out / f'E_capacity_{mode}.png')
+        plot_f(zones, st, mode, out / f'F_deadlock_{mode}.png')
+        plot_b(zones, st, mode, out / f'G_relative_ok_{mode}.png', key='ok_med')
     plot_poster(zones, st, out / 'poster_mono.png')
     for z in zones:
         rows = st[z]['rows']
         print(z, ' '.join(f"n{r['n']}: 중앙값 {r['med']:.1f} [{r['lo']:.1f}, {r['hi']:.1f}] 초과 {r['cens']}/{r['k']} 60s안 {r['within60']:.0%}"
-                          for r in rows), '정원', st[z]['dbl'])
+                          for r in rows))
     return 0
 
 

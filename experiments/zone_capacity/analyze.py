@@ -53,7 +53,12 @@ def summarize(passes):
     for zone, samples in sorted(by.items()):
         meds = medians(samples)
         cens = {n: sum(1 for p in passes if p['zone'] == zone and p['n'] == n and p['censored']) for n in samples}
+        ok = defaultdict(list)
+        for p in passes:
+            if p['zone'] == zone and not p['censored']:
+                ok[p['n']].append(p['time_s'])
         res = {'medians': meds, 'counts': {n: len(v) for n, v in samples.items()}, 'censored': cens,
+               'ok_medians': medians(ok),
                'doubling_n': doubling_point(meds)}
         try:
             res['fit'] = fit(meds)
@@ -85,6 +90,17 @@ def write_md(summary, path: Path):
         d = s['doubling_n']
         dn = f'{d:.1f}명' if d is not None else f"{max(s['medians'])}명 넘음"
         lines.append(f'| {zone} | ' + ' | '.join(cells) + f' | {fc} | {fb} | {fe} | {dn} |')
+    lines += ['', '## 시간 초과(교착)를 뺀 통과만', '',
+              '시간 초과가 많으면 위 중앙값은 혼잡보다 교착(로봇 안전 정지와 손님 양보가 서로 기다림)을 잰다. 괄호는 지나간 통과 수.', '',
+              '| 통로 | ' + ' | '.join(f'손님 {n}명' for n in ns) + ' |', '| --- |' + ' --- |' * len(ns)]
+    for zone, s in summary.items():
+        ok = s.get('ok_medians', {})
+        t0 = ok.get(min(ns))
+        cells = []
+        for n in ns:
+            v = ok.get(n)
+            cells.append('-' if v is None else f"{v:.1f} s (×{v / t0:.1f}, {s['counts'][n] - s['censored'][n]})")
+        lines.append(f'| {zone} | ' + ' | '.join(cells) + ' |')
     path.write_text('\n'.join(lines) + '\n')
 
 
