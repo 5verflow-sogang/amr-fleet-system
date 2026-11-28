@@ -23,7 +23,9 @@ straight·random 패턴만 쓸 수 있다 (curve는 구간이 표본 간격 0.5 
 
 keep_away_m(생성자 인자, 0이면 끔)을 주면 패턴·로봇 이름과 상관없이, 로봇 중심이 keep_away_m 안에 있고 그쪽으로
 걷는 중이면(로봇 쪽 성분이 양수) 그 자리에 선다. 움직이는 로봇에도 선다 (식당 시연: 손님이 로봇에 부딪히지 않게).
-로봇이 멀어지거나 걷는 방향이 로봇에서 멀어지면 다시 걷는다. KEEP_AWAY_PATIENCE_S 넘게 서 있으면 온 쪽으로 돌아선다.
+로봇이 멀어지거나 걷는 방향이 로봇에서 멀어지면 다시 걷는다. KEEP_AWAY_PATIENCE_S 넘게 서 있으면 돌아선다.
+straight류는 온 쪽으로, random은 로봇 반대쪽이고 로봇에서 keep_away_m + KEEP_AWAY_CLEAR_M 밖인 목표를 고른다.
+그런 목표가 없으면(통로 끝 구석) 차체에 안 닿는 목표로 로봇 옆을 지나가고, 그동안은 keep_away_m을 안 본다.
 yield_robot_size(선택, [길이, 폭] m)는 비킬 때 보는 로봇 차체 크기다. 없으면 물류 AMR(ROBOT_LENGTH × ROBOT_WIDTH).
 식당 서빙 로봇(body:=serving)은 0.565 × 0.537 m를 준다.
 yield_patience_s·yield_progress_m(선택)은 언제 돌아설지 정한다. 기본(없음)은 막은 로봇의 속력이 STOPPED_SPEED 아래로
@@ -91,6 +93,11 @@ YIELD_SIDE_MARGIN = 0.05
 YIELD_PATIENCE_S = 5.0
 # keep_away_m: 로봇 때문에 이만큼 [s] 넘게 서 있으면 온 쪽으로 돌아선다 (로봇이 손님 앞에 멈춰 둘 다 기다리지 않게)
 KEEP_AWAY_PATIENCE_S = 5.0
+# keep_away_m으로 돌아설 때 random 패턴이 가까운 로봇 쪽이 아닌 목표점을 찾아 뽑아 보는 횟수
+KEEP_AWAY_GOAL_TRIES = 50
+# 그 목표점은 가까운 로봇에서 keep_away_m보다 이만큼 [m] 더 멀다. 손님은 반경 경계에서 서므로, 여유가 없으면 바로 옆
+# 점이 뽑혀 금방 닿고 다음 무작위 목표가 다시 로봇 쪽이라 또 선다
+KEEP_AWAY_CLEAR_M = 0.5
 # 로봇 차체 [m] (amr_description, avoidance_eval robot_length·width). yield_robot_size가 없을 때 쓴다
 ROBOT_LENGTH = 0.6
 ROBOT_WIDTH = 0.4
@@ -158,6 +165,7 @@ class ObstacleMotion:
         self.keep_away_m = float(keep_away_m)
         self.keeping_away = False                     # 가까운 로봇 때문에 서 있는 중
         self._keep_since: Optional[float] = None      # 그렇게 서기 시작한 시각 [s]
+        self._passing = False    # 구석에 몰려 로봇 옆으로 지나가는 중 (keep_away_m을 잠시 안 본다, _turn_away)
         self._stuck_since: Optional[float] = None   # 막은 로봇이 계속 멈춰 있기 시작한 시각 [s]
         self._steps: List[dict] = []
         if self.pattern == 'routine':
@@ -254,6 +262,12 @@ class ObstacleMotion:
 
     def _keep_away(self, xy: Point, robots: Mapping[str, RobotState], t: Optional[float]) -> bool:
         """keep_away_m 안의 로봇 쪽으로 걷는 중이면 True (self.keeping_away도 같은 값). 오래 서 있으면 돌아서고 False."""
+        if self._passing:
+            # 옆으로 지나가는 중: 반경 밖으로 벗어나면 다시 본다 (목표에 닿아도 _advance가 끝낸다)
+            if all(math.hypot(rx - xy[0], ry - xy[1]) >= self.keep_away_m for rx, ry, *_ in robots.values()):
+                self._passing = False
+            else:
+                return False
         ux, uy = self._goal[0] - xy[0], self._goal[1] - xy[1]
         blocked = any(math.hypot(rx - xy[0], ry - xy[1]) < self.keep_away_m
                       and (rx - xy[0]) * ux + (ry - xy[1]) * uy > 0.0
@@ -266,12 +280,60 @@ class ObstacleMotion:
             self.keeping_away = True
             self._keep_since = t
         elif t is not None and self._keep_since is not None and t - self._keep_since >= KEEP_AWAY_PATIENCE_S:
-            # 온 쪽으로 돌아서면 로봇에서 멀어지는 방향이라 다음 걸음부터 걷는다
-            self._turn_back()
+            # 로봇에서 멀어지는 쪽으로 돌아서 다음 걸음부터 걷는다. random은 새 목표를 무작위로 뽑으므로 가까운 로봇
+            # 쪽이 아닌 점만 고른다. 안 그러면 좁은 통로에서 새 목표가 다시 로봇 너머라 바로 또 선다
+            # (zone_pass 11/28: 돌아섬 2,046번 중 60%가 0.5 s 안에 다시 서 손님과 로봇이 120 s 넘게 마주 봄)
+            self._turn_away(xy, robots)
             self.keeping_away = False
             self._keep_since = None
             return False
         return True
+
+    def _turn_away(self, xy: Point, robots: Mapping[str, RobotState]) -> None:
+        """keep_away_m 안의 로봇 쪽으로 걷지 않는 목표로 돌아선다 (straight는 온 쪽으로, random은 그런 점을 뽑는다)."""
+        if self.pattern != 'random':
+            self._turn_back()
+            return
+        near_states = [r for r in robots.values() if math.hypot(r[0] - xy[0], r[1] - xy[1]) < self.keep_away_m]
+        near = [(r[0], r[1]) for r in near_states]
+        far_enough = self.keep_away_m + KEEP_AWAY_CLEAR_M
+
+        def ok(goal: Point) -> bool:
+            # 로봇 쪽으로 걷지 않고, 도착하면 keep_away_m + KEEP_AWAY_CLEAR_M 밖이다
+            ux, uy = goal[0] - xy[0], goal[1] - xy[1]
+            return all((rx - xy[0]) * ux + (ry - xy[1]) * uy <= 0.0
+                       and math.dist(goal, (rx, ry)) >= far_enough for rx, ry in near)
+
+        self.turn_backs += 1
+        self._stuck_since = None
+        candidates = [self._random_goal() for _ in range(KEEP_AWAY_GOAL_TRIES)]
+        for goal in candidates:
+            if math.dist(goal, xy) >= REACH_TOLERANCE and ok(goal):
+                self._goal = goal
+                return
+        # 구석에 몰려 로봇 반대쪽에 갈 데가 없다 (통로 끝에서 로봇이 그 끝으로 올 때). 사람처럼 로봇 옆으로 지나간다:
+        # 차체에 안 닿고(blocks_path) 도착하면 반경 밖인 목표 중 로봇 중심에서 가장 멀리 지나가는 것.
+        # 지나가는 동안은 keep_away_m을 안 본다 (_passing). 안 그러면 로봇 쪽 성분 때문에 바로 또 선다
+        best, best_gap = None, -1.0
+        for goal in candidates:
+            d = math.dist(goal, xy)
+            if d < REACH_TOLERANCE or any(math.dist(goal, r) < far_enough for r in near):
+                continue
+            u = ((goal[0] - xy[0]) / d, (goal[1] - xy[1]) / d)
+            if any(blocks_path(xy, u, d, r, self.radius + YIELD_SIDE_MARGIN, self.robot_half) for r in near_states):
+                continue
+            gap = min(_segment_point_distance(xy, goal, r) for r in near)
+            if gap > best_gap:
+                best, best_gap = goal, gap
+        if best is not None:
+            self._goal, self._passing = best, True
+            return
+        # 그것도 없으면 가장 가까운 로봇 반대쪽으로 영역 안에서 갈 수 있는 데까지
+        rx, ry = min(near, key=lambda r: math.dist(r, xy)) if near else (xy[0] - 1.0, xy[1])
+        d = math.hypot(xy[0] - rx, xy[1] - ry) or 1.0
+        x0, x1, y0, y1 = self.area
+        self._goal = (min(max(xy[0] + 10.0 * (xy[0] - rx) / d, x0), x1),
+                      min(max(xy[1] + 10.0 * (xy[1] - ry) / d, y0), y1))
 
     def _must_wait(self, xy: Point, robots: Mapping[str, RobotState], t: Optional[float]) -> bool:
         """길을 막은 로봇 때문에 서야 하면 True (self.waiting도 같은 값).
@@ -504,6 +566,7 @@ class ObstacleMotion:
         self._goal = self.path[self._index]
 
     def _advance(self) -> None:
+        self._passing = False
         if self.pattern == 'random':
             self._goal = self._random_goal()
             self.speed = self._new_speed()
@@ -589,6 +652,14 @@ def _toward(xy: Point, goal: Point, speed: float) -> Tuple[float, float]:
         return 0.0, 0.0
     v = min(speed, d / 0.1)        # 마지막 한 걸음에서 넘치지 않게 (노드 주기 0.1 s 기준)
     return v * dx / d, v * dy / d
+
+
+def _segment_point_distance(a: Point, b: Point, p: Point) -> float:
+    """선분 ab와 점 p 사이 거리."""
+    ax, ay = b[0] - a[0], b[1] - a[1]
+    n = ax * ax + ay * ay
+    k = 0.0 if n == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * ax + (p[1] - a[1]) * ay) / n))
+    return math.dist(p, (a[0] + k * ax, a[1] + k * ay))
 
 
 def blocks_path(xy: Point, u: Point, reach: float, robot: RobotState, clearance: float,

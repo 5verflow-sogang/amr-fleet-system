@@ -520,6 +520,76 @@ def test_keep_away_simulated_guest_never_enters_radius_of_parked_robot():
     assert closest >= 1.2 - 0.5 * DT and m.turn_backs >= 2
 
 
+def _aisle(seed):
+    # zone_pass west_aisle 손님 띠와 같은 모양: 폭 1.15 m, 길이 6.6 m 세로 통로 안 무작위
+    spec = {'id': 'g', 'type': 'customer', 'pattern': 'random', 'speed_range_mps': [0.4, 0.8],
+            'spawn': {'x': 0.0, 'y': 3.0},
+            'waypoints': [{'x': -0.575, 'y': 0.0}, {'x': 0.575, 'y': 0.0}, {'x': 0.575, 'y': 6.6}, {'x': -0.575, 'y': 6.6}]}
+    return ObstacleMotion(spec, random.Random(seed), keep_away_m=1.2)
+
+
+@pytest.mark.parametrize('seed', range(200))
+def test_keep_away_random_turns_away_from_robot(seed):
+    # 북쪽으로 걷던 손님 앞 1.0 m에 로봇이 거의 멈춰 있다. 돌아서면 로봇 쪽이 아닌 목표로 바로 걸어야 한다
+    # (전에는 무작위 새 목표가 다시 로봇 너머면 0.05 s 만에 또 서서 손님이 120 s 넘게 그 자리에 있었다)
+    from amr_gazebo.obstacle_motion import KEEP_AWAY_PATIENCE_S
+    m = _aisle(seed)
+    m._goal = (0.0, 6.0)
+    robot = {'amr_01': (0.3, 4.0, -math.pi / 2, 0.01)}
+    xy = (0.0, 3.0)
+    assert m.step(xy, robot, 0.0) == (0.0, 0.0)
+    t = KEEP_AWAY_PATIENCE_S + 0.1
+    for _ in range(int(0.5 / DT)):          # 돌아선 뒤 0.5 s
+        vx, vy = m.step(xy, robot, t)
+        assert (vx, vy) != (0.0, 0.0) and not m.keeping_away
+        xy, t = (xy[0] + vx * DT, xy[1] + vy * DT), t + DT
+    assert m.turn_backs == 1
+    assert math.dist(xy, (0.3, 4.0)) > math.dist((0.0, 3.0), (0.3, 4.0))   # 로봇에서 멀어졌다
+
+
+@pytest.mark.parametrize('seed', range(20))
+def test_keep_away_random_guest_does_not_freeze_in_aisle(seed):
+    # 통로 가운데 거의 멈춘 로봇: 30 s 동안 돌아선 직후(0.5 s 안) 다시 서는 일이 없다
+    m = _aisle(seed)
+    robot = {'amr_01': (0.2, 3.3, math.pi / 2, 0.01)}
+    xy, t = (0.0, 1.0), 0.0
+    turned_at, restops = None, 0
+    for _ in range(int(30 / DT)):
+        before, keeping = m.turn_backs, m.keeping_away
+        vx, vy = m.step(xy, robot, t)
+        if m.turn_backs > before:
+            turned_at = t
+        elif m.keeping_away and not keeping and turned_at is not None and t - turned_at < 0.5:
+            restops += 1
+        xy, t = (xy[0] + vx * DT, xy[1] + vy * DT), t + DT
+    assert restops == 0
+
+
+@pytest.mark.parametrize('seed', range(50))
+def test_keep_away_cornered_guest_slips_past_robot(seed):
+    # 통로 끝 구석에 몰린 손님 앞 1.0 m로 로봇이 그 끝을 향해 와 거의 멈춤 (zone_pass 디버그 기록과 같은 배치).
+    # 로봇 반대쪽은 0.1 m뿐이라 전에는 닿자마자 다시 로봇 쪽 목표를 골라 또 섰다. 이제 차체에 안 닿게 옆으로 지나간다
+    m = _aisle(seed)
+    m._goal = (0.3, 5.0)
+    robot_xy = (0.125, 1.1)
+    robot = {'amr_01': (*robot_xy, -1.47, 0.01)}
+    xy, t, closest, escaped = (-0.545, 0.12), 0.0, 99.0, False
+    turned_at, restops = None, 0
+    for _ in range(int(30 / DT)):
+        before, keeping = m.turn_backs, m.keeping_away
+        vx, vy = m.step(xy, robot, t)
+        if m.turn_backs > before:
+            turned_at = t
+        elif m.keeping_away and not keeping and turned_at is not None and t - turned_at < 0.5:
+            restops += 1
+        xy, t = (xy[0] + vx * DT, xy[1] + vy * DT), t + DT
+        closest = min(closest, math.dist(xy, robot_xy))
+        escaped = escaped or (xy[1] > robot_xy[1] and math.dist(xy, robot_xy) > 1.2)
+    assert restops == 0 and escaped
+    # 서빙 로봇 반폭 0.27 + 손님 반지름 0.25보다 멀다 (옆으로 지나가도 안 닿는다. 50 seed 최소 0.61 m)
+    assert closest > 0.55
+
+
 def test_negative_keep_away_rejected():
     with pytest.raises(ValueError):
         ObstacleMotion(_line(), random.Random(0), keep_away_m=-1.0)
