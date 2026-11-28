@@ -1,0 +1,137 @@
+# 식당 v3 홀에 서 있는 손님 10명: 테이블 사이 세로 통로 4명 + 정수대 앞 2명 + 키오스크 줄 4명 (혼잡도에 안 센다, staff_file 자리).
+#
+# 모든 손님이 pattern stand다 (amr_gazebo/obstacle_motion.py): 제자리(spawn)에서 waypoints 두 점 사이를 왕복하는데,
+#   경유점 0.15 m 앞에서 돌아서 실제로는 약 ± 5 cm다 (0.02 ~ 0.05 m/s). 로봇이 1.5 m 안에서 다가오면(손님이 로봇 진행선
+#   옆 0.9 m 안) evade_dirs 중 로봇 진행선에서 가장 먼 쪽으로 0.8 m 비켜 서고, 모든 로봇이 2 m 밖이면 제자리로 돌아온다.
+# evade_dirs: 8방향 중 0.8 m 비켜 선 길이 식당 정답 지도(restaurant_gt)에서 비어 있는 방향만 (gen 스크립트로 뽑았다)
+
+obstacles:
+  - id: stand_aisle_1
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -7.275, y: 1.7, yaw: 0.0}
+    waypoints:
+      - {x: -7.275, y: 1.500}
+      - {x: -7.275, y: 1.900}
+    evade_dirs: [[0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+    note: "x -7.275 세로 통로, t01·t02 사이"
+
+  - id: stand_aisle_2
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -4.225, y: -1.3, yaw: 0.0}
+    waypoints:
+      - {x: -4.225, y: -1.500}
+      - {x: -4.225, y: -1.100}
+    evade_dirs: [[0, 1], [0, -1]]
+    note: "x -4.225 세로 통로, t07·t08 사이"
+
+  - id: stand_aisle_3
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -1.175, y: 1.7, yaw: 0.0}
+    waypoints:
+      - {x: -1.175, y: 1.500}
+      - {x: -1.175, y: 1.900}
+    evade_dirs: [[0, 1], [0, -1]]
+    note: "x -1.175 세로 통로, t03·t04 사이"
+
+  - id: stand_aisle_4
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: 1.875, y: -1.3, yaw: 0.0}
+    waypoints:
+      - {x: 1.875, y: -1.500}
+      - {x: 1.875, y: -1.100}
+    evade_dirs: [[0, 1], [0, -1]]
+    note: "x 1.875 세로 통로, t09·t10 사이"
+
+  - id: stand_water_1
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: 2.9, y: -6.95, yaw: 0.0}
+    waypoints:
+      - {x: 2.700, y: -6.950}
+      - {x: 3.100, y: -6.950}
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+    note: "정수대 앞 서쪽"
+
+  - id: stand_water_2
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: 3.9, y: -6.95, yaw: 0.0}
+    waypoints:
+      - {x: 3.700, y: -6.950}
+      - {x: 4.100, y: -6.950}
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+    note: "정수대 앞 동쪽"
+
+  - id: stand_kiosk_1a
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -10.6, y: -6.95, yaw: 0.0}
+    waypoints:
+      - {x: -10.800, y: -6.950}
+      - {x: -10.400, y: -6.950}
+    evade_dirs: [[1, 0], [0, 1], [1, 1], [-1, 1]]
+    note: "키오스크 1 줄 맨 앞"
+
+  - id: stand_kiosk_1b
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -10.6, y: -6.4, yaw: 0.0}
+    waypoints:
+      - {x: -10.800, y: -6.400}
+      - {x: -10.400, y: -6.400}
+    evade_dirs: [[1, 0], [0, 1], [1, 1], [1, -1], [-1, 1]]
+    note: "키오스크 1 줄 두 번째 (1호 출발 자리 바로 뒤)"
+
+  - id: stand_kiosk_2a
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -9.2, y: -6.95, yaw: 0.0}
+    waypoints:
+      - {x: -9.400, y: -6.950}
+      - {x: -9.000, y: -6.950}
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1]]
+    note: "키오스크 2 줄 맨 앞"
+
+  - id: stand_kiosk_2b
+    type: customer
+    pattern: stand
+    yield_to_robots: [amr_01, amr_02, amr_03, amr_04, amr_05]
+    yield_robot_size: [0.565, 0.537]
+    speed_range_mps: [0.02, 0.05]
+    spawn: {x: -9.2, y: -6.4, yaw: 0.0}
+    waypoints:
+      - {x: -9.400, y: -6.400}
+      - {x: -9.000, y: -6.400}
+    evade_dirs: [[1, 0], [-1, 0], [0, 1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+    note: "키오스크 2 줄 두 번째"

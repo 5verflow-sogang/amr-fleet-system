@@ -27,8 +27,8 @@ steps:
     gap_s: 0.5
     tasks:
       - {id: a_busy_t01, type: delivery, pickup: L04, dropoff: t01, path_m: 24.1}       # amr_05
-      - {id: a_busy_t05, type: delivery, pickup: buffet_2, dropoff: t05, path_m: 36.0}  # amr_04
-      - {id: a_busy_L01, type: delivery, pickup: buffet_1, dropoff: L01, path_m: 42.2}  # amr_03
+      - {id: a_busy_t05, type: delivery, pickup: stall_5, dropoff: t05, path_m: 34.8}   # amr_04 (v3 배식대 → 매장 5, path_m은 직선 차이만큼 고친 값)
+      - {id: a_busy_L01, type: delivery, pickup: stall_6, dropoff: L01, path_m: 43.4}   # amr_03 (v3 배식대 → 매장 6, 같은 방식)
       - {id: a_busy_c01, type: delivery, pickup: L03, dropoff: c01, path_m: 8.9}        # amr_02 (먼저 끝난다)
       - {id: a_busy_t14, type: delivery, pickup: t10, dropoff: t14, path_m: 19.8}       # amr_01
   # 5대가 모두 할당받은 뒤 배달 4건 (빈 로봇이 없어 대기한다)

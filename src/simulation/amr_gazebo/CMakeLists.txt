@@ -29,6 +29,7 @@ install(DIRECTORY launch config worlds models
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_obstacle_motion test/test_obstacle_motion.py)
+  ament_add_pytest_test(test_guest_routes test/test_guest_routes.py)
   ament_add_pytest_test(test_cargo test/test_cargo.py)
   ament_add_pytest_test(test_rl_eval test/test_rl_eval.py)
   ament_add_pytest_test(test_clock_throttle test/test_clock_throttle.py)

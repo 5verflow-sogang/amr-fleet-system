@@ -1,0 +1,14 @@
+# restaurant_decor sign_stall_5 (amr_gazebo 식당 월드, 직접 생성 CC0)
+mtllib sign_stall_5.mtl
+o sign_stall_5
+v -1.2000 0.0000 -0.2200
+v 1.2000 0.0000 -0.2200
+v 1.2000 0.0000 0.2200
+v -1.2000 0.0000 0.2200
+vt 0.0000 0.0000
+vt 1.0000 0.0000
+vt 1.0000 1.0000
+vt 0.0000 1.0000
+vn 0.0 -1.0 0.0
+usemtl sign_stall_5
+f 1/1/1 2/2/1 3/3/1 4/4/1

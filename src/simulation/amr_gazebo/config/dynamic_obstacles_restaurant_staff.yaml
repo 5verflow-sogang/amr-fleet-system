@@ -1,4 +1,4 @@
-# 식당 월드 직원 5명 (매장 주방 4곳 + 배식대 뒤). 손님이 아니라 혼잡도에 세지 않으려고 손님 파일과 나눴다.
+# 식당 월드 직원 6명 (매장 주방 6곳). 손님이 아니라 혼잡도에 세지 않으려고 손님 파일과 나눴다.
 #
 #   ros2 launch amr_gazebo dynamic_obstacles.launch.py \
 #       config:=$(ros2 pkg prefix amr_gazebo)/share/amr_gazebo/config/dynamic_obstacles_restaurant_staff.yaml name:=staff_obstacles
@@ -7,7 +7,7 @@
 # 모두 칸막이 안쪽(y 5.4 이상)이라 로봇과는 만나지 않는다. 모델은 손님과 같은 customer 타입.
 
 obstacles:
-  # 매장 직원: 칸막이 안쪽 주방(y 5.4~7.3)과 배식대 뒤에서 조리대 앞을 왕복한다. 로봇과는 만나지 않고, 카운터 너머로 LiDAR·카메라에 보인다
+  # 매장 직원: 칸막이 안쪽 주방(y 5.4~7.3)에서 조리대 앞을 왕복한다. 로봇과는 만나지 않고, 카운터 너머로 LiDAR·카메라에 보인다
   - id: staff_1
     type: customer
     pattern: straight
@@ -52,8 +52,18 @@ obstacles:
     type: customer
     pattern: straight
     speed_range_mps: [0.3, 0.7]
-    spawn: {x: -10.6, y: 6.4, yaw: 0.0}
+    spawn: {x: -8.4, y: 6.3, yaw: 0.0}
     waypoints:
-      - {x: -10.6, y: 6.4}
-      - {x: -7.4, y: 6.4}
-    note: "배식대 뒤 (배식대와 조리대 사이)"
+      - {x: -8.4, y: 6.3}
+      - {x: -6.6, y: 6.3}
+    note: "일식 매장 주방"
+
+  - id: staff_6
+    type: customer
+    pattern: straight
+    speed_range_mps: [0.3, 0.7]
+    spawn: {x: -11.4, y: 6.3, yaw: 0.0}
+    waypoints:
+      - {x: -11.4, y: 6.3}
+      - {x: -9.6, y: 6.3}
+    note: "중식 매장 주방"
