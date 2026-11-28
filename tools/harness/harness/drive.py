@@ -12,6 +12,8 @@ command: 셸 명령 하나를 끝날 때까지 돌린다(예: Nav2 목표를 보
 프로세스를 SIGKILL로 죽여 손자(측정 스크립트)를 못 치우므로, timeout_s는 시나리오 timeout_s보다 짧게 둔다.
 마지막 줄에 {"sim_s", "wall_s", "rtf"} JSON을 출력한다. sim_s는 대기 시계(use_sim_time)와 상관없이 /clock으로 잰다.
 /clock이 없으면(가짜 로봇만 띄우는 시나리오) sim_s·rtf는 null이다.
+wait에 stop_after_tasks: N을 주면 /fleet/task_status에서 서로 다른 작업 N개가 COMPLETED가 되는 순간 stop_tail_s(기본 5 s,
+시뮬레이션 시간)만 더 기다리고 끝낸다. duration_s는 상한으로 남는다 (정면 대치처럼 작업 몇 개만 보는 장면).
 segments·wait는 노드 시계(use_sim_time)로 기다린다. 시뮬레이션 시간으로 기다리는데 시계가 실제 60초 동안 멈추면
 (Gazebo가 죽음) 종료 코드 3으로 끝낸다 (clock_watch, #285 하연 리뷰).
 """
@@ -71,11 +73,11 @@ def main(argv):
     class ClockStalled(Exception):
         pass
 
-    def spin_for(duration, publish=None):
+    def spin_for(duration, publish=None, until=None):
         # 시뮬레이션 시간으로 기다리는데 /clock이 멈추면(Gazebo가 죽음) 끝나지 않으므로 멈춤을 본다 (clock_watch)
         t0 = now()
         watch = ClockStall(t0, time.monotonic())
-        while now() - t0 < duration:
+        while now() - t0 < duration and not (until and until()):
             if publish:
                 publish()
             rclpy.spin_once(node, timeout_sec=0.05)
@@ -99,7 +101,19 @@ def main(argv):
                 print(f'구간 끝: v={v} w={w} {duration}s', file=sys.stderr, flush=True)
             spin_for(float(spec.get('then_wait_s', 0.0)))
         elif mode == 'wait':
-            spin_for(float(spec['duration_s']))
+            need = int(spec.get('stop_after_tasks') or 0)
+            done = set()
+            if need:
+                from amr_msgs.msg import TaskStatus   # 이 옵션을 쓰는 시나리오만 amr_msgs가 필요하다
+                from rclpy.qos import QoSProfile, ReliabilityPolicy
+                node.create_subscription(
+                    TaskStatus, '/fleet/task_status',
+                    lambda m: done.add(m.task_id) if m.state == TaskStatus.STATE_COMPLETED else None,
+                    QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE))   # Fleet 서버와 같은 QoS
+            spin_for(float(spec['duration_s']), until=(lambda: len(done) >= need) if need else None)
+            if need and len(done) >= need:
+                print(f'작업 {len(done)}개 완료: {spec.get("stop_tail_s", 5.0)} s 더 기다리고 끝낸다', file=sys.stderr, flush=True)
+                spin_for(float(spec.get('stop_tail_s', 5.0)))
         elif mode == 'command':
             # 명령의 출력은 이 프로세스의 stderr(drive.log)로 보낸다. stdout은 마지막 JSON 한 줄만 쓴다
             timeout_s = spec.get('timeout_s')
