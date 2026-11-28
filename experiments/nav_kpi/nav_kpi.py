@@ -289,9 +289,10 @@ class NavKpi(Node):
                 if t >= next_cte and self.gt is not None and self.plan_now is not None and not self.in_recovery(t):
                     next_cte = t + 1.0 / a.cte_hz
                     # 전역 경로는 계획 순간의 로봇 위치에서 시작하므로 앞 3 m(선분 120개)만 찾는다
-                    row = self.cte_sample(i, t, self.to_map(*self.gt))
-                    if row is not None:
-                        pair_cte.append(row)
+                    # 쌍 기록(row)과 이름을 나눈다: 같은 이름이면 CTE 표본(튜플)이 쌍 기록을 덮어써 아래 row.update가 죽는다
+                    cte_row = self.cte_sample(i, t, self.to_map(*self.gt))
+                    if cte_row is not None:
+                        pair_cte.append(cte_row)
                 if t >= next_replan:
                     next_replan = t + a.replan_period_s
                     r_ok, r_ms, r_wall, _ = self.compute_path(self.goal_pose(mx, my, yaw))

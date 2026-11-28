@@ -1,0 +1,56 @@
+# make_configs.py가 만든다. 손으로 고치지 말고 스크립트를 고쳐 다시 만든다
+obstacles:
+- id: guest_1
+  type: customer
+  pattern: random
+  yield_to_robots:
+  - amr_01
+  yield_robot_size:
+  - 0.565
+  - 0.537
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  speed_range_mps:
+  - 0.4
+  - 0.8
+  spawn:
+    x: -10.755
+    y: -1.425
+    yaw: 1.5707963
+  waypoints:
+  - x: -11.1
+    y: -4.2
+  - x: -9.95
+    y: -4.2
+  - x: -9.95
+    y: 2.4
+  - x: -11.1
+    y: 2.4
+  note: 통로 띠 안 무작위 (4점은 활동 범위)
+- id: guest_2
+  type: customer
+  pattern: random
+  yield_to_robots:
+  - amr_01
+  yield_robot_size:
+  - 0.565
+  - 0.537
+  yield_patience_s: 3.0
+  yield_progress_m: 0.1
+  speed_range_mps:
+  - 0.4
+  - 0.8
+  spawn:
+    x: -10.295
+    y: 1.125
+    yaw: 1.5707963
+  waypoints:
+  - x: -11.1
+    y: -4.2
+  - x: -9.95
+    y: -4.2
+  - x: -9.95
+    y: 2.4
+  - x: -11.1
+    y: 2.4
+  note: 통로 띠 안 무작위 (4점은 활동 범위)
