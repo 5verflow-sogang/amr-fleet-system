@@ -2,9 +2,10 @@
 # 2·4·5호에 먼저 동쪽 테이블 회수를 주고(화면 밖), 0초에 배식대 1번 자리(buffet_1) → 1번 테이블 배달을 요청하며 /demo/t0을 낸다.
 # 0초에 비어 있는 로봇은 1호(입구 옆)와 3호(3번 매장 앞) 둘뿐이라 핵심 요청은 둘 중 하나가 받는다:
 #   끔 (cost_fn euclidean)   직선 거리 1호 9.6 m < 3호 12.0 m → 1호 (v3 매장 6, 정차 자리 y 4.0). 손님이 몰린 서쪽 통로로 간다
-#   켬 (cost_fn congestion)  1호 선분이 west_aisle 8.0 m·buffet_line 1.2 m, 3호는 buffet_line 3.8 m·stall_front 7.6 m를 지난다.
-#                            west_aisle·buffet_line 1.0, stall_front 0.17(customer_1)이면 1호 37.2 > 3호 26.7 → 3호
-#                            (west_aisle이 0.56 밑이면 1호로 돌아간다 = 서쪽 통로 손님 3명 중 2명 넘게 구역 안이어야 한다)
+#   켬 (cost_fn congestion)  1호 선분이 west_aisle 8.0 m·buffet_line 1.0 m, 3호는 buffet_line 4.4 m·stall_west 6.3 m·
+#                            stall_east 1.3 m를 지난다 (12구역, #367).
+#                            west_aisle·buffet_line 1.0, stall_east 0.33(customer_1)이면 1호 36.6 > 3호 26.5 → 3호
+#                            (west_aisle이 0.58 밑이면 1호로 돌아간다 = 서쪽 통로 정원 3명 중 2명 넘게 구역 안이어야 한다)
 #
 # buffet_2가 아니라 buffet_1인 까닭: buffet_2(-8.1, 4.15)는 3호가 직선 9.6 m로 1호(10.0 m)보다 가까워 끔에서도 3호가 간다.
 # 시작 작업: 픽업을 매장으로 두면 3호(3번 매장 앞)가 가장 가까워 가져간다. 그래서 동쪽 테이블 회수로 2·4·5호만 묶는다.
