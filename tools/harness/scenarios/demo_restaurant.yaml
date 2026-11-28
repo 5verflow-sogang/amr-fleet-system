@@ -73,6 +73,7 @@ processes:
       $(test -n "{fleet_params}" && echo fleet_params_file:={fleet_params})
       enable_camera:={robot_camera} guest_keep_away_m:=1.2 guest_avoid_peers:=true
       zone_client:={permit_zones} zones_file:=$(ros2 pkg prefix amr_fleet_manager)/share/amr_fleet_manager/config/zones_restaurant.yaml
+      zone_stop_margin_m:=1.0
       assignments_csv:={run_dir}/assignments.csv epoch_file:={run_dir}/epoch spawn_interval_s:={spawn_interval_s}
     ready_topic: /fleet/heartbeat
     ready_cmds:

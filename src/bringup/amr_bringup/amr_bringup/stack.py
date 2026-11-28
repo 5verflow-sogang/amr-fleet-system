@@ -63,6 +63,8 @@ class Options:
     map_origin_in_world: str = '[0, 0, 0]'
     use_imu: str = 'true'
     zones_file: str = ''
+    # 허가 없이 서는 자리 (구역 경계 앞 m). 식당은 1.0: 0.5면 기다리는 로봇이 출구 길목을 막는다 (zone_client.launch.py)
+    zone_stop_margin_m: str = '0.5'
     body: str = 'amr'
 
     def __post_init__(self) -> None:
@@ -144,7 +146,7 @@ def robot_stack(opt: Options, index: int, name: str, pose, map_pose) -> List[Inc
         # (robot_pose_topic 기본값)이라 접두어를 따로 넘길 게 없다 (perf/zone-client-pose-topic)
         stack.append(Include('amr_zone_client', 'zone_client.launch.py', dict(
             namespace=name, robot_id=name, zones_file=opt.zones_file, zones_frame='world',
-            cmd_vel_out_topic=chain['zone_out'], use_sim_time='true')))
+            stop_margin_m=opt.zone_stop_margin_m, cmd_vel_out_topic=chain['zone_out'], use_sim_time='true')))
     if opt.docking:
         # 도킹 서버는 Nav2 컨트롤러 자리로 속도를 낸다 (같은 cmd_vel 체인)
         stack.append(Include('amr_docking', 'docking.launch.py', dict(

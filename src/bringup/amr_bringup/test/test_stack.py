@@ -64,9 +64,15 @@ def test_zone_client_uses_server_zones():
     items = robot_stack(Options(nav2=True, zone_client=True, zones_file='/z.yaml'), 0, 'amr_02', POSE, MAP_POSE)
     zone = args(items, 'zone_client.launch.py')
     assert (zone['robot_id'], zone['zones_file']) == ('amr_02', '/z.yaml')
+    assert zone['stop_margin_m'] == '0.5'
     # zones.yaml은 world 좌표라 TF map ← world로 바꿔 쓴다. 로봇 위치는 네임스페이스 안 상대
     # 토픽(robot_pose_topic 기본값)이라 접두어를 따로 넘기지 않는다 (perf/zone-client-pose-topic)
     assert zone['zones_frame'] == 'world'
+
+
+def test_zone_client_stop_margin_is_overridable_for_the_restaurant():
+    items = robot_stack(Options(nav2=True, zone_client=True, zone_stop_margin_m='1.0'), 0, 'amr_02', POSE, MAP_POSE)
+    assert args(items, 'zone_client.launch.py')['stop_margin_m'] == '1.0'
 
 
 def test_bt_follows_nav2_and_docking():
