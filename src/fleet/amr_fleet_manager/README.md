@@ -71,7 +71,7 @@
 
 ```bash
 ros2 launch amr_fleet_manager congestion.launch.py                                  # 물류센터 가짜 구역 + 동적 장애물 5개
-ros2 launch amr_fleet_manager congestion.launch.py site:=restaurant guests:=peak    # 식당: 구역 7개, 피크 손님 13명, map = world
+ros2 launch amr_fleet_manager congestion.launch.py site:=restaurant guests:=peak    # 식당: 구역 12개, 피크 손님 13명, map = world
 ros2 launch amr_fleet_manager congestion.launch.py zones_file:=<구역> obstacles_file:=<손님 yaml> map_origin_in_world:='[x, y, yaw]'
 ```
 

@@ -332,16 +332,16 @@ def test_scene11_off_sends_robot_1_and_on_sends_robot_3():
     # 끔(직선 거리): 1호가 가깝다(9.6 m < 12.0 m). 매장 5였다면 3호가 가까워 끔·켬이 같아진다
     assert math.dist(one, buffet) < math.dist(three, buffet)
     assert math.dist(three, st['stall_5'][:2]) < math.dist(one, st['stall_5'][:2])
-    # 켬: 피크 몰림(서쪽 통로 1.0, 매장 앞 customer_1 한 명 1/6, v3는 배식대 줄이 없어 buffet_line 0)이면 3호
-    # (11/15 로컬 녹화의 3호 비용 15.80과 같은 값)
-    peak = _congestion_cost({'west_aisle': 1.0, 'stall_front': 1 / 6})
-    assert peak(three, buffet) == pytest.approx(15.8, abs=0.05)
+    # 켬: 피크 몰림(서쪽 통로 1.0, 매장 3 앞 customer_1 한 명이 stall_east 정원 3명 중 1명, v3는 배식대 줄이 없어
+    # buffet_line 0)이면 3호. 12구역(#367) 값 13.29. 7구역일 때는 stall_front 1/6으로 15.80 (11/15 로컬 녹화와 같은 값)
+    peak = _congestion_cost({'west_aisle': 1.0, 'stall_east': 1 / 3})
+    assert peak(three, buffet) == pytest.approx(13.29, abs=0.05)
     assert peak(three, buffet) + 5.0 < peak(one, buffet)
     # 서쪽 통로가 비면 1호로 돌아간다 - 몰림이 실제로 배정을 바꾼다
-    thin = _congestion_cost({'west_aisle': 0.0, 'stall_front': 1 / 6})
+    thin = _congestion_cost({'west_aisle': 0.0, 'stall_east': 1 / 3})
     assert thin(one, buffet) < thin(three, buffet)
-    # 평상시(hall_west만 1.0)면 둘 다 그 구역을 안 지나 끔과 같다
-    calm = _congestion_cost({'hall_west': 1.0})
+    # 평상시(손님 6명이 aisle_1 3.4명·aisle_2 2.2명)면 둘 다 그 구역을 안 지나 끔과 같다
+    calm = _congestion_cost({'aisle_1': 1.0, 'aisle_2': 2.2 / 3})
     assert calm(one, buffet) < calm(three, buffet)
     # 시작 작업도 켬에서 같다: cafe 혼잡 1.0이어도 L04는 2호가 3호보다 싸다
     cafe = _congestion_cost({'cafe': 1.0})
